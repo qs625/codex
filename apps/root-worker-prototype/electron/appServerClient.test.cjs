@@ -921,6 +921,43 @@ test("app-server client writes server request responses and rejections", async (
   ]);
 });
 
+test("app-server client registers the Host lifecycle consumer before becoming ready", async () => {
+  const client = Object.create(AppServerClient.prototype);
+  const calls = [];
+  client.hostInstanceId = "host-1";
+  client.request = async (method) => {
+    calls.push(["request", method]);
+    return { serverInfo: { name: "app-server" } };
+  };
+  client.notify = async (method) => {
+    calls.push(["notify", method]);
+  };
+  client.sendRequest = async (method, params) => {
+    calls.push(["sendRequest", method, params]);
+    return { registered: true, hostId: params.hostId };
+  };
+  client.readyResolve = () => calls.push(["ready"]);
+  client.readyReject = (error) => {
+    throw error;
+  };
+  client.emit = (event) => calls.push(["emit", event]);
+  client.child = { exitCode: null, pid: 1234 };
+  client.mobileConnection = { enabled: false };
+
+  await client.initialize();
+
+  assert.deepEqual(calls.slice(0, 4), [
+    ["request", "initialize"],
+    ["notify", "initialized"],
+    [
+      "sendRequest",
+      "client/lifecycle/register",
+      { hostId: "host-1" },
+    ],
+    ["ready"],
+  ]);
+});
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

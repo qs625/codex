@@ -195,14 +195,20 @@ async fn record_stage1_output_usage_for_memory_citation(
 /// Handle a completed output item from the model stream, recording it and
 /// queuing any tool execution futures. This records items immediately so
 /// history and rollout stay in sync even if the turn is later cancelled.
+pub(crate) enum InFlightToolResult {
+    ReturnToModel(ResponseItem),
+    FinishTurn,
+}
+
 pub(crate) type InFlightFuture<'f> =
-    Pin<Box<dyn Future<Output = Result<ResponseItem>> + Send + 'f>>;
+    Pin<Box<dyn Future<Output = Result<InFlightToolResult>> + Send + 'f>>;
 
 #[derive(Default)]
 pub(crate) struct OutputItemResult {
     pub last_agent_message: Option<String>,
     pub needs_follow_up: bool,
     pub tool_future: Option<InFlightFuture<'static>>,
+    pub tool_is_terminal_control: bool,
 }
 
 pub(crate) struct HandleOutputCtx {
@@ -313,6 +319,18 @@ pub(crate) async fn handle_output_item_done(
             record_completed_response_item(ctx.sess.as_ref(), ctx.turn_context.as_ref(), &item)
                 .await;
 
+            output.tool_is_terminal_control =
+                ctx.sess
+                    .services
+                    .tool_service
+                    .tool_is_terminal_control(tool_service_api::ToolParallelRequest {
+                        tool: crate::session::turn::tool_service_request(
+                            &ctx.sess,
+                            &ctx.turn_context,
+                            &ctx.tool_inputs,
+                        ),
+                        call: &call,
+                    });
             let cancellation_token = ctx.cancellation_token.child_token();
             let tool_future: InFlightFuture<'static> =
                 Box::pin(crate::session::turn::handle_tool_call(

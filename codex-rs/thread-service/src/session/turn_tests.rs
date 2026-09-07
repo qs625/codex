@@ -7,6 +7,8 @@ use protocol::items::AgentMessageContent;
 use protocol::models::ContentItem;
 use std::sync::Arc;
 
+use crate::stream_events_utils::InFlightToolResult;
+
 struct RewriteAgentMessageContributor;
 
 impl TurnItemContributor for RewriteAgentMessageContributor {
@@ -36,6 +38,23 @@ fn assistant_output_text(text: &str) -> ResponseItem {
         }],
         phase: None,
     }
+}
+
+#[tokio::test]
+async fn terminal_tool_outcome_finishes_sampling_without_model_output() {
+    let (session, turn_context) = crate::session::tests::make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let mut in_flight = FuturesOrdered::new();
+    let terminal: InFlightFuture<'static> =
+        Box::pin(async { Ok(InFlightToolResult::FinishTurn) });
+    in_flight.push_back(terminal);
+
+    assert!(
+        drain_in_flight(&mut in_flight, session, turn_context)
+            .await
+            .expect("terminal result should drain")
+    );
 }
 
 #[tokio::test]

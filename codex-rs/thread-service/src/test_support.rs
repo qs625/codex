@@ -65,8 +65,6 @@ use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
 use tokio::time::timeout;
 #[cfg(any(test, feature = "test-support"))]
-use tool_service_api::AnyToolResult;
-#[cfg(any(test, feature = "test-support"))]
 use tool_service_api::FunctionCallError;
 #[cfg(any(test, feature = "test-support"))]
 use tool_service_api::ToolDiffConsumerRequest;
@@ -564,10 +562,15 @@ impl ToolServiceApi for DisabledToolServiceForTests {
         false
     }
 
+    fn tool_is_terminal_control(&self, request: ToolParallelRequest<'_>) -> bool {
+        let _ = request;
+        false
+    }
+
     fn dispatch_tool(
         &self,
         request: ToolDispatchRequest<'_>,
-    ) -> ToolServiceFuture<'_, Result<AnyToolResult, FunctionCallError>> {
+    ) -> ToolServiceFuture<'_, Result<tool_service_api::ToolCallOutcome, FunctionCallError>> {
         Box::pin(async move {
             Err(FunctionCallError::Fatal(format!(
                 "DisabledToolServiceForTests does not dispatch {}",

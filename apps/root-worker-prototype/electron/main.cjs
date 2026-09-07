@@ -79,14 +79,19 @@ const {
   observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 const {
-  resolveInstalledArtifactUpdatePlan,
-  updateInstalledArtifacts,
+  resolveInstalledArtifactUpdatePlanInWorker,
+  updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 const {
   AUTO_RESUME_PROMPT,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
 } = require("./threadAutoResume.cjs");
+const {
+  createRuntimeRestartController,
+  createRuntimeRestartIntentStore,
+  expectedRuntimeRestartPrompt,
+} = require("./runtimeRestartIntent.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
@@ -118,8 +123,8 @@ const installedArtifactUpdateLifecycle =
     },
     fullRelaunch: appRelaunch,
     reloadWindows: reloadRendererWindows,
-    resolvePlan: () => resolveInstalledArtifactUpdatePlan(),
-    updateArtifacts: (plan) => updateInstalledArtifacts(plan),
+    resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
+    updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
     broadcastStatus: (status) =>
       broadcast("codex:status", {
         ...appServerClient.status,
@@ -139,6 +144,8 @@ let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
 let autoResumeCoordinator = null;
+let runtimeRestartController = null;
+let runtimeRestartIntentStore = null;
 let quittingAfterAppServerStop = false;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
@@ -235,21 +242,7 @@ appServerClient.on("notification", (notification) => {
   }
   const normalizedNotification = normalizeNotification(notification);
   if (isClientRelaunchNotification(normalizedNotification)) {
-    void observeClientRelaunchResult(
-      handleClientRelaunchNotification(normalizedNotification),
-      {
-        broadcastStatus: (status) =>
-          broadcast("codex:status", {
-            ...appServerClient.status,
-            ...status,
-          }),
-        logger: console,
-        reason:
-          normalizedNotification.params?.reason ??
-          normalizedNotification.method ??
-          null,
-      },
-    );
+    void getRuntimeRestartController().handle(normalizedNotification);
     return;
   }
   broadcast("codex:notification", normalizedNotification);
@@ -299,12 +292,18 @@ ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
   const listResult = await listThreads(defaultWorkspace);
   const threads = listResult.threads;
-  const autoResume = await getAutoResumeCoordinator().run(threads);
+  const expectedRestart =
+    await getRuntimeRestartController().recoverPending();
+  const expectedThreadIds = new Set(expectedRestart.expectedThreadIds);
+  const autoResume = await getAutoResumeCoordinator().run(
+    threads.filter((thread) => !expectedThreadIds.has(thread.id)),
+  );
   return {
     workspace: defaultWorkspace,
     threads,
     materializedSelfThreadId: listResult.materializedSelfThreadId,
     autoResume,
+    expectedRestart,
     appServer: appServerClient.status,
   };
 });
@@ -1306,6 +1305,62 @@ function getAutoResumeCoordinator() {
     });
   }
   return autoResumeCoordinator;
+}
+
+function getRuntimeRestartIntentStore() {
+  if (!runtimeRestartIntentStore) {
+    runtimeRestartIntentStore = createRuntimeRestartIntentStore(
+      path.join(app.getPath("userData"), "runtime-restart-intents.json"),
+      { fs },
+    );
+  }
+  return runtimeRestartIntentStore;
+}
+
+function getRuntimeRestartController() {
+  if (!runtimeRestartController) {
+    runtimeRestartController = createRuntimeRestartController({
+      store: getRuntimeRestartIntentStore(),
+      execute: (notification) =>
+        observeClientRelaunchResult(
+          handleClientRelaunchNotification(notification),
+          {
+            broadcastStatus: (status) =>
+              broadcast("codex:status", {
+                ...appServerClient.status,
+                ...status,
+              }),
+            logger: console,
+            reason:
+              notification.params?.reason ?? notification.method ?? null,
+            requestId: notification.params?.requestId ?? null,
+          },
+        ),
+      recover: recoverRuntimeRestartRecord,
+      broadcastStatus: (status) =>
+        broadcast("codex:status", {
+          ...appServerClient.status,
+          ...status,
+        }),
+      logger: console,
+    });
+  }
+  return runtimeRestartController;
+}
+
+async function recoverRuntimeRestartRecord(record) {
+  const readResult = await readThread(record.requestedByThreadId, true);
+  const thread = readResult.thread;
+  await subscribeThread(record.requestedByThreadId);
+  return startThreadTurn({
+    threadId: record.requestedByThreadId,
+    model: thread?.model ?? null,
+    modelProvider: thread?.modelProvider ?? null,
+    effort: thread?.reasoningEffort ?? null,
+    text: expectedRuntimeRestartPrompt(record),
+    skills: [],
+    images: [],
+  });
 }
 
 async function listThreads(cwd) {

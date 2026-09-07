@@ -535,6 +535,40 @@ test("installed artifact update failure does not reload stale renderer", async (
   });
 });
 
+test("installed artifact build failure keeps the lifecycle request id", async () => {
+  const statuses = [];
+  const handler = createClientRelaunchNotificationHandler({
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => {
+        throw new Error("build failed");
+      },
+      logger: { error: () => {} },
+      broadcastStatus: (status) => statuses.push(status),
+    }),
+  });
+
+  const result = await handler({
+    method: "client/relaunch/requested",
+    params: {
+      requestId: "restart-1",
+      mode: "hot",
+      reason: "runtime update",
+    },
+  });
+
+  assert.equal(result.requestId, "restart-1");
+  assert.deepEqual(statuses.at(-1), {
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "failed",
+      mode: "hot",
+      requestId: "restart-1",
+      reason: "build failed",
+    },
+  });
+});
+
 test("full installed artifact build failure does not stop or relaunch", async () => {
   const calls = [];
   const statuses = [];
@@ -1145,6 +1179,7 @@ test("installed artifact update coalesces concurrent requests with the same mode
 
   const first = adapter.requestUpdateAndRelaunch("first", "full");
   const second = adapter.requestUpdateAndRelaunch("second", "full");
+  await Promise.resolve();
   resolveUpdate({ ok: true, updated: true });
 
   assert.equal((await first).alreadyRequested, undefined);

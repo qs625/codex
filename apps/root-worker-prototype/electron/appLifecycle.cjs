@@ -191,6 +191,12 @@ function normalizeClientRelaunchMode(mode) {
   return null;
 }
 
+function normalizeClientRelaunchRequestId(requestId) {
+  return typeof requestId === "string" && requestId.trim()
+    ? requestId.trim()
+    : null;
+}
+
 function createClientRelaunchNotificationHandler({
   rendererReload,
   installedArtifactUpdate,
@@ -202,6 +208,9 @@ function createClientRelaunchNotificationHandler({
   return async function handleClientRelaunchNotification(notification) {
     const reason = notification?.params?.reason ?? notification?.method ?? null;
     const mode = normalizeClientRelaunchMode(notification?.params?.mode);
+    const requestId = normalizeClientRelaunchRequestId(
+      notification?.params?.requestId,
+    );
     if (!mode) {
       return {
         ok: false,
@@ -210,6 +219,7 @@ function createClientRelaunchNotificationHandler({
         reloaded: false,
         updated: false,
         mode: null,
+        ...requestIdFields(requestId),
         reason: `Invalid client relaunch mode: ${String(notification?.params?.mode ?? "missing")}`,
       };
     }
@@ -235,6 +245,7 @@ function createClientRelaunchNotificationHandler({
       installedArtifactUpdate,
       mode,
       reason,
+      requestId,
       rendererReload,
     }).finally(() => {
       inFlight = null;
@@ -249,6 +260,7 @@ async function runClientRelaunchNotification({
   installedArtifactUpdate,
   mode,
   reason,
+  requestId,
   rendererReload,
 }) {
   if (
@@ -256,7 +268,11 @@ async function runClientRelaunchNotification({
     typeof installedArtifactUpdate.requestUpdateAndRelaunch === "function"
   ) {
     const updateResult =
-      await installedArtifactUpdate.requestUpdateAndRelaunch(reason, mode);
+      await installedArtifactUpdate.requestUpdateAndRelaunch(
+        reason,
+        mode,
+        requestId,
+      );
     if (!updateResult.unsupported) {
       return updateResult;
     }
@@ -277,6 +293,7 @@ async function runClientRelaunchNotification({
       reloaded: false,
       updated: false,
       mode,
+      ...requestIdFields(requestId),
       relaunch,
       reason: relaunch.reason ?? reason,
     };
@@ -288,17 +305,26 @@ async function runClientRelaunchNotification({
       relaunching: false,
       reloaded: false,
       reason: "Renderer reload adapter is unavailable",
+      ...requestIdFields(requestId),
     };
   }
   if (typeof rendererReload.requestHotReload === "function") {
-    return rendererReload.requestHotReload(reason);
+    const result = await rendererReload.requestHotReload(reason);
+    return {
+      ...(result && typeof result === "object" ? result : {}),
+      ...requestIdFields(requestId),
+    };
   }
-  return rendererReload.requestReload(reason);
+  const result = await rendererReload.requestReload(reason);
+  return {
+    ...(result && typeof result === "object" ? result : {}),
+    ...requestIdFields(requestId),
+  };
 }
 
 async function observeClientRelaunchResult(
   resultPromise,
-  { broadcastStatus, logger = console, reason = null } = {},
+  { broadcastStatus, logger = console, reason = null, requestId = null } = {},
 ) {
   try {
     const result = await resultPromise;
@@ -307,6 +333,7 @@ async function observeClientRelaunchResult(
         type: "clientRelaunch",
         phase: result?.ok ? "completed" : "failed",
         mode: result?.mode ?? null,
+        ...requestIdFields(result?.requestId ?? requestId),
         reason: result?.reason ?? reason,
       },
       relaunch:
@@ -326,6 +353,7 @@ async function observeClientRelaunchResult(
         type: "clientRelaunch",
         phase: "failed",
         mode: null,
+        ...requestIdFields(requestId),
         reason: message,
       },
     });
@@ -335,6 +363,7 @@ async function observeClientRelaunchResult(
       relaunching: false,
       reloaded: false,
       updated: false,
+      ...requestIdFields(requestId),
       reason: message,
     };
   }
@@ -354,7 +383,7 @@ function createInstalledArtifactUpdateLifecycleAdapter({
   let inFlightMode = null;
 
   return {
-    requestUpdateAndRelaunch(reason = null, mode = null) {
+    requestUpdateAndRelaunch(reason = null, mode = null, requestId = null) {
       const normalizedMode = normalizeClientRelaunchMode(mode);
       if (!normalizedMode) {
         return Promise.resolve({
@@ -363,6 +392,7 @@ function createInstalledArtifactUpdateLifecycleAdapter({
           relaunching: false,
           updated: false,
           mode: null,
+          ...requestIdFields(requestId),
           reason: `Invalid installed artifact refresh mode: ${String(mode ?? "missing")}`,
         });
       }
@@ -386,41 +416,9 @@ function createInstalledArtifactUpdateLifecycleAdapter({
       if (!resolvePlan || typeof resolvePlan !== "function") {
         return Promise.resolve({ ok: false, unsupported: true });
       }
-      let plan;
-      try {
-        plan = resolvePlan();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger?.error?.(
-          "[prototype] installed artifact update planning failed",
-          JSON.stringify({ reason: message }),
-        );
-        broadcastStatus?.({
-          lifecycle: {
-            type: "installedArtifactUpdate",
-            phase: "failed",
-            mode: normalizedMode,
-            reason: message,
-          },
-        });
-        return Promise.resolve({
-          ok: false,
-          unsupported: false,
-          inPlace: false,
-          partial: false,
-          relaunching: false,
-          reloaded: false,
-          updated: false,
-          mode: normalizedMode,
-          reason: message,
-        });
-      }
-      if (!plan) {
-        return Promise.resolve({ ok: false, unsupported: true });
-      }
 
       inFlightMode = normalizedMode;
-      inFlight = runInstalledArtifactUpdate({
+      inFlight = resolveAndRunInstalledArtifactUpdate({
         appServerRestart,
         appServerStop,
         fullRelaunch,
@@ -428,9 +426,10 @@ function createInstalledArtifactUpdateLifecycleAdapter({
         updateArtifacts,
         broadcastStatus,
         logger,
-        plan,
+        resolvePlan,
         reason,
         mode: normalizedMode,
+        requestId,
       }).finally(() => {
         inFlight = null;
         inFlightMode = null;
@@ -438,6 +437,68 @@ function createInstalledArtifactUpdateLifecycleAdapter({
       return inFlight;
     },
   };
+}
+
+async function resolveAndRunInstalledArtifactUpdate({
+  appServerRestart,
+  appServerStop,
+  fullRelaunch,
+  reloadWindows,
+  updateArtifacts,
+  broadcastStatus,
+  logger,
+  resolvePlan,
+  reason,
+  mode,
+  requestId,
+}) {
+  let plan;
+  try {
+    plan = await resolvePlan();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger?.error?.(
+      "[prototype] installed artifact update planning failed",
+      JSON.stringify({ reason: message }),
+    );
+    broadcastStatus?.({
+      lifecycle: {
+        type: "installedArtifactUpdate",
+        phase: "failed",
+        mode,
+        ...requestIdFields(requestId),
+        reason: message,
+      },
+    });
+    return {
+      ok: false,
+      unsupported: false,
+      inPlace: false,
+      partial: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode,
+      ...requestIdFields(requestId),
+      reason: message,
+    };
+  }
+  if (!plan) {
+    return { ok: false, unsupported: true };
+  }
+  return runInstalledArtifactUpdate({
+    appServerRestart,
+    appServerStop,
+    fullRelaunch,
+    reloadWindows,
+    updateArtifacts,
+    broadcastStatus,
+    logger,
+    plan,
+    reason,
+    mode,
+    requestId,
+  });
 }
 
 async function runInstalledArtifactUpdate({
@@ -451,6 +512,7 @@ async function runInstalledArtifactUpdate({
   plan,
   reason,
   mode,
+  requestId,
 }) {
   if (!updateArtifacts || typeof updateArtifacts !== "function") {
     return {
@@ -459,6 +521,7 @@ async function runInstalledArtifactUpdate({
       relaunching: false,
       updated: false,
       mode,
+      ...requestIdFields(requestId),
       reason: "Installed artifact updater is unavailable",
     };
   }
@@ -468,6 +531,7 @@ async function runInstalledArtifactUpdate({
       type: "installedArtifactUpdate",
       phase: "building",
       mode,
+      ...requestIdFields(requestId),
       reason,
     },
   });
@@ -484,6 +548,7 @@ async function runInstalledArtifactUpdate({
         type: "installedArtifactUpdate",
         phase: "updated",
         mode,
+        ...requestIdFields(requestId),
         reason,
       },
     });
@@ -494,6 +559,7 @@ async function runInstalledArtifactUpdate({
         fullRelaunch,
         mode,
         reason,
+        requestId,
         update,
       });
     }
@@ -508,6 +574,7 @@ async function runInstalledArtifactUpdate({
       broadcastStatus,
       mode,
       reason,
+      requestId,
     });
     if (!reload.ok) {
       throw partialInstalledUpdateError(
@@ -524,6 +591,7 @@ async function runInstalledArtifactUpdate({
         type: "installedArtifactUpdate",
         phase: "reloaded",
         mode,
+        ...requestIdFields(requestId),
         reason,
       },
       reload,
@@ -536,6 +604,7 @@ async function runInstalledArtifactUpdate({
       updated: Boolean(update.updated),
       backendRestart,
       mode,
+      ...requestIdFields(requestId),
       mainProcessUpdate: "pendingAppRelaunch",
       preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
       reason,
@@ -552,6 +621,7 @@ async function runInstalledArtifactUpdate({
         type: "installedArtifactUpdate",
         phase: "failed",
         mode,
+        ...requestIdFields(requestId),
         reason: message,
       },
     });
@@ -565,6 +635,7 @@ async function runInstalledArtifactUpdate({
       backendRestart: error?.backendRestart,
       reload: error?.reload,
       mode,
+      ...requestIdFields(requestId),
       reason: message,
     };
     if (error?.backendStop) {
@@ -583,6 +654,7 @@ async function relaunchUpdatedApp({
   fullRelaunch,
   mode,
   reason,
+  requestId,
   update,
 }) {
   broadcastStatus?.({
@@ -590,6 +662,7 @@ async function relaunchUpdatedApp({
       type: "installedArtifactUpdate",
       phase: "relaunching",
       mode,
+      ...requestIdFields(requestId),
       reason,
     },
   });
@@ -619,6 +692,7 @@ async function relaunchUpdatedApp({
       type: "installedArtifactUpdate",
       phase: "relaunching",
       mode,
+      ...requestIdFields(requestId),
       reason,
     },
     relaunch,
@@ -631,6 +705,7 @@ async function relaunchUpdatedApp({
     updated: Boolean(update.updated),
     backendStop,
     mode,
+    ...requestIdFields(requestId),
     mainProcessUpdate: "requiresAppRelaunch",
     preloadUpdate: "requiresAppRelaunch",
     reason,
@@ -674,7 +749,10 @@ async function restartUpdatedAppServer(appServerRestart, reason) {
   };
 }
 
-async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, mode, reason }) {
+async function reloadUpdatedRenderer(
+  reloadWindows,
+  { broadcastStatus, mode, reason, requestId },
+) {
   if (typeof reloadWindows !== "function") {
     return {
       ok: false,
@@ -682,6 +760,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, mode, rea
       relaunching: false,
       reloaded: false,
       mode,
+      ...requestIdFields(requestId),
       reason: "Renderer reload is unavailable after installed artifact update",
     };
   }
@@ -690,6 +769,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, mode, rea
       type: "installedArtifactUpdate",
       phase: "reloading",
       mode,
+      ...requestIdFields(requestId),
       reason,
     },
   });
@@ -702,6 +782,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, mode, rea
       reloaded: true,
       windowsReloaded: reload?.windowsReloaded ?? null,
       mode,
+      ...requestIdFields(requestId),
       reason,
     };
   } catch (error) {
@@ -711,6 +792,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, mode, rea
       relaunching: false,
       reloaded: false,
       mode,
+      ...requestIdFields(requestId),
       reason: error instanceof Error ? error.message : String(error),
     };
   }
@@ -721,6 +803,10 @@ function partialInstalledUpdateError(message, details = {}) {
   error.partial = true;
   Object.assign(error, details);
   return error;
+}
+
+function requestIdFields(requestId) {
+  return requestId ? { requestId } : {};
 }
 
 async function runRendererReload({

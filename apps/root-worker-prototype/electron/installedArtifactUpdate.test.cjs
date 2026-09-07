@@ -13,6 +13,7 @@ const {
   resolveInstalledArtifactUpdatePlan,
   replaceInstalledArtifactsSync,
   updateInstalledArtifacts,
+  updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 
 test("resolves installed update plan from current app resources path", () => {
@@ -595,6 +596,47 @@ test("successful update replaces runnable artifacts and codesigns installed app"
   ]);
 });
 
+test("installed artifact worker keeps the Electron event loop responsive", async () => {
+  const fixture = createUpdateFixture();
+  const fakeBin = path.join(path.dirname(fixture.plan.workspace), "fake-bin");
+  writeExecutable(
+    path.join(fakeBin, "pnpm"),
+    `#!/bin/sh
+if [ "$1" = "--filter" ]; then
+  sleep 0.2
+fi
+if [ "$1" = "dlx" ]; then
+  for last_arg do :; done
+  mkdir -p "$(dirname "$last_arg")"
+  printf 'new asar' > "$last_arg"
+fi
+`,
+  );
+  writeExecutable(path.join(fakeBin, "cargo"), "#!/bin/sh\nexit 0\n");
+  writeExecutable(path.join(fakeBin, "codesign"), "#!/bin/sh\nexit 0\n");
+  fixture.plan.commandEnv = {
+    ...process.env,
+    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+  };
+
+  let updateSettled = false;
+  const update = updateInstalledArtifactsInWorker(fixture.plan).finally(() => {
+    updateSettled = true;
+  });
+  let timerFired = false;
+  await new Promise((resolve) => {
+    setTimeout(() => {
+      timerFired = true;
+      resolve();
+    }, 25);
+  });
+
+  assert.equal(timerFired, true);
+  assert.equal(updateSettled, false);
+  assert.equal((await update).ok, true);
+  assert.equal(read(fixture.targetAppAsar), "new asar");
+});
+
 test("codesign failure restores old installed artifacts", () => {
   const fixture = createUpdateFixture();
 
@@ -896,6 +938,11 @@ function pathStartsWith(targetPath, parentPath) {
 function write(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
+}
+
+function writeExecutable(filePath, content) {
+  write(filePath, content);
+  fs.chmodSync(filePath, 0o755);
 }
 
 function read(filePath) {

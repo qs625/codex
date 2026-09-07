@@ -737,6 +737,31 @@ impl Session {
         true
     }
 
+    pub(crate) async fn mark_current_turn_terminal_handoff(&self) {
+        let turn_state = {
+            let active = self.active_turn.lock().await;
+            active
+                .as_ref()
+                .map(|active_turn| Arc::clone(&active_turn.turn_state))
+        };
+        if let Some(turn_state) = turn_state {
+            turn_state.lock().await.mark_terminal_handoff();
+        }
+    }
+
+    pub(crate) async fn current_turn_has_terminal_handoff(&self) -> bool {
+        let turn_state = {
+            let active = self.active_turn.lock().await;
+            active
+                .as_ref()
+                .map(|active_turn| Arc::clone(&active_turn.turn_state))
+        };
+        match turn_state {
+            Some(turn_state) => turn_state.lock().await.terminal_handoff(),
+            None => false,
+        }
+    }
+
     pub async fn on_task_finished(
         self: &Arc<Self>,
         turn_context: Arc<TurnContext>,
@@ -751,6 +776,7 @@ impl Session {
         let mut turn_had_memory_citation = false;
         let mut turn_tool_calls = 0_u64;
         let mut records_turn_token_usage_on_span = false;
+        let mut terminal_handoff = false;
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             if let Some(at) = active.as_mut()
@@ -773,6 +799,7 @@ impl Session {
             turn_had_memory_citation = ts.has_memory_citation;
             turn_tool_calls = ts.tool_calls;
             token_usage_at_turn_start = Some(ts.token_usage_at_turn_start.clone());
+            terminal_handoff = ts.terminal_handoff();
         }
         // Emit token usage metrics.
         if let Some(token_usage_at_turn_start) = token_usage_at_turn_start {
@@ -952,7 +979,9 @@ impl Session {
                 } else {
                     false
                 };
-                if has_thread_pending_work {
+                if terminal_handoff {
+                    FinishedTurnAction::Noop
+                } else if has_thread_pending_work {
                     FinishedTurnAction::StartPendingWork
                 } else if restart_for_leftover_pending_input {
                     FinishedTurnAction::StartLeftoverPendingInput

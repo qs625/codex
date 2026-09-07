@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { Worker } = require("node:worker_threads");
 const {
   isPackagedApp,
   resolveDefaultWorkspace,
@@ -19,6 +20,13 @@ const DEFAULT_CONFIG_RELATIVE_PATH = "default-config";
 const SIGNATURE_RELATIVE_PATH = path.join("Contents", "_CodeSignature");
 const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
 const ELECTRON_SHELL_RELATIVE_DIR = "electron";
+const INSTALLED_ARTIFACT_WORKER_FILES = [
+  "environment.cjs",
+  "installedArtifactUpdate.cjs",
+  "installedArtifactUpdateWorker.cjs",
+  "workspace.cjs",
+];
+let installedArtifactWorkerBundlePath = null;
 
 function resolveInstalledArtifactUpdatePlan({
   commandEnv,
@@ -316,6 +324,114 @@ function updateInstalledArtifacts(plan, options = {}) {
     workspace: plan.workspace,
     appBundlePath: plan.appBundlePath,
   };
+}
+
+function resolveInstalledArtifactUpdatePlanInWorker(options = {}) {
+  const workerOptions = {
+    commandEnv: options.commandEnv,
+    env: options.env ?? { ...process.env },
+    platform: options.platform ?? process.platform,
+    resourcesPath: options.resourcesPath ?? currentResourcesPath(),
+    workspace: options.workspace,
+  };
+  if (Object.hasOwn(options, "isPackaged")) {
+    workerOptions.isPackaged = options.isPackaged;
+  }
+  return runInstalledArtifactWorker(
+    "resolvePlan",
+    workerOptions,
+    options.workerOptions,
+  );
+}
+
+function updateInstalledArtifactsInWorker(plan, options = {}) {
+  return runInstalledArtifactWorker(
+    "update",
+    { plan },
+    options.workerOptions,
+  );
+}
+
+function runInstalledArtifactWorker(operation, payload, options = {}) {
+  const WorkerClass = options.Worker ?? Worker;
+  const workerPath =
+    options.workerPath ??
+    path.join(
+      materializeInstalledArtifactWorkerBundle(options),
+      "installedArtifactUpdateWorker.cjs",
+    );
+  return new Promise((resolve, reject) => {
+    const worker = new WorkerClass(workerPath, {
+      workerData: { operation, payload },
+    });
+    let settled = false;
+    const settle = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback(value);
+    };
+    worker.once("message", (message) => {
+      if (message?.ok) {
+        settle(resolve, message.result);
+        return;
+      }
+      const error = new Error(
+        message?.error?.message ?? "Installed artifact worker failed",
+      );
+      if (message?.error?.name) {
+        error.name = message.error.name;
+      }
+      if (message?.error?.stack) {
+        error.stack = message.error.stack;
+      }
+      settle(reject, error);
+    });
+    worker.once("error", (error) => settle(reject, error));
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        settle(
+          reject,
+          new Error(`Installed artifact worker exited with code ${code}`),
+        );
+      } else if (!settled) {
+        settle(
+          reject,
+          new Error("Installed artifact worker exited without a result"),
+        );
+      }
+    });
+  });
+}
+
+function materializeInstalledArtifactWorkerBundle(options = {}) {
+  if (installedArtifactWorkerBundlePath) {
+    return installedArtifactWorkerBundlePath;
+  }
+  const mkdtempSync = options.mkdtempSync ?? fs.mkdtempSync;
+  const copyFileSync = options.copyFileSync ?? fs.copyFileSync;
+  const rmSync = options.rmSync ?? fs.rmSync;
+  const bundlePath = mkdtempSync(
+    path.join(os.tmpdir(), "morpheus-installed-artifact-worker-"),
+  );
+  try {
+    for (const fileName of INSTALLED_ARTIFACT_WORKER_FILES) {
+      copyFileSync(path.join(__dirname, fileName), path.join(bundlePath, fileName));
+    }
+  } catch (error) {
+    rmSync(bundlePath, { force: true, recursive: true });
+    throw error;
+  }
+  installedArtifactWorkerBundlePath = bundlePath;
+  process.once("exit", () => {
+    try {
+      rmSync(bundlePath, { force: true, recursive: true });
+    } catch {
+      // Best-effort cleanup only; a stale temp bundle is safe to remove later.
+    }
+  });
+  return bundlePath;
 }
 
 function prepareDirectArtifacts(plan, options = {}) {
@@ -812,7 +928,11 @@ module.exports = {
   resolveElectronShellUpdate,
   resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
+  resolveInstalledArtifactUpdatePlanInWorker,
+  materializeInstalledArtifactWorkerBundle,
+  runInstalledArtifactWorker,
   updateInstalledArtifacts,
+  updateInstalledArtifactsInWorker,
   replaceInstalledArtifactsSync,
   restoreSignatureMetadataSync,
 };
