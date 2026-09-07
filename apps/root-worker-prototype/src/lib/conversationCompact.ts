@@ -11,7 +11,6 @@ export type ConversationCellBuildOptions = {
   compactDetailsById?: Readonly<
     Record<string, LoadedCompactConversationDetails | undefined>
   >;
-  terminalTurnIds?: ReadonlySet<string>;
 };
 
 export function buildConversationCells(
@@ -19,10 +18,7 @@ export function buildConversationCells(
   previousCells?: ConversationCell[] | null,
   options?: ConversationCellBuildOptions,
 ): ConversationCell[] {
-  const cells = foldTerminalTurnProcessCells(
-    buildConversationCellsForSegment(entries, options),
-    options?.terminalTurnIds,
-  );
+  const cells = buildConversationCellsForSegment(entries, options);
   return reuseConversationCells(cells, previousCells);
 }
 
@@ -84,17 +80,12 @@ function buildConversationCellsForSegment(
       const compactTurnCells = collectCompactTurnCellsBeforeCompact(
         cells,
         entry.turnId,
-        options?.terminalTurnIds,
       );
       if (localArchivedCells.length > 0 || compactTurnCells.length > 0) {
         const visibleCells = cells.filter(
           (cell) =>
             !shouldArchiveCellForCompact(cell, entry.turnId) &&
-            !shouldDiscardCellBeforeCompact(
-              cell,
-              entry.turnId,
-              options?.terminalTurnIds,
-            ),
+            !shouldDiscardCellBeforeCompact(cell, entry.turnId),
         );
         cells.length = 0;
         cells.push(...visibleCells);
@@ -150,87 +141,6 @@ function buildConversationCellsForSegment(
   }
 
   return cells;
-}
-
-function foldTerminalTurnProcessCells(
-  cells: ConversationCell[],
-  terminalTurnIds: ReadonlySet<string> | undefined,
-): ConversationCell[] {
-  if (!terminalTurnIds || terminalTurnIds.size === 0) {
-    return cells;
-  }
-
-  const foldedCells: ConversationCell[] = [];
-  let pendingProcessCells: ConversationCell[] = [];
-
-  const flushPendingProcessCells = () => {
-    if (pendingProcessCells.length === 0) {
-      return;
-    }
-    foldedCells.push(buildTurnProcessCell(pendingProcessCells));
-    pendingProcessCells = [];
-  };
-
-  for (const cell of cells) {
-    if (!shouldFoldTerminalProcessCell(cell, terminalTurnIds)) {
-      flushPendingProcessCells();
-      foldedCells.push(cell);
-      continue;
-    }
-
-    const pendingTurnId = pendingProcessCells[0]?.entries[0]?.turnId;
-    const nextTurnId = cell.entries[0]?.turnId;
-    if (pendingTurnId && nextTurnId && pendingTurnId !== nextTurnId) {
-      flushPendingProcessCells();
-    }
-    pendingProcessCells.push(cell);
-  }
-
-  flushPendingProcessCells();
-  return foldedCells;
-}
-
-function shouldFoldTerminalProcessCell(
-  cell: ConversationCell,
-  terminalTurnIds: ReadonlySet<string>,
-) {
-  if (cell.kind === "turnProcess") {
-    return false;
-  }
-  if (cell.kind === "compact") {
-    return false;
-  }
-  if (cell.entries.length === 0) {
-    return false;
-  }
-  const turnId = cell.entries[0]?.turnId;
-  if (!turnId || !terminalTurnIds.has(turnId)) {
-    return false;
-  }
-  if (cell.entries.some((entry) => entry.turnId !== turnId)) {
-    return false;
-  }
-  return !cell.entries.some(isTerminalTurnVisibleAnchorEntry);
-}
-
-function isTerminalTurnVisibleAnchorEntry(entry: ConversationEntry) {
-  return (
-    entry.isTurnTerminalOutcome === true ||
-    entry.sourceItemType === "userMessage" ||
-    entry.sourceItemType === "agentMessage"
-  );
-}
-
-function buildTurnProcessCell(cells: ConversationCell[]): ConversationCell {
-  const entries = cells.flatMap((cell) => cell.entries);
-  const firstEntry = entries[0];
-  const lastEntry = entries.at(-1);
-  return {
-    id: `turn-process:${firstEntry?.turnId ?? "unknown"}:${firstEntry?.id ?? "start"}:${lastEntry?.id ?? "end"}:${entries.length}`,
-    kind: "turnProcess",
-    entries,
-    collapsedCells: cells,
-  };
 }
 
 function countConversationEntries(cells: ConversationCell[]) {
@@ -326,17 +236,12 @@ function shouldMergeConversationEntry(
     cell.kind === "message" &&
     nextEntry.kind === "message" &&
     previousEntry.role === "agent" &&
-    nextEntry.role === "agent" &&
-    previousEntry.sourceItemType === "agentMessage" &&
-    nextEntry.sourceItemType === "agentMessage"
+    nextEntry.role === "agent"
   ) {
     if (previousEntry.turnId !== nextEntry.turnId) {
       return false;
     }
     if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
-      return false;
-    }
-    if (previousEntry.messagePhase !== nextEntry.messagePhase) {
       return false;
     }
     return true;
@@ -377,10 +282,9 @@ function collectArchivedCellsForCompact(
 function collectCompactTurnCellsBeforeCompact(
   cells: ConversationCell[],
   compactTurnId: string | undefined,
-  terminalTurnIds?: ReadonlySet<string>,
 ) {
   return cells.filter((cell) =>
-    shouldDiscardCellBeforeCompact(cell, compactTurnId, terminalTurnIds),
+    shouldDiscardCellBeforeCompact(cell, compactTurnId),
   );
 }
 
@@ -398,20 +302,10 @@ function shouldArchiveCellForCompact(
 function shouldDiscardCellBeforeCompact(
   cell: ConversationCell,
   compactTurnId: string | undefined,
-  terminalTurnIds?: ReadonlySet<string>,
 ) {
   if (!compactTurnId) {
     return false;
   }
   const cellTurnId = cell.entries.find((entry) => entry.turnId)?.turnId;
-  if (cellTurnId !== compactTurnId) {
-    return false;
-  }
-  if (
-    terminalTurnIds?.has(compactTurnId) &&
-    cell.entries.some(isTerminalTurnVisibleAnchorEntry)
-  ) {
-    return false;
-  }
-  return true;
+  return cellTurnId === compactTurnId;
 }

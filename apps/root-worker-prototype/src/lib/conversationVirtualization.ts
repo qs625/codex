@@ -9,7 +9,6 @@ const DEFAULT_TOOL_ROW_HEIGHT = 112;
 const DEFAULT_ARTIFACT_ROW_HEIGHT = 420;
 const DEFAULT_COMPACT_ROW_HEIGHT = 156;
 const DEFAULT_ARCHIVE_ROW_HEIGHT = 112;
-const DEFAULT_TURN_PROCESS_ROW_HEIGHT = 92;
 const TEXT_LINE_HEIGHT = 22;
 const TEXT_CHARS_PER_LINE = 72;
 const TOOL_CHARS_PER_LINE = 84;
@@ -40,10 +39,6 @@ export function estimateConversationCellHeight(cell: ConversationCell): number {
 
   if (cell.kind === "compact") {
     return estimateCompactCellHeight(cell.entries[0]);
-  }
-
-  if (cell.kind === "turnProcess") {
-    return estimateTurnProcessCellHeight(cell);
   }
 
   return estimateMessageCellHeight(cell.entries);
@@ -169,10 +164,6 @@ function estimateCompactCellHeight(entry: ConversationEntry | undefined) {
   }
 
   return height;
-}
-
-function estimateTurnProcessCellHeight(cell: ConversationCell) {
-  return DEFAULT_TURN_PROCESS_ROW_HEIGHT + Math.min(cell.entries.length, 3) * 4;
 }
 
 function estimateNestedCellsHeight(cells: ConversationCell[]) {

@@ -857,12 +857,10 @@ export type ConversationEntry = {
   id: string;
   turnId?: string;
   kind: "message" | "event" | "tool" | "artifact" | "compact" | "archive";
-  sourceItemType?: ThreadItem["type"];
   author: string;
   role: "user" | "agent" | "system";
   text: string;
   timestamp: string;
-  messagePhase?: string | null;
   attachments: Array<{
     kind: "image" | "file";
     label: string;
@@ -908,21 +906,12 @@ export type ConversationEntry = {
   archivedCells?: ConversationCell[];
   archivedEntryCount?: number;
   isReplacementHistory?: boolean;
-  isTurnTerminalOutcome?: boolean;
 };
 
 export type ConversationCell = {
   id: string;
-  kind:
-    | "message"
-    | "event"
-    | "tool"
-    | "artifact"
-    | "compact"
-    | "archive"
-    | "turnProcess";
+  kind: "message" | "event" | "tool" | "artifact" | "compact" | "archive";
   entries: ConversationEntry[];
-  collapsedCells?: ConversationCell[];
 };
 
 export type TreeMenuState = {
