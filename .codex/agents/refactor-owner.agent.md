@@ -25,7 +25,6 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 
 - review 全部通过前，不运行 Rust/Cargo 相关测试、构建、格式化、lint 或 benchmark。
 - review 通过后，再在所属 checkout 内串行执行必要验证。
-- 所有命令都必须通过 `exec_command` 直接运行带 `rtk` 前缀的命令；长命令用 `command_wait` 等待完成。
 - 默认 Rust/Cargo 验证保持最小化：
   - 修改模块的单元测试或最小 crate 测试
   - 涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时：在 `codex-rs/` 下运行 `cargo build -p app-server --bin app-server`
