@@ -125,7 +125,6 @@ function buildTypedReplacementHistoryEntry(
       return {
         id,
         kind: "message",
-        sourceItemType: "userMessage",
         author: "You",
         role: "user",
         text: formatUserInputContent(item.content),
@@ -136,12 +135,10 @@ function buildTypedReplacementHistoryEntry(
       return {
         id,
         kind: "message",
-        sourceItemType: "agentMessage",
         author,
         role: "agent",
         text: item.text || "Replacement history assistant message.",
         timestamp,
-        messagePhase: item.phase ?? null,
         attachments: [],
       };
     case "conversationArtifact":
@@ -243,19 +240,11 @@ function buildReplacementHistoryEntry(
       return {
         id,
         kind: "message",
-        sourceItemType:
-          role === "user"
-            ? "userMessage"
-            : role === "assistant"
-              ? "agentMessage"
-              : undefined,
         author: formatReplacementMessageAuthor(role, author),
         role: role === "user" ? "user" : role === "assistant" ? "agent" : "system",
         text:
           text || `Replacement history ${index + 1}: empty ${role} message.`,
         timestamp,
-        messagePhase:
-          role === "assistant" ? stringOrNull(item.phase) : undefined,
         attachments: [],
       };
     }

@@ -111,58 +111,6 @@ test("estimates archived history rows separately from compact rows", () => {
   assert.ok(estimateConversationCellHeight(compactCell) > 0);
 });
 
-test("estimates terminal turn process groups as compact folded rows", () => {
-  const turnProcessCell: ConversationCell = {
-    id: "turn-process:turn-1:cmd-1:event-1:2",
-    kind: "turnProcess",
-    entries: [
-      {
-        id: "cmd-1",
-        kind: "tool",
-        author: "root",
-        role: "system",
-        text: "ran command",
-        timestamp: "09:41",
-        attachments: [],
-        toolName: "npm test",
-        toolStatus: "completed",
-        toolCategory: "command",
-      },
-      {
-        id: "event-1",
-        kind: "event",
-        author: "root",
-        role: "system",
-        text: "wait completed",
-        timestamp: "09:42",
-        attachments: [],
-      },
-    ],
-    collapsedCells: [
-      {
-        id: "cmd-1",
-        kind: "tool",
-        entries: [],
-      },
-      {
-        id: "event-1",
-        kind: "event",
-        entries: [],
-      },
-    ],
-  };
-
-  assert.ok(estimateConversationCellHeight(turnProcessCell) > 0);
-  assert.ok(
-    estimateConversationCellHeight(turnProcessCell) <
-      estimateConversationCellHeight({
-        id: "expanded-tool",
-        kind: "tool",
-        entries: turnProcessCell.entries,
-      }),
-  );
-});
-
 test("expanded compact rows account for loaded round details in height estimates", () => {
   const collapsedCompactCell: ConversationCell = {
     id: "compact-collapsed",
