@@ -8,9 +8,73 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Add multi-tab support to the Root Worker Browser panel.
+Define a unified instruction/memory model and make compact refresh current file-backed model context without special-casing AGENTS.md.
 
 ## Active Work
+- id: revert-terminal-turn-intermediate-item-folding
+  owner: /self/my_codex_owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/terminal-turn-item-folding
+  task_type: revert/ui-runtime
+  depends_on: owner commit `ab66e2c426ee93819694d4ef4222f9e9a3e365e4`, merged to main as `750ef380f29a15fe15be0ffaa22dd9fa0762cbc1`
+  files: apps/root-worker-prototype conversation rendering/grouping, virtualization, styles, types, and focused tests touched by `ab66e2c42`
+  base_commit: ab66e2c426ee93819694d4ef4222f9e9a3e365e4
+  pending_sync_from_main: dev-2 intentionally remains on the original feature commit so it can produce a clean Git revert; main-only restart commits do not overlap this file set.
+  status: merged
+  objective: Remove the terminal-turn process-item folding behavior and restore the pre-`ab66e2c42` client behavior where process items remain individually rendered. Do not replace it with a different grouping or hiding heuristic.
+  last_update: 2026-09-07 CST fixed dev-2 owner created standard revert `f0de05661e`; PM fetched the dev-2 branch and merged it to main as `3516e50e5`. Folding types, projection, renderer, virtualization state, styles, and dedicated tests have no residual code. The only expected difference from the pre-feature tree is independent restart-mode typing added later on main.
+  next_action: refresh the installed renderer with the merged frontend build.
+  blockers: none
+  validation: Owner focused conversation/search/virtualization/render tests 100/100 passed; Root Worker build passed with only the existing chunk warning; exact affected-tree comparison against `ab66e2c42^` passed; fixed reviewer passed. PM main focused tests 100/100 passed; production build passed in 1.59s with only the existing chunk warning; semantic search confirmed no terminal folding symbols remain; merge diff/check passed.
+  commit: 3516e50e5, f0de05661eb2023d557b6cb4d4d93229c73fe29f
+- id: runtime-restart-builds-current-source
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-restart-build-update
+  task_type: bugfix/runtime-lifecycle
+  depends_on: merged explicit restart mode contract `e5370c514`; main baseline `f3a192d705cf43e08d603209933b1de09cb59c99`
+  files: apps/root-worker-prototype/electron installed artifact update/build/relaunch path and focused tests; source workspace instructions only if behavior contract needs correction
+  base_commit: f3a192d705cf43e08d603209933b1de09cb59c99
+  pending_sync_from_main:
+  status: merged
+  objective: Make `request_runtime_restart` update the installed Root Worker from the current source checkout instead of repacking stale `dist`/`target/release` artifacts. The update path must use ordinary build commands, surface build/update failure clearly, preserve signed atomic replacement, and ensure full mode loads the new Electron main/preload and app-server schema.
+  last_update: 2026-09-07 CST PM design-accepted owner commit `4efc2147f1` and merged it as `8e2b62f04`. The controlled updater built current frontend and release app-server, staged and replaced installed artifacts, and codesigned successfully. A full quit/open loaded Electron PID `73891` at 13:09:06 and installed app-server PID `73901` at 13:09:07; both remained stable during follow-up observation, CDP `127.0.0.1:9222` responded, and the fresh runtime exposes required `mode: hot | full`. A temporary launchd validation script subsequently caused repeated quit/open because its PID-detection awk expression was malformed; the job was removed and was not part of product runtime behavior.
+  next_action: none
+  blockers: none
+  validation: Owner focused Node tests 62 passed, frontend/release builds passed, reviewer passed. PM main focused tests 62 passed. Real controlled update built frontend in 1.59s and release app-server in 15m19s, updated `/Applications` at 2026-09-07 12:56:44 CST, installed/source binary hashes match, new required-mode strings are present, and `codesign --verify --deep --strict` passes. Full relaunch produced stable fresh Electron/app-server processes and a healthy CDP endpoint; installed binary and current tool schema both confirm `RequestRuntimeRestartArgs` has required hot/full mode.
+  commit: 8e2b62f049136ec3a127510b05a590cd43136101, 4efc2147f16383f1dcecb2cd133dd1ffb7983ee5
+- id: terminal-turn-intermediate-item-folding
+  owner: /self/my_codex_owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/terminal-turn-item-folding
+  task_type: feature/ui-runtime
+  depends_on: main baseline `571d9900379d77f895a14cc06bb741ed405951bd`; independent of request-runtime-restart-mode at the product contract level
+  files: apps/root-worker-prototype conversation/thread item grouping and rendering; typed turn/item state helpers and focused tests; backend protocol/replay only if authoritative turn boundaries are not currently available to renderer
+  base_commit: 571d9900379d77f895a14cc06bb741ed405951bd
+  pending_sync_from_main: dev-2 must first reconcile old AGENTS/memory cleanup residue to canonical main and preserve unrelated untracked `apps/android-companion/local.properties`, then fast-forward to the baseline.
+  status: merged
+  objective: While a turn is active, render its items exactly as today. Once the turn becomes terminal, keep every user-visible typed user/assistant text message visible, including commentary/progress/final and any visible interrupted partial response, while collapsing reasoning, tool call/result, command, lifecycle, inspection, and other non-message process items between those transcript anchors into expandable groups. Preserve visible terminal error/interruption information. Live completion and reload/replay must produce the same grouping.
+  last_update: 2026-09-04 CST user clarified the actual pain point: during a long-running turn the agent may answer several side questions while continuing work, and those answers are buried by process history. Final-message-only folding and treating all assistant messages as final are both rejected. Current task will not guess semantic answer/progress classification; it keeps all user-visible typed text and folds only non-message process items. Provider response `end_turn`, adjacency, raw text markers, and renderer-only ephemeral heuristics are not acceptable.
+  next_action: none
+  blockers: none
+  validation: Merged to main as `750ef380f29a15fe15be0ffaa22dd9fa0762cbc1`.
+  commit: 750ef380f29a15fe15be0ffaa22dd9fa0762cbc1
+- id: request-runtime-restart-mode
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/request-runtime-restart-mode
+  task_type: feature/runtime-lifecycle
+  depends_on: main baseline `571d9900379d77f895a14cc06bb741ed405951bd`; existing installed-artifact refresh and Electron relaunch paths
+  files: request_runtime_restart tool schema/handler and typed lifecycle request; apps/root-worker-prototype Electron host lifecycle/update dispatch and focused tests; generated schema/export files only where required
+  base_commit: 571d9900379d77f895a14cc06bb741ed405951bd
+  pending_sync_from_main: dev-3 must first reconcile its old AGENTS/memory cleanup residue to the current canonical main state, then fast-forward to this baseline without including those files in the product commit.
+  status: merged
+  objective: Expose a required `mode: hot | full` on `request_runtime_restart`, with no `auto` mode and no implicit fallback. `hot` must update/sign installed runnable artifacts, restart app-server, and reload renderer without quitting Electron; `full` must update/sign artifacts and force Electron relaunch so main/preload changes become active. Existing callers must explicitly choose a mode.
+  last_update: 2026-09-04 CST owner delivered `4b12b73f71`; PM rejected cross-mode in-flight coalescing. Rebuilt fixed owner delivered follow-up `7fccdbe60a` with same-mode-only coalescing, typed different-mode conflict, generic/hot isolation, and app-server `executedMode=null` until host execution. Fixed reviewer passed after two blocking findings were corrected. PM design-checked and merged both commits into main as `e5370c514`.
+  next_action: none
+  blockers: none
+  validation: PM merged-main Electron lifecycle/workspace tests 49 passed; Root Worker full tests 675 passed; Root Worker build passed with existing chunk warning; `cargo check -p codex-tool-service --lib` passed; `cargo test -p app-server --lib host_lifecycle` passed; merge diff/show checks passed. On 2026-09-07, a full relaunch loaded the new installed app-server and the fresh runtime exposed required `mode: hot | full`.
+  commit: e5370c514, 4b12b73f714105e5070d0ea13f39e35b89d08825, 7fccdbe60ae5ac042624882aae5ec62d23581a10
 - id: browser-panel-multi-tab
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
