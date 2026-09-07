@@ -386,7 +386,35 @@ function createInstalledArtifactUpdateLifecycleAdapter({
       if (!resolvePlan || typeof resolvePlan !== "function") {
         return Promise.resolve({ ok: false, unsupported: true });
       }
-      const plan = resolvePlan();
+      let plan;
+      try {
+        plan = resolvePlan();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger?.error?.(
+          "[prototype] installed artifact update planning failed",
+          JSON.stringify({ reason: message }),
+        );
+        broadcastStatus?.({
+          lifecycle: {
+            type: "installedArtifactUpdate",
+            phase: "failed",
+            mode: normalizedMode,
+            reason: message,
+          },
+        });
+        return Promise.resolve({
+          ok: false,
+          unsupported: false,
+          inPlace: false,
+          partial: false,
+          relaunching: false,
+          reloaded: false,
+          updated: false,
+          mode: normalizedMode,
+          reason: message,
+        });
+      }
       if (!plan) {
         return Promise.resolve({ ok: false, unsupported: true });
       }

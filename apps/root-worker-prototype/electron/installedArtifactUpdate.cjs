@@ -7,6 +7,7 @@ const {
   isPackagedApp,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
+const { buildDesktopEnvironment } = require("./environment.cjs");
 
 const APP_NAME = "Root Worker Prototype";
 const APP_PLATFORM_DIR = "Root Worker Prototype-darwin-arm64";
@@ -20,6 +21,7 @@ const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
 const ELECTRON_SHELL_RELATIVE_DIR = "electron";
 
 function resolveInstalledArtifactUpdatePlan({
+  commandEnv,
   env = process.env,
   platform = process.platform,
   resourcesPath = currentResourcesPath(),
@@ -43,9 +45,11 @@ function resolveInstalledArtifactUpdatePlan({
   const sourceAppDir = path.join(resolvedWorkspace, SOURCE_APP_RELATIVE_PATH);
   const codexRsDir = path.join(resolvedWorkspace, "codex-rs");
   const codexRsCargoManifestPath = path.join(codexRsDir, "Cargo.toml");
+  const resolvedCommandEnv = commandEnv ?? buildDesktopEnvironment(env);
   const cargoTargetDir = resolveCargoTargetDirectory({
     codexRsCargoManifestPath,
     codexRsDir,
+    env: resolvedCommandEnv,
     spawnSync: spawn,
   });
 
@@ -62,6 +66,7 @@ function resolveInstalledArtifactUpdatePlan({
       APP_SERVER_BINARY_NAME,
     ),
     codexRsCargoManifestPath,
+    commandEnv: resolvedCommandEnv,
     defaultCompactPromptSourcePath: path.join(
       codexRsDir,
       "thread-service",
@@ -202,12 +207,12 @@ function collectElectronShellSourceFiles({
 function resolveCargoTargetDirectory({
   codexRsCargoManifestPath,
   codexRsDir,
+  env = buildDesktopEnvironment(),
   spawnSync: spawn = spawnSync,
 } = {}) {
   const result = spawn(
-    "rtk",
+    "cargo",
     [
-      "cargo",
       "metadata",
       "--format-version=1",
       "--no-deps",
@@ -217,12 +222,13 @@ function resolveCargoTargetDirectory({
     {
       cwd: codexRsDir,
       encoding: "utf8",
+      env,
       stdio: "pipe",
     },
   );
   assertSuccessfulSpawn(
     result,
-    "rtk cargo metadata --format-version=1 --no-deps --manifest-path <Cargo.toml>",
+    "cargo metadata --format-version=1 --no-deps --manifest-path <Cargo.toml>",
     { cwd: codexRsDir },
   );
 
@@ -280,7 +286,12 @@ function updateInstalledArtifacts(plan, options = {}) {
       signatureBackupRoot: prepared.stagingRoot,
       updateId: replacement.updateId,
     });
-    codesign(stagedPlan, { spawnSync: spawn, logger });
+    codesign(stagedPlan, {
+      env: resolveCommandEnvironment(stagedPlan, options),
+      logger,
+      spawnSync: spawn,
+      stdio: options.stdio,
+    });
   } catch (error) {
     if (replacement) {
       restoreBackups(stagedPlan, replacement.backupDir, replacement.fsOps);
@@ -313,6 +324,7 @@ function prepareDirectArtifacts(plan, options = {}) {
     mkdirSync: options.mkdirSync ?? fs.mkdirSync,
     rmSync: options.rmSync ?? fs.rmSync,
   };
+  buildDirectArtifactSources(plan, options);
   assertDirectArtifactSources(plan, options);
   const stagingRoot =
     options.directStagingRoot ??
@@ -358,12 +370,71 @@ function prepareDirectArtifacts(plan, options = {}) {
   };
 }
 
+function buildDirectArtifactSources(plan, options = {}) {
+  const spawn = options.spawnSync ?? spawnSync;
+  const env = resolveCommandEnvironment(plan, options);
+  const stdio = options.stdio ?? "pipe";
+  const frontendBuild = spawn(
+    "pnpm",
+    ["--filter", "@my-codex/root-worker-prototype", "build"],
+    {
+      cwd: plan.workspace,
+      encoding: "utf8",
+      env,
+      stdio,
+    },
+  );
+  assertSuccessfulSpawn(
+    frontendBuild,
+    "pnpm --filter @my-codex/root-worker-prototype build",
+    { cwd: plan.workspace },
+  );
+  assertPathType(
+    options.statSync ?? fs.statSync,
+    plan.frontendDistPath,
+    "directory",
+    "frontend dist",
+  );
+
+  const codexRsDir = path.dirname(plan.codexRsCargoManifestPath);
+  const appServerBuild = spawn(
+    "cargo",
+    [
+      "build",
+      "--release",
+      "--package",
+      "app-server",
+      "--bin",
+      APP_SERVER_BINARY_NAME,
+      "--manifest-path",
+      plan.codexRsCargoManifestPath,
+    ],
+    {
+      cwd: codexRsDir,
+      encoding: "utf8",
+      env,
+      stdio,
+    },
+  );
+  assertSuccessfulSpawn(
+    appServerBuild,
+    "cargo build --release --package app-server --bin app-server --manifest-path <Cargo.toml>",
+    { cwd: codexRsDir },
+  );
+  assertPathType(
+    options.statSync ?? fs.statSync,
+    plan.appServerBinaryPath,
+    "file",
+    "release app-server binary",
+  );
+}
+
 function packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options = {}) {
   const spawn = options.spawnSync ?? spawnSync;
+  const env = resolveCommandEnvironment(plan, options);
   const result = spawn(
-    "rtk",
+    "pnpm",
     [
-      "pnpm",
       "dlx",
       "@electron/asar",
       "pack",
@@ -373,30 +444,37 @@ function packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options = {}
     {
       cwd: plan.workspace,
       encoding: "utf8",
+      env,
       stdio: options.stdio ?? "pipe",
     },
   );
   assertSuccessfulSpawn(
     result,
-    "rtk pnpm dlx @electron/asar pack <source> <app.asar>",
+    "pnpm dlx @electron/asar pack <source> <app.asar>",
     { cwd: plan.workspace },
   );
 }
 
 function codesignInstalledApp(plan, options = {}) {
   const spawn = options.spawnSync ?? spawnSync;
+  const env = resolveCommandEnvironment(plan, options);
   const result = spawn(
-    "rtk",
-    ["codesign", "--force", "--deep", "--sign", "-", plan.appBundlePath],
+    "codesign",
+    ["--force", "--deep", "--sign", "-", plan.appBundlePath],
     {
       cwd: plan.workspace,
       encoding: "utf8",
+      env,
       stdio: options.stdio ?? "pipe",
     },
   );
-  assertSuccessfulSpawn(result, "rtk codesign --force --deep --sign - <app>", {
+  assertSuccessfulSpawn(result, "codesign --force --deep --sign - <app>", {
     cwd: plan.workspace,
   });
+}
+
+function resolveCommandEnvironment(plan, options = {}) {
+  return plan.commandEnv ?? options.env ?? buildDesktopEnvironment();
 }
 
 function assertSuccessfulSpawn(result, label, context = {}) {
@@ -726,6 +804,7 @@ module.exports = {
   DEFAULT_CONFIG_RELATIVE_PATH,
   SIGNATURE_RELATIVE_PATH,
   backupSignatureMetadataSync,
+  buildDirectArtifactSources,
   packAppAsar,
   prepareDirectArtifacts,
   listInstalledElectronShellRelativePaths,
