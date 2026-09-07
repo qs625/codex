@@ -211,6 +211,15 @@ impl AnyToolResult {
     }
 }
 
+/// Result of dispatching one model tool call.
+///
+/// Terminal tools transfer control outside the current model turn and do not
+/// produce a normal function-call output for another sampling request.
+pub enum ToolCallOutcome {
+    ReturnToModel(AnyToolResult),
+    FinishTurn,
+}
+
 pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
     pub session_capability: Weak<dyn ThreadSessionCapability>,
@@ -252,10 +261,12 @@ pub trait ToolServiceApi: Send + Sync + 'static {
 
     fn tool_supports_parallel(&self, request: ToolParallelRequest<'_>) -> bool;
 
+    fn tool_is_terminal_control(&self, request: ToolParallelRequest<'_>) -> bool;
+
     fn dispatch_tool(
         &self,
         request: ToolDispatchRequest<'_>,
-    ) -> ToolServiceFuture<'_, Result<AnyToolResult, FunctionCallError>>;
+    ) -> ToolServiceFuture<'_, Result<ToolCallOutcome, FunctionCallError>>;
 }
 
 pub struct TypedDiffConsumer<Turn> {

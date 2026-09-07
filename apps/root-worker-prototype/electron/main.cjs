@@ -1,11 +1,15 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const { randomUUID } = require("node:crypto");
+const { pathToFileURL } = require("node:url");
 const {
   app,
   BrowserWindow,
   dialog,
   ipcMain,
+  net,
   Notification,
+  protocol,
   session,
   shell,
   systemPreferences,
@@ -17,10 +21,23 @@ const {
   normalizeBrowserTarget,
 } = require("./browserPanelSecurity.cjs");
 const {
+  browserPanelWebPreferences,
+  browserSessionPartition,
+} = require("./browserPanelConfig.cjs");
+const {
+  nextBrowserTabIdAfterClose,
+  shouldDetachAttachedBrowserPanelView,
+} = require("./browserPanelTabs.cjs");
+const {
   isLocalLinkTarget,
   localFilePathFromTarget,
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
+const {
+  buildPdfPreview,
+  FILE_PREVIEW_PROTOCOL,
+} = require("./localFilePreview.cjs");
+const { writeLocalFileTarget } = require("./localFileWrite.cjs");
 const { languageForFilePath } = require("./filePreviewLanguages.cjs");
 const { readGitCommitFiles, readGitSnapshot } = require("./gitPanel.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
@@ -31,12 +48,14 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
-  buildSelfCommandThreadStartParams,
   buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { listThreads: listAllThreads } = require("./threadList.cjs");
 const { ensureSelfProjectSync } = require("./selfProject.cjs");
-const { ensureSelfProjectThread } = require("./selfProjectThread.cjs");
+const {
+  ensureSelfProjectThread,
+  sendSelfCommandToThread,
+} = require("./selfProjectThread.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
   buildTurnStartParams,
@@ -57,22 +76,33 @@ const {
   createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
+  observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 const {
-  resolveInstalledArtifactUpdatePlan,
-  updateInstalledArtifacts,
+  resolveInstalledArtifactUpdatePlanInWorker,
+  updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 const {
   AUTO_RESUME_PROMPT,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
 } = require("./threadAutoResume.cjs");
+const {
+  createRuntimeRestartController,
+  createRuntimeRestartIntentStore,
+  expectedRuntimeRestartPrompt,
+} = require("./runtimeRestartIntent.cjs");
+const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
-const appRelaunch = createAppRelaunchAdapter({ app });
+const appRelaunch = createAppRelaunchAdapter({
+  app,
+  beforeExit: (reason) =>
+    appServerClient.stop(reason ?? "application relaunch"),
+});
 const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
   fullRelaunch: appRelaunch,
   reloadWindows: reloadRendererWindows,
@@ -85,9 +115,16 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
 });
 const installedArtifactUpdateLifecycle =
   createInstalledArtifactUpdateLifecycleAdapter({
+    appServerRestart: {
+      requestRestart: (reason) => appServerClient.restart(reason),
+    },
+    appServerStop: {
+      requestStop: (reason) => appServerClient.stop(reason),
+    },
     fullRelaunch: appRelaunch,
-    resolvePlan: () => resolveInstalledArtifactUpdatePlan(),
-    updateArtifacts: (plan) => updateInstalledArtifacts(plan),
+    reloadWindows: reloadRendererWindows,
+    resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
+    updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
     broadcastStatus: (status) =>
       broadcast("codex:status", {
         ...appServerClient.status,
@@ -99,16 +136,35 @@ const handleClientRelaunchNotification =
   createClientRelaunchNotificationHandler({
     rendererReload: rendererReloadLifecycle,
     installedArtifactUpdate: installedArtifactUpdateLifecycle,
+    fullRelaunch: appRelaunch,
   });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
+let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
+const localFilePreviewTargetsByToken = new Map();
 let autoResumeCoordinator = null;
+let runtimeRestartController = null;
+let runtimeRestartIntentStore = null;
+let quittingAfterAppServerStop = false;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
-const browserSessionPartition = "persist:root-worker-browser";
+
+applyRemoteDebuggingConfig(app, process.env, console);
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: FILE_PREVIEW_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+]);
 
 async function createWindow() {
   const window = new BrowserWindow({
@@ -186,7 +242,7 @@ appServerClient.on("notification", (notification) => {
   }
   const normalizedNotification = normalizeNotification(notification);
   if (isClientRelaunchNotification(normalizedNotification)) {
-    handleClientRelaunchNotification(normalizedNotification);
+    void getRuntimeRestartController().handle(normalizedNotification);
     return;
   }
   broadcast("codex:notification", normalizedNotification);
@@ -236,12 +292,18 @@ ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
   const listResult = await listThreads(defaultWorkspace);
   const threads = listResult.threads;
-  const autoResume = await getAutoResumeCoordinator().run(threads);
+  const expectedRestart =
+    await getRuntimeRestartController().recoverPending();
+  const expectedThreadIds = new Set(expectedRestart.expectedThreadIds);
+  const autoResume = await getAutoResumeCoordinator().run(
+    threads.filter((thread) => !expectedThreadIds.has(thread.id)),
+  );
   return {
     workspace: defaultWorkspace,
     threads,
     materializedSelfThreadId: listResult.materializedSelfThreadId,
     autoResume,
+    expectedRestart,
     appServer: appServerClient.status,
   };
 });
@@ -370,37 +432,23 @@ ipcMain.handle("codex:startSelfCommand", async (_event, payload = {}) => {
   if (!project) {
     throw new Error("Self project is only available from a packaged app.");
   }
-  const text = typeof payload?.text === "string" ? payload.text.trim() : "";
-  if (!text) {
-    throw new Error("Self command requires task text.");
-  }
-  const start = await appServerClient.request(
-    "thread/start",
-    buildSelfCommandThreadStartParams(project),
-  );
-  await appServerClient.request("thread/name/set", {
-    threadId: start.thread.id,
-    name: "/self",
+  const result = await sendSelfCommandToThread({
+    appServerClient,
+    buildTurnInput,
+    loadThreadForTurn: async (threadId) =>
+      (await subscribeThread(threadId)).thread ?? null,
+    normalizeThread,
+    project,
+    rememberThreadRuntime,
+    startThreadTurn,
+    text: payload?.text,
+    threads: await listAllThreads(appServerClient, normalizeThread),
   });
-  const runtime = {
-    model: start.model ?? null,
-    modelProvider: start.modelProvider ?? null,
-    reasoningEffort: start.reasoningEffort ?? null,
-  };
-  rememberThreadRuntime(start.thread.id, runtime);
-  const turn = await startThreadTurn(
-    {
-      threadId: start.thread.id,
-      text,
-      skills: [],
-      images: [],
-    },
-    buildTurnInput({ text, skills: [], images: [] }),
-  );
   return {
     project,
-    thread: normalizeThread({ ...start.thread, name: "/self" }, runtime),
-    turn,
+    materializedSelfThreadId: result.materializedSelfThreadId,
+    thread: result.thread,
+    turn: result.turn,
   };
 });
 
@@ -496,51 +544,101 @@ ipcMain.handle("codex:browser:setBounds", async (event, bounds) => {
 
 ipcMain.handle("codex:browser:navigate", async (event, target) => {
   const panel = browserPanelForEvent(event);
+  const tab = activeBrowserPanelTab(panel);
+  if (!tab) {
+    throw new Error("Browser panel has no active tab");
+  }
   const normalized = normalizeBrowserTarget(target);
   if (!normalized.ok) {
     throw new Error(normalized.reason);
   }
-  panel.state.error = null;
-  await panel.view.webContents.loadURL(normalized.url);
+  tab.state.error = null;
+  await loadBrowserPanelTabUrl(panel, tab, normalized.url);
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:newTab", async (event, target) => {
+  const panel = browserPanelForEvent(event);
+  const normalized =
+    typeof target === "string" && target.trim()
+      ? normalizeBrowserTarget(target)
+      : { ok: true, url: null };
+  if (!normalized.ok) {
+    throw new Error(normalized.reason);
+  }
+  const tab = createBrowserPanelTab(panel, { activate: true });
+  if (normalized.url) {
+    await loadBrowserPanelTabUrl(panel, tab, normalized.url);
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:selectTab", async (event, tabId) => {
+  const panel = browserPanelForEvent(event);
+  if (!selectBrowserPanelTab(panel, tabId)) {
+    throw new Error("Browser tab not found");
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:closeTab", async (event, tabId) => {
+  const panel = browserPanelForEvent(event);
+  if (!closeBrowserPanelTab(panel, tabId)) {
+    throw new Error("Browser tab not found");
+  }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:goBack", async (event) => {
   const panel = browserPanelForEvent(event);
-  const navigation = browserNavigation(panel.view.webContents);
-  if (navigation.canGoBack()) {
-    navigation.goBack();
+  const tab = activeBrowserPanelTab(panel);
+  if (tab) {
+    const navigation = browserNavigation(tab.view.webContents);
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    }
   }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:goForward", async (event) => {
   const panel = browserPanelForEvent(event);
-  const navigation = browserNavigation(panel.view.webContents);
-  if (navigation.canGoForward()) {
-    navigation.goForward();
+  const tab = activeBrowserPanelTab(panel);
+  if (tab) {
+    const navigation = browserNavigation(tab.view.webContents);
+    if (navigation.canGoForward()) {
+      navigation.goForward();
+    }
   }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:reload", async (event) => {
   const panel = browserPanelForEvent(event);
-  if (panel.view.webContents.getURL()) {
-    panel.view.webContents.reload();
+  const tab = activeBrowserPanelTab(panel);
+  if (tab && tab.view.webContents.getURL()) {
+    tab.view.webContents.reload();
   }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:stop", async (event) => {
   const panel = browserPanelForEvent(event);
-  panel.view.webContents.stop();
-  panel.state.loading = false;
+  const tab = activeBrowserPanelTab(panel);
+  if (tab) {
+    tab.view.webContents.stop();
+    tab.state.loading = false;
+  }
   sendBrowserPanelState(panel);
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
+});
+
+ipcMain.handle("codex:writeLocalFile", async (_event, target, content) => {
+  return writeLocalFileTarget(target, content, defaultWorkspace);
 });
 
 ipcMain.handle("codex:listLocalDirectory", async (_event, target) => {
@@ -658,6 +756,7 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
+  registerLocalFilePreviewProtocol();
   configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
     permission === "media" && !isBrowserPanelWebContents(webContents),
   );
@@ -686,6 +785,27 @@ app.on("window-all-closed", () => {
   }
 });
 
+app.on("before-quit", (event) => {
+  if (quittingAfterAppServerStop || !appServerClient.status.connected) {
+    return;
+  }
+  quittingAfterAppServerStop = true;
+  event.preventDefault();
+  void appServerClient
+    .stop("application quit")
+    .catch((error) => {
+      console.error(
+        "[prototype] app-server stop during app quit failed",
+        JSON.stringify({
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    })
+    .finally(() => {
+      app.exit(0);
+    });
+});
+
 function browserPanelForEvent(event) {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window) {
@@ -704,90 +824,18 @@ function browserPanelForWindow(window) {
     throw new Error("This Electron version does not support WebContentsView");
   }
 
-  const view = new WebContentsView({
-    webPreferences: {
-      allowRunningInsecureContent: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      partition: browserSessionPartition,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-
   const panel = {
     window,
-    view,
     visible: false,
-    state: {
-      url: null,
-      title: null,
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      error: null,
-    },
+    bounds: normalizeBrowserBounds(null),
+    tabs: [],
+    activeTabId: null,
+    attachedTabId: null,
+    destroying: false,
   };
 
-  view.webContents.setWindowOpenHandler(({ url }) => {
-    const normalized = normalizeBrowserTarget(url);
-    if (normalized.ok) {
-      void shell.openExternal(normalized.url);
-    }
-    return { action: "deny" };
-  });
-
-  view.webContents.on("will-navigate", (event, url) =>
-    guardBrowserPanelNavigation(panel, event, url),
-  );
-  view.webContents.on("will-frame-navigate", (event, url) =>
-    guardBrowserPanelNavigation(panel, event, url),
-  );
-  view.webContents.on("will-redirect", (event, url) =>
-    guardBrowserPanelNavigation(panel, event, url),
-  );
-  view.webContents.on("did-start-loading", () => {
-    panel.state.loading = true;
-    panel.state.error = null;
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("did-stop-loading", () => {
-    updateBrowserPanelLocationState(panel);
-    panel.state.loading = false;
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("did-navigate", (_event, url) => {
-    panel.state.url = url || null;
-    updateBrowserPanelLocationState(panel);
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("did-navigate-in-page", (_event, url) => {
-    panel.state.url = url || null;
-    updateBrowserPanelLocationState(panel);
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("page-title-updated", (_event, title) => {
-    panel.state.title = title || null;
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on(
-    "did-fail-load",
-    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) {
-        return;
-      }
-      panel.state.url = validatedUrl || panel.state.url;
-      panel.state.loading = false;
-      panel.state.error = errorDescription || "Page failed to load";
-      updateBrowserPanelLocationState(panel);
-      sendBrowserPanelState(panel);
-    },
-  );
-  view.webContents.on("destroyed", () => {
-    browserPanelsByWindowId.delete(window.id);
-  });
-
   browserPanelsByWindowId.set(window.id, panel);
+  createBrowserPanelTab(panel, { activate: true });
   return panel;
 }
 
@@ -795,15 +843,15 @@ function attachBrowserPanel(panel) {
   if (panel.visible) {
     return;
   }
-  panel.window.contentView.addChildView(panel.view);
   panel.visible = true;
+  attachActiveBrowserPanelView(panel);
 }
 
 function detachBrowserPanel(panel) {
   if (!panel.visible) {
     return;
   }
-  panel.window.contentView.removeChildView(panel.view);
+  detachAttachedBrowserPanelView(panel);
   panel.visible = false;
 }
 
@@ -812,13 +860,27 @@ function destroyBrowserPanel(window) {
   if (!panel) {
     return;
   }
-  detachBrowserPanel(panel);
-  panel.view.webContents.close({ waitForBeforeUnload: false });
+  panel.destroying = true;
   browserPanelsByWindowId.delete(window.id);
+  detachBrowserPanel(panel);
+  for (const tab of panel.tabs) {
+    closeBrowserPanelTabContents(tab);
+  }
+  panel.tabs = [];
+  panel.activeTabId = null;
 }
 
 function setBrowserPanelBounds(panel, bounds) {
-  panel.view.setBounds(normalizeBrowserBounds(bounds));
+  panel.bounds = normalizeBrowserBounds(bounds);
+  const tab = activeBrowserPanelTab(panel);
+  if (
+    panel.visible &&
+    tab &&
+    !panel.window.isDestroyed() &&
+    !tab.view.webContents.isDestroyed()
+  ) {
+    tab.view.setBounds(panel.bounds);
+  }
 }
 
 function normalizeBrowserBounds(bounds) {
@@ -837,18 +899,260 @@ function sendBrowserPanelState(panel) {
 }
 
 function browserPanelState(panel) {
-  updateBrowserPanelLocationState(panel);
-  return { ...panel.state };
+  const activeTab = activeBrowserPanelTab(panel);
+  if (activeTab) {
+    updateBrowserPanelLocationState(activeTab);
+  }
+  const activeState = activeTab?.state ?? emptyBrowserPanelTabState();
+  return {
+    ...activeState,
+    activeTabId: panel.activeTabId,
+    tabs: panel.tabs.map((tab) => {
+      updateBrowserPanelLocationState(tab);
+      return {
+        id: tab.id,
+        ...tab.state,
+      };
+    }),
+  };
 }
 
-function updateBrowserPanelLocationState(panel) {
-  if (!panel.view.webContents.isDestroyed()) {
-    const navigation = browserNavigation(panel.view.webContents);
-    panel.state.url = panel.view.webContents.getURL() || panel.state.url;
-    panel.state.title = panel.view.webContents.getTitle() || panel.state.title;
-    panel.state.loading = panel.view.webContents.isLoading();
-    panel.state.canGoBack = navigation.canGoBack();
-    panel.state.canGoForward = navigation.canGoForward();
+function emptyBrowserPanelTabState() {
+  return {
+    url: null,
+    title: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  };
+}
+
+function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
+  const view = new WebContentsView({
+    webPreferences: browserPanelWebPreferences(),
+  });
+  const tab = {
+    id: `browser-tab-${++browserPanelTabCounter}`,
+    view,
+    state: emptyBrowserPanelTabState(),
+  };
+  panel.tabs.push(tab);
+  bindBrowserPanelTab(panel, tab);
+  if (activate || !panel.activeTabId) {
+    selectBrowserPanelTab(panel, tab.id);
+  }
+  if (url) {
+    void loadBrowserPanelTabUrl(panel, tab, url).catch((error) => {
+      tab.state.loading = false;
+      tab.state.error = error instanceof Error ? error.message : String(error);
+      sendBrowserPanelState(panel);
+    });
+  }
+  return tab;
+}
+
+async function loadBrowserPanelTabUrl(panel, tab, target) {
+  const normalized = normalizeBrowserTarget(target);
+  if (!normalized.ok) {
+    tab.state.error = normalized.reason;
+    tab.state.loading = false;
+    sendBrowserPanelState(panel);
+    throw new Error(normalized.reason);
+  }
+  tab.state.error = null;
+  await tab.view.webContents.loadURL(normalized.url);
+}
+
+function bindBrowserPanelTab(panel, tab) {
+  tab.view.webContents.setWindowOpenHandler(({ url }) => {
+    const normalized = normalizeBrowserTarget(url);
+    if (normalized.ok) {
+      createBrowserPanelTab(panel, { url: normalized.url, activate: true });
+      sendBrowserPanelState(panel);
+    }
+    return { action: "deny" };
+  });
+
+  tab.view.webContents.on("will-navigate", (event, url) =>
+    guardBrowserPanelNavigation(panel, tab, event, url),
+  );
+  tab.view.webContents.on("will-frame-navigate", (event, url) =>
+    guardBrowserPanelNavigation(panel, tab, event, url),
+  );
+  tab.view.webContents.on("will-redirect", (event, url) =>
+    guardBrowserPanelNavigation(panel, tab, event, url),
+  );
+  tab.view.webContents.on("did-start-loading", () => {
+    tab.state.loading = true;
+    tab.state.error = null;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-stop-loading", () => {
+    updateBrowserPanelLocationState(tab);
+    tab.state.loading = false;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-navigate", (_event, url) => {
+    tab.state.url = url || null;
+    updateBrowserPanelLocationState(tab);
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-navigate-in-page", (_event, url) => {
+    tab.state.url = url || null;
+    updateBrowserPanelLocationState(tab);
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("page-title-updated", (_event, title) => {
+    tab.state.title = title || null;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) {
+        return;
+      }
+      tab.state.url = validatedUrl || tab.state.url;
+      tab.state.loading = false;
+      tab.state.error = errorDescription || "Page failed to load";
+      updateBrowserPanelLocationState(tab);
+      sendBrowserPanelState(panel);
+    },
+  );
+  tab.view.webContents.on("destroyed", () => {
+    removeDestroyedBrowserPanelTab(panel, tab);
+  });
+}
+
+function activeBrowserPanelTab(panel) {
+  return panel.tabs.find((tab) => tab.id === panel.activeTabId) ?? panel.tabs[0] ?? null;
+}
+
+function selectBrowserPanelTab(panel, tabId) {
+  const nextTab = panel.tabs.find((tab) => tab.id === tabId);
+  if (!nextTab) {
+    return false;
+  }
+  if (panel.activeTabId === nextTab.id) {
+    if (panel.visible) {
+      attachActiveBrowserPanelView(panel);
+    }
+    return true;
+  }
+  detachAttachedBrowserPanelView(panel);
+  panel.activeTabId = nextTab.id;
+  if (panel.visible) {
+    attachActiveBrowserPanelView(panel);
+  }
+  return true;
+}
+
+function closeBrowserPanelTab(panel, tabId) {
+  const index = panel.tabs.findIndex((tab) => tab.id === tabId);
+  if (index === -1) {
+    return false;
+  }
+  const tab = panel.tabs[index];
+  const wasActive = panel.activeTabId === tab.id;
+  const nextActiveTabId = nextBrowserTabIdAfterClose(
+    panel.tabs,
+    panel.activeTabId,
+    tab.id,
+  );
+  if (wasActive) {
+    detachAttachedBrowserPanelView(panel);
+  }
+  panel.tabs.splice(index, 1);
+  closeBrowserPanelTabContents(tab);
+  if (panel.tabs.length === 0 && !panel.destroying) {
+    createBrowserPanelTab(panel, { activate: true });
+    return true;
+  }
+  if (wasActive) {
+    panel.activeTabId = nextActiveTabId;
+    if (panel.visible) {
+      attachActiveBrowserPanelView(panel);
+    }
+  }
+  return true;
+}
+
+function removeDestroyedBrowserPanelTab(panel, tab) {
+  const index = panel.tabs.findIndex((candidate) => candidate.id === tab.id);
+  if (index === -1) {
+    return;
+  }
+  const wasActive = panel.activeTabId === tab.id;
+  panel.tabs.splice(index, 1);
+  if (panel.attachedTabId === tab.id) {
+    panel.attachedTabId = null;
+  }
+  if (panel.destroying || panel.window.isDestroyed()) {
+    return;
+  }
+  if (panel.tabs.length === 0) {
+    createBrowserPanelTab(panel, { activate: true });
+  } else if (wasActive) {
+    const nextTab = panel.tabs[Math.min(index, panel.tabs.length - 1)] ?? panel.tabs[0];
+    panel.activeTabId = nextTab.id;
+    if (panel.visible) {
+      attachActiveBrowserPanelView(panel);
+    }
+  }
+  sendBrowserPanelState(panel);
+}
+
+function closeBrowserPanelTabContents(tab) {
+  if (!tab.view.webContents.isDestroyed()) {
+    tab.view.webContents.close({ waitForBeforeUnload: false });
+  }
+}
+
+function attachActiveBrowserPanelView(panel) {
+  const tab = activeBrowserPanelTab(panel);
+  if (
+    !tab ||
+    !panel.visible ||
+    panel.window.isDestroyed() ||
+    tab.view.webContents.isDestroyed()
+  ) {
+    return;
+  }
+  if (panel.attachedTabId === tab.id) {
+    tab.view.setBounds(panel.bounds);
+    return;
+  }
+  detachAttachedBrowserPanelView(panel);
+  panel.window.contentView.addChildView(tab.view);
+  panel.attachedTabId = tab.id;
+  tab.view.setBounds(panel.bounds);
+}
+
+function detachAttachedBrowserPanelView(panel) {
+  const attachedTabId = panel.attachedTabId;
+  panel.attachedTabId = null;
+  const tab = panel.tabs.find((candidate) => candidate.id === attachedTabId);
+  const tabDestroyed = !tab || tab.view.webContents.isDestroyed();
+  if (
+    shouldDetachAttachedBrowserPanelView({
+      attachedTabId,
+      tabDestroyed,
+      windowDestroyed: panel.window.isDestroyed(),
+    })
+  ) {
+    panel.window.contentView.removeChildView(tab.view);
+  }
+}
+
+function updateBrowserPanelLocationState(tab) {
+  if (!tab.view.webContents.isDestroyed()) {
+    const navigation = browserNavigation(tab.view.webContents);
+    tab.state.url = tab.view.webContents.getURL() || tab.state.url;
+    tab.state.title = tab.view.webContents.getTitle() || tab.state.title;
+    tab.state.loading = tab.view.webContents.isLoading();
+    tab.state.canGoBack = navigation.canGoBack();
+    tab.state.canGoForward = navigation.canGoForward();
   }
 }
 
@@ -868,22 +1172,24 @@ function browserNavigation(webContents) {
 
 function isBrowserPanelWebContents(webContents) {
   for (const panel of browserPanelsByWindowId.values()) {
-    if (panel.view.webContents === webContents) {
-      return true;
+    for (const tab of panel.tabs) {
+      if (tab.view.webContents === webContents) {
+        return true;
+      }
     }
   }
   return false;
 }
 
-function guardBrowserPanelNavigation(panel, event, target) {
+function guardBrowserPanelNavigation(panel, tab, event, target) {
   const decision = browserNavigationEventDecision(event, target);
   if (decision.allow) {
     return;
   }
 
   event.preventDefault();
-  panel.state.error = decision.reason;
-  panel.state.loading = false;
+  tab.state.error = decision.reason;
+  tab.state.loading = false;
   sendBrowserPanelState(panel);
 }
 
@@ -999,6 +1305,62 @@ function getAutoResumeCoordinator() {
     });
   }
   return autoResumeCoordinator;
+}
+
+function getRuntimeRestartIntentStore() {
+  if (!runtimeRestartIntentStore) {
+    runtimeRestartIntentStore = createRuntimeRestartIntentStore(
+      path.join(app.getPath("userData"), "runtime-restart-intents.json"),
+      { fs },
+    );
+  }
+  return runtimeRestartIntentStore;
+}
+
+function getRuntimeRestartController() {
+  if (!runtimeRestartController) {
+    runtimeRestartController = createRuntimeRestartController({
+      store: getRuntimeRestartIntentStore(),
+      execute: (notification) =>
+        observeClientRelaunchResult(
+          handleClientRelaunchNotification(notification),
+          {
+            broadcastStatus: (status) =>
+              broadcast("codex:status", {
+                ...appServerClient.status,
+                ...status,
+              }),
+            logger: console,
+            reason:
+              notification.params?.reason ?? notification.method ?? null,
+            requestId: notification.params?.requestId ?? null,
+          },
+        ),
+      recover: recoverRuntimeRestartRecord,
+      broadcastStatus: (status) =>
+        broadcast("codex:status", {
+          ...appServerClient.status,
+          ...status,
+        }),
+      logger: console,
+    });
+  }
+  return runtimeRestartController;
+}
+
+async function recoverRuntimeRestartRecord(record) {
+  const readResult = await readThread(record.requestedByThreadId, true);
+  const thread = readResult.thread;
+  await subscribeThread(record.requestedByThreadId);
+  return startThreadTurn({
+    threadId: record.requestedByThreadId,
+    model: thread?.model ?? null,
+    modelProvider: thread?.modelProvider ?? null,
+    effort: thread?.reasoningEffort ?? null,
+    text: expectedRuntimeRestartPrompt(record),
+    skills: [],
+    images: [],
+  });
 }
 
 async function listThreads(cwd) {
@@ -1518,9 +1880,12 @@ async function readLocalFileTarget(target) {
   const displayPath = path.relative(defaultWorkspace, filePath) || filePath;
   const extension = path.extname(filePath).toLowerCase();
   const imageMime = imageMimeForExtension(extension);
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) {
+    throw new Error("Only files can be previewed");
+  }
 
   if (imageMime) {
-    const { size } = await fs.stat(filePath);
     return {
       path: filePath,
       displayPath,
@@ -1540,8 +1905,36 @@ async function readLocalFileTarget(target) {
         path: filePath,
         mimeType: imageMime,
         name: path.basename(filePath),
-        byteSize: size,
+        byteSize: stat.size,
       },
+      pdf: null,
+    };
+  }
+
+  const pdfPreviewToken = randomUUID();
+  const pdf = buildPdfPreview(filePath, stat.size, pdfPreviewToken);
+  if (pdf) {
+    localFilePreviewTargetsByToken.set(pdfPreviewToken, {
+      path: filePath,
+      mimeType: pdf.mimeType,
+    });
+    return {
+      path: filePath,
+      displayPath,
+      content: "",
+      language: "pdf",
+      line: null,
+      column: null,
+      lsp: {
+        enabled: false,
+        languageId: null,
+        lspStatus: { phase: "plain", detail: "PDF preview" },
+        serverLabel: null,
+        workspaceRoot: null,
+        reason: "PDF file",
+      },
+      image: null,
+      pdf,
     };
   }
 
@@ -1557,7 +1950,50 @@ async function readLocalFileTarget(target) {
     column,
     lsp,
     image: null,
+    pdf: null,
   };
+}
+
+function registerLocalFilePreviewProtocol() {
+  protocol.handle(FILE_PREVIEW_PROTOCOL, async (request) => {
+    const target = localFilePreviewTargetForUrl(request.url);
+    if (!target) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    try {
+      return await net.fetch(pathToFileURL(target.path).href);
+    } catch (error) {
+      console.error(
+        "[prototype] failed to serve local file preview",
+        JSON.stringify({
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return new Response("Unable to load preview", { status: 500 });
+    }
+  });
+}
+
+function localFilePreviewTargetForUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== `${FILE_PREVIEW_PROTOCOL}:` ||
+    parsed.hostname !== "pdf"
+  ) {
+    return null;
+  }
+  const token = decodeURIComponent(parsed.pathname.split("/").filter(Boolean)[0] ?? "");
+  const target = localFilePreviewTargetsByToken.get(token);
+  if (!target || target.mimeType !== "application/pdf") {
+    return null;
+  }
+  return target;
 }
 
 async function readLocalImageTarget(target) {

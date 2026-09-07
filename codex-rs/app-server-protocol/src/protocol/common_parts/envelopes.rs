@@ -391,6 +391,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::InitializeResponse,
     },
+    ClientLifecycleRegister => "client/lifecycle/register" {
+        params: v2::ClientLifecycleRegisterParams,
+        serialization: None,
+        response: v2::ClientLifecycleRegisterResponse,
+    },
 
     /// NEW APIs
     // Thread lifecycle

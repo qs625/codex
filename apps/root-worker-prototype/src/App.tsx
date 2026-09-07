@@ -37,6 +37,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./lib/conversation";
+import { clientLifecycleFailureReason } from "./lib/clientLifecycleStatus";
 import {
   extractCompactConversationDetails,
   type LoadedCompactConversationDetails,
@@ -45,6 +46,7 @@ import { isConversationNearBottom } from "./lib/conversationScroll";
 import {
   getProjectFilePreview,
   rememberProjectFilePreview,
+  rememberSavedProjectFilePreview,
   shouldRestoreProjectFilePreview,
   type FilePreviewMemoryByRootId,
 } from "./lib/filePreviewMemory";
@@ -88,7 +90,9 @@ import {
   getThreadItemNotificationTargetThreadIds,
   getTreeRootThreadId,
   getThreadDepth,
+  getInterruptibleTurn,
   isCompletedFinalLifecycleStatus,
+  isActiveTurnMismatchError,
   isRootThread,
   isSubagentThread,
   markThreadCommandExecutionRunning,
@@ -894,7 +898,10 @@ function App() {
       );
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
       const autoResumeThread = normalizedThreads.find(
-        (thread) => thread.id === payload.autoResume?.focusThreadId,
+        (thread) =>
+          thread.id ===
+          (payload.expectedRestart?.focusThreadId ??
+            payload.autoResume?.focusThreadId),
       );
       const excludedInitialThreadIds = payload.materializedSelfThreadId
         ? new Set([payload.materializedSelfThreadId])
@@ -1855,11 +1862,11 @@ function App() {
       return;
     }
 
-    const currentTurn = selectedThread?.turns.at(-1) ?? null;
-    const turnInProgress =
-      currentTurn != null &&
-      (currentTurn.status === "inProgress" || currentTurn.completedAt == null);
-    if (!turnInProgress) {
+    const thread =
+      threadsRef.current.find((candidate) => candidate.id === selectedThreadId) ??
+      selectedThread;
+    const currentTurn = getInterruptibleTurn(thread);
+    if (!currentTurn) {
       return;
     }
 
@@ -1871,7 +1878,13 @@ function App() {
         turnId: currentTurn.id,
       });
     } catch (interruptError) {
-      setError(toErrorMessage(interruptError));
+      const message = toErrorMessage(interruptError);
+      if (isActiveTurnMismatchError(message)) {
+        void loadThread(selectedThreadId);
+        setError("The running turn changed. Refreshed the thread status.");
+      } else {
+        setError(message);
+      }
       setIsStoppingTurn(false);
     }
   }
@@ -2340,6 +2353,10 @@ function App() {
   function handleStreamEvent(payload: NotificationEnvelope) {
     try {
       if (payload.type === "status" && payload.status) {
+        const lifecycleFailure = clientLifecycleFailureReason(payload.status);
+        if (lifecycleFailure) {
+          setError(lifecycleFailure);
+        }
         if (!payload.status.connected) {
           subscribedThreadIdsRef.current.clear();
           return;
@@ -2938,6 +2955,27 @@ function App() {
     }
   }
 
+  function updateFilePreviewAfterSave(
+    preview: FilePreview,
+    rootId: string | null,
+  ) {
+    const currentRootId = selectedTreeRootIdRef.current;
+    const currentPreview = filePreviewRef.current;
+    if (currentRootId !== rootId || currentPreview?.path !== preview.path) {
+      return;
+    }
+    setFilePreview(preview);
+    setFilePreviewByRootId((current) =>
+      rememberSavedProjectFilePreview(
+        current,
+        currentRootId,
+        rootId,
+        currentPreview,
+        preview,
+      ),
+    );
+  }
+
   function beginResize(panel: "left" | "right", clientX: number) {
     resizeStateRef.current = {
       panel,
@@ -3071,6 +3109,8 @@ function App() {
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onOpenTreeFile={handleOpenTreeFile}
+          onPreviewUpdated={updateFilePreviewAfterSave}
+          previewRootId={selectedTreeRootId}
           onSelectCommandMonitor={(commandItemId) =>
             setFocusedConversationItem((current) => ({
               itemId: commandItemId,

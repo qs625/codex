@@ -14,11 +14,11 @@ use command_service_api::CommandServiceApi;
 use goal_service_api::GoalServiceApi;
 use mcp_service_api::McpServiceApi;
 use permissions_service_api::PermissionsServiceApi;
-use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
 use tool_service_api::ToolDiffConsumerRequest;
 use tool_service_api::ToolDispatchRequest;
+use tool_service_api::ToolCallOutcome;
 use tool_service_api::ToolParallelRequest;
 use tool_service_api::ToolServiceApi;
 use tool_service_api::ToolServiceFuture;
@@ -42,6 +42,8 @@ pub struct ToolService {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HostRelaunchRequest {
+    pub request_id: String,
+    pub mode: HostRelaunchMode,
     pub reason: Option<String>,
     pub requested_by_thread_id: Option<String>,
 }
@@ -49,12 +51,22 @@ pub struct HostRelaunchRequest {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HostRelaunchResult {
+    pub request_id: String,
     pub status: HostRelaunchStatus,
     pub accepted: bool,
     pub relaunching: bool,
+    pub requested_mode: HostRelaunchMode,
+    pub executed_mode: Option<HostRelaunchMode>,
     pub message: String,
     pub reason: Option<String>,
     pub resume_strategy: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HostRelaunchMode {
+    Hot,
+    Full,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -149,10 +161,18 @@ impl ToolServiceApi for ToolService {
         domains::supports_parallel(self, tool_request, request.call)
     }
 
+    fn tool_is_terminal_control(&self, request: ToolParallelRequest<'_>) -> bool {
+        let tool_request = Self::typed_request(request.tool);
+        matches!(
+            domains::classify_tool_name(&tool_request, &request.call.tool_name),
+            domains::ToolDomain::HostLifecycle
+        )
+    }
+
     fn dispatch_tool(
         &self,
         request: ToolDispatchRequest<'_>,
-    ) -> ToolServiceFuture<'_, Result<AnyToolResult, FunctionCallError>> {
+    ) -> ToolServiceFuture<'_, Result<ToolCallOutcome, FunctionCallError>> {
         let tool_request = Self::typed_request(request.tool);
         if matches!(
             domains::route_for_tool_name(&tool_request, &request.call.tool_name),
@@ -161,9 +181,11 @@ impl ToolServiceApi for ToolService {
             let workflow_api = Arc::clone(&self.workflow_api);
             let turn = Arc::clone(&tool_request.turn);
             let call = request.call;
-            return Box::pin(
-                async move { domains::workflow::dispatch(workflow_api, turn, call).await },
-            );
+            return Box::pin(async move {
+                domains::workflow::dispatch(workflow_api, turn, call)
+                    .await
+                    .map(ToolCallOutcome::ReturnToModel)
+            });
         }
         let domain = domains::classify_tool_name(&tool_request, &request.call.tool_name);
         let code_mode_nested_tool_specs = if matches!(domain, domains::ToolDomain::CodeMode) {
@@ -207,6 +229,8 @@ impl ToolServiceApi for ToolService {
             .map(<[mcp_types::ToolInfo]>::to_vec);
         let cancellation_token = request.cancellation_token;
         let tracker = request.tracker;
+        let host_lifecycle_direct =
+            matches!(request.source, tool_service_api::ToolCallSource::Direct);
         let call = request.call;
         Box::pin(async move {
             let tool_name = call.tool_name.clone();
@@ -263,13 +287,24 @@ impl ToolServiceApi for ToolService {
                     .await
                 }
                 domains::ToolDomain::HostLifecycle => {
-                    domains::host_lifecycle::dispatch(
+                    if !host_lifecycle_direct {
+                        return Err(FunctionCallError::RespondToModel(
+                            "request_runtime_restart is a terminal control action and must be called directly".to_string(),
+                        ));
+                    }
+                    let outcome = domains::host_lifecycle::dispatch(
                         Arc::clone(&session),
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         host_lifecycle_runtime,
                         call,
                     )
-                    .await
+                    .await?;
+                    if let Some(session_capability) = tool_request.session_capability.upgrade() {
+                        let _ = session_capability
+                            .account_goal_tool_completed(turn.as_ref(), &tool_name.name)
+                            .await;
+                    }
+                    return Ok(outcome);
                 }
                 domains::ToolDomain::Discovery => {
                     domains::discovery::dispatch(
@@ -371,7 +406,7 @@ impl ToolServiceApi for ToolService {
                 result.result = Box::new(domains::goal::tool_output_for_state(&tool_name, goal)?);
             }
 
-            Ok(result)
+            Ok(ToolCallOutcome::ReturnToModel(result))
         })
     }
 }

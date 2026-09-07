@@ -646,6 +646,17 @@ impl Session {
             .await
     }
 
+    pub(crate) async fn read_resolved_agent_for_turn(
+        &self,
+        _turn: &TurnContext,
+        thread_id: ThreadId,
+    ) -> CodexResult<codex_agent_runtime::AgentDetails> {
+        self.services
+            .agent_control
+            .read_resolved_agent(thread_id)
+            .await
+    }
+
     pub(crate) async fn send_inter_agent_communication(
         &self,
         receiver_thread_id: ThreadId,

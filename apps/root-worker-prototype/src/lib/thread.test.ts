@@ -17,6 +17,7 @@ import {
   formatUpdatedLabel,
   findProjectByRootIdentity,
   getAgentRoleLabel,
+  getInterruptibleTurn,
   getPresenceLabel,
   getParentThreadId,
   getRootThreadConversationTitle,
@@ -28,6 +29,7 @@ import {
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
+  isActiveTurnMismatchError,
   markThreadCommandExecutionRunning,
   mergeDefaultCollapsedProjectIds,
   mergeThreadLifecycleStatus,
@@ -2070,6 +2072,95 @@ test("mergeThreadSnapshot drops equivalent init context from later snapshots", (
   });
 
   assert.deepEqual(merged.turns, [nextTurn]);
+});
+
+test("upsertThread merges start response and started notification init context snapshots", () => {
+  const startResponseTurn: Turn = {
+    id: "turn-start-response",
+    items: [makeInitContextItem("ctx-start-response")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+  const startedNotificationTurn: Turn = {
+    id: "turn-started-notification",
+    items: [makeInitContextItem("ctx-started-notification")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 3,
+    completedAt: 4,
+    durationMs: 1000,
+  };
+
+  let threads = upsertThread(
+    [
+      {
+        ...makeThread(),
+        turns: [startResponseTurn],
+      },
+    ],
+    {
+      ...makeThread(),
+      updatedAt: 4,
+      turns: [startedNotificationTurn],
+    },
+  );
+  threads = upsertThread(threads, {
+    ...makeThread(),
+    updatedAt: 5,
+    turns: [],
+  });
+
+  const initContextEntries = buildConversationEntries(
+    threads[0] ?? null,
+  ).filter((entry) => entry.toolName === "Init Context");
+
+  assert.equal(initContextEntries.length, 1);
+  assert.deepEqual(threads[0]?.turns, [startedNotificationTurn]);
+});
+
+test("mergeThreadSnapshot drops stale duplicate init context already in thread state", () => {
+  const canonicalTurn: Turn = {
+    id: "turn-canonical",
+    items: [makeInitContextItem("ctx-canonical")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+  const duplicateTurn: Turn = {
+    id: "turn-duplicate",
+    items: [makeInitContextItem("ctx-duplicate")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 3,
+    completedAt: 4,
+    durationMs: 1000,
+  };
+  const existing = {
+    ...makeThread(),
+    turns: [canonicalTurn, duplicateTurn],
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [],
+  });
+
+  assert.deepEqual(merged.turns, [canonicalTurn]);
+  assert.deepEqual(
+    buildConversationEntries(merged)
+      .filter((entry) => entry.toolName === "Init Context")
+      .map((entry) => entry.text),
+    ["Workspace • Instructions"],
+  );
 });
 
 test("mergeThreadSnapshot keeps one completed init context after first user turn", () => {
@@ -6965,6 +7056,101 @@ test("getPresenceLabel surfaces canonical thread lifecycle status", () => {
     }),
     "Complete",
   );
+});
+
+test("getInterruptibleTurn returns the single running turn", () => {
+  const runningTurn = {
+    ...makeTurn("turn-running", []),
+    status: "running" as const,
+    startedAt: 3,
+    completedAt: null,
+  };
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [runningTurn],
+  };
+
+  assert.equal(getInterruptibleTurn(thread)?.id, "turn-running");
+});
+
+test("getInterruptibleTurn ignores a completed last turn", () => {
+  const runningTurn = {
+    ...makeTurn("turn-running", []),
+    status: "running" as const,
+    startedAt: 3,
+    completedAt: null,
+  };
+  const completedTurn = {
+    ...makeTurn("turn-completed", []),
+    status: "completed" as const,
+    startedAt: 4,
+    completedAt: 5,
+  };
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [runningTurn, completedTurn],
+  };
+
+  assert.equal(getInterruptibleTurn(thread)?.id, "turn-running");
+});
+
+test("getInterruptibleTurn prefers running over stale in-progress turns", () => {
+  const activeTurn = {
+    ...makeTurn("turn-active", []),
+    status: "running" as const,
+    startedAt: 3,
+    completedAt: null,
+  };
+  const staleTurn = {
+    ...makeTurn("turn-stale", []),
+    status: "inProgress" as const,
+    startedAt: 4,
+    completedAt: null,
+  };
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [activeTurn, staleTurn],
+  };
+
+  assert.equal(getInterruptibleTurn(thread)?.id, "turn-active");
+});
+
+test("getInterruptibleTurn ignores stale in-flight turns on final threads", () => {
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
+    turns: [
+      {
+        ...makeTurn("turn-stale", []),
+        status: "inProgress" as const,
+        completedAt: null,
+      },
+    ],
+  };
+
+  assert.equal(getInterruptibleTurn(thread), null);
+});
+
+test("isActiveTurnMismatchError matches non-uuid turn ids", () => {
+  assert.equal(
+    isActiveTurnMismatchError(
+      "expected active turn id auto-compact-0 but found auto-compact-1",
+    ),
+    true,
+  );
+  assert.equal(
+    isActiveTurnMismatchError(
+      "app-server request failed (-32600): expected active turn id turn-a but found turn-b",
+    ),
+    true,
+  );
+  assert.equal(isActiveTurnMismatchError("expected active turn id a"), false);
 });
 
 test("isThreadThinking stays false while a turn only injects init context", () => {

@@ -16,6 +16,23 @@ export function rememberProjectFilePreview(
   };
 }
 
+export function rememberSavedProjectFilePreview(
+  memory: FilePreviewMemoryByRootId,
+  currentRootId: string | null,
+  saveRootId: string | null,
+  currentPreview: FilePreview | null,
+  savedPreview: FilePreview,
+): FilePreviewMemoryByRootId {
+  if (
+    !currentRootId ||
+    currentRootId !== saveRootId ||
+    currentPreview?.path !== savedPreview.path
+  ) {
+    return memory;
+  }
+  return rememberProjectFilePreview(memory, currentRootId, savedPreview);
+}
+
 export function getProjectFilePreview(
   memory: FilePreviewMemoryByRootId,
   rootId: string | null,

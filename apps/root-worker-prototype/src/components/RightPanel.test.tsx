@@ -22,10 +22,23 @@ const {
   RightPanel,
   ScheduleAgendaLayout,
   ScheduleAgendaDateGroup,
+  beginFilePreviewEdit,
+  beginFilePreviewSave,
+  browserTabLabel,
   buildGitGraphVisualModel,
+  cancelFilePreviewEdit,
+  completeFilePreviewSave,
+  currentBrowserPanelApi,
+  failFilePreviewSave,
+  filePreviewCanEdit,
+  filePreviewHeaderEditControlsVisible,
   filePreviewRenderMode,
+  filePreviewSourceEditorVisible,
+  normalizeBrowserPanelState,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
+  syncFilePreviewEditState,
+  updateFilePreviewDraft,
 } = await import("./RightPanel");
 
 const FEATURE_DEV_WORKFLOW: WorkflowSummary = {
@@ -113,6 +126,8 @@ function renderRightPanel(
     expandedTreeDirectories?: string[];
     isCollapsed?: boolean;
     preview?: FilePreview | null;
+    previewError?: string | null;
+    previewLoading?: boolean;
     todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
   },
 ) {
@@ -130,6 +145,8 @@ function renderRightPanel(
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
+      onPreviewUpdated={() => {}}
+      previewRootId="root-1"
       onSetActiveView={() => {}}
       onSetCollapsed={() => {}}
       onSetFilePanelView={() => {}}
@@ -142,8 +159,8 @@ function renderRightPanel(
       goalAction={null}
       goalActionError={null}
       preview={options?.preview ?? null}
-      previewError={null}
-      previewLoading={false}
+      previewError={options?.previewError ?? null}
+      previewLoading={options?.previewLoading ?? false}
       skills={[]}
       thread={thread}
       todoItems={options?.todoItems ?? []}
@@ -171,6 +188,7 @@ function makePreview(overrides: Partial<FilePreview> = {}): FilePreview {
       reason: null,
     },
     image: null,
+    pdf: null,
     ...overrides,
   };
 }
@@ -277,9 +295,128 @@ test("renders browser panel and rail button", () => {
   const markup = renderRightPanel(makeThread([]), "browser");
 
   assert.match(markup, /aria-label="Browser"/);
+  assert.match(markup, /aria-label="Browser tabs"/);
+  assert.match(markup, /New tab/);
+  assert.match(markup, /browser-new-tab-button/);
+  assert.match(markup, /aria-label="New browser tab"/);
   assert.match(markup, /Browser URL/);
   assert.match(markup, /class="browser-go-button" disabled=""/);
   assert.match(markup, /Open a page in the right panel/);
+});
+
+test("browser tab helpers preserve active tab state and readable labels", () => {
+  const state = normalizeBrowserPanelState({
+    url: "https://active.example/docs",
+    title: "Active page",
+    loading: false,
+    canGoBack: true,
+    canGoForward: false,
+    error: null,
+    activeTabId: "tab-2",
+    tabs: [
+      {
+        id: "tab-1",
+        url: "https://old.example/",
+        title: "Old page",
+        loading: false,
+        canGoBack: false,
+        canGoForward: true,
+        error: null,
+      },
+      {
+        id: "tab-2",
+        url: "https://active.example/docs",
+        title: "Active page",
+        loading: true,
+        canGoBack: true,
+        canGoForward: false,
+        error: "Loading took too long",
+      },
+    ],
+  });
+
+  assert.equal(state.url, "https://active.example/docs");
+  assert.equal(state.title, "Active page");
+  assert.equal(state.loading, true);
+  assert.equal(state.error, "Loading took too long");
+  assert.equal(browserTabLabel(state.tabs[0]), "Old page");
+  assert.equal(
+    browserTabLabel({
+      id: "tab-host",
+      url: "https://docs.example/path",
+      title: null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    }),
+    "docs.example",
+  );
+  assert.equal(
+    browserTabLabel({
+      id: "tab-empty",
+      url: null,
+      title: null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    }),
+    "New tab",
+  );
+
+  const legacyState = normalizeBrowserPanelState({
+    url: "https://legacy.example/",
+    title: "Legacy page",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  });
+  assert.equal(legacyState.activeTabId, "browser-tab-active");
+  assert.equal(legacyState.tabs.length, 1);
+  assert.equal(legacyState.tabs[0]?.title, "Legacy page");
+});
+
+test("browser API detection requires tab actions", () => {
+  const originalWindow = globalThis.window;
+  const baseApi = {
+    browserGoBack: async () => ({}),
+    browserGoForward: async () => ({}),
+    hideBrowserView: async () => ({}),
+    navigateBrowserView: async () => ({}),
+    openLink: async () => ({ ok: true }),
+    reloadBrowserView: async () => ({}),
+    setBrowserViewBounds: async () => ({}),
+    showBrowserView: async () => ({}),
+    stopBrowserView: async () => ({}),
+    subscribeBrowserState: () => () => {},
+  };
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { codexDesktop: baseApi },
+  });
+
+  try {
+    assert.equal(currentBrowserPanelApi(), null);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        codexDesktop: {
+          ...baseApi,
+          createBrowserTab: async () => ({}),
+          selectBrowserTab: async () => ({}),
+          closeBrowserTab: async () => ({}),
+        },
+      },
+    });
+    assert.ok(currentBrowserPanelApi());
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow,
+    });
+  }
 });
 
 test("collapsed browser panel keeps rail and omits browser content", () => {
@@ -417,19 +554,19 @@ test("omits plan work queue from thread analysis", () => {
 });
 
 test("renders live commands and schedule subscriptions", () => {
+  const activeCommand = {
+    type: "commandExecution",
+    id: "command-1",
+    command: "tail -f /tmp/out.log",
+    cwd: "/tmp",
+    status: "running",
+    aggregatedOutput: "changed:/tmp/out.log\n",
+    exitCode: null,
+    durationMs: null,
+  } satisfies NonNullable<Thread["activeCommandItems"]>[number];
   const thread = {
     ...makeThread(
       [
-        {
-          type: "commandExecution",
-          id: "command-1",
-          command: "tail -f /tmp/out.log",
-          cwd: "/tmp",
-          status: "running",
-          aggregatedOutput: "changed:/tmp/out.log\n",
-          exitCode: null,
-          durationMs: null,
-        },
         {
           type: "builtinToolCall",
           id: "schedule-1",
@@ -447,6 +584,7 @@ test("renders live commands and schedule subscriptions", () => {
       ],
       { type: "idle", reason: "waitCommand" },
     ),
+    activeCommandItems: [activeCommand],
     stats: { compactionCount: 2 },
   } satisfies Thread;
   const markup = renderRightPanel(thread);
@@ -947,6 +1085,315 @@ test("keeps non-markdown file previews on the editor render path", () => {
     ),
     "editor",
   );
+});
+
+test("enables edit actions for editable text previews while keeping image and PDF read-only", () => {
+  const editorPreview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+  });
+  const markdownPreview = makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+  });
+  const imagePreview = makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+  });
+  const pdfPreview = makePreview({
+    path: "/tmp/spec.pdf",
+    displayPath: "spec.pdf",
+    content: "",
+    language: "pdf",
+    pdf: {
+      path: "/tmp/spec.pdf",
+      mimeType: "application/pdf",
+      name: "spec.pdf",
+      byteSize: 512,
+      url: "morpheus-file-preview://pdf/token-1/spec.pdf",
+    },
+  });
+
+  const markdownMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+  });
+  const imageMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: imagePreview,
+  });
+  const pdfMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: pdfPreview,
+  });
+
+  assert.equal(filePreviewCanEdit(editorPreview), true);
+  assert.equal(filePreviewCanEdit(markdownPreview), true);
+  assert.equal(filePreviewCanEdit(imagePreview), false);
+  assert.equal(filePreviewCanEdit(pdfPreview), false);
+  assert.match(
+    markdownMarkup,
+    /<div class="preview-header-actions">[\s\S]*preview-edit-action[\s\S]*<\/header>/,
+  );
+  assert.match(markdownMarkup, />Edit<\/button>/);
+  assert.doesNotMatch(markdownMarkup, /preview-utility-strip[\s\S]*preview-edit-action/);
+  assert.doesNotMatch(imageMarkup, /preview-edit-action/);
+  assert.doesNotMatch(pdfMarkup, /preview-edit-action/);
+});
+
+test("header edit controls appear only for loaded editable previews", () => {
+  const markdownPreview = makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+  });
+  const editorPreview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+  });
+  const imagePreview = makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+  });
+
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: markdownPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    true,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: editorPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    true,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "tree",
+      preview: markdownPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: markdownPreview,
+      previewError: null,
+      previewLoading: true,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: markdownPreview,
+      previewError: "Failed",
+      previewLoading: false,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: imagePreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: null,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+
+  const loadingMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+    previewLoading: true,
+  });
+  const errorMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+    previewError: "Failed to load",
+  });
+  const emptyMarkup = renderRightPanel(makeThread([]), "preview", null);
+
+  assert.doesNotMatch(loadingMarkup, /preview-edit-action/);
+  assert.doesNotMatch(errorMarkup, /preview-edit-action/);
+  assert.doesNotMatch(emptyMarkup, /preview-edit-action/);
+});
+
+test("markdown previews keep rendered readonly mode until editing or saving", () => {
+  const markdownPreview = makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+  });
+  const editorPreview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+  });
+  const imagePreview = makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+  });
+  const markup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+  });
+
+  assert.match(markup, /<h1>Title<\/h1>/);
+  assert.doesNotMatch(markup, /Loading editor/);
+  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "readonly"), false);
+  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "editing"), true);
+  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "saving"), true);
+  assert.equal(filePreviewSourceEditorVisible(editorPreview, "readonly"), true);
+  assert.equal(filePreviewSourceEditorVisible(imagePreview, "editing"), false);
+});
+
+test("file preview edit state saves, cancels, keeps failures, and resets on file switch", () => {
+  const preview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "const value = 1;",
+    language: "typescript",
+  });
+  const nextPreview = makePreview({
+    path: "/tmp/src/Other.tsx",
+    displayPath: "src/Other.tsx",
+    content: "const other = 1;",
+    language: "typescript",
+  });
+
+  let state = syncFilePreviewEditState(
+    {
+      mode: "readonly",
+      path: null,
+      baseContent: "",
+      draft: "",
+      error: null,
+    },
+    preview,
+    "editor",
+  );
+  state = beginFilePreviewEdit(state);
+  state = updateFilePreviewDraft(state, "const value = 2;");
+
+  assert.equal(state.mode, "editing");
+  assert.equal(state.draft, "const value = 2;");
+
+  const saving = beginFilePreviewSave(state);
+  assert.equal(saving.mode, "saving");
+  const failed = failFilePreviewSave(saving, "Permission denied");
+  assert.equal(failed.mode, "editing");
+  assert.equal(failed.draft, "const value = 2;");
+  assert.equal(failed.error, "Permission denied");
+
+  const saved = completeFilePreviewSave(failed, failed.draft);
+  assert.equal(saved.mode, "readonly");
+  assert.equal(saved.baseContent, "const value = 2;");
+  assert.equal(saved.draft, "const value = 2;");
+
+  const editing = updateFilePreviewDraft(beginFilePreviewEdit(saved), "dirty");
+  const cancelled = cancelFilePreviewEdit(editing);
+  assert.equal(cancelled.mode, "readonly");
+  assert.equal(cancelled.draft, "const value = 2;");
+  assert.equal(cancelled.error, null);
+
+  const switched = syncFilePreviewEditState(editing, nextPreview, "editor");
+  assert.equal(switched.mode, "readonly");
+  assert.equal(switched.path, "/tmp/src/Other.tsx");
+  assert.equal(switched.draft, "const other = 1;");
+});
+
+test("file preview save button and Cmd+S use the same save handler", () => {
+  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /onClick=\{\(\) => void savePreviewDraft\(\)\}/);
+  assert.match(source, /monaco\.KeyMod\.CtrlCmd \| monaco\.KeyCode\.KeyS/);
+  assert.match(source, /savePreviewDraftRef\.current\(\)/);
+});
+
+test("renders PDF file previews with an embedded PDF object", () => {
+  const markup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      path: "/tmp/Project Docs/spec.PDF",
+      displayPath: "Project Docs/spec.PDF",
+      content: "",
+      language: "pdf",
+      pdf: {
+        path: "/tmp/Project Docs/spec.PDF",
+        mimeType: "application/pdf",
+        name: "spec.PDF",
+        byteSize: 4096,
+        url: "morpheus-file-preview://pdf/token-1/spec.PDF",
+      },
+    }),
+  });
+
+  assert.equal(
+    filePreviewRenderMode(
+      makePreview({
+        language: "markdown",
+        pdf: {
+          path: "/tmp/spec.pdf",
+          mimeType: "application/pdf",
+          name: "spec.pdf",
+          byteSize: 512,
+          url: "morpheus-file-preview://pdf/token-2/spec.pdf",
+        },
+      }),
+    ),
+    "pdf",
+  );
+  assert.match(markup, /PDF/);
+  assert.match(markup, /application\/pdf/);
+  assert.match(markup, /4\.0 KB/);
+  assert.match(markup, /aria-label="PDF preview for spec\.PDF"/);
+  assert.match(markup, /data="morpheus-file-preview:\/\/pdf\/token-1\/spec\.PDF"/);
+  assert.doesNotMatch(markup, /Loading editor/);
 });
 
 test("resolves preview definition clicks to a column inside the current word", () => {

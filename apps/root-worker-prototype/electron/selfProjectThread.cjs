@@ -50,6 +50,57 @@ async function ensureSelfProjectThread(
   };
 }
 
+async function sendSelfCommandToThread({
+  appServerClient,
+  buildTurnInput,
+  loadThreadForTurn,
+  normalizeThread,
+  project,
+  rememberThreadRuntime,
+  startThreadTurn,
+  text,
+  threads,
+}) {
+  const commandText = typeof text === "string" ? text.trim() : "";
+  if (!commandText) {
+    throw new Error("Self command requires task text.");
+  }
+
+  const result = await ensureSelfProjectThread(
+    appServerClient,
+    normalizeThread,
+    project,
+    threads,
+  );
+  if (result.created) {
+    rememberThreadRuntime(result.thread.id, result.runtime);
+  }
+  const threadForTurn = result.created
+    ? result.thread
+    : await loadThreadForTurn(result.thread.id);
+  if (!threadForTurn) {
+    throw new Error("Self thread is unavailable.");
+  }
+
+  const turnPayload = {
+    threadId: threadForTurn.id,
+    model: threadForTurn.model ?? null,
+    modelProvider: threadForTurn.modelProvider ?? null,
+    effort: threadForTurn.reasoningEffort ?? null,
+    text: commandText,
+    skills: [],
+    images: [],
+  };
+  const turn = await startThreadTurn(turnPayload, buildTurnInput(turnPayload));
+
+  return {
+    materializedSelfThreadId: result.created ? result.thread.id : null,
+    thread: threadForTurn,
+    threads: result.threads,
+    turn,
+  };
+}
+
 function normalizePath(value) {
   if (typeof value !== "string") {
     return null;
@@ -70,4 +121,5 @@ module.exports = {
   SELF_PROJECT_THREAD_NAME,
   ensureSelfProjectThread,
   isSelfProjectThread,
+  sendSelfCommandToThread,
 };

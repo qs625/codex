@@ -310,6 +310,7 @@ async fn run_compact_task_inner_impl(
                     Ok(crate::session::turn::SamplingRequestResult {
                         needs_follow_up: false,
                         last_agent_message: None,
+                        finish_turn: false,
                     })
                 }
                 Err(err) => Err(err),

@@ -2,7 +2,8 @@ use std::sync::Mutex;
 
 use serde_json::json;
 use thread_service::test_support;
-use thread_service_api::ThreadSessionCapability;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCallOutcome;
 use tool_service_api::ToolName;
 use tool_service_api::ToolOutput;
 use tool_service_api::ToolPayload;
@@ -20,13 +21,19 @@ impl HostLifecycleToolRuntime for FakeHostLifecycleRuntime {
         request: HostRelaunchRequest,
     ) -> tool_service_api::ToolServiceFuture<'a, HostRelaunchResult> {
         Box::pin(async move {
-            self.requests.lock().expect("requests mutex").push(request);
+            self.requests
+                .lock()
+                .expect("requests mutex")
+                .push(request.clone());
             HostRelaunchResult {
+                request_id: request.request_id,
                 status: HostRelaunchStatus::Accepted,
                 accepted: true,
-                relaunching: true,
+                relaunching: false,
+                requested_mode: request.mode,
+                executed_mode: None,
                 message: "accepted".to_string(),
-                reason: Some("runtime update".to_string()),
+                reason: request.reason,
                 resume_strategy: RESUME_STRATEGY.to_string(),
             }
         })
@@ -55,7 +62,7 @@ fn tool_output_json(result: &AnyToolResult) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
+async fn accepted_restart_is_terminal_and_has_no_function_call_output() {
     let (session, turn) = test_support::make_session_and_context().await;
     let runtime = Arc::new(FakeHostLifecycleRuntime::default());
 
@@ -65,39 +72,67 @@ async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
         Some(runtime.clone()),
         tool_call(json!({
             "reason": " runtime update ",
+            "mode": "full",
         })),
     )
     .await
     .expect("dispatch should succeed");
 
-    assert_eq!(result.call_id, "restart-call");
-    let response_json = tool_output_json(&result);
-    assert_eq!(response_json["status"], "accepted");
-    assert_eq!(response_json["accepted"], true);
-    assert_eq!(response_json["relaunching"], true);
-    assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
-
+    assert!(matches!(result, ToolCallOutcome::FinishTurn));
     let requests = runtime.requests.lock().expect("requests mutex");
     assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].request_id, "restart-call");
+    assert_eq!(requests[0].mode, HostRelaunchMode::Full);
     assert_eq!(requests[0].reason.as_deref(), Some("runtime update"));
-    let expected_thread_id = session.conversation_id().to_string();
-    assert_eq!(requests[0].requested_by_thread_id, Some(expected_thread_id));
-    drop(requests);
+    assert_eq!(
+        requests[0].requested_by_thread_id,
+        Some(session.conversation_id().to_string())
+    );
 }
 
 #[tokio::test]
-async fn request_runtime_restart_reports_unsupported_without_host_runtime() {
+async fn unsupported_restart_remains_a_model_visible_error_result() {
     let (session, turn) = test_support::make_session_and_context().await;
 
-    let result = dispatch(session, turn, None, tool_call(json!({})))
+    let result = dispatch(session, turn, None, tool_call(json!({ "mode": "hot" })))
         .await
-        .expect("unsupported is a model-visible result");
+        .expect("unsupported is model-visible");
+    let ToolCallOutcome::ReturnToModel(result) = result else {
+        panic!("unsupported restart must return an error result to the model");
+    };
     let response_json = tool_output_json(&result);
 
     assert_eq!(response_json["status"], "unsupported");
+    assert_eq!(response_json["requestId"], "restart-call");
     assert_eq!(response_json["accepted"], false);
-    assert_eq!(response_json["relaunching"], false);
+    assert_eq!(response_json["requestedMode"], "hot");
     assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
+}
+
+#[tokio::test]
+async fn invalid_mode_is_rejected_before_host_dispatch() {
+    let (session, turn) = test_support::make_session_and_context().await;
+    let runtime = Arc::new(FakeHostLifecycleRuntime::default());
+
+    let error = match dispatch(
+        session,
+        turn,
+        Some(runtime.clone()),
+        tool_call(json!({ "mode": "auto" })),
+    )
+    .await
+    {
+        Ok(_) => panic!("invalid mode should fail"),
+        Err(error) => error,
+    };
+
+    match error {
+        FunctionCallError::RespondToModel(message) => {
+            assert!(message.contains("unknown variant `auto`"));
+        }
+        other => panic!("expected model-visible parse error, got {other:?}"),
+    }
+    assert!(runtime.requests.lock().expect("requests mutex").is_empty());
 }
 
 #[test]
@@ -108,48 +143,16 @@ fn request_runtime_restart_tool_schema_is_narrow() {
     };
     assert_eq!(tool.name, REQUEST_RUNTIME_RESTART_TOOL_NAME);
     assert!(tool.description.contains("Use after completing a feature"));
-    assert!(tool.description.contains("fixing a bug"));
     assert!(tool.description.contains("frontend and backend builds"));
-    assert!(
-        !tool
-            .description
-            .contains("full Morpheus client/app-server relaunch")
-    );
     assert!(!tool.description.contains("run shell commands"));
     assert!(!tool.description.contains("kill processes"));
-    assert_eq!(tool.parameters.required, Some(Vec::new()));
+    assert_eq!(tool.parameters.required, Some(vec!["mode".to_string()]));
     assert_eq!(tool.parameters.additional_properties, Some(false.into()));
     let properties = tool.parameters.properties.expect("properties");
-    assert_eq!(properties.len(), 1);
+    assert_eq!(properties.len(), 2);
+    assert_eq!(
+        properties.get("mode").expect("mode property").enum_values,
+        Some(vec![json!("hot"), json!("full")])
+    );
     assert!(properties.contains_key("reason"));
-    let output_schema = tool.output_schema.expect("output schema");
-    assert_eq!(
-        output_schema["required"],
-        json!([
-            "status",
-            "accepted",
-            "relaunching",
-            "message",
-            "reason",
-            "resumeStrategy"
-        ])
-    );
-    assert_eq!(
-        output_schema["properties"]["status"]["enum"],
-        json!(["accepted", "unsupported", "failed"])
-    );
-    assert_eq!(
-        output_schema["properties"]["status"]["description"],
-        "Whether the host accepted, does not support, or failed the refresh request."
-    );
-    assert_eq!(
-        output_schema["properties"]["reason"]["description"],
-        "The normalized refresh reason."
-    );
-    assert!(
-        output_schema["properties"]["relaunching"]["description"]
-            .as_str()
-            .expect("relaunching description")
-            .contains("relaunch-style fallback")
-    );
 }

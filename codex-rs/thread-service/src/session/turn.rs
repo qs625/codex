@@ -41,6 +41,7 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::InMemoryHistorySnapshot;
 use crate::stream_events_utils::HandleOutputCtx;
+use crate::stream_events_utils::InFlightFuture;
 use crate::stream_events_utils::TurnItemContributorPolicy;
 use crate::stream_events_utils::finalize_non_tool_response_items;
 use crate::stream_events_utils::handle_non_tool_response_item;
@@ -67,7 +68,6 @@ use codex_turn_items::PlanModeStreamAction;
 use codex_turn_items::PlanModeStreamState;
 use codex_turn_items::raw_assistant_output_text_from_item;
 use codex_utils_output_truncation::approx_token_count;
-use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
 use hooks::PendingInputHookDisposition;
@@ -632,7 +632,13 @@ pub(crate) async fn run_turn(
                 let SamplingRequestResult {
                     needs_follow_up: model_needs_follow_up,
                     last_agent_message: sampling_request_last_agent_message,
+                    finish_turn,
                 } = sampling_request_output;
+                if finish_turn {
+                    sess.mark_current_turn_terminal_handoff().await;
+                    last_agent_message = sampling_request_last_agent_message;
+                    break;
+                }
                 can_drain_pending_input = true;
                 let has_pending_input = sess.has_pending_input().await;
                 let needs_follow_up = model_needs_follow_up || has_pending_input;
@@ -1696,7 +1702,7 @@ pub(crate) async fn dispatch_tool_call(
     call: tool_service_api::ToolCall,
     source: tool_service_api::ToolCallSource,
     cancellation_token: CancellationToken,
-) -> Result<tool_service_api::AnyToolResult, FunctionCallError> {
+) -> Result<tool_service_api::ToolCallOutcome, FunctionCallError> {
     tool_service
         .dispatch_tool(tool_service_api::ToolDispatchRequest {
             tool: tool_service_request(&sess, &turn_context, &tool_inputs),
@@ -1716,7 +1722,7 @@ pub(crate) async fn handle_tool_call(
     tracker: SharedTurnDiffTracker,
     call: tool_service_api::ToolCall,
     cancellation_token: CancellationToken,
-) -> Result<ResponseItem, CodexErr> {
+) -> Result<crate::stream_events_utils::InFlightToolResult, CodexErr> {
     let error_call = call.clone();
     match dispatch_tool_call(
         tool_service,
@@ -1730,9 +1736,20 @@ pub(crate) async fn handle_tool_call(
     )
     .await
     {
-        Ok(response) => Ok(response.into_response().into()),
+        Ok(tool_service_api::ToolCallOutcome::ReturnToModel(response)) => Ok(
+            crate::stream_events_utils::InFlightToolResult::ReturnToModel(
+                response.into_response().into(),
+            ),
+        ),
+        Ok(tool_service_api::ToolCallOutcome::FinishTurn) => {
+            Ok(crate::stream_events_utils::InFlightToolResult::FinishTurn)
+        }
         Err(FunctionCallError::Fatal(message)) => Err(CodexErr::Fatal(message)),
-        Err(other) => Ok(failure_response(error_call, other)),
+        Err(other) => Ok(
+            crate::stream_events_utils::InFlightToolResult::ReturnToModel(failure_response(
+                error_call, other,
+            )),
+        ),
     }
 }
 
@@ -1834,6 +1851,7 @@ pub(crate) fn map_model_response_event(
 pub(crate) struct SamplingRequestResult {
     pub(crate) needs_follow_up: bool,
     pub(crate) last_agent_message: Option<String>,
+    pub(crate) finish_turn: bool,
 }
 
 pub(crate) struct SamplingRequest<'a> {
@@ -2025,29 +2043,62 @@ async fn handle_assistant_item_done_in_plan_mode(
     false
 }
 
+#[cfg(test)]
 async fn drain_in_flight(
-    in_flight: &mut FuturesOrdered<BoxFuture<'static, CodexResult<ResponseItem>>>,
+    in_flight: &mut FuturesOrdered<InFlightFuture<'static>>,
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-) -> CodexResult<()> {
+) -> CodexResult<bool> {
+    let mut completed = Vec::new();
+    collect_in_flight(in_flight, &mut completed).await;
+    Ok(process_collected_tool_results(&mut completed, sess.as_ref(), turn_context.as_ref()).await)
+}
+
+async fn collect_in_flight(
+    in_flight: &mut FuturesOrdered<InFlightFuture<'static>>,
+    completed: &mut Vec<CodexResult<crate::stream_events_utils::InFlightToolResult>>,
+) {
     while let Some(res) = in_flight.next().await {
-        match res {
-            Ok(response_item) => {
-                sess.record_conversation_items(&turn_context, std::slice::from_ref(&response_item))
-                    .await;
-                mark_thread_memory_mode_polluted_if_external_context(
-                    sess.as_ref(),
-                    turn_context.as_ref(),
-                    &response_item,
-                )
-                .await;
-            }
-            Err(err) => {
-                error_or_panic(format!("in-flight tool future failed during drain: {err}"));
-            }
+        completed.push(res);
+    }
+}
+
+async fn process_collected_tool_results(
+    completed: &mut Vec<CodexResult<crate::stream_events_utils::InFlightToolResult>>,
+    sess: &Session,
+    turn_context: &TurnContext,
+) -> bool {
+    for result in completed.drain(..) {
+        if process_in_flight_result(result, sess, turn_context).await {
+            return true;
         }
     }
-    Ok(())
+    false
+}
+
+async fn process_in_flight_result(
+    result: CodexResult<crate::stream_events_utils::InFlightToolResult>,
+    sess: &Session,
+    turn_context: &TurnContext,
+) -> bool {
+    match result {
+        Ok(crate::stream_events_utils::InFlightToolResult::ReturnToModel(response_item)) => {
+            sess.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
+                .await;
+            mark_thread_memory_mode_polluted_if_external_context(
+                sess,
+                turn_context,
+                &response_item,
+            )
+            .await;
+            false
+        }
+        Ok(crate::stream_events_utils::InFlightToolResult::FinishTurn) => true,
+        Err(err) => {
+            error_or_panic(format!("in-flight tool future failed during drain: {err}"));
+            false
+        }
+    }
 }
 
 #[instrument(level = "trace",
@@ -2114,8 +2165,8 @@ async fn try_run_sampling_request(
         .await
         .map_err(|_| CodexErr::TurnAborted)?
         .map_err(|err| err.into_codex_err())?;
-    let mut in_flight: FuturesOrdered<BoxFuture<'static, CodexResult<ResponseItem>>> =
-        FuturesOrdered::new();
+    let mut in_flight: FuturesOrdered<InFlightFuture<'static>> = FuturesOrdered::new();
+    let mut completed_tool_results = Vec::new();
     let mut needs_follow_up = false;
     let mut last_agent_message: Option<String> = None;
     let mut active_item: Option<TurnItem> = None;
@@ -2264,7 +2315,27 @@ async fn try_run_sampling_request(
                         Err(err) => break Err(err),
                     };
                 if let Some(tool_future) = output_result.tool_future {
-                    in_flight.push_back(tool_future);
+                    if output_result.tool_is_terminal_control {
+                        collect_in_flight(&mut in_flight, &mut completed_tool_results).await;
+                        match tool_future.await {
+                            Ok(crate::stream_events_utils::InFlightToolResult::FinishTurn) => {
+                                process_collected_tool_results(
+                                    &mut completed_tool_results,
+                                    sess.as_ref(),
+                                    turn_context.as_ref(),
+                                )
+                                .await;
+                                break Ok(SamplingRequestResult {
+                                    needs_follow_up: false,
+                                    last_agent_message,
+                                    finish_turn: true,
+                                });
+                            }
+                            result => completed_tool_results.push(result),
+                        }
+                    } else {
+                        in_flight.push_back(tool_future);
+                    }
                 }
                 if let Some(agent_message) = output_result.last_agent_message {
                     last_agent_message = Some(agent_message);
@@ -2275,6 +2346,7 @@ async fn try_run_sampling_request(
                     break Ok(SamplingRequestResult {
                         needs_follow_up: true,
                         last_agent_message,
+                        finish_turn: false,
                     });
                 }
             }
@@ -2411,6 +2483,7 @@ async fn try_run_sampling_request(
                 break Ok(SamplingRequestResult {
                     needs_follow_up,
                     last_agent_message,
+                    finish_turn: false,
                 });
             }
             ResponseEvent::OutputTextDelta(delta) => {
@@ -2545,7 +2618,13 @@ async fn try_run_sampling_request(
         client_session.send_response_processed(response_id).await;
     }
 
-    drain_in_flight(&mut in_flight, sess.clone(), turn_context.clone()).await?;
+    collect_in_flight(&mut in_flight, &mut completed_tool_results).await;
+    let finish_turn = process_collected_tool_results(
+        &mut completed_tool_results,
+        sess.as_ref(),
+        turn_context.as_ref(),
+    )
+    .await;
 
     if should_emit_token_count {
         // A tool call such as request_user_input can intentionally pause the turn. Emit token
@@ -2570,7 +2649,12 @@ async fn try_run_sampling_request(
         }
     }
 
-    outcome
+    let mut outcome = outcome?;
+    if finish_turn {
+        outcome.needs_follow_up = false;
+        outcome.finish_turn = true;
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]

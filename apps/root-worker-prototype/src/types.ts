@@ -595,6 +595,12 @@ export type BootstrapResponse = {
     focusThreadId: string | null;
     errors: Array<{ threadId: string; message: string }>;
   };
+  expectedRestart?: {
+    recoveredThreadIds: string[];
+    failedThreadIds: string[];
+    expectedThreadIds: string[];
+    focusThreadId: string | null;
+  };
   appServer: {
     connected: boolean;
     pid: number | null;
@@ -693,6 +699,26 @@ export type NotificationEnvelope = {
       ok: boolean;
       relaunching: boolean;
       alreadyRequested?: boolean;
+      busy?: boolean;
+      conflict?: boolean;
+      mode?: "hot" | "full" | null;
+      requestedMode?: "hot" | "full" | null;
+      executingMode?: "hot" | "full" | null;
+      reason?: string | null;
+    };
+    lifecycle?: {
+      type: "rendererReload" | "installedArtifactUpdate" | "clientRelaunch";
+      phase:
+        | "building"
+        | "updated"
+        | "relaunching"
+        | "reloading"
+        | "reloaded"
+        | "fullRelaunchFallback"
+        | "completed"
+        | "failed";
+      mode?: "hot" | "full" | null;
+      requestId?: string;
       reason?: string | null;
     };
   };
@@ -927,6 +953,14 @@ export type FilePreviewImage = {
   byteSize: number;
 };
 
+export type FilePreviewPdf = {
+  path: string;
+  mimeType: string;
+  name: string;
+  byteSize: number;
+  url: string;
+};
+
 export type FilePreview = {
   path: string;
   displayPath: string;
@@ -946,6 +980,7 @@ export type FilePreview = {
     reason: string | null;
   };
   image?: FilePreviewImage | null;
+  pdf?: FilePreviewPdf | null;
 };
 
 export type FileLocation = {

@@ -932,6 +932,10 @@ pub enum AgentReferenceResolution {
         depth: i32,
         agent_path: String,
     },
+    PersistedNativeRoot {
+        thread_id: ThreadId,
+        agent_path: String,
+    },
     PersistedExternalReadOnly {
         thread_id: ThreadId,
         agent_path: String,

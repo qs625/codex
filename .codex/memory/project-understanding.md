@@ -1,13 +1,12 @@
 # Project Understanding
 
 ## Stable Working Rules
-- 所有 shell 命令必须以 `rtk` 开头。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
 - 当前项目的 PM / owner / reviewer 协作规则以 `.codex/agents/project-pm.agent.md` 及对应 owner agent 定义为准。
+- `.codex/pm-progress.md` 是当前调度状态文件，只保留最近半个月左右的活跃/近期进度和当前约束；更早历史归档到 `.codex/pm-progress-archive/` 并通过 `index.md` 查找。
 - 我们自己的 agent/runtime 产品名定为 Morpheus；外部官方 Codex provider 仍称 `codex_cli` / external Codex CLI provider。
 - 代码 crate、模块、变量名默认使用语义名，除非明确表达产品本身语义，否则不要带 Morpheus/Codex 等产品名。
-- `daily-cargo-clean-worktrees` schedule 触发时不是只确认通知，而是要实际在四个 checkout 的 `codex-rs/` 下运行 `rtk cargo clean`：`my-codex`、`my-codex-dev`、`my-codex-dev-2`、`my-codex-dev-3`。
 
 ## System Model
 - 这个项目的核心不是单一 CLI，而是一套围绕 thread、agent、tool call、event replay 和客户端展示组织起来的运行时系统。
@@ -21,6 +20,7 @@
 - workflow 中的 PM agent 不应被设计成一次性输出 owner brief 后就承担隐含持续监督；PM 模型线程结束后不会自动轮询 owner。owner 等待、超时、心跳、状态检查、完成通知消费、输出 schema 校验和异常分支应由 workflow runtime/script 持有；需要新的 PM 判断时，runtime 再显式唤起 PM/coordination step，并带上当前 durable state、owner 活动和异常证据。
 - 长期设计中，workflow 不能替代 PM 对依赖、冲突、owner 空闲、任务拆分和验收风险的语义判断；这些判断本身仍依赖模型理解代码库和当前上下文。workflow 真正能可靠化的是把 PM 的判断结果变成显式状态、有限转移、可审计事实和部分可自动检查的门禁，从而降低漏步骤、遗忘、错误交接和无人监督的概率；不能承诺“有 workflow 就一定正确”。
 - 模型可调用的 inter-agent tools 和 hook 系统已经是 runtime API 的真实样例：它们操作 thread/agent/event/pending input 等 runtime-owned 对象，而不是靠模型修改文件来间接影响行为。
+- agent path 属于 `ThreadService` 级全局虚拟 `/` namespace：absolute reference / absolute prefix list 可以跨 project/root group 查找，relative reference 仍从当前 agent path/root scope 解析；raw `ThreadId` read 仍必须受当前 agent directory 可见性约束。
 - 后续评估“是否把某能力做成 tool/API”时，优先问它是否操作 runtime 原生事实、是否能被 runtime enforce、是否需要进入 typed history 并在 compact/reload 后恢复；如果只是结构化记笔记或包装 markdown 修改，通常价值不大。
 - completion gate 的设计可先分为外部环境检查和内部 runtime 检查：外部检查优先用受控 shell gate；内部检查应依赖窄的 runtime introspection primitive，而不是一开始做万能高层 API。
 - completion gate 的 core runtime 不应负责定义“什么叫完成”，而应可靠暴露当前 runtime 状态；具体完成标准由 project/plugin/hook gate 组合 shell 结果和 runtime introspection 结果决定。
@@ -43,9 +43,11 @@
 - 内置 tool description 是 provider-visible contract 的一部分；不要用无 schema 的用户配置临时覆盖内置描述。若后续需要降低改文案成本，应优先抽成 repo-local typed template/assets，并用测试保证 native/external surface、tool name、schema 和参数语义不漂移。
 - 产品透明性原则：所有实际输入给模型/provider 的内容，以及模型/provider 返回的内容，都应通过 typed history/display 路径可见并可 reload 恢复。external agent initial prompt 中注入的 external tool spec 是 provider-visible 输入，也应作为输入事实展示；不能只展示用户原始 task、也不能只在 UI fake 展示。
 - External tool spec 注入必须由 Morpheus backend bridge 负责，不能依赖 external provider 自己的 init context 或 compact 保留策略。external provider 发生内部 compact 后，我们无法控制其 retained context；因此需要明确的 spec reinjection policy。但不要每次输入都重复完整 spec：应优先采用版本化 protocol context、compact-aware reinjection、parse-failure repair、或有界阈值 reinjection，并按透明性原则把实际 reinjected provider-visible content 进入 typed history/display。
+- agent directory / reference resolver 的全局 `/` namespace 包含 explicit `agent_path` 的 root/subagent，也包含普通 root project thread 的 cwd-derived virtual root path：当 root thread 没有 explicit `agent_path` 且不是 subagent tree target 时，用 persisted `cwd` basename 按前端 taskName 规则派生 `/segment`（如 `MyCV` -> `/mycv`）用于 list/read/resolve/followup；root restore 必须按目标 persisted cwd 重载 cwd-scoped config，不能沿用 sender project config。
 - external tools 与 internal tools 可共享 AgentControl / InterAgentCommunication / pending input / completion 事实源，但 model-visible tool 名称和 schema 必须分离。
 - ThreadProvider / agent provider 架构目标是 native 和 external 都作为一等公民接入 provider-neutral runtime；capability、prompt、tool schema 和 dispatch 不一致时，优先补齐 external 的真实 runtime 能力，而不是隐藏 external tool surface 或把 external 降级成次等 provider。
 - 当同一能力存在多个 provider 或设计路径时，架构判断应把它们都作为一等公民处理；差异应通过明确 capability、typed facts 和 provider-neutral 边界表达，而不是让某个设计长期停留在隐式例外或次等路径。
+- 所有 thread/agent path 都应位于统一虚拟 `/` 命名空间下：各 project root 可以在 UI/导航上作为各自顶层展示，但 inter-agent tools、agent reference resolution、list/filter/lookup 和 persisted spawn metadata 必须能通过全局绝对 path 查找任意 thread/agent，不能被当前 project root 隔离。历史 `/root` 只能作为兼容别名或普通兼容节点处理，不应继续定义“全局根”语义。
 - `thread/read` 和 `thread/turns/list` 的 live persisted history 读取已迁到 `LiveThreadHistoryRuntime` / `AppServerLiveThreadHistoryRuntime`。
 - listener/event-stream 入口已迁到 `LiveThreadListenerRuntime` / `LiveThreadListenerHandle`；idle-unload shutdown/removal、listener lifecycle live `AgentStatus` read 和 TurnComplete post-turn `ThreadRuntimeStatus` read 已迁到 `ThreadLifecycleRuntime`，running resume usage replay 已迁到 `LiveThreadUsageRuntime` / `AppServerLiveThreadUsageRuntime`，running resume goal effects/idle continuation 已迁到 `LiveThreadGoalRuntime` / `AppServerLiveThreadGoalRuntime`。listener handle 不再暴露 shutdown/wait、token/context usage、goal resume/continue effects、`AgentStatus` copied read 或 `ThreadRuntimeStatus` copied read。旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` facade 已删除。后续不要通过恢复 broad registry 来获取 live handle；需要新能力时应继续拆窄 runtime 或挂到明确的 provider-neutral runtime 边界。
 - Memory consolidation startup/shutdown/status/token usage 已从 broad `AppServerLiveThreadHandle` 迁到 memory-specific `AppServerMemoryConsolidationThreadHandle`；memory code 只需要 submit user input、agent status、wait terminated、token usage 和 shutdown，不应访问 config/read/history/context/goal/listener 能力。

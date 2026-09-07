@@ -13,9 +13,13 @@ import {
   MoreIcon,
   GearIcon,
   OpenIcon,
+  PencilIcon,
+  PlusIcon,
   RefreshIcon,
+  SaveIcon,
   SearchIcon,
   StopIcon,
+  XIcon,
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
 import { isChatCompatCwd } from "../lib/chatCompat";
@@ -60,7 +64,8 @@ type BrowserViewBounds = {
   height: number;
 };
 
-type BrowserPanelState = {
+type BrowserPanelTabState = {
+  id: string;
   url: string | null;
   title: string | null;
   loading: boolean;
@@ -69,14 +74,32 @@ type BrowserPanelState = {
   error: string | null;
 };
 
+type BrowserPanelActiveState = Omit<BrowserPanelTabState, "id">;
+
+type BrowserPanelState = BrowserPanelActiveState & {
+  activeTabId: string | null;
+  tabs: BrowserPanelTabState[];
+};
+
+type FilePreviewEditState = {
+  mode: "readonly" | "editing" | "saving";
+  path: string | null;
+  baseContent: string;
+  draft: string;
+  error: string | null;
+};
+
 type BrowserPanelApi = Pick<
   Window["codexDesktop"],
   | "browserGoBack"
   | "browserGoForward"
+  | "closeBrowserTab"
+  | "createBrowserTab"
   | "hideBrowserView"
   | "navigateBrowserView"
   | "openLink"
   | "reloadBrowserView"
+  | "selectBrowserTab"
   | "setBrowserViewBounds"
   | "showBrowserView"
   | "stopBrowserView"
@@ -141,6 +164,8 @@ const EMPTY_BROWSER_STATE: BrowserPanelState = {
   canGoBack: false,
   canGoForward: false,
   error: null,
+  activeTabId: null,
+  tabs: [],
 };
 
 function formatByteSize(bytes: number) {
@@ -180,6 +205,7 @@ export function RightPanel({
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
+  onPreviewUpdated,
   onSelectCommandMonitor,
   onSetActiveView,
   onSetCollapsed,
@@ -200,6 +226,7 @@ export function RightPanel({
   preview,
   previewError,
   previewLoading,
+  previewRootId,
   skills,
   thread,
   modelContextWindowOverride,
@@ -214,6 +241,7 @@ export function RightPanel({
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
+  onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetCollapsed: (value: boolean) => void;
@@ -234,6 +262,7 @@ export function RightPanel({
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
+  previewRootId: string | null;
   skills: ThreadSkill[];
   thread: Thread | null;
   modelContextWindowOverride?: number | null;
@@ -284,11 +313,13 @@ export function RightPanel({
                 onNavigateToSymbol={onNavigateToSymbol}
                 onOpenPreviewExternally={onOpenPreviewExternally}
                 onOpenTreeFile={onOpenTreeFile}
+                onPreviewUpdated={onPreviewUpdated}
                 onSetFilePanelView={onSetFilePanelView}
                 onToggleTreeDirectory={onToggleTreeDirectory}
                 preview={preview}
                 previewError={previewError}
                 previewLoading={previewLoading}
+                previewRootId={previewRootId}
                 thread={thread}
               />
             )}
@@ -616,21 +647,27 @@ function BrowserPanel({
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
+  const tabs = state.tabs.length > 0 ? state.tabs : browserTabsFromActiveState(state);
+  const activeTab =
+    tabs.find((tab) => tab.id === state.activeTabId) ?? tabs[0] ?? null;
+  const displayUrl = activeTab?.url ?? state.url ?? "";
+  const error = localError ?? activeTab?.error ?? state.error;
+  const activeTitle = activeTab?.title || state.title || "Browser";
+
+  const applyBrowserState = (nextState: BrowserPanelState) => {
+    const normalizedState = normalizeBrowserPanelState(nextState);
+    setState(normalizedState);
+    const normalizedActiveTab =
+      normalizedState.tabs.find(
+        (tab) => tab.id === normalizedState.activeTabId,
+      ) ?? normalizedState.tabs[0] ?? null;
+    setAddress(normalizedActiveTab?.url ?? "");
+  };
 
   useEffect(() => {
     const browserApi = currentBrowserPanelApi();
     const unsubscribe = browserApi?.subscribeBrowserState((nextState) => {
-      setState({
-        url: nextState.url,
-        title: nextState.title,
-        loading: nextState.loading,
-        canGoBack: nextState.canGoBack,
-        canGoForward: nextState.canGoForward,
-        error: nextState.error,
-      });
-      if (nextState.url) {
-        setAddress(nextState.url);
-      }
+      applyBrowserState(nextState);
     });
 
     return () => {
@@ -657,7 +694,7 @@ function BrowserPanel({
     setLocalError(null);
     void browserApi
       .navigateBrowserView(normalized.url)
-      .then(setState)
+      .then(applyBrowserState)
       .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   }, [navigationRequest, onNavigationRequestHandled]);
 
@@ -678,10 +715,7 @@ function BrowserPanel({
     void browserApi
       .showBrowserView(browserBoundsFromElement(viewport))
       .then((nextState) => {
-        setState(nextState);
-        if (nextState.url) {
-          setAddress(nextState.url);
-        }
+        applyBrowserState(nextState);
       })
       .catch((error) => setLocalError(toBrowserError(error)));
 
@@ -697,9 +731,6 @@ function BrowserPanel({
     };
   }, []);
 
-  const displayUrl = state.url ?? "";
-  const error = localError ?? state.error;
-
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
     if (!normalized.ok) {
@@ -714,7 +745,7 @@ function BrowserPanel({
     setLocalError(null);
     void browserApi
       .navigateBrowserView(normalized.url)
-      .then(setState)
+      .then(applyBrowserState)
       .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   };
 
@@ -729,10 +760,31 @@ function BrowserPanel({
     }
     setLocalError(null);
     void command(browserApi)
-      .then(setState)
+      .then(applyBrowserState)
       .catch((commandError) =>
         setLocalError(toBrowserError(commandError) || fallbackError),
       );
+  };
+
+  const createTab = () => {
+    runCommand((browserApi) => browserApi.createBrowserTab(), "Could not create a tab.");
+  };
+
+  const selectTab = (tabId: string) => {
+    if (tabId === state.activeTabId) {
+      return;
+    }
+    runCommand(
+      (browserApi) => browserApi.selectBrowserTab(tabId),
+      "Could not switch tabs.",
+    );
+  };
+
+  const closeTab = (tabId: string) => {
+    runCommand(
+      (browserApi) => browserApi.closeBrowserTab(tabId),
+      "Could not close the tab.",
+    );
   };
 
   return (
@@ -740,7 +792,7 @@ function BrowserPanel({
       <header className="panel-content-header browser-header">
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Browser</span>
-          <h2>{state.title || "Browser"}</h2>
+          <h2>{activeTitle}</h2>
         </div>
         <button
           type="button"
@@ -762,6 +814,62 @@ function BrowserPanel({
         </button>
       </header>
 
+      <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+        <div className="browser-tabs">
+          {tabs.map((tab) => {
+            const isActive = tab.id === (state.activeTabId ?? activeTab?.id);
+            return (
+              <div
+                key={tab.id}
+                className={`browser-tab-shell ${isActive ? "active" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="browser-tab"
+                  role="tab"
+                  aria-selected={isActive}
+                  title={browserTabLabel(tab)}
+                  onClick={() => selectTab(tab.id)}
+                >
+                  <span className={`browser-tab-dot ${tab.loading ? "loading" : ""}`} />
+                  <span className="browser-tab-title">{browserTabLabel(tab)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="browser-tab-close"
+                  aria-label={`Close ${browserTabLabel(tab)}`}
+                  title="Close tab"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      closeTab(tab.id);
+                    }
+                  }}
+                >
+                  <XIcon />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="browser-icon-button browser-new-tab-button"
+          aria-label="New browser tab"
+          title="New tab"
+          disabled={!hasBrowserApi}
+          onClick={createTab}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+
       <form
         className="browser-toolbar"
         onSubmit={(event) => {
@@ -774,7 +882,7 @@ function BrowserPanel({
           className="browser-icon-button"
           aria-label="Go back"
           title="Back"
-          disabled={!state.canGoBack || !hasBrowserApi}
+          disabled={!activeTab?.canGoBack || !hasBrowserApi}
           onClick={() =>
             runCommand(
               (browserApi) => browserApi.browserGoBack(),
@@ -789,7 +897,7 @@ function BrowserPanel({
           className="browser-icon-button"
           aria-label="Go forward"
           title="Forward"
-          disabled={!state.canGoForward || !hasBrowserApi}
+          disabled={!activeTab?.canGoForward || !hasBrowserApi}
           onClick={() =>
             runCommand(
               (browserApi) => browserApi.browserGoForward(),
@@ -802,20 +910,20 @@ function BrowserPanel({
         <button
           type="button"
           className="browser-icon-button"
-          aria-label={state.loading ? "Stop loading" : "Reload"}
-          title={state.loading ? "Stop" : "Reload"}
+          aria-label={activeTab?.loading ? "Stop loading" : "Reload"}
+          title={activeTab?.loading ? "Stop" : "Reload"}
           disabled={!hasBrowserApi}
           onClick={() =>
             runCommand(
               (browserApi) =>
-                state.loading
+                activeTab?.loading
                   ? browserApi.stopBrowserView()
                   : browserApi.reloadBrowserView(),
               "Could not update the page.",
             )
           }
         >
-          {state.loading ? <StopIcon /> : <RefreshIcon />}
+          {activeTab?.loading ? <StopIcon /> : <RefreshIcon />}
         </button>
         <input
           aria-label="Browser URL"
@@ -833,7 +941,7 @@ function BrowserPanel({
       </form>
 
       <div className="browser-status-row" role="status">
-        <span className={`browser-status-dot ${state.loading ? "loading" : "idle"}`} />
+        <span className={`browser-status-dot ${activeTab?.loading ? "loading" : "idle"}`} />
         <span title={error ?? displayUrl}>
           {error ?? (displayUrl || "Ready")}
         </span>
@@ -851,6 +959,61 @@ function BrowserPanel({
   );
 }
 
+export function normalizeBrowserPanelState(
+  state: BrowserPanelState | BrowserPanelActiveState,
+): BrowserPanelState {
+  const candidateState = state as Partial<BrowserPanelState> & BrowserPanelActiveState;
+  const tabs =
+    Array.isArray(candidateState.tabs) && candidateState.tabs.length > 0
+      ? candidateState.tabs
+      : browserTabsFromActiveState(candidateState);
+  const activeTabId =
+    typeof candidateState.activeTabId === "string"
+      ? candidateState.activeTabId
+      : null;
+  const activeTab =
+    tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
+  return {
+    url: activeTab?.url ?? candidateState.url,
+    title: activeTab?.title ?? candidateState.title,
+    loading: activeTab?.loading ?? candidateState.loading,
+    canGoBack: activeTab?.canGoBack ?? candidateState.canGoBack,
+    canGoForward: activeTab?.canGoForward ?? candidateState.canGoForward,
+    error: activeTab?.error ?? candidateState.error,
+    activeTabId: activeTab?.id ?? null,
+    tabs,
+  };
+}
+
+function browserTabsFromActiveState(state: BrowserPanelActiveState) {
+  return [
+    {
+      id: "browser-tab-active",
+      url: state.url,
+      title: state.title,
+      loading: state.loading,
+      canGoBack: state.canGoBack,
+      canGoForward: state.canGoForward,
+      error: state.error,
+    },
+  ];
+}
+
+export function browserTabLabel(tab: BrowserPanelTabState) {
+  if (tab.title?.trim()) {
+    return tab.title.trim();
+  }
+  if (!tab.url) {
+    return "New tab";
+  }
+  try {
+    const parsed = new URL(tab.url);
+    return parsed.host || tab.url;
+  } catch {
+    return tab.url;
+  }
+}
+
 function browserBoundsFromElement(element: HTMLElement): BrowserViewBounds {
   const rect = element.getBoundingClientRect();
   return {
@@ -861,7 +1024,7 @@ function browserBoundsFromElement(element: HTMLElement): BrowserViewBounds {
   };
 }
 
-function currentBrowserPanelApi(): BrowserPanelApi | null {
+export function currentBrowserPanelApi(): BrowserPanelApi | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -869,10 +1032,13 @@ function currentBrowserPanelApi(): BrowserPanelApi | null {
   if (
     !browserApi?.browserGoBack ||
     !browserApi.browserGoForward ||
+    !browserApi.closeBrowserTab ||
+    !browserApi.createBrowserTab ||
     !browserApi.hideBrowserView ||
     !browserApi.navigateBrowserView ||
     !browserApi.openLink ||
     !browserApi.reloadBrowserView ||
+    !browserApi.selectBrowserTab ||
     !browserApi.setBrowserViewBounds ||
     !browserApi.showBrowserView ||
     !browserApi.stopBrowserView ||
@@ -891,6 +1057,122 @@ function toBrowserError(error: unknown) {
     return error;
   }
   return "Browser action failed.";
+}
+
+function toFilePreviewSaveError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "Failed to save file.";
+}
+
+function initialFilePreviewEditState(): FilePreviewEditState {
+  return {
+    mode: "readonly",
+    path: null,
+    baseContent: "",
+    draft: "",
+    error: null,
+  };
+}
+
+export function syncFilePreviewEditState(
+  state: FilePreviewEditState,
+  preview: FilePreview | null,
+  _renderMode: ReturnType<typeof filePreviewRenderMode>,
+): FilePreviewEditState {
+  if (!preview || !filePreviewCanEdit(preview)) {
+    return initialFilePreviewEditState();
+  }
+  if (state.path !== preview.path) {
+    return {
+      mode: "readonly",
+      path: preview.path,
+      baseContent: preview.content,
+      draft: preview.content,
+      error: null,
+    };
+  }
+  if (state.mode === "readonly" && state.baseContent !== preview.content) {
+    return {
+      ...state,
+      baseContent: preview.content,
+      draft: preview.content,
+      error: null,
+    };
+  }
+  return state;
+}
+
+export function beginFilePreviewEdit(
+  state: FilePreviewEditState,
+): FilePreviewEditState {
+  if (!state.path || state.mode === "saving") {
+    return state;
+  }
+  return {
+    ...state,
+    mode: "editing",
+    draft: state.baseContent,
+    error: null,
+  };
+}
+
+export function updateFilePreviewDraft(
+  state: FilePreviewEditState,
+  draft: string,
+): FilePreviewEditState {
+  if (state.mode !== "editing") {
+    return state;
+  }
+  return { ...state, draft, error: null };
+}
+
+export function cancelFilePreviewEdit(
+  state: FilePreviewEditState,
+): FilePreviewEditState {
+  return {
+    ...state,
+    mode: "readonly",
+    draft: state.baseContent,
+    error: null,
+  };
+}
+
+export function beginFilePreviewSave(
+  state: FilePreviewEditState,
+): FilePreviewEditState {
+  if (state.mode !== "editing") {
+    return state;
+  }
+  return { ...state, mode: "saving", error: null };
+}
+
+export function completeFilePreviewSave(
+  state: FilePreviewEditState,
+  content: string,
+): FilePreviewEditState {
+  return {
+    ...state,
+    mode: "readonly",
+    baseContent: content,
+    draft: content,
+    error: null,
+  };
+}
+
+export function failFilePreviewSave(
+  state: FilePreviewEditState,
+  error: string,
+): FilePreviewEditState {
+  return {
+    ...state,
+    mode: "editing",
+    error,
+  };
 }
 
 function ThreadAnalysisPanel({
@@ -2413,10 +2695,45 @@ export function filePreviewRenderMode(preview: FilePreview | null) {
   if (preview.image) {
     return "image";
   }
+  if (preview.pdf) {
+    return "pdf";
+  }
   if (preview.language === "markdown") {
     return "markdown";
   }
   return "editor";
+}
+
+export function filePreviewCanEdit(preview: FilePreview | null) {
+  const renderMode = filePreviewRenderMode(preview);
+  return renderMode === "editor" || renderMode === "markdown";
+}
+
+export function filePreviewSourceEditorVisible(
+  preview: FilePreview | null,
+  editMode: FilePreviewEditState["mode"],
+) {
+  const renderMode = filePreviewRenderMode(preview);
+  return renderMode === "editor" || (filePreviewCanEdit(preview) && editMode !== "readonly");
+}
+
+export function filePreviewHeaderEditControlsVisible({
+  filePanelView,
+  preview,
+  previewError,
+  previewLoading,
+}: {
+  filePanelView: FilePanelView;
+  preview: FilePreview | null;
+  previewError: string | null;
+  previewLoading: boolean;
+}) {
+  return (
+    filePanelView === "preview" &&
+    !previewLoading &&
+    !previewError &&
+    filePreviewCanEdit(preview)
+  );
 }
 
 function FilePreviewPanel({
@@ -2428,11 +2745,13 @@ function FilePreviewPanel({
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
+  onPreviewUpdated,
   onSetFilePanelView,
   onToggleTreeDirectory,
   preview,
   previewError,
   previewLoading,
+  previewRootId,
   thread,
 }: {
   expandedTreeDirectories: string[];
@@ -2443,11 +2762,13 @@ function FilePreviewPanel({
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
+  onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetFilePanelView: (value: FilePanelView) => void;
   onToggleTreeDirectory: (path: string) => void;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
+  previewRootId: string | null;
   thread: Thread | null;
 }) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -2456,10 +2777,43 @@ function FilePreviewPanel({
   const pendingDefinitionRef = useRef(false);
   const modifierPressedRef = useRef(false);
   const previewEnabledRef = useRef(preview?.lsp.enabled ?? false);
+  const savePreviewDraftRef = useRef<() => void>(() => {});
+  const [editState, setEditState] = useState<FilePreviewEditState>(() =>
+    initialFilePreviewEditState(),
+  );
+  const previewRenderMode = filePreviewRenderMode(preview);
+  const previewIsEditable = filePreviewCanEdit(preview);
+  const previewSourceEditorVisible = filePreviewSourceEditorVisible(
+    preview,
+    editState.mode,
+  );
+  const showPreviewHeaderEditControls = filePreviewHeaderEditControlsVisible({
+    filePanelView,
+    preview,
+    previewError,
+    previewLoading,
+  });
+  const isEditingPreview = editState.mode === "editing";
+  const isSavingPreview = editState.mode === "saving";
+  const previewDraft =
+    previewIsEditable && editState.path === preview?.path
+      ? editState.draft
+      : (preview?.content ?? "");
+  const previewDirty =
+    previewIsEditable &&
+    editState.path === preview?.path &&
+    editState.draft !== editState.baseContent;
 
   useEffect(() => {
-    previewEnabledRef.current = preview?.lsp.enabled ?? false;
-  }, [preview?.lsp.enabled]);
+    previewEnabledRef.current =
+      (preview?.lsp.enabled ?? false) && editState.mode === "readonly";
+  }, [editState.mode, preview?.lsp.enabled]);
+
+  useEffect(() => {
+    setEditState((current) =>
+      syncFilePreviewEditState(current, preview, previewRenderMode),
+    );
+  }, [preview, previewRenderMode]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -2509,7 +2863,88 @@ function FilePreviewPanel({
 
   const threadRootPath =
     thread && !isChatCompatCwd(thread.cwd) ? thread.cwd : null;
-  const previewRenderMode = filePreviewRenderMode(preview);
+
+  async function savePreviewDraft() {
+    if (
+      !preview ||
+      !previewIsEditable ||
+      !isEditingPreview ||
+      !previewDirty ||
+      isSavingPreview
+    ) {
+      return;
+    }
+    const draft = editState.draft;
+    setEditState((current) => beginFilePreviewSave(current));
+    try {
+      await window.codexDesktop.writeLocalFile(preview.path, draft);
+      const updatedPreview = {
+        ...preview,
+        content: draft,
+      };
+      onPreviewUpdated(updatedPreview, previewRootId);
+      setEditState((current) =>
+        current.path === preview.path
+          ? completeFilePreviewSave(current, draft)
+          : current,
+      );
+    } catch (error) {
+      setEditState((current) =>
+        current.path === preview.path
+          ? failFilePreviewSave(current, toFilePreviewSaveError(error))
+          : current,
+      );
+    }
+  }
+  savePreviewDraftRef.current = () => {
+    void savePreviewDraft();
+  };
+  const previewHeaderEditActions =
+    preview && showPreviewHeaderEditControls ? (
+      editState.mode === "readonly" ? (
+        <button
+          type="button"
+          className="preview-edit-action preview-header-edit-action"
+          onClick={() =>
+            setEditState((current) =>
+              beginFilePreviewEdit(
+                syncFilePreviewEditState(
+                  current,
+                  preview,
+                  previewRenderMode,
+                ),
+              ),
+            )
+          }
+        >
+          <PencilIcon />
+          Edit
+        </button>
+      ) : (
+        <div className="preview-edit-actions preview-header-edit-actions">
+          <button
+            type="button"
+            className="preview-edit-action primary"
+            onClick={() => void savePreviewDraft()}
+            disabled={!previewDirty || isSavingPreview}
+          >
+            <SaveIcon />
+            {isSavingPreview ? "Saving" : "Save"}
+          </button>
+          <button
+            type="button"
+            className="preview-edit-action"
+            onClick={() =>
+              setEditState((current) => cancelFilePreviewEdit(current))
+            }
+            disabled={isSavingPreview}
+          >
+            <XIcon />
+            Cancel
+          </button>
+        </div>
+      )
+    ) : null;
 
   return (
     <div className="preview-panel">
@@ -2545,6 +2980,7 @@ function FilePreviewPanel({
               CWD Tree
             </button>
           </div>
+          {previewHeaderEditActions}
           <button
             type="button"
             className="panel-inline-action preview-open-button"
@@ -2604,7 +3040,36 @@ function FilePreviewPanel({
           </div>
         </div>
       ) : null}
-      {!previewLoading && !previewError && preview && previewRenderMode !== "image" ? (
+      {!previewLoading && !previewError && previewRenderMode === "pdf" && preview?.pdf ? (
+        <div className="preview-editor-shell preview-pdf-shell">
+          <div className="preview-utility-strip">
+            <div className="preview-utility-primary">
+              <span className="preview-signal plain" />
+              <button type="button" className="preview-lsp-button plain" disabled>
+                PDF
+              </button>
+            </div>
+            <div className="preview-utility-secondary">
+              <span>{preview.pdf.mimeType}</span>
+              <span className="preview-utility-separator">•</span>
+              <span>{formatByteSize(preview.pdf.byteSize)}</span>
+              <span className="preview-utility-separator">•</span>
+              <span className="preview-utility-cwd">{preview.pdf.name}</span>
+            </div>
+          </div>
+          <object
+            className="preview-pdf-frame"
+            data={preview.pdf.url}
+            type={preview.pdf.mimeType}
+            aria-label={`PDF preview for ${preview.pdf.name}`}
+          >
+            <div className="preview-empty">
+              <p>This PDF cannot be embedded here. Use the open button to view it in the system app.</p>
+            </div>
+          </object>
+        </div>
+      ) : null}
+      {!previewLoading && !previewError && preview && previewRenderMode !== "image" && previewRenderMode !== "pdf" ? (
         <div className="preview-editor-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
@@ -2627,7 +3092,7 @@ function FilePreviewPanel({
               </span>
             </div>
           </div>
-          {previewRenderMode === "markdown" ? (
+          {!previewSourceEditorVisible ? (
             <div className="preview-markdown-pad">
               <MarkdownContent
                 text={preview.content}
@@ -2640,12 +3105,23 @@ function FilePreviewPanel({
             </div>
           ) : (
             <div className="preview-editor-pad">
+              {editState.error ? (
+                <div className="preview-edit-error" role="alert">
+                  {editState.error}
+                </div>
+              ) : null}
               <Editor
                 key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
                 height="100%"
                 onMount={(editor, monaco) => {
                   editorRef.current = editor;
                   decorationCollectionRef.current = editor.createDecorationsCollection();
+                  editor.addCommand(
+                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                    () => {
+                      savePreviewDraftRef.current();
+                    },
+                  );
                   editor.revealPositionInCenter({
                     lineNumber: preview.line ?? 1,
                     column: preview.column ?? 1,
@@ -2661,7 +3137,7 @@ function FilePreviewPanel({
                       event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey;
                     updateLinkDecoration(editor, decorationCollectionRef.current, {
                       modifierPressed: modifierPressedRef.current,
-                      enabled: preview.lsp.enabled,
+                      enabled: previewEnabledRef.current,
                       position: hoverPositionRef.current,
                     });
                   });
@@ -2669,7 +3145,7 @@ function FilePreviewPanel({
                   editor.onMouseLeave(() => {
                     hoverPositionRef.current = null;
                     updateLinkDecoration(editor, decorationCollectionRef.current, {
-                      enabled: preview.lsp.enabled,
+                      enabled: previewEnabledRef.current,
                       modifierPressed: false,
                       position: null,
                     });
@@ -2677,7 +3153,7 @@ function FilePreviewPanel({
 
                   editor.onMouseDown((event) => {
                     if (
-                      !preview.lsp.enabled ||
+                      !previewEnabledRef.current ||
                       !event.target.position ||
                       event.event.browserEvent.button !== 0 ||
                       !(event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey) ||
@@ -2718,12 +3194,20 @@ function FilePreviewPanel({
                       .finally(() => {
                         pendingDefinitionRef.current = false;
                         updateLinkDecoration(editor, decorationCollectionRef.current, {
-                          enabled: preview.lsp.enabled,
+                          enabled: previewEnabledRef.current,
                           modifierPressed: modifierPressedRef.current,
                           position: hoverPositionRef.current,
                         });
                       });
                   });
+                }}
+                onChange={(value) => {
+                  if (!isEditingPreview) {
+                    return;
+                  }
+                  setEditState((current) =>
+                    updateFilePreviewDraft(current, value ?? ""),
+                  );
                 }}
                 language={preview.language}
                 loading={<div className="preview-empty">Loading editor…</div>}
@@ -2734,7 +3218,7 @@ function FilePreviewPanel({
                   fontSize: 12,
                   lineNumbersMinChars: 3,
                   minimap: { enabled: false },
-                  readOnly: true,
+                  readOnly: !isEditingPreview,
                   renderLineHighlight: "all",
                   roundedSelection: false,
                   scrollBeyondLastLine: false,
@@ -2743,7 +3227,7 @@ function FilePreviewPanel({
                 }}
                 path={preview.path}
                 theme="vs"
-                value={preview.content}
+                value={previewDraft}
               />
             </div>
           )}

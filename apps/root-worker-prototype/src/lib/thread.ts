@@ -1471,17 +1471,19 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
         contextUsage,
       });
 
-  return pruneThreadSnapshotToLatestCompact({
-    ...existing,
-    ...normalizedNext,
-    lifecycleStatus: preserveFinalLifecycleStatus(existing, normalizedNext),
-    threadUsage,
-    tokenUsage,
-    contextUsage,
-    stats: mergeThreadStats(existing.stats, normalizedNext.stats),
-    turns,
-    activeCommandItems: normalizedNext.activeCommandItems ?? [],
-  });
+  return dropDuplicateInitContextItems(
+    pruneThreadSnapshotToLatestCompact({
+      ...existing,
+      ...normalizedNext,
+      lifecycleStatus: preserveFinalLifecycleStatus(existing, normalizedNext),
+      threadUsage,
+      tokenUsage,
+      contextUsage,
+      stats: mergeThreadStats(existing.stats, normalizedNext.stats),
+      turns,
+      activeCommandItems: normalizedNext.activeCommandItems ?? [],
+    }),
+  );
 }
 
 function mergeThreadStats(
@@ -1629,7 +1631,9 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
     !activeCommandItemsChanged
       ? thread
       : { ...thread, turns, activeSubscriptionItems, activeCommandItems };
-  return pruneThreadSnapshotToLatestCompact(normalizedThread);
+  return dropDuplicateInitContextItems(
+    pruneThreadSnapshotToLatestCompact(normalizedThread),
+  );
 }
 
 function threadItemsArrayEqual(left: ThreadItem[], right: ThreadItem[]) {
@@ -1727,7 +1731,9 @@ function normalizeTurnSnapshot(turn: Turn): Turn {
   const items = turn.items.reduce<ThreadItem[]>((normalizedItems, item) => {
     const normalizedItem = normalizeThreadItemSnapshot(item);
     const existingIndex = normalizedItems.findIndex(
-      (item) => item.id === normalizedItem.id,
+      (item) =>
+        item.id === normalizedItem.id ||
+        isEquivalentInitContextItem(item, normalizedItem),
     );
     if (existingIndex === -1) {
       return [...normalizedItems, normalizedItem];
@@ -1743,6 +1749,34 @@ function normalizeTurnSnapshot(turn: Turn): Turn {
     items.every((item, index) => item === turn.items[index])
     ? turn
     : { ...turn, items };
+}
+
+function dropDuplicateInitContextItems(thread: Thread): Thread {
+  const seenKeys = new Set<string>();
+  let changed = false;
+  const turns = thread.turns.flatMap((turn) => {
+    const items = turn.items.filter((item) => {
+      const key = initContextItemKey(item);
+      if (key === null) {
+        return true;
+      }
+      if (seenKeys.has(key)) {
+        changed = true;
+        return false;
+      }
+      seenKeys.add(key);
+      return true;
+    });
+    if (items.length === 0 && turn.items.length > 0) {
+      changed = true;
+      return [];
+    }
+    if (items.length !== turn.items.length) {
+      return [{ ...turn, items }];
+    }
+    return [turn];
+  });
+  return changed ? { ...thread, turns } : thread;
 }
 
 export function upsertThread(threads: Thread[], next: Thread) {
@@ -1859,6 +1893,51 @@ export function applyOrQueueInitializedThreadUpdate(
 
 export function isTurnInFlight(turn: Turn) {
   return turn.status === "running" || turn.status === "inProgress";
+}
+
+export function getInterruptibleTurn(thread: Thread | null) {
+  if (!thread || isTerminalThreadLifecycle(thread.lifecycleStatus)) {
+    return null;
+  }
+
+  const candidates = thread.turns.filter(
+    (turn) => isTurnInFlight(turn) && turn.completedAt == null,
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const runningCandidates = candidates.filter(
+    (turn) => turn.status === "running",
+  );
+  return pickLatestStartedTurn(
+    runningCandidates.length > 0 ? runningCandidates : candidates,
+  );
+}
+
+function isTerminalThreadLifecycle(status: ThreadLifecycleStatus) {
+  return (
+    status.type === "final" ||
+    status.type === "notLoaded" ||
+    status.type === "systemError"
+  );
+}
+
+function pickLatestStartedTurn(turns: Turn[]) {
+  return [...turns].sort(compareTurnRecency)[0] ?? null;
+}
+
+function compareTurnRecency(left: Turn, right: Turn) {
+  const leftStarted = left.startedAt ?? Number.NEGATIVE_INFINITY;
+  const rightStarted = right.startedAt ?? Number.NEGATIVE_INFINITY;
+  if (leftStarted !== rightStarted) {
+    return rightStarted - leftStarted;
+  }
+  return right.id.localeCompare(left.id);
+}
+
+export function isActiveTurnMismatchError(message: string) {
+  return /\bexpected active turn id \S+ but found \S+\b/i.test(message);
 }
 
 export function isThreadThinking(

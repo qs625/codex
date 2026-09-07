@@ -335,23 +335,31 @@ pub(crate) async fn read_agent_tool(
     target: String,
 ) -> Result<ReadAgentToolResult, FunctionCallError> {
     session.register_session_root_for_turn(turn.as_ref());
-    let agent_id = if let Ok(thread_id) = ThreadId::from_string(&target) {
-        thread_id
+    let (agent_id, resolved_from_reference) = if let Ok(thread_id) = ThreadId::from_string(&target)
+    {
+        (thread_id, false)
     } else {
-        session
-            .resolve_agent_reference_for_read(turn.as_ref(), &target)
-            .await
-            .map_err(|err| match err {
-                protocol::error::CodexErr::UnsupportedOperation(message) => {
-                    FunctionCallError::RespondToModel(message)
-                }
-                other => FunctionCallError::RespondToModel(other.to_string()),
-            })?
+        (
+            session
+                .resolve_agent_reference_for_read(turn.as_ref(), &target)
+                .await
+                .map_err(|err| match err {
+                    protocol::error::CodexErr::UnsupportedOperation(message) => {
+                        FunctionCallError::RespondToModel(message)
+                    }
+                    other => FunctionCallError::RespondToModel(other.to_string()),
+                })?,
+            true,
+        )
     };
-    let agent = session
-        .read_agent_for_turn(turn.as_ref(), agent_id)
-        .await
-        .map_err(collab_spawn_error)?;
+    let agent = if resolved_from_reference {
+        session
+            .read_resolved_agent_for_turn(turn.as_ref(), agent_id)
+            .await
+    } else {
+        session.read_agent_for_turn(turn.as_ref(), agent_id).await
+    }
+    .map_err(collab_spawn_error)?;
 
     Ok(ReadAgentToolResult { agent })
 }

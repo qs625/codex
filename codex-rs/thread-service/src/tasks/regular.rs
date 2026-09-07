@@ -92,7 +92,9 @@ impl SessionTask for RegularTask {
             )
             .instrument(run_turn_span.clone())
             .await;
-            if !sess.has_pending_input().await {
+            if sess.current_turn_has_terminal_handoff().await
+                || !sess.has_pending_input().await
+            {
                 return last_agent_message;
             }
             next_input = Vec::new();

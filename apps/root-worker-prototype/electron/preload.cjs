@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   listLocalDirectory: (target) =>
     ipcRenderer.invoke("codex:listLocalDirectory", target),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
+  writeLocalFile: (target, content) =>
+    ipcRenderer.invoke("codex:writeLocalFile", target, content),
   readLocalImage: (target) =>
     ipcRenderer.invoke("codex:readLocalImage", target),
   readGitSnapshot: (cwd, options) =>
@@ -64,6 +66,11 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:browser:setBounds", bounds),
   navigateBrowserView: (target) =>
     ipcRenderer.invoke("codex:browser:navigate", target),
+  createBrowserTab: (target) => ipcRenderer.invoke("codex:browser:newTab", target),
+  selectBrowserTab: (tabId) =>
+    ipcRenderer.invoke("codex:browser:selectTab", tabId),
+  closeBrowserTab: (tabId) =>
+    ipcRenderer.invoke("codex:browser:closeTab", tabId),
   browserGoBack: () => ipcRenderer.invoke("codex:browser:goBack"),
   browserGoForward: () => ipcRenderer.invoke("codex:browser:goForward"),
   reloadBrowserView: () => ipcRenderer.invoke("codex:browser:reload"),

@@ -28,6 +28,7 @@ pub struct TurnState {
     accepts_async_input_for_current_turn: bool,
     granted_permissions: Option<AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
+    terminal_handoff: bool,
     pub tool_calls: u64,
     pub has_memory_citation: bool,
     pub token_usage_at_turn_start: TokenUsage,
@@ -45,6 +46,7 @@ impl Default for TurnState {
             accepts_async_input_for_current_turn: true,
             granted_permissions: None,
             strict_auto_review_enabled: false,
+            terminal_handoff: false,
             tool_calls: 0,
             has_memory_citation: false,
             token_usage_at_turn_start: TokenUsage::default(),
@@ -60,6 +62,14 @@ pub struct PendingRequestPermissions {
 }
 
 impl TurnState {
+    pub fn mark_terminal_handoff(&mut self) {
+        self.terminal_handoff = true;
+    }
+
+    pub fn terminal_handoff(&self) -> bool {
+        self.terminal_handoff
+    }
+
     pub fn insert_pending_approval(
         &mut self,
         key: String,

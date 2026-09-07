@@ -16,7 +16,7 @@ description: "在 my-codex 项目中使用 Playwright 调试 root-worker prototy
 `playwright` 是 `apps/root-worker-prototype` 的 devDependency。主 checkout 首次使用前准备 JS 依赖：
 
 ```bash
-rtk pnpm install
+pnpm install
 ```
 
 固定开发 checkout `~/Projects/my-codex-dev` 与主 checkout 独立管理 JS 依赖，不共享 `node_modules`。如果当前 checkout 没有可用依赖，先在该 checkout 运行必要的 JS 依赖安装命令。
@@ -28,24 +28,24 @@ rtk pnpm install
 如果只是调试普通前端页面或复现 renderer DOM/CSS 问题，可以使用 Playwright CLI，但必须使用项目内 `playwright` 包管理的 Chromium：
 
 ```bash
-rtk pnpm --dir apps/root-worker-prototype exec playwright open --browser chromium http://127.0.0.1:<port>
+pnpm --dir apps/root-worker-prototype exec playwright open --browser chromium http://127.0.0.1:<port>
 ```
 
 不要使用系统浏览器 channel，例如 `--channel chrome`、`--channel msedge`，也不要在调试脚本里指定系统浏览器 `executablePath`。如果 Chromium 尚未安装，先在当前 checkout 安装 Playwright 管理的浏览器：
 
 ```bash
-rtk pnpm --dir apps/root-worker-prototype exec playwright install chromium
+pnpm --dir apps/root-worker-prototype exec playwright install chromium
 ```
 
 如果需要把浏览器二进制固定到项目依赖目录内，安装和运行时都使用：
 
 ```bash
-rtk env PLAYWRIGHT_BROWSERS_PATH=0 \
+env PLAYWRIGHT_BROWSERS_PATH=0 \
   pnpm --dir apps/root-worker-prototype exec playwright install chromium
 ```
 
 ```bash
-rtk env PLAYWRIGHT_BROWSERS_PATH=0 \
+env PLAYWRIGHT_BROWSERS_PATH=0 \
   pnpm --dir apps/root-worker-prototype exec playwright open --browser chromium http://127.0.0.1:<port>
 ```
 
@@ -66,7 +66,7 @@ scripts/
 运行一次完整 Electron smoke：随机端口启动 Vite，启动 Electron，关闭 DevTools，选择真实应用窗口，检查 `window.codexDesktop`，尝试输入，并截图。
 
 ```bash
-rtk scripts/run-electron-smoke.sh
+scripts/run-electron-smoke.sh
 ```
 
 默认输出：
@@ -78,7 +78,7 @@ rtk scripts/run-electron-smoke.sh
 常用覆盖：
 
 ```bash
-rtk env \
+env \
   ROOT_WORKER_SCREENSHOT_PATH=/tmp/root-worker-debug.png \
   ROOT_WORKER_SMOKE_INPUT="hello from playwright" \
   scripts/run-electron-smoke.sh
@@ -89,14 +89,32 @@ rtk env \
 启动一个可手动操作的完整 Electron dev 实例。脚本会自动选空闲端口，并把 Vite URL 传给 Electron。
 
 ```bash
-rtk scripts/launch-electron-dev.sh
+scripts/launch-electron-dev.sh
 ```
 
 默认关闭 DevTools，避免 Playwright 抓到 DevTools window。需要 DevTools 时：
 
 ```bash
-rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
+env ROOT_WORKER_OPEN_DEVTOOLS=1 \
   scripts/launch-electron-dev.sh
+```
+
+需要用客户端内置 Browser panel 作为载体，通过 Playwright/CDP 调试其它前端页面时，使用用户配置目录中的通用 `frontend-debug` skill。该场景不是 Root Worker 专用前端调试流程；Root Worker 文档只负责提供完整客户端启动方式和 CDP endpoint，具体 DOM、console、network、截图和交互排查使用 `playwright-cli`：
+
+```text
+/Users/bytedance/.morpheus/skills/frontend-debug/SKILL.md
+```
+
+该场景可用：
+
+```bash
+scripts/launch-electron-dev.sh
+```
+
+脚本会打印 `CDP_URL=http://127.0.0.1:9222`；CDP 默认只绑定 loopback。需要避开端口冲突时设置 `ROOT_WORKER_REMOTE_DEBUGGING_PORT=<port>`，需要关闭本地 CDP endpoint 时设置 `ROOT_WORKER_DISABLE_CDP=1`。先在客户端 Browser panel 打开目标 URL，再按通用 skill 连接并选择 URL 匹配的 tab：
+
+```bash
+playwright-cli attach --cdp=http://127.0.0.1:9222
 ```
 
 ## Morpheus 状态
@@ -119,7 +137,7 @@ ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-debug/workspace
 如需冷启动或隔离某次调试：
 
 ```bash
-rtk env \
+env \
   ROOT_WORKER_DEBUG_MORPHEUS_HOME=/tmp/root-worker-oneoff/morpheus-home \
   ROOT_WORKER_DEBUG_WORKSPACE=/tmp/root-worker-oneoff/workspace \
   scripts/run-electron-smoke.sh
@@ -142,7 +160,7 @@ CODEX_APP_SERVER_CMD="$REPO/codex-rs/target/debug/app-server --listen stdio://"
 如需指定其他 binary：
 
 ```bash
-rtk env CODEX_APP_SERVER_CMD="/path/to/app-server --listen stdio://" \
+env CODEX_APP_SERVER_CMD="/path/to/app-server --listen stdio://" \
   scripts/run-electron-smoke.sh
 ```
 

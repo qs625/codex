@@ -1,5 +1,20 @@
 export {};
 
+type BrowserPanelTabState = {
+  id: string;
+  url: string | null;
+  title: string | null;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error: string | null;
+};
+
+type BrowserPanelState = Omit<BrowserPanelTabState, "id"> & {
+  activeTabId: string | null;
+  tabs: BrowserPanelTabState[];
+};
+
 declare global {
   interface Window {
     codexDesktop: {
@@ -33,6 +48,12 @@ declare global {
           failedThreadIds: string[];
           focusThreadId: string | null;
           errors: Array<{ threadId: string; message: string }>;
+        };
+        expectedRestart?: {
+          recoveredThreadIds: string[];
+          failedThreadIds: string[];
+          expectedThreadIds: string[];
+          focusThreadId: string | null;
         };
         appServer: {
           connected: boolean;
@@ -154,6 +175,7 @@ declare global {
           hidden: boolean;
           system: boolean;
         };
+        materializedSelfThreadId?: string | null;
         thread: unknown;
         turn: unknown;
       }>;
@@ -271,6 +293,21 @@ declare global {
           name: string;
           byteSize: number;
         } | null;
+        pdf?: {
+          path: string;
+          mimeType: string;
+          name: string;
+          byteSize: number;
+          url: string;
+        } | null;
+      }>;
+      writeLocalFile: (
+        target: string,
+        content: string,
+      ) => Promise<{
+        ok: true;
+        path: string;
+        byteSize: number;
       }>;
       lspDefinition: (payload: {
         path: string;
@@ -306,84 +343,24 @@ declare global {
         y: number;
         width: number;
         height: number;
-      }) => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      hideBrowserView: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
+      }) => Promise<BrowserPanelState>;
+      hideBrowserView: () => Promise<BrowserPanelState>;
       setBrowserViewBounds: (bounds: {
         x: number;
         y: number;
         width: number;
         height: number;
-      }) => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      navigateBrowserView: (target: string) => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      browserGoBack: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      browserGoForward: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      reloadBrowserView: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      stopBrowserView: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
+      }) => Promise<BrowserPanelState>;
+      navigateBrowserView: (target: string) => Promise<BrowserPanelState>;
+      createBrowserTab: (target?: string | null) => Promise<BrowserPanelState>;
+      selectBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
+      closeBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
+      browserGoBack: () => Promise<BrowserPanelState>;
+      browserGoForward: () => Promise<BrowserPanelState>;
+      reloadBrowserView: () => Promise<BrowserPanelState>;
+      stopBrowserView: () => Promise<BrowserPanelState>;
       subscribeBrowserState: (
-        listener: (state: {
-          url: string | null;
-          title: string | null;
-          loading: boolean;
-          canGoBack: boolean;
-          canGoForward: boolean;
-          error: string | null;
-        }) => void,
+        listener: (state: BrowserPanelState) => void,
       ) => () => void;
       sendMessage: (payload: {
         threadId: string;
@@ -444,7 +421,10 @@ declare global {
             reason?: string;
             mobileConnection?: AndroidConnectionInfo;
             lifecycle?: {
-              type: "rendererReload" | "installedArtifactUpdate";
+              type:
+                | "rendererReload"
+                | "installedArtifactUpdate"
+                | "clientRelaunch";
               phase:
                 | "building"
                 | "updated"
@@ -452,13 +432,21 @@ declare global {
                 | "reloading"
                 | "reloaded"
                 | "fullRelaunchFallback"
+                | "completed"
                 | "failed";
+              mode?: "hot" | "full" | null;
+              requestId?: string;
               reason?: string | null;
             };
             relaunch?: {
               ok: boolean;
               relaunching: boolean;
               alreadyRequested?: boolean;
+              busy?: boolean;
+              conflict?: boolean;
+              mode?: "hot" | "full" | null;
+              requestedMode?: "hot" | "full" | null;
+              executingMode?: "hot" | "full" | null;
               reason?: string | null;
             };
           };
