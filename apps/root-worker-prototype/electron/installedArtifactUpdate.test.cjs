@@ -7,10 +7,12 @@ const path = require("node:path");
 const {
   buildDirectArtifactSources,
   listElectronShellSourceRelativePaths,
+  materializeInstalledArtifactWorkerBundle,
   prepareDirectArtifacts,
   resolveElectronShellUpdate,
   resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
+  resolveInstalledArtifactUpdatePlanInWorker,
   replaceInstalledArtifactsSync,
   updateInstalledArtifacts,
   updateInstalledArtifactsInWorker,
@@ -635,6 +637,111 @@ fi
   assert.equal(updateSettled, false);
   assert.equal((await update).ok, true);
   assert.equal(read(fixture.targetAppAsar), "new asar");
+});
+
+test("installed artifact worker bundle contains every dependency and starts", async () => {
+  const bundlePath = materializeInstalledArtifactWorkerBundle();
+  assert.deepEqual(
+    fs.readdirSync(bundlePath).sort(),
+    [
+      "environment.cjs",
+      "installedArtifactUpdate.cjs",
+      "installedArtifactUpdateWorker.cjs",
+      "workspace.cjs",
+    ],
+  );
+
+  assert.equal(
+    await resolveInstalledArtifactUpdatePlanInWorker({
+      isPackaged: false,
+      platform: "linux",
+    }),
+    null,
+  );
+});
+
+test("installed app.asar digest bypasses Electron archive-root fs semantics", () => {
+  const fixture = createUpdateFixture();
+  const rawReadPaths = [];
+  const electronPatchedReadFileSync = (filePath) => {
+    if (path.basename(filePath) === "app.asar") {
+      const error = new Error(
+        `ENOENT,  not found in ${filePath}`,
+      );
+      error.code = "ENOENT";
+      throw error;
+    }
+    return fs.readFileSync(filePath);
+  };
+
+  assert.throws(
+    () => electronPatchedReadFileSync(fixture.targetAppAsar),
+    /ENOENT,  not found in .*app\.asar/,
+  );
+
+  const result = updateInstalledArtifacts(fixture.plan, {
+    directStagingRoot: fixture.directStagingRoot,
+    readFileSync: electronPatchedReadFileSync,
+    rawReadFileSync: (filePath) => {
+      rawReadPaths.push(filePath);
+      return fs.readFileSync(filePath);
+    },
+    spawnSync: (_command, args) => {
+      if (args.includes("@electron/asar")) {
+        write(args.at(-1), "new asar");
+      }
+      return { status: 0 };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(read(fixture.targetAppAsar), "new asar");
+  assert.deepEqual(
+    rawReadPaths,
+    [
+      path.join(fixture.directStagingRoot, "resources/app.asar"),
+      fixture.targetAppAsar,
+    ],
+  );
+});
+
+test("raw app.asar reader failures restore installed artifacts", () => {
+  const cases = [
+    {
+      expected:
+        /Failed to load Electron original-fs for raw app\.asar verification.*loader failed/,
+      loadOriginalFileSystem() {
+        throw new Error("loader failed");
+      },
+    },
+    {
+      expected:
+        /Electron original-fs does not provide readFileSync for raw app\.asar verification/,
+      loadOriginalFileSystem() {
+        return {};
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = createUpdateFixture();
+    assert.throws(
+      () =>
+        updateInstalledArtifacts(fixture.plan, {
+          directStagingRoot: fixture.directStagingRoot,
+          isElectron: true,
+          loadOriginalFileSystem: testCase.loadOriginalFileSystem,
+          spawnSync: (_command, args) => {
+            if (args.includes("@electron/asar")) {
+              write(args.at(-1), "new asar");
+            }
+            return { status: 0 };
+          },
+        }),
+      testCase.expected,
+    );
+    assertInstalledArtifactsUnchanged(fixture);
+  }
 });
 
 test("codesign failure restores old installed artifacts", () => {
