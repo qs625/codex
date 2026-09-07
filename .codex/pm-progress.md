@@ -11,6 +11,22 @@
 Define a unified instruction/memory model and make compact refresh current file-backed model context without special-casing AGENTS.md.
 
 ## Active Work
+- id: runtime-restart-terminal-handoff-smoke
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-restart-build-update
+  task_type: bugfix/runtime-lifecycle
+  depends_on: durable terminal restart commit `d1bb9cab6d`; raw archive read commit `9f1bb5dd51`
+  files: apps/root-worker-prototype/electron/installedArtifactUpdate.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs
+  base_commit: a45f585720921e5e478f9917437761b5120ba43a
+  pending_sync_from_main: dev-3 remains on delivered commit `8dd8fc43d1`; sync after final installed hot-smoke acceptance.
+  status: testing
+  objective: Complete real installed-app acceptance for durable terminal hot restart. Raw `app.asar` filesystem operations and updater-owned archive container cleanup must bypass Electron patched `node:fs` through a narrow `original-fs` boundary while preserving rollback, signature backup, and fail-closed behavior.
+  last_update: 2026-09-07 CST second hot smoke `call_CquFhgw2RVCISeDoms7nRFl7` failed before restart because writable preflight still used patched `accessSync` on raw `app.asar`. Owner confirmed installed/source/materialized-worker hashes already matched, expanded the fix across exact archive access/stat/copy/rename/remove/digest and owned container cleanup, completed three fixed-reviewer rounds, and delivered `8dd8fc43d1`. PM merged the complete restart branch to main as `833941f5ec`; merged-main focused tests passed 124/124 and Root Worker build passed with only the existing chunk-size warning.
+  next_action: run the direct installed artifact updater, verify codesign and artifact hashes/mtimes, then trigger exactly one hot restart and validate Electron PID stability, app-server PID replacement, renderer reload, and durable intent consumed/completed.
+  blockers: none
+  validation: Owner 124/124 focused tests, production build, real Electron 37.10.3 safe-temp update smoke, node syntax, raw boundary scan, and diff checks passed. PM merged-main 124/124 focused tests and production build passed. Final `/Applications` hot smoke remains pending.
+  commit: 833941f5ec, 8dd8fc43d115cb1e8dd4a76a38671e0ebde2777c, 9f1bb5dd51a080b9bc9d364d03181ebc693a2111
 - id: revert-terminal-turn-intermediate-item-folding
   owner: /self/my_codex_owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
