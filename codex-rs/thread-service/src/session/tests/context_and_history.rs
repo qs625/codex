@@ -947,6 +947,63 @@ async fn task_finish_restarts_turn_for_leftover_pending_user_input() {
 }
 
 #[tokio::test]
+async fn terminal_handoff_clears_active_turn_without_auto_starting_leftover_input() {
+    let (sess, tc, _rx) = make_session_and_context_with_rx().await;
+    let queued_item = ResponseInputItem::Message {
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "continue after expected restart".to_string(),
+        }],
+        phase: None,
+    };
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: false,
+        },
+    )
+    .await;
+    sess.inject_hook_inspectable_items(vec![queued_item.clone()])
+        .await
+        .expect("inject pending input into active turn");
+    sess.mark_current_turn_terminal_handoff().await;
+
+    sess.on_task_finished(Arc::clone(&tc), /*last_agent_message*/ None)
+        .await;
+    tokio::task::yield_now().await;
+
+    assert!(sess.active_turn.lock().await.is_none());
+    assert!(
+        sess.clone_history()
+            .await
+            .raw_items()
+            .contains(&queued_item.clone().into()),
+        "leftover input should remain in persisted model history for restart recovery"
+    );
+
+    let next_turn = sess.new_default_turn().await;
+    sess.spawn_task(
+        Arc::clone(&next_turn),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: false,
+        },
+    )
+    .await;
+
+    assert_eq!(
+        sess.active_turn_context_and_cancellation_token()
+            .await
+            .map(|(turn, _)| turn.sub_id.clone()),
+        Some(next_turn.sub_id.clone())
+    );
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn task_finish_prioritizes_thread_pending_work_without_losing_leftover_input() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     sess.spawn_task(

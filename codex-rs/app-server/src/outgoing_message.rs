@@ -592,6 +592,26 @@ impl OutgoingMessageSender {
         }
     }
 
+    pub(crate) async fn send_server_notification_to_connection(
+        &self,
+        connection_id: ConnectionId,
+        notification: ServerNotification,
+    ) -> std::result::Result<(), String> {
+        tracing::trace!("app-server event: {notification}");
+        let outgoing_message = OutgoingMessage::AppServerNotification(notification.clone());
+        self.sender
+            .send(OutgoingEnvelope::ToConnection {
+                connection_id,
+                message: outgoing_message,
+                write_complete_tx: None,
+            })
+            .await
+            .map_err(|error| {
+                warn!("failed to send server notification to client: {error:?}");
+                error.to_string()
+            })
+    }
+
     pub(crate) async fn send_server_notification_to_connection_and_wait(
         &self,
         connection_id: ConnectionId,
@@ -891,6 +911,7 @@ mod tests {
     fn verify_client_relaunch_requested_notification_serialization() {
         let notification =
             ServerNotification::ClientRelaunchRequested(ClientRelaunchRequestedNotification {
+                request_id: "restart-call".to_string(),
                 mode: app_server_protocol::ClientRelaunchMode::Full,
                 reason: Some("runtime update".to_string()),
                 requested_by_thread_id: Some("thread-1".to_string()),
@@ -902,6 +923,7 @@ mod tests {
             json!({
                 "method": "client/relaunch/requested",
                 "params": {
+                    "requestId": "restart-call",
                     "mode": "full",
                     "reason": "runtime update",
                     "requestedByThreadId": "thread-1",

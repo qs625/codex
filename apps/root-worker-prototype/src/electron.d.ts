@@ -49,6 +49,12 @@ declare global {
           focusThreadId: string | null;
           errors: Array<{ threadId: string; message: string }>;
         };
+        expectedRestart?: {
+          recoveredThreadIds: string[];
+          failedThreadIds: string[];
+          expectedThreadIds: string[];
+          focusThreadId: string | null;
+        };
         appServer: {
           connected: boolean;
           pid: number | null;
@@ -429,6 +435,7 @@ declare global {
                 | "completed"
                 | "failed";
               mode?: "hot" | "full" | null;
+              requestId?: string;
               reason?: string | null;
             };
             relaunch?: {

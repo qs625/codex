@@ -43,6 +43,7 @@ use crate::request_serialization::RequestSerializationQueueKey;
 use crate::request_serialization::RequestSerializationQueues;
 use crate::skills_watcher::SkillsWatcher;
 use crate::thread_state::ConnectionCapabilities;
+use crate::thread_state::HostLifecycleRegistrationError;
 use crate::thread_state::ThreadStateManager;
 use crate::thread_store_factory::thread_store_from_config;
 use crate::transport::AppServerTransport;
@@ -50,6 +51,7 @@ use crate::transport::RemoteControlHandle;
 use app_server_protocol::ChatgptAuthTokensRefreshParams;
 use app_server_protocol::ChatgptAuthTokensRefreshReason;
 use app_server_protocol::ChatgptAuthTokensRefreshResponse;
+use app_server_protocol::ClientLifecycleRegisterResponse;
 use app_server_protocol::ClientNotification;
 use app_server_protocol::ClientRequest;
 use app_server_protocol::ClientResponsePayload;
@@ -101,6 +103,16 @@ use tokio::sync::watch;
 use tokio::time::Duration;
 use tokio::time::timeout;
 use tracing::Instrument;
+
+const HOST_LIFECYCLE_CLIENT_NAME: &str = "root_worker_prototype_electron";
+
+pub(crate) fn is_host_lifecycle_connection(
+    transport: &AppServerTransport,
+    client_name: Option<&str>,
+) -> bool {
+    matches!(transport, AppServerTransport::Stdio)
+        && client_name == Some(HOST_LIFECYCLE_CLIENT_NAME)
+}
 
 const EXTERNAL_AUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -236,6 +248,7 @@ pub(crate) struct MessageProcessor {
     turn_processor: TurnRequestProcessor,
     windows_sandbox_processor: WindowsSandboxRequestProcessor,
     workflow_processor: WorkflowRequestProcessor,
+    thread_state_manager: ThreadStateManager,
     request_serialization_queues: RequestSerializationQueues,
 }
 
@@ -368,7 +381,10 @@ impl MessageProcessor {
         let thread_service_plugin_runtime: plugin_service_api::SharedPluginRuntime =
             plugins_manager.clone();
         let host_lifecycle_runtime: Arc<dyn codex_tool_service::HostLifecycleToolRuntime> =
-            Arc::new(AppServerHostLifecycleToolRuntime::new(outgoing.clone()));
+            Arc::new(AppServerHostLifecycleToolRuntime::new(
+                outgoing.clone(),
+                thread_state_manager.clone(),
+            ));
         let workflow_service_slot = std::sync::OnceLock::new();
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
@@ -578,7 +594,7 @@ impl MessageProcessor {
             config_manager.clone(),
             Arc::clone(&thread_store),
             pending_thread_unloads,
-            thread_state_manager,
+            thread_state_manager.clone(),
             thread_watch_manager,
             thread_list_state_permit,
             state_db.clone(),
@@ -655,6 +671,7 @@ impl MessageProcessor {
             turn_processor,
             windows_sandbox_processor,
             workflow_processor,
+            thread_state_manager,
             request_serialization_queues: RequestSerializationQueues::default(),
         }
     }
@@ -708,6 +725,7 @@ impl MessageProcessor {
                             codex_request,
                             Arc::clone(&session),
                             /*outbound_initialized*/ None,
+                            matches!(transport, AppServerTransport::Stdio),
                             request_context.clone(),
                         )
                         .await
@@ -759,6 +777,7 @@ impl MessageProcessor {
                         request,
                         Arc::clone(&session),
                         Some(outbound_initialized),
+                        false,
                         request_context.clone(),
                     )
                     .await;
@@ -815,12 +834,15 @@ impl MessageProcessor {
         &self,
         connection_id: ConnectionId,
         request_attestation: bool,
+        host_lifecycle_eligible: bool,
     ) {
         self.thread_processor
             .connection_initialized(
                 connection_id,
                 ConnectionCapabilities {
+                    host_lifecycle_eligible,
                     request_attestation,
+                    ..Default::default()
                 },
             )
             .await;
@@ -944,10 +966,13 @@ impl MessageProcessor {
         // connection outbound-ready. Websocket JSON-RPC calls pass `None` so
         // lib.rs can deliver connection-scoped initialize notifications first.
         outbound_initialized: Option<&AtomicBool>,
+        host_lifecycle_transport_eligible: bool,
         request_context: RequestContext,
     ) -> Result<(), JSONRPCErrorError> {
         let connection_id = connection_request_id.connection_id;
         if let ClientRequest::Initialize { request_id, params } = codex_request {
+            let host_lifecycle_eligible = host_lifecycle_transport_eligible
+                && params.client_info.name == HOST_LIFECYCLE_CLIENT_NAME;
             let connection_initialized = self
                 .initialize_processor
                 .initialize(
@@ -963,7 +988,9 @@ impl MessageProcessor {
                     .connection_initialized(
                         connection_id,
                         ConnectionCapabilities {
+                            host_lifecycle_eligible,
                             request_attestation: session.request_attestation(),
+                            ..Default::default()
                         },
                     )
                     .await;
@@ -1060,6 +1087,62 @@ impl MessageProcessor {
         let result: Result<Option<ClientResponsePayload>, JSONRPCErrorError> = match codex_request {
             ClientRequest::Initialize { .. } => {
                 panic!("Initialize should be handled before initialized request dispatch");
+            }
+            ClientRequest::ClientLifecycleRegister { params, .. } => {
+                let host_id = params.host_id.trim().to_string();
+                if host_id.is_empty() {
+                    Err(invalid_request("hostId must not be empty"))
+                } else {
+                    match self
+                        .thread_state_manager
+                        .register_host_lifecycle_connection(connection_id)
+                        .await
+                    {
+                        Ok(()) => Ok(Some(
+                            ClientLifecycleRegisterResponse {
+                                registered: true,
+                                host_id,
+                                reason: None,
+                            }
+                            .into(),
+                        )),
+                        Err(HostLifecycleRegistrationError::AlreadyRegistered(
+                            existing_connection_id,
+                        )) => Ok(Some(
+                            ClientLifecycleRegisterResponse {
+                                registered: false,
+                                host_id,
+                                reason: Some(format!(
+                                    "Host lifecycle consumer is already registered on connection {}",
+                                    existing_connection_id.0
+                                )),
+                            }
+                            .into(),
+                        )),
+                        Err(HostLifecycleRegistrationError::Ineligible) => Ok(Some(
+                            ClientLifecycleRegisterResponse {
+                                registered: false,
+                                host_id,
+                                reason: Some(
+                                    "This connection is not the trusted Electron Host transport."
+                                        .to_string(),
+                                ),
+                            }
+                            .into(),
+                        )),
+                        Err(HostLifecycleRegistrationError::UnknownConnection) => Ok(Some(
+                            ClientLifecycleRegisterResponse {
+                                registered: false,
+                                host_id,
+                                reason: Some(
+                                    "This connection is not registered with app-server."
+                                        .to_string(),
+                                ),
+                            }
+                            .into(),
+                        )),
+                    }
+                }
             }
             ClientRequest::ConfigRead { params, .. } => self
                 .config_processor
@@ -1564,3 +1647,26 @@ impl MessageProcessor {
 #[cfg(test)]
 #[path = "message_processor_tracing_tests.rs"]
 mod message_processor_tracing_tests;
+
+#[cfg(test)]
+mod host_lifecycle_eligibility_tests {
+    use super::*;
+
+    #[test]
+    fn only_electron_stdio_connection_is_host_lifecycle_eligible() {
+        assert!(is_host_lifecycle_connection(
+            &AppServerTransport::Stdio,
+            Some(HOST_LIFECYCLE_CLIENT_NAME),
+        ));
+        assert!(!is_host_lifecycle_connection(
+            &AppServerTransport::Stdio,
+            Some("other-client"),
+        ));
+        assert!(!is_host_lifecycle_connection(
+            &AppServerTransport::WebSocket {
+                bind_address: "127.0.0.1:0".parse().expect("socket address"),
+            },
+            Some(HOST_LIFECYCLE_CLIENT_NAME),
+        ));
+    }
+}

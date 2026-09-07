@@ -1,11 +1,9 @@
 use super::TurnError;
 use crate::RequestId;
 #[cfg(feature = "schema-export")]
-#[cfg(feature = "schema-export")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-#[cfg(feature = "schema-export")]
 #[cfg(feature = "schema-export")]
 use ts_rs::TS;
 
@@ -56,6 +54,8 @@ pub enum ClientRelaunchMode {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ClientRelaunchRequestedNotification {
+    /// Correlation identifier for this lifecycle operation.
+    pub request_id: String,
     /// Required refresh mode chosen by the runtime tool caller.
     pub mode: ClientRelaunchMode,
     /// Optional human-readable reason supplied by the runtime tool caller.
@@ -64,6 +64,25 @@ pub struct ClientRelaunchRequestedNotification {
     pub requested_by_thread_id: Option<String>,
     /// Reminder that post-relaunch continuation is handled by client bootstrap autoresume.
     pub resume_strategy: String,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ClientLifecycleRegisterParams {
+    /// Stable identifier for the Electron Host instance owning this connection.
+    pub host_id: String,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ClientLifecycleRegisterResponse {
+    pub registered: bool,
+    pub host_id: String,
+    pub reason: Option<String>,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

@@ -140,7 +140,7 @@ async fn call_nested_tool(
         call_id: format!("{PUBLIC_TOOL_NAME}-{}", uuid::Uuid::new_v4()),
         payload,
     };
-    let result = crate::session::turn::dispatch_tool_call(
+    let outcome = crate::session::turn::dispatch_tool_call(
         Arc::clone(&exec.session.services.tool_service),
         Arc::clone(&exec.session),
         Arc::clone(&exec.turn),
@@ -154,7 +154,12 @@ async fn call_nested_tool(
         cancellation_token,
     )
     .await?;
-    Ok(result.code_mode_result())
+    match outcome {
+        tool_service_api::ToolCallOutcome::ReturnToModel(result) => Ok(result.code_mode_result()),
+        tool_service_api::ToolCallOutcome::FinishTurn => Err(FunctionCallError::Fatal(
+            "terminal control tools cannot run as nested code-mode tools".to_string(),
+        )),
+    }
 }
 
 fn build_nested_tool_payload(

@@ -37,6 +37,7 @@ class AppServerClient extends EventEmitter {
     this.child = null;
     this.pending = new Map();
     this.nextRequestId = 1;
+    this.hostInstanceId = options.hostInstanceId ?? crypto.randomUUID();
     this.mobileConnection = {
       enabled: false,
       reason: "app-server is starting",
@@ -342,6 +343,15 @@ class AppServerClient extends EventEmitter {
         },
       });
       await this.notify("initialized", {});
+      const registration = await this.sendRequest("client/lifecycle/register", {
+        hostId: this.hostInstanceId,
+      });
+      if (!registration?.registered) {
+        throw new Error(
+          registration?.reason ??
+            "app-server did not register this client as the Host lifecycle consumer",
+        );
+      }
       this.readyResolve();
       this.emit("status", { ...this.status, initializeResult });
     } catch (error) {

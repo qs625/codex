@@ -254,7 +254,16 @@ struct ThreadStateManagerInner {
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ConnectionCapabilities {
+    pub(crate) host_lifecycle: bool,
+    pub(crate) host_lifecycle_eligible: bool,
     pub(crate) request_attestation: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HostLifecycleRegistrationError {
+    AlreadyRegistered(ConnectionId),
+    Ineligible,
+    UnknownConnection,
 }
 
 #[derive(Clone, Default)]
@@ -306,6 +315,48 @@ impl ThreadStateManager {
             .iter()
             .filter_map(|(connection_id, capabilities)| {
                 capabilities.request_attestation.then_some(*connection_id)
+            })
+            .min_by_key(|connection_id| connection_id.0)
+    }
+
+    pub(crate) async fn register_host_lifecycle_connection(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<(), HostLifecycleRegistrationError> {
+        let mut state = self.state.lock().await;
+        let Some(capabilities) = state.live_connections.get(&connection_id) else {
+            return Err(HostLifecycleRegistrationError::UnknownConnection);
+        };
+        if !capabilities.host_lifecycle_eligible {
+            return Err(HostLifecycleRegistrationError::Ineligible);
+        }
+        if capabilities.host_lifecycle {
+            return Ok(());
+        }
+        if let Some(existing_connection_id) = state.live_connections.iter().find_map(
+            |(candidate_connection_id, capabilities)| {
+                capabilities
+                    .host_lifecycle
+                    .then_some(*candidate_connection_id)
+            },
+        ) {
+            return Err(HostLifecycleRegistrationError::AlreadyRegistered(
+                existing_connection_id,
+            ));
+        }
+        if let Some(capabilities) = state.live_connections.get_mut(&connection_id) {
+            capabilities.host_lifecycle = true;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn host_lifecycle_connection(&self) -> Option<ConnectionId> {
+        let state = self.state.lock().await;
+        state
+            .live_connections
+            .iter()
+            .filter_map(|(connection_id, capabilities)| {
+                capabilities.host_lifecycle.then_some(*connection_id)
             })
             .min_by_key(|connection_id| connection_id.0)
     }
@@ -495,5 +546,95 @@ impl ThreadStateManager {
             .threads
             .get(&thread_id)
             .map(|thread_entry| thread_entry.has_connections_watcher.subscribe())
+    }
+}
+
+#[cfg(test)]
+mod host_lifecycle_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn host_lifecycle_registration_is_unique_and_idempotent() {
+        let manager = ThreadStateManager::new();
+        let first = ConnectionId(1);
+        let second = ConnectionId(2);
+        manager
+            .connection_initialized(
+                first,
+                ConnectionCapabilities {
+                    host_lifecycle_eligible: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        manager
+            .connection_initialized(
+                second,
+                ConnectionCapabilities {
+                    host_lifecycle_eligible: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        assert_eq!(manager.register_host_lifecycle_connection(first).await, Ok(()));
+        assert_eq!(manager.register_host_lifecycle_connection(first).await, Ok(()));
+        assert_eq!(
+            manager.register_host_lifecycle_connection(second).await,
+            Err(HostLifecycleRegistrationError::AlreadyRegistered(first))
+        );
+        assert_eq!(manager.host_lifecycle_connection().await, Some(first));
+    }
+
+    #[tokio::test]
+    async fn host_lifecycle_registration_is_released_on_disconnect() {
+        let manager = ThreadStateManager::new();
+        let first = ConnectionId(1);
+        let second = ConnectionId(2);
+        manager
+            .connection_initialized(
+                first,
+                ConnectionCapabilities {
+                    host_lifecycle_eligible: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        manager
+            .connection_initialized(
+                second,
+                ConnectionCapabilities {
+                    host_lifecycle_eligible: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        manager
+            .register_host_lifecycle_connection(first)
+            .await
+            .expect("register first host");
+
+        manager.remove_connection(first).await;
+
+        assert_eq!(manager.host_lifecycle_connection().await, None);
+        assert_eq!(manager.register_host_lifecycle_connection(second).await, Ok(()));
+        assert_eq!(manager.host_lifecycle_connection().await, Some(second));
+    }
+
+    #[tokio::test]
+    async fn host_lifecycle_registration_rejects_ineligible_connection() {
+        let manager = ThreadStateManager::new();
+        let connection_id = ConnectionId(1);
+        manager
+            .connection_initialized(connection_id, ConnectionCapabilities::default())
+            .await;
+
+        assert_eq!(
+            manager
+                .register_host_lifecycle_connection(connection_id)
+                .await,
+            Err(HostLifecycleRegistrationError::Ineligible)
+        );
+        assert_eq!(manager.host_lifecycle_connection().await, None);
     }
 }

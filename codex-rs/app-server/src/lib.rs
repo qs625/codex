@@ -1009,6 +1009,13 @@ pub async fn run_main_with_transport_options(
                                                     connection_state
                                                         .session
                                                         .request_attestation(),
+                                                    crate::message_processor::
+                                                        is_host_lifecycle_connection(
+                                                            &transport,
+                                                            connection_state
+                                                                .session
+                                                                .app_server_client_name(),
+                                                        ),
                                                 )
                                                 .await;
                                             connection_state

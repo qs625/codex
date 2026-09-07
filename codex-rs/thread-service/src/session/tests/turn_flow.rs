@@ -1661,7 +1661,7 @@ pub(crate) async fn dispatch_tool_via_tool_service(
 ) -> Result<tool_service_api::AnyToolResult, FunctionCallError> {
     let tool_inputs = test_tool_inputs(Arc::clone(&session), Arc::clone(&turn_context));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    crate::session::turn::dispatch_tool_call(
+    match crate::session::turn::dispatch_tool_call(
         Arc::clone(&session.services.tool_service),
         Arc::clone(&session),
         Arc::clone(&turn_context),
@@ -1675,7 +1675,13 @@ pub(crate) async fn dispatch_tool_via_tool_service(
         source,
         CancellationToken::new(),
     )
-    .await
+    .await?
+    {
+        tool_service_api::ToolCallOutcome::ReturnToModel(result) => Ok(result),
+        tool_service_api::ToolCallOutcome::FinishTurn => Err(FunctionCallError::Fatal(
+            "test helper does not support terminal tool outcomes".to_string(),
+        )),
+    }
 }
 
 #[tokio::test]

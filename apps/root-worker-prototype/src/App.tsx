@@ -37,6 +37,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./lib/conversation";
+import { clientLifecycleFailureReason } from "./lib/clientLifecycleStatus";
 import {
   extractCompactConversationDetails,
   type LoadedCompactConversationDetails,
@@ -897,7 +898,10 @@ function App() {
       );
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
       const autoResumeThread = normalizedThreads.find(
-        (thread) => thread.id === payload.autoResume?.focusThreadId,
+        (thread) =>
+          thread.id ===
+          (payload.expectedRestart?.focusThreadId ??
+            payload.autoResume?.focusThreadId),
       );
       const excludedInitialThreadIds = payload.materializedSelfThreadId
         ? new Set([payload.materializedSelfThreadId])
@@ -2349,6 +2353,10 @@ function App() {
   function handleStreamEvent(payload: NotificationEnvelope) {
     try {
       if (payload.type === "status" && payload.status) {
+        const lifecycleFailure = clientLifecycleFailureReason(payload.status);
+        if (lifecycleFailure) {
+          setError(lifecycleFailure);
+        }
         if (!payload.status.connected) {
           subscribedThreadIdsRef.current.clear();
           return;

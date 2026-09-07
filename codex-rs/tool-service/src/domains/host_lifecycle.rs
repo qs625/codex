@@ -14,6 +14,7 @@ use tool_service_api::FunctionCallError;
 use tool_service_api::JsonSchema;
 use tool_service_api::ResponsesApiTool;
 use tool_service_api::ToolCall;
+use tool_service_api::ToolCallOutcome;
 use tool_service_api::ToolName;
 use tool_service_api::ToolSpec;
 
@@ -26,7 +27,7 @@ use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
 
 pub(crate) const REQUEST_RUNTIME_RESTART_TOOL_NAME: &str = "request_runtime_restart";
-const RESUME_STRATEGY: &str = "client_bootstrap_autoresume";
+const RESUME_STRATEGY: &str = "expected_restart_intent";
 
 pub(crate) fn specs(_request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     vec![create_request_runtime_restart_tool()]
@@ -52,7 +53,7 @@ pub(crate) async fn dispatch(
     turn: Arc<dyn ThreadRuntimeCapability>,
     runtime: Option<Arc<dyn HostLifecycleToolRuntime>>,
     call: ToolCall,
-) -> Result<AnyToolResult, FunctionCallError> {
+) -> Result<ToolCallOutcome, FunctionCallError> {
     let args: RequestRuntimeRestartArgs = parse_arguments(&call)?;
     let reason = normalize_reason(args.reason);
     let mode = args.mode;
@@ -76,13 +77,14 @@ pub(crate) async fn dispatch(
         Some(runtime) => {
             runtime
                 .request_client_relaunch(HostRelaunchRequest {
+                    request_id: call.call_id.clone(),
                     mode: mode.clone(),
                     reason: reason.clone(),
                     requested_by_thread_id: Some(session.conversation_id().to_string()),
                 })
                 .await
         }
-        None => unsupported_relaunch_result(mode.clone(), reason.clone()),
+        None => unsupported_relaunch_result(call.call_id.clone(), mode.clone(), reason.clone()),
     };
     let output = serde_json::to_value(&result).map_err(|err| {
         FunctionCallError::Fatal(format!(
@@ -107,14 +109,17 @@ pub(crate) async fn dispatch(
             ),
         )
         .await;
+    if result.accepted {
+        return Ok(ToolCallOutcome::FinishTurn);
+    }
     let tool_output = function_tool_json_output(&result)?;
 
-    Ok(AnyToolResult {
+    Ok(ToolCallOutcome::ReturnToModel(AnyToolResult {
         call_id: call.call_id,
         payload: call.payload,
         result: Box::new(tool_output),
         post_tool_use_payload: None,
-    })
+    }))
 }
 
 fn create_request_runtime_restart_tool() -> ToolSpec {
@@ -162,6 +167,10 @@ fn request_runtime_restart_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "requestId": {
+                "type": "string",
+                "description": "Correlation identifier for this host lifecycle request."
+            },
             "status": {
                 "type": "string",
                 "enum": ["accepted", "unsupported", "failed"],
@@ -169,7 +178,7 @@ fn request_runtime_restart_output_schema() -> Value {
             },
             "accepted": {
                 "type": "boolean",
-                "description": "Whether the refresh request was accepted for delivery to the host client."
+                "description": "Whether the request was delivered to the registered Host as a terminal control action."
             },
             "relaunching": {
                 "type": "boolean",
@@ -199,7 +208,7 @@ fn request_runtime_restart_output_schema() -> Value {
                 "description": "How continuation is attempted after the host refreshes."
             }
         },
-        "required": ["status", "accepted", "relaunching", "requestedMode", "executedMode", "message", "reason", "resumeStrategy"],
+        "required": ["requestId", "status", "accepted", "relaunching", "requestedMode", "executedMode", "message", "reason", "resumeStrategy"],
         "additionalProperties": false
     })
 }
@@ -250,10 +259,12 @@ fn normalize_reason(reason: Option<String>) -> Option<String> {
 }
 
 fn unsupported_relaunch_result(
+    request_id: String,
     requested_mode: HostRelaunchMode,
     reason: Option<String>,
 ) -> HostRelaunchResult {
     HostRelaunchResult {
+        request_id,
         status: HostRelaunchStatus::Unsupported,
         accepted: false,
         relaunching: false,
