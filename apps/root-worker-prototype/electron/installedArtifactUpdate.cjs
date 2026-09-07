@@ -706,8 +706,43 @@ function assertInstalledArtifactsMatchStaged(plan, options = {}) {
       assertDirectoryDigestsEqual(statSync, stagedPath, installedPath);
       continue;
     }
-    assertFileDigestsEqual(stagedPath, installedPath, options);
+    const fileOptions =
+      artifact.relativePath === APP_ASAR_RELATIVE_PATH
+        ? {
+            ...options,
+            readFileSync: resolveRawArchiveReadFileSync(options),
+          }
+        : options;
+    assertFileDigestsEqual(stagedPath, installedPath, fileOptions);
   }
+}
+
+function resolveRawArchiveReadFileSync(options = {}) {
+  if (typeof options.rawReadFileSync === "function") {
+    return options.rawReadFileSync;
+  }
+  const isElectron =
+    options.isElectron ?? typeof process.versions?.electron === "string";
+  if (isElectron) {
+    const loadOriginalFileSystem =
+      options.loadOriginalFileSystem ?? (() => require("original-fs"));
+    let originalFileSystem;
+    try {
+      originalFileSystem = loadOriginalFileSystem();
+    } catch (error) {
+      throw new Error(
+        `Failed to load Electron original-fs for raw app.asar verification${formatCause(error)}`,
+        { cause: error },
+      );
+    }
+    if (typeof originalFileSystem?.readFileSync !== "function") {
+      throw new Error(
+        "Electron original-fs does not provide readFileSync for raw app.asar verification",
+      );
+    }
+    return originalFileSystem.readFileSync;
+  }
+  return fs.readFileSync;
 }
 
 function assertDirectoryDigestsEqual(statSync, stagedPath, installedPath) {
