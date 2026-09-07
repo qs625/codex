@@ -279,6 +279,9 @@ function updateInstalledArtifacts(plan, options = {}) {
     stagedResourcesPath: prepared.stagedResourcesPath,
   };
   let replacement = null;
+  let preservePreparedArtifacts = false;
+  let preserveReplacementBackup = false;
+  let preserveSignatureBackup = false;
   let signatureBackup = null;
   try {
     assertStagedArtifacts(stagedPlan, options);
@@ -301,21 +304,77 @@ function updateInstalledArtifacts(plan, options = {}) {
       stdio: options.stdio,
     });
   } catch (error) {
+    preservePreparedArtifacts = error?.preserveArtifactBackup === true;
+    let failure = error;
     if (replacement) {
-      restoreBackups(stagedPlan, replacement.backupDir, replacement.fsOps);
+      const rollbackErrors = restoreBackups(
+        stagedPlan,
+        replacement.backupDir,
+        replacement.fsOps,
+        stagedPlan.artifacts,
+        options,
+      );
+      preserveReplacementBackup = rollbackErrors.length > 0;
+      failure = appendSecondaryFailures(
+        failure,
+        "installed artifact rollback",
+        rollbackErrors,
+      );
     }
     if (signatureBackup) {
-      restoreSignatureMetadataSync(signatureBackup);
+      try {
+        restoreSignatureMetadataSync(signatureBackup);
+      } catch (restoreError) {
+        preservePreparedArtifacts = true;
+        preserveSignatureBackup = true;
+        failure = appendSecondaryFailures(
+          failure,
+          "signature rollback",
+          [restoreError],
+        );
+      }
     }
-    throw error;
+    throw failure;
   } finally {
-    if (signatureBackup) {
-      cleanupSignatureBackupSync(signatureBackup);
+    if (signatureBackup && !preserveSignatureBackup) {
+      try {
+        cleanupSignatureBackupSync(signatureBackup);
+      } catch (error) {
+        logger?.warn?.(
+          `[prototype] signature backup cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } else if (signatureBackup) {
+      logger?.warn?.(
+        `[prototype] preserving signature backup after rollback failure: ${signatureBackup.backupPath}`,
+      );
     }
-    if (replacement) {
-      cleanupPath(replacement.backupDir, replacement.fsOps);
+    if (replacement && !preserveReplacementBackup) {
+      cleanupRawArchiveContainerBestEffort(
+        replacement.backupDir,
+        replacement.fsOps,
+        options,
+        logger,
+        "replacement backup cleanup",
+      );
+    } else if (replacement) {
+      logger?.warn?.(
+        `[prototype] preserving replacement backup after rollback failure: ${replacement.backupDir}`,
+      );
     }
-    cleanupPath(prepared.stagingRoot, prepared.fsOps);
+    if (!preservePreparedArtifacts && !preserveReplacementBackup) {
+      cleanupRawArchiveContainerBestEffort(
+        prepared.stagingRoot,
+        prepared.fsOps,
+        options,
+        logger,
+        "prepared artifact cleanup",
+      );
+    } else {
+      logger?.warn?.(
+        `[prototype] preserving prepared artifacts after rollback failure: ${prepared.stagingRoot}`,
+      );
+    }
   }
 
   return {
@@ -462,7 +521,7 @@ function prepareDirectArtifacts(plan, options = {}) {
     "COMPACT.md",
   );
 
-  fsOps.rmSync(stagingRoot, { force: true, recursive: true });
+  cleanupRawArchiveContainer(stagingRoot, fsOps, options);
   try {
     fsOps.mkdirSync(path.dirname(stagedAppAsarPath), { recursive: true });
     fsOps.mkdirSync(path.dirname(stagedAppServerPath), { recursive: true });
@@ -475,7 +534,13 @@ function prepareDirectArtifacts(plan, options = {}) {
     fsOps.cpSync(plan.appServerBinaryPath, stagedAppServerPath);
     fsOps.cpSync(plan.defaultCompactPromptSourcePath, stagedDefaultCompactPath);
   } catch (error) {
-    cleanupPath(stagingRoot, fsOps);
+    cleanupRawArchiveContainerBestEffort(
+      stagingRoot,
+      fsOps,
+      options,
+      options.logger ?? console,
+      "failed artifact preparation cleanup",
+    );
     throw error;
   }
 
@@ -674,7 +739,14 @@ function assertInstalledTargetsWritable(plan, options = {}) {
   accessSync(plan.resourcesPath, constants.W_OK);
   accessSync(plan.appBundlePath, constants.W_OK);
   for (const artifact of plan.artifacts) {
-    accessSync(
+    const artifactAccessSync = resolveArtifactFileSystemMethod({
+      artifact,
+      defaultMethod: accessSync,
+      methodName: "accessSync",
+      operation: "preflight writable check",
+      options,
+    });
+    artifactAccessSync(
       path.join(plan.resourcesPath, artifact.relativePath),
       constants.W_OK,
     );
@@ -688,7 +760,14 @@ function assertStagedArtifacts(plan, options = {}) {
       plan.stagedResourcesPath,
       artifact.relativePath,
     );
-    const stat = statSync(artifactPath);
+    const artifactStatSync = resolveArtifactFileSystemMethod({
+      artifact,
+      defaultMethod: statSync,
+      methodName: "statSync",
+      operation: "staged artifact type check",
+      options,
+    });
+    const stat = artifactStatSync(artifactPath);
     if (artifact.kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
       throw new Error(
         `Prepared refresh artifact has unexpected type: ${artifactPath}`,
@@ -707,19 +786,48 @@ function assertInstalledArtifactsMatchStaged(plan, options = {}) {
       continue;
     }
     const fileOptions =
-      artifact.relativePath === APP_ASAR_RELATIVE_PATH
+      isRawAppAsarArtifact(artifact)
         ? {
             ...options,
-            readFileSync: resolveRawArchiveReadFileSync(options),
+            readFileSync: resolveRawAppAsarFileSystemMethod({
+              defaultMethod: options.readFileSync ?? fs.readFileSync,
+              methodName: "readFileSync",
+              operation: "postcondition digest",
+              options,
+            }),
           }
         : options;
     assertFileDigestsEqual(stagedPath, installedPath, fileOptions);
   }
 }
 
-function resolveRawArchiveReadFileSync(options = {}) {
-  if (typeof options.rawReadFileSync === "function") {
-    return options.rawReadFileSync;
+function isRawAppAsarArtifact(artifact) {
+  return (
+    artifact?.kind === "file" &&
+    artifact.relativePath === APP_ASAR_RELATIVE_PATH
+  );
+}
+
+function resolveRawAppAsarFileSystemMethod({
+  defaultMethod,
+  methodName,
+  operation,
+  options = {},
+}) {
+  const injectedMethodName =
+    methodName === "readFileSync" ? "rawReadFileSync" : null;
+  if (
+    injectedMethodName &&
+    typeof options[injectedMethodName] === "function"
+  ) {
+    return options[injectedMethodName];
+  }
+  if (options.rawArchiveFileSystem != null) {
+    return requireRawAppAsarMethod(
+      options.rawArchiveFileSystem,
+      methodName,
+      operation,
+    );
   }
   const isElectron =
     options.isElectron ?? typeof process.versions?.electron === "string";
@@ -731,18 +839,45 @@ function resolveRawArchiveReadFileSync(options = {}) {
       originalFileSystem = loadOriginalFileSystem();
     } catch (error) {
       throw new Error(
-        `Failed to load Electron original-fs for raw app.asar verification${formatCause(error)}`,
+        `Failed to load Electron original-fs ${methodName} for raw app.asar ${operation}${formatCause(error)}`,
         { cause: error },
       );
     }
-    if (typeof originalFileSystem?.readFileSync !== "function") {
-      throw new Error(
-        "Electron original-fs does not provide readFileSync for raw app.asar verification",
-      );
-    }
-    return originalFileSystem.readFileSync;
+    return requireRawAppAsarMethod(
+      originalFileSystem,
+      methodName,
+      operation,
+    );
   }
-  return fs.readFileSync;
+  return defaultMethod;
+}
+
+function requireRawAppAsarMethod(fileSystem, methodName, operation) {
+  const method = fileSystem?.[methodName];
+  if (typeof method !== "function") {
+    throw new Error(
+      `Electron original-fs does not provide ${methodName} for raw app.asar ${operation}`,
+    );
+  }
+  return method;
+}
+
+function resolveArtifactFileSystemMethod({
+  artifact,
+  defaultMethod,
+  methodName,
+  operation,
+  options,
+}) {
+  if (!isRawAppAsarArtifact(artifact)) {
+    return defaultMethod;
+  }
+  return resolveRawAppAsarFileSystemMethod({
+    defaultMethod,
+    methodName,
+    operation,
+    options,
+  });
 }
 
 function assertDirectoryDigestsEqual(statSync, stagedPath, installedPath) {
@@ -824,16 +959,25 @@ function replaceInstalledArtifactsSync(plan, options = {}) {
     `.morpheus-update-backup-${updateId}`,
   );
 
-  cleanupPath(stagingDir, fsOps);
-  cleanupPath(backupDir, fsOps);
+  cleanupRawArchiveContainer(stagingDir, fsOps, options);
+  cleanupRawArchiveContainer(backupDir, fsOps, options);
   fsOps.mkdirSync(stagingDir, { recursive: true });
   fsOps.mkdirSync(backupDir, { recursive: true });
 
   let completed = false;
+  let operationError = null;
+  let preserveBackup = false;
   const backedUpArtifacts = [];
   try {
     for (const artifact of plan.artifacts) {
-      fsOps.cpSync(
+      const artifactCpSync = resolveArtifactFileSystemMethod({
+        artifact,
+        defaultMethod: fsOps.cpSync,
+        methodName: "cpSync",
+        operation: "replacement staging copy",
+        options,
+      });
+      artifactCpSync(
         path.join(plan.stagedResourcesPath, artifact.relativePath),
         path.join(stagingDir, artifact.relativePath),
         { recursive: artifact.kind === "directory" },
@@ -841,60 +985,155 @@ function replaceInstalledArtifactsSync(plan, options = {}) {
     }
 
     for (const artifact of plan.artifacts) {
+      const artifactRenameSync = resolveArtifactFileSystemMethod({
+        artifact,
+        defaultMethod: fsOps.renameSync,
+        methodName: "renameSync",
+        operation: "installed artifact backup",
+        options,
+      });
       fsOps.mkdirSync(path.dirname(path.join(backupDir, artifact.relativePath)), {
         recursive: true,
       });
       try {
-        fsOps.renameSync(
+        artifactRenameSync(
           path.join(plan.resourcesPath, artifact.relativePath),
           path.join(backupDir, artifact.relativePath),
         );
         backedUpArtifacts.push(artifact);
       } catch (error) {
-        restoreBackups(plan, backupDir, fsOps, backedUpArtifacts);
-        throw error;
+        const rollbackErrors = restoreBackups(
+          plan,
+          backupDir,
+          fsOps,
+          backedUpArtifacts,
+          options,
+        );
+        preserveBackup = rollbackErrors.length > 0;
+        const failure = appendSecondaryFailures(
+          error,
+          "partial backup rollback",
+          rollbackErrors,
+        );
+        if (preserveBackup) {
+          markPreservedArtifactBackup(failure, backupDir);
+        }
+        throw failure;
       }
     }
 
     try {
       for (const artifact of plan.artifacts) {
+        const artifactRenameSync = resolveArtifactFileSystemMethod({
+          artifact,
+          defaultMethod: fsOps.renameSync,
+          methodName: "renameSync",
+          operation: "installed artifact replacement",
+          options,
+        });
         fsOps.mkdirSync(
           path.dirname(path.join(plan.resourcesPath, artifact.relativePath)),
           {
             recursive: true,
           },
         );
-        fsOps.renameSync(
+        artifactRenameSync(
           path.join(stagingDir, artifact.relativePath),
           path.join(plan.resourcesPath, artifact.relativePath),
         );
       }
     } catch (error) {
-      restoreBackups(plan, backupDir, fsOps, backedUpArtifacts);
-      throw error;
+      const rollbackErrors = restoreBackups(
+        plan,
+        backupDir,
+        fsOps,
+        backedUpArtifacts,
+        options,
+      );
+      preserveBackup = rollbackErrors.length > 0;
+      const failure = appendSecondaryFailures(
+        error,
+        "partial replacement rollback",
+        rollbackErrors,
+      );
+      if (preserveBackup) {
+        markPreservedArtifactBackup(failure, backupDir);
+      }
+      throw failure;
     }
     completed = true;
+  } catch (error) {
+    operationError = error;
+    throw error;
   } finally {
-    cleanupPath(stagingDir, fsOps);
-    if (!options.keepBackup || !completed) {
-      cleanupPath(backupDir, fsOps);
+    const logger = options.logger ?? console;
+    cleanupRawArchiveContainerBestEffort(
+      stagingDir,
+      fsOps,
+      options,
+      logger,
+      operationError
+        ? "failed replacement staging cleanup"
+        : "replacement staging cleanup",
+    );
+    if ((!options.keepBackup || !completed) && !preserveBackup) {
+      cleanupRawArchiveContainerBestEffort(
+        backupDir,
+        fsOps,
+        options,
+        logger,
+        operationError
+          ? "failed replacement backup cleanup"
+          : "replacement backup cleanup",
+      );
+    } else if (preserveBackup) {
+      logger?.warn?.(
+        `[prototype] preserving replacement backup after rollback failure: ${backupDir}`,
+      );
     }
   }
 
   return { backupDir, fsOps, stagingDir, updateId };
 }
 
-function restoreBackups(plan, backupDir, fsOps, artifacts = plan.artifacts) {
+function restoreBackups(
+  plan,
+  backupDir,
+  fsOps,
+  artifacts = plan.artifacts,
+  options = {},
+) {
+  const errors = [];
   for (const artifact of artifacts) {
     const target = path.join(plan.resourcesPath, artifact.relativePath);
     const backup = path.join(backupDir, artifact.relativePath);
-    cleanupPath(target, fsOps);
+    const artifactRmSync = resolveArtifactFileSystemMethod({
+      artifact,
+      defaultMethod: fsOps.rmSync,
+      methodName: "rmSync",
+      operation: "rollback target cleanup",
+      options,
+    });
+    const artifactRenameSync = resolveArtifactFileSystemMethod({
+      artifact,
+      defaultMethod: fsOps.renameSync,
+      methodName: "renameSync",
+      operation: "rollback backup restore",
+      options,
+    });
     try {
-      fsOps.renameSync(backup, target);
-    } catch {
-      // Best-effort rollback; the original error is more useful to callers.
+      artifactRmSync(target, { recursive: true, force: true });
+    } catch (error) {
+      errors.push(error);
+      continue;
+    }
+    try {
+      artifactRenameSync(backup, target);
+    } catch (error) {
+      errors.push(error);
     }
   }
+  return errors;
 }
 
 function backupSignatureMetadataSync(plan, options = {}) {
@@ -941,6 +1180,57 @@ function cleanupSignatureBackupSync(signatureBackup) {
 
 function cleanupPath(targetPath, fsOps) {
   fsOps.rmSync(targetPath, { recursive: true, force: true });
+}
+
+function cleanupRawArchiveContainer(targetPath, fsOps, options = {}) {
+  const rmSync = resolveRawAppAsarFileSystemMethod({
+    defaultMethod: fsOps.rmSync,
+    methodName: "rmSync",
+    operation: "updater temporary container cleanup",
+    options,
+  });
+  rmSync(targetPath, { recursive: true, force: true });
+}
+
+function cleanupRawArchiveContainerBestEffort(
+  targetPath,
+  fsOps,
+  options,
+  logger,
+  operation,
+) {
+  try {
+    cleanupRawArchiveContainer(targetPath, fsOps, options);
+  } catch (error) {
+    logger?.warn?.(
+      `[prototype] ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function appendSecondaryFailures(error, operation, secondaryErrors) {
+  if (!Array.isArray(secondaryErrors) || secondaryErrors.length === 0) {
+    return error;
+  }
+  const primaryMessage = error instanceof Error ? error.message : String(error);
+  const details = secondaryErrors
+    .map((secondaryError) =>
+      secondaryError instanceof Error
+        ? secondaryError.message
+        : String(secondaryError),
+    )
+    .join("; ");
+  return new Error(`${primaryMessage}; ${operation} also failed: ${details}`, {
+    cause: error,
+  });
+}
+
+function markPreservedArtifactBackup(error, backupDir) {
+  if (!error || typeof error !== "object") {
+    return;
+  }
+  error.preserveArtifactBackup = true;
+  error.artifactBackupDir = backupDir;
 }
 
 function currentResourcesPath() {

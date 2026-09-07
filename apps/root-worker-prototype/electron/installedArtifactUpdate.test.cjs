@@ -660,32 +660,21 @@ test("installed artifact worker bundle contains every dependency and starts", as
   );
 });
 
-test("installed app.asar digest bypasses Electron archive-root fs semantics", () => {
+test("installed app.asar operations bypass Electron archive-root fs semantics", () => {
   const fixture = createUpdateFixture();
-  const rawReadPaths = [];
-  const electronPatchedReadFileSync = (filePath) => {
-    if (path.basename(filePath) === "app.asar") {
-      const error = new Error(
-        `ENOENT,  not found in ${filePath}`,
-      );
-      error.code = "ENOENT";
-      throw error;
-    }
-    return fs.readFileSync(filePath);
-  };
+  const rawCalls = [];
+  const patchedFileSystem = createElectronArchiveRootRejectingFileSystem();
+  const rawArchiveFileSystem = createRecordingFileSystem(rawCalls);
 
   assert.throws(
-    () => electronPatchedReadFileSync(fixture.targetAppAsar),
+    () => patchedFileSystem.accessSync(fixture.targetAppAsar, fs.constants.W_OK),
     /ENOENT,  not found in .*app\.asar/,
   );
 
   const result = updateInstalledArtifacts(fixture.plan, {
+    ...patchedFileSystem,
     directStagingRoot: fixture.directStagingRoot,
-    readFileSync: electronPatchedReadFileSync,
-    rawReadFileSync: (filePath) => {
-      rawReadPaths.push(filePath);
-      return fs.readFileSync(filePath);
-    },
+    rawArchiveFileSystem,
     spawnSync: (_command, args) => {
       if (args.includes("@electron/asar")) {
         write(args.at(-1), "new asar");
@@ -696,27 +685,50 @@ test("installed app.asar digest bypasses Electron archive-root fs semantics", ()
 
   assert.equal(result.ok, true);
   assert.equal(read(fixture.targetAppAsar), "new asar");
+  const exactArchiveCalls = rawCalls.filter(({ args }) =>
+    args
+      .filter((value) => typeof value === "string")
+      .some((value) => path.basename(value) === "app.asar"),
+  );
   assert.deepEqual(
-    rawReadPaths,
+    exactArchiveCalls.map(({ methodName }) => methodName),
     [
-      path.join(fixture.directStagingRoot, "resources/app.asar"),
-      fixture.targetAppAsar,
+      "accessSync",
+      "statSync",
+      "cpSync",
+      "renameSync",
+      "renameSync",
+      "readFileSync",
+      "readFileSync",
     ],
+  );
+  const containerCleanupCalls = rawCalls.filter(
+    (call) => !exactArchiveCalls.includes(call),
+  );
+  assert.equal(containerCleanupCalls.length > 0, true);
+  assert.equal(
+    containerCleanupCalls.every(
+      ({ args, methodName }) =>
+        methodName === "rmSync" &&
+        (args[0] === fixture.directStagingRoot ||
+          pathStartsWith(args[0], fixture.directStagingRoot)),
+    ),
+    true,
   );
 });
 
-test("raw app.asar reader failures restore installed artifacts", () => {
+test("raw app.asar filesystem failures leave installed artifacts unchanged", () => {
   const cases = [
     {
       expected:
-        /Failed to load Electron original-fs for raw app\.asar verification.*loader failed/,
+        /Failed to load Electron original-fs accessSync for raw app\.asar preflight writable check.*loader failed/,
       loadOriginalFileSystem() {
         throw new Error("loader failed");
       },
     },
     {
       expected:
-        /Electron original-fs does not provide readFileSync for raw app\.asar verification/,
+        /Electron original-fs does not provide accessSync for raw app\.asar preflight writable check/,
       loadOriginalFileSystem() {
         return {};
       },
@@ -741,6 +753,300 @@ test("raw app.asar reader failures restore installed artifacts", () => {
       testCase.expected,
     );
     assertInstalledArtifactsUnchanged(fixture);
+  }
+});
+
+test("raw app.asar rollback uses the archive filesystem boundary", () => {
+  const fixture = createUpdateFixture();
+  const rawCalls = [];
+  const patchedFileSystem = createElectronArchiveRootRejectingFileSystem();
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        ...patchedFileSystem,
+        codesign() {
+          throw new Error("signature failed");
+        },
+        directStagingRoot: fixture.directStagingRoot,
+        rawArchiveFileSystem: createRecordingFileSystem(rawCalls),
+        spawnSync: (_command, args) => {
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
+          }
+          return { status: 0 };
+        },
+      }),
+    /signature failed/,
+  );
+
+  assertInstalledArtifactsUnchanged(fixture);
+  assert.equal(
+    rawCalls.some(
+      ({ args, methodName }) =>
+        methodName === "rmSync" &&
+        args.some(
+          (value) =>
+            typeof value === "string" &&
+            value === fixture.targetAppAsar,
+        ),
+    ),
+    true,
+  );
+  assert.equal(
+    rawCalls.filter(({ methodName }) => methodName === "renameSync").length,
+    3,
+  );
+});
+
+test("successful update is not misreported when owned cleanup fails", () => {
+  const fixture = createUpdateFixture();
+  const warnings = [];
+  const rawCalls = [];
+  const rawArchiveFileSystem = createRecordingFileSystem(rawCalls);
+  const recordedRmSync = rawArchiveFileSystem.rmSync;
+  rawArchiveFileSystem.rmSync = (...args) => {
+    if (
+      args[0] === fixture.directStagingRoot &&
+      fs.existsSync(path.join(fixture.directStagingRoot, "resources/app.asar"))
+    ) {
+      rawCalls.push({ args, methodName: "rmSync" });
+      throw new Error("owned cleanup blocked");
+    }
+    return recordedRmSync(...args);
+  };
+
+  const result = updateInstalledArtifacts(fixture.plan, {
+    directStagingRoot: fixture.directStagingRoot,
+    logger: {
+      warn(message) {
+        warnings.push(message);
+      },
+    },
+    rawArchiveFileSystem,
+    spawnSync: (_command, args) => {
+      if (args.includes("@electron/asar")) {
+        write(args.at(-1), "new asar");
+      }
+      return { status: 0 };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(read(fixture.targetAppAsar), "new asar");
+  assert.equal(fs.existsSync(fixture.directStagingRoot), true);
+  assert.equal(
+    warnings.some((warning) =>
+      warning.includes("prepared artifact cleanup failed: owned cleanup blocked"),
+    ),
+    true,
+  );
+  fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
+});
+
+test("owned cleanup failure does not replace the primary update error", () => {
+  const fixture = createUpdateFixture();
+  const warnings = [];
+  const rawArchiveFileSystem = createRecordingFileSystem([]);
+  const recordedRmSync = rawArchiveFileSystem.rmSync;
+  rawArchiveFileSystem.rmSync = (...args) => {
+    if (
+      args[0] === fixture.directStagingRoot &&
+      fs.existsSync(path.join(fixture.directStagingRoot, "resources/app.asar"))
+    ) {
+      throw new Error("owned cleanup blocked");
+    }
+    return recordedRmSync(...args);
+  };
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        codesign() {
+          throw new Error("primary signature failure");
+        },
+        directStagingRoot: fixture.directStagingRoot,
+        logger: {
+          warn(message) {
+            warnings.push(message);
+          },
+        },
+        rawArchiveFileSystem,
+        spawnSync: (_command, args) => {
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
+          }
+          return { status: 0 };
+        },
+      }),
+    /primary signature failure/,
+  );
+
+  assertInstalledArtifactsUnchanged(fixture);
+  assert.equal(
+    warnings.some((warning) =>
+      warning.includes("prepared artifact cleanup failed: owned cleanup blocked"),
+    ),
+    true,
+  );
+  fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
+});
+
+test("rollback continues and preserves backups when raw app.asar cleanup fails", () => {
+  const fixture = createUpdateFixture();
+  const warnings = [];
+  const rawArchiveFileSystem = createRecordingFileSystem([]);
+  const recordedRmSync = rawArchiveFileSystem.rmSync;
+  rawArchiveFileSystem.rmSync = (...args) => {
+    if (args[0] === fixture.targetAppAsar) {
+      throw new Error("rollback target cleanup blocked");
+    }
+    return recordedRmSync(...args);
+  };
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        codesign() {
+          throw new Error("primary signature failure");
+        },
+        directStagingRoot: fixture.directStagingRoot,
+        logger: {
+          warn(message) {
+            warnings.push(message);
+          },
+        },
+        rawArchiveFileSystem,
+        spawnSync: (_command, args) => {
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
+          }
+          return { status: 0 };
+        },
+      }),
+    /primary signature failure; installed artifact rollback also failed: rollback target cleanup blocked/,
+  );
+
+  assert.equal(read(fixture.targetAppAsar), "new asar");
+  assert.equal(read(fixture.targetAppServer), "old server");
+  assert.equal(read(fixture.targetCompact), "old compact");
+  const backupDir = fs
+    .readdirSync(fixture.directStagingRoot)
+    .find((entry) => entry.startsWith(".morpheus-update-backup-"));
+  assert.equal(typeof backupDir, "string");
+  assert.equal(
+    read(path.join(fixture.directStagingRoot, backupDir, "app.asar")),
+    "old asar",
+  );
+  assert.equal(
+    warnings.some((warning) =>
+      warning.includes("preserving prepared artifacts after rollback failure"),
+    ),
+    true,
+  );
+  fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
+});
+
+test("signature rollback failures preserve the primary error and backup", () => {
+  const cases = [
+    {
+      expectedSecondary: "signature target cleanup blocked",
+      expectedTarget: "new signature",
+      kind: "rm",
+    },
+    {
+      expectedSecondary: "signature backup restore blocked",
+      expectedTarget: null,
+      kind: "rename",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = createUpdateFixture();
+    const warnings = [];
+    const realRenameSync = fs.renameSync;
+    const realRmSync = fs.rmSync;
+    const signaturePath = path.dirname(fixture.targetSignature);
+
+    assert.throws(
+      () =>
+        updateInstalledArtifacts(fixture.plan, {
+          codesign() {
+            write(fixture.targetSignature, "new signature");
+            throw new Error("primary signing failure");
+          },
+          directStagingRoot: fixture.directStagingRoot,
+          logger: {
+            warn(message) {
+              warnings.push(message);
+            },
+          },
+          renameSync: (from, to) => {
+            if (
+              testCase.kind === "rename" &&
+              path.basename(from).startsWith(
+                ".morpheus-signature-backup-",
+              ) &&
+              to === signaturePath
+            ) {
+              throw new Error(testCase.expectedSecondary);
+            }
+            return realRenameSync(from, to);
+          },
+          rmSync: (targetPath, options) => {
+            if (
+              testCase.kind === "rm" &&
+              targetPath === signaturePath
+            ) {
+              throw new Error(testCase.expectedSecondary);
+            }
+            return realRmSync(targetPath, options);
+          },
+          spawnSync: (_command, args) => {
+            if (args.includes("@electron/asar")) {
+              write(args.at(-1), "new asar");
+            }
+            return { status: 0 };
+          },
+        }),
+      new RegExp(
+        `primary signing failure; signature rollback also failed: ${testCase.expectedSecondary}`,
+      ),
+    );
+
+    assertInstalledArtifactsUnchanged(fixture);
+    if (testCase.expectedTarget == null) {
+      assert.equal(fs.existsSync(fixture.targetSignature), false);
+    } else {
+      assert.equal(read(fixture.targetSignature), testCase.expectedTarget);
+    }
+    const signatureBackup = fs
+      .readdirSync(fixture.directStagingRoot)
+      .find((entry) => entry.startsWith(".morpheus-signature-backup-"));
+    assert.equal(typeof signatureBackup, "string");
+    assert.equal(
+      read(
+        path.join(
+          fixture.directStagingRoot,
+          signatureBackup,
+          "CodeResources",
+        ),
+      ),
+      "old signature",
+    );
+    assert.equal(
+      warnings.some((warning) =>
+        warning.includes("preserving signature backup after rollback failure"),
+      ),
+      true,
+    );
+    assert.equal(
+      warnings.some((warning) =>
+        warning.includes("preserving prepared artifacts after rollback failure"),
+      ),
+      true,
+    );
+    fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
   }
 });
 
@@ -997,6 +1303,52 @@ function assertInstalledArtifactsUnchanged(fixture) {
   assert.equal(read(fixture.targetAppAsar), "old asar");
   assert.equal(read(fixture.targetAppServer), "old server");
   assert.equal(read(fixture.targetCompact), "old compact");
+}
+
+function createElectronArchiveRootRejectingFileSystem() {
+  return Object.fromEntries(
+    [
+      "accessSync",
+      "cpSync",
+      "readFileSync",
+      "renameSync",
+      "rmSync",
+      "statSync",
+    ].map((methodName) => [
+      methodName,
+      (...args) => {
+        const archivePath = args.find(
+          (value) =>
+            typeof value === "string" && path.basename(value) === "app.asar",
+        );
+        if (archivePath) {
+          const error = new Error(`ENOENT,  not found in ${archivePath}`);
+          error.code = "ENOENT";
+          throw error;
+        }
+        return fs[methodName](...args);
+      },
+    ]),
+  );
+}
+
+function createRecordingFileSystem(calls) {
+  return Object.fromEntries(
+    [
+      "accessSync",
+      "cpSync",
+      "readFileSync",
+      "renameSync",
+      "rmSync",
+      "statSync",
+    ].map((methodName) => [
+      methodName,
+      (...args) => {
+        calls.push({ args, methodName });
+        return fs[methodName](...args);
+      },
+    ]),
+  );
 }
 
 function fakeCargoMetadataSpawn(metadata, calls = []) {
