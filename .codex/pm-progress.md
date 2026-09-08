@@ -26,7 +26,7 @@ Migrate Morpheus project-local configuration and repository-owned runtime assets
   next_action: PM performs design acceptance, inspects the committed path-classification boundary, and merges the owner branch if accepted
   blockers: none
   validation: `cargo check -p config-service --lib --quiet`, `cargo check -p skill-service --lib --quiet`, `cargo check -p codex-windows-sandbox --lib --quiet`, `cargo build -p app-server --bin app-server --quiet`, protocol `.morpheus` permission tests, macOS Seatbelt protected-metadata test, workflow-api project tests, agent-role tests, thread-service child-cwd config reload test, app-server repo import lib tests, and 80 Root Worker focused tests passed. Linux-only bwrap test was cfg-filtered on macOS. Full config/skill-service/app-server integration test targets remain blocked by unrelated pre-existing test compile errors; workflow-api full suite has one unrelated stale budget assertion; one thread-service workflow-context fixture mutates cwd without rebuilding config layers. Full-tree rustfmt check remains blocked by existing repository formatting drift and stable-toolchain nightly-option warnings. `git diff --check` and path invariants passed.
-  commit: pending owner commit
+  commit: 902b08eafd
 - id: runtime-restart-terminal-handoff-smoke
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
