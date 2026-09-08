@@ -1,6 +1,12 @@
 use super::*;
 use std::sync::Weak;
 
+pub(crate) struct FreshCompactInitialContext {
+    pub(crate) user_instructions: Option<String>,
+    pub(crate) response_items: Vec<ResponseItem>,
+    pub(crate) reference_context_item: TurnContextItem,
+}
+
 fn developer_instructions_contains_section(
     developer_instructions: Option<&str>,
     section: &str,
@@ -257,10 +263,14 @@ impl Session {
         turn_context: &TurnContext,
     ) -> TurnContextItem {
         let mut item = turn_context.to_turn_context_item();
-        let session_source = {
+        let (session_source, user_instructions) = {
             let state = self.state.lock().await;
-            state.session_configuration.session_source.clone()
+            (
+                state.session_configuration.session_source.clone(),
+                state.session_configuration.user_instructions.clone(),
+            )
         };
+        item.user_instructions = user_instructions;
         if let Some(agent_role_instructions) = self
             .current_agent_role_developer_instructions(turn_context, &session_source)
             .await
@@ -1469,23 +1479,35 @@ impl Session {
         items: Vec<ResponseItem>,
         reference_context_item: Option<TurnContextItem>,
         compacted_item: CompactedItem,
-    ) {
-        {
-            let mut state = self.state.lock().await;
-            state.replace_history_with_compact_window_start(
-                items.clone(),
-                reference_context_item.clone(),
-                Some(items.len()),
-            );
+        user_instructions: Option<String>,
+    ) -> CodexResult<()> {
+        let compact_window_start = items.len();
+        let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
+        if let Some(turn_context_item) = reference_context_item.clone() {
+            rollout_items.push(RolloutItem::TurnContext(turn_context_item));
+        }
+        if let Some(live_thread) = self.live_thread() {
+            live_thread
+                .append_items(&rollout_items)
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to persist compact checkpoint: {err}"))
+                })?;
+            live_thread.flush().await.map_err(|err| {
+                CodexErr::Fatal(format!("failed to flush compact checkpoint: {err}"))
+            })?;
         }
 
-        self.persist_rollout_items(&[RolloutItem::Compacted(compacted_item)])
-            .await;
-        if let Some(turn_context_item) = reference_context_item {
-            self.persist_rollout_items(&[RolloutItem::TurnContext(turn_context_item)])
-                .await;
-        }
+        let mut state = self.state.lock().await;
+        state.session_configuration.user_instructions = user_instructions;
+        state.replace_history_with_compact_window_start(
+            items,
+            reference_context_item,
+            Some(compact_window_start),
+        );
+        drop(state);
         self.services.model_client_api.advance_window_generation();
+        Ok(())
     }
 
     async fn persist_rollout_response_items(&self, items: &[ResponseItem]) {
@@ -1599,6 +1621,22 @@ impl Session {
         turn_context: &TurnContext,
         external_agent_tool_specs: &[tool_service_api::ToolSpec],
     ) -> Vec<ResponseItem> {
+        self.build_initial_context_with_overrides(
+            turn_context,
+            external_agent_tool_specs,
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn build_initial_context_with_overrides(
+        &self,
+        turn_context: &TurnContext,
+        external_agent_tool_specs: &[tool_service_api::ToolSpec],
+        user_instructions_override: Option<&Option<String>>,
+        agent_role_instructions_override: Option<&Option<String>>,
+    ) -> Vec<ResponseItem> {
         let mut developer_sections = Vec::<String>::with_capacity(8);
         let mut contextual_user_sections = Vec::<String>::with_capacity(2);
         let mut separate_developer_sections = Vec::<String>::new();
@@ -1609,6 +1647,7 @@ impl Session {
             base_instructions,
             session_source,
             root_agent_metadata,
+            session_user_instructions,
         ) = {
             let state = self.state.lock().await;
             (
@@ -1618,6 +1657,7 @@ impl Session {
                 state.session_configuration.base_instructions.clone(),
                 state.session_configuration.session_source.clone(),
                 state.session_configuration.root_agent_metadata.clone(),
+                state.session_configuration.user_instructions.clone(),
             )
         };
         if let Some(model_switch_message) =
@@ -1657,10 +1697,15 @@ impl Session {
         {
             developer_sections.push(developer_instructions.to_string());
         }
+        let agent_role_instructions = match agent_role_instructions_override {
+            Some(instructions) => instructions.clone(),
+            None => {
+                self.current_agent_role_developer_instructions(turn_context, &session_source)
+                    .await
+            }
+        };
         if !separate_guardian_developer_message
-            && let Some(agent_role_instructions) = self
-                .current_agent_role_developer_instructions(turn_context, &session_source)
-                .await
+            && let Some(agent_role_instructions) = agent_role_instructions
             && !developer_instructions_contains_section(
                 turn_context.developer_instructions.as_deref(),
                 &agent_role_instructions,
@@ -1795,7 +1840,10 @@ impl Session {
                 }
             }
         }
-        if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
+        let user_instructions = user_instructions_override
+            .cloned()
+            .unwrap_or(session_user_instructions);
+        if let Some(user_instructions) = user_instructions.as_deref() {
             contextual_user_sections.push(
                 UserInstructions {
                     text: user_instructions.to_string(),
@@ -1906,6 +1954,68 @@ impl Session {
             items.push(guardian_developer_message);
         }
         items
+    }
+
+    pub(crate) async fn build_fresh_compact_initial_context(
+        &self,
+        turn_context: &TurnContext,
+    ) -> CodexResult<FreshCompactInitialContext> {
+        let external_agent_tool_specs = self
+            .external_agent_tool_specs_for_initial_context(turn_context)
+            .await;
+        self.build_fresh_compact_initial_context_with_external_agent_tool_specs(
+            turn_context,
+            &external_agent_tool_specs,
+        )
+        .await
+    }
+
+    pub(crate) async fn build_fresh_compact_initial_context_with_external_agent_tool_specs(
+        &self,
+        turn_context: &TurnContext,
+        external_agent_tool_specs: &[tool_service_api::ToolSpec],
+    ) -> CodexResult<FreshCompactInitialContext> {
+        let user_instructions = AgentsMdManager::new(&turn_context.config)
+            .try_user_instructions_with_fs(codex_file_system::LOCAL_FS.as_ref())
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!(
+                    "failed to refresh configured instruction files for compact: {err}"
+                ))
+            })?;
+        let session_source = {
+            let state = self.state.lock().await;
+            state.session_configuration.session_source.clone()
+        };
+        let agent_role_instructions = self
+            .current_agent_role_developer_instructions(turn_context, &session_source)
+            .await;
+        let initial_context = self
+            .build_initial_context_with_overrides(
+                turn_context,
+                external_agent_tool_specs,
+                Some(&user_instructions),
+                Some(&agent_role_instructions),
+            )
+            .await;
+        let mut reference_context_item = turn_context.to_turn_context_item();
+        reference_context_item.user_instructions = user_instructions.clone();
+        if let Some(agent_role_instructions) = agent_role_instructions
+            && !developer_instructions_contains_section(
+                reference_context_item.developer_instructions.as_deref(),
+                &agent_role_instructions,
+            )
+        {
+            append_developer_instructions_section(
+                &mut reference_context_item.developer_instructions,
+                agent_role_instructions,
+            );
+        }
+        Ok(FreshCompactInitialContext {
+            user_instructions,
+            response_items: initial_context,
+            reference_context_item,
+        })
     }
 
     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) {

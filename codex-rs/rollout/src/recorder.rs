@@ -1809,7 +1809,6 @@ impl RolloutWriterState {
         self.ensure_writer_open().await?;
         self.write_session_meta_if_needed().await?;
 
-        self.finalize_pending_segment_after_compaction().await?;
         self.write_pending_items_once().await?;
 
         if let Some(writer) = self.writer.as_mut() {
@@ -1825,6 +1824,14 @@ impl RolloutWriterState {
             let item = self.pending_items[written_count].clone();
             let item_starts_segment = matches!(item, RolloutItem::Compacted(_));
             if item_starts_segment {
+                // A compact segment is not published as the durable head until every
+                // following item in the same append batch has been written. If another
+                // compact starts in the same buffered batch, the previous checkpoint is
+                // complete at this boundary and can be finalized before opening the next.
+                if let Err(err) = self.finalize_pending_segment_after_compaction().await {
+                    write_result = Err(err);
+                    break;
+                }
                 self.prepare_segment_for_compaction().await?;
             }
             let Some(writer) = self.writer.as_mut() else {
@@ -1845,10 +1852,6 @@ impl RolloutWriterState {
             if item_starts_segment {
                 if let Some(segment) = self.pending_segment.as_mut() {
                     segment.compact_written = true;
-                }
-                if let Err(err) = self.finalize_pending_segment_after_compaction().await {
-                    write_result = Err(err);
-                    break;
                 }
             }
         }

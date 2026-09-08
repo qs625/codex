@@ -1278,6 +1278,15 @@ impl Session {
         state.session_configuration.codex_home().clone()
     }
 
+    #[cfg(test)]
+    pub(crate) async fn set_user_instructions_for_test(
+        &self,
+        user_instructions: Option<String>,
+    ) {
+        let mut state = self.state.lock().await;
+        state.session_configuration.user_instructions = user_instructions;
+    }
+
     pub(crate) fn subscribe_out_of_band_elicitation_pause_state(&self) -> watch::Receiver<bool> {
         self.out_of_band_elicitation_paused.subscribe()
     }

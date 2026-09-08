@@ -2967,7 +2967,7 @@ description: Compact role fixture.
 "#
         ),
     )?;
-    let instruction_dir = workspace.path().join("memory");
+    let instruction_dir = workspace.path().join("instructions");
     std::fs::create_dir_all(&instruction_dir)?;
     std::fs::write(
         instruction_dir.join("project-understanding.md"),
@@ -2981,8 +2981,8 @@ description: Compact role fixture.
         project_config_dir.join("config.toml"),
         r#"
 instruction_files = [
-  "memory/user-preferences.md",
-  "memory/project-understanding.md",
+  "instructions/user-preferences.md",
+  "instructions/project-understanding.md",
 ]
 "#,
     )?;
