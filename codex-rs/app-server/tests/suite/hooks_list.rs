@@ -308,9 +308,9 @@ hooks = false
 "#,
     )?;
     std::fs::create_dir_all(workspace.path().join(".git"))?;
-    std::fs::create_dir_all(workspace.path().join(".codex"))?;
+    std::fs::create_dir_all(workspace.path().join(".morpheus"))?;
     std::fs::write(
-        workspace.path().join(".codex/config.toml"),
+        workspace.path().join(".morpheus/config.toml"),
         r#"[features]
 hooks = true
 
@@ -345,7 +345,7 @@ timeout = 5
     .await??;
     let HooksListResponse { data } = to_response(response)?;
     let project_config_path =
-        AbsolutePathBuf::try_from(workspace.path().join(".codex/config.toml"))?;
+        AbsolutePathBuf::try_from(workspace.path().join(".morpheus/config.toml"))?;
     assert_eq!(
         data,
         vec![
@@ -405,8 +405,8 @@ async fn hooks_list_uses_root_repo_hooks_for_linked_worktrees() -> Result<()> {
         worktree_root.join(".git"),
         format!("gitdir: {}\n", worktree_git_dir.display()),
     )?;
-    write_project_hook_config(&repo_root.join(".codex"), "echo root hook")?;
-    write_project_hook_config(&worktree_root.join(".codex"), "echo worktree hook")?;
+    write_project_hook_config(&repo_root.join(".morpheus"), "echo root hook")?;
+    write_project_hook_config(&worktree_root.join(".morpheus"), "echo worktree hook")?;
     set_project_trust_level(codex_home.path(), &repo_root, TrustLevel::Trusted)?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
@@ -426,7 +426,7 @@ async fn hooks_list_uses_root_repo_hooks_for_linked_worktrees() -> Result<()> {
     let repo_hook = data[0].hooks[0].clone();
     let worktree_hook = data[1].hooks[0].clone();
     let repo_config_path =
-        AbsolutePathBuf::from_absolute_path(repo_root.join(".codex/config.toml"))?;
+        AbsolutePathBuf::from_absolute_path(repo_root.join(".morpheus/config.toml"))?;
 
     assert_eq!(repo_hook.command.as_deref(), Some("echo root hook"));
     assert_eq!(worktree_hook.command.as_deref(), Some("echo root hook"));

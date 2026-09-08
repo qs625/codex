@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use toml::Value as TomlValue;
 
-const REPO_ROOT_CONFIG_DIR_NAME: &str = ".codex";
+const REPO_ROOT_CONFIG_DIR_NAME: &str = ".morpheus";
 
 struct TestConfig {
     cwd: AbsolutePathBuf,
@@ -218,7 +218,7 @@ async fn skill_roots_from_layer_stack_includes_disabled_project_layers() -> anyh
     fs::create_dir_all(&user_folder)?;
 
     let project_root = tmp.path().join("repo");
-    let dot_codex = project_root.join(".codex");
+    let dot_codex = project_root.join(".morpheus");
     fs::create_dir_all(&dot_codex)?;
 
     let user_file = user_folder.join("config.toml").abs();
@@ -289,8 +289,8 @@ async fn skill_roots_from_layer_stack_includes_nested_dot_codex_skills_for_cwd()
 
     let project_root = tmp.path().join("repo");
     let nested_dir = project_root.join("nested/inner");
-    let root_dot_codex = project_root.join(".codex");
-    let nested_dot_codex = project_root.join("nested/.codex");
+    let root_dot_codex = project_root.join(".morpheus");
+    let nested_dot_codex = project_root.join("nested/.morpheus");
     fs::create_dir_all(&nested_dir)?;
     fs::create_dir_all(&root_dot_codex)?;
     fs::create_dir_all(&nested_dot_codex)?;

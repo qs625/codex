@@ -626,7 +626,7 @@ async fn external_agent_config_import_returns_before_background_session_import_f
         .to_string(),
     )?;
 
-    let project_config_dir = project_root.join(".codex");
+    let project_config_dir = project_root.join(".morpheus");
     std::fs::create_dir_all(&project_config_dir)?;
     let project_config = project_config_dir.join("config.toml");
     let status = std::process::Command::new("mkfifo")

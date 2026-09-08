@@ -3,7 +3,7 @@
 ## Stable Working Rules
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
-- 当前项目的 PM / owner / reviewer 协作规则以 `.codex/agents/project-pm.agent.md` 及对应 owner agent 定义为准。
+- 当前项目的 PM / owner / reviewer 协作规则以 `.morpheus/agents/project-pm.agent.md` 及对应 owner agent 定义为准。
 - `.codex/pm-progress.md` 是当前调度状态文件，只保留最近半个月左右的活跃/近期进度和当前约束；更早历史归档到 `.codex/pm-progress-archive/` 并通过 `index.md` 查找。
 - 我们自己的 agent/runtime 产品名定为 Morpheus；外部官方 Codex provider 仍称 `codex_cli` / external Codex CLI provider。
 - 代码 crate、模块、变量名默认使用语义名，除非明确表达产品本身语义，否则不要带 Morpheus/Codex 等产品名。
@@ -28,7 +28,7 @@
 - agent role / thread role mutation 是比 memory 文件更有价值的候选 runtime API，因为 role 已经是 thread metadata/listing/resume 相关事实；如果要支持自进化，应优先让 tool 更新 runtime 认可的 role/revision/effective-from-turn，而不是只修改 `*.agent.md` 后期待当前 thread 自动生效。
 
 ## Stable Architecture Rules
-- Morpheus 自己的用户配置 home 使用 `MORPHEUS_HOME`，默认目录是 `~/.morpheus`；不要再让 `CODEX_HOME` 控制 Morpheus config home。project-local `.codex/` 目录、workflow/agents/memory 目录语义保持不变；external official `codex_cli` / `~/.codex` 只在外部 provider 语义中出现。
+- Morpheus 自己的用户配置 home 使用 `MORPHEUS_HOME`，默认目录是 `~/.morpheus`；project-local canonical config/runtime assets 目录同样是 `.morpheus/`。Morpheus runtime 不兼容读取 project `.codex/`，但 external official `codex_cli` / `~/.codex` 与 `.codex-plugin` 生态格式保持原义。
 - `MORPHEUS_HOME/instructions/` 是用户配置级 model-visible instructions 目录：启动时加载其中直属普通非隐藏文件，按稳定顺序与既有 `instruction_files` / AGENTS/user instructions 组合，并继续受 instruction 总预算约束。不要把它和任意项目内的 `instructions/` 目录混用。
 - 安装态 Root Worker/Morpheus desktop 包不再携带仓库源码 snapshot；`.app/.dmg` 只带运行资源和构建产物。需要源码 workspace 时，packaged app 默认从 `origin` (`git@github.com:qs625/codex.git`) clone 到 `~/.morpheus/source_workspace`，已有 workspace 或显式 `ROOT_WORKER_WORKSPACE` 时不覆盖、不自动 pull/reset。
 - 安装态会维护一份受控 instruction 文件 `MORPHEUS_HOME/instructions/morpheus-source-workspace.md`，告诉模型当前 Morpheus source workspace 路径，以及修改 runtime/client/server/frontend/backend 后应先完成相关测试，再调用 `request_runtime_restart`；packaged macOS app 会由 host 运行 source workspace package build、更新当前 installed runnable artifacts、重新签名并 full relaunch。
@@ -59,7 +59,7 @@
 - command output / exit、child notification、inter-agent completion 应复用同一套 pending-input 唤醒链路；不要再为某一类等待事件维护平行 wait API。
 - parent-side child notification 是 child status/update signal，不是严格 subtree completion：child 等 command、subagent 或 event subscription 时也可以向 parent 发送 typed lifecycle notification；parent 根据 lifecycle/status 判断 child 是否真正完成。active goal 或 pending input 仍应阻止通知；相同 lifecycle 去重，waiting -> final 等状态变化应再次通知。兼容 wire/persisted 名称 `ChildCompletion` 可保留，但不应用它定义新语义。
 - parent-side child notification bookkeeping 只用于 notification/status 投递、去重和清理，不应定义 child 当前是否 active；`WaitChild` / `IdleWaitChild` 只应由 direct child thread 的本地 active 状态驱动。
-- thread init context 中的 workflow discovery 依赖 `TurnContext::discovery_context()`，其 project workflows 来自 `config.config_layer_stack` 中各 project layer 的 `.codex/workflows`。
+- thread init context 中的 workflow discovery 依赖 `TurnContext::discovery_context()`，其 project workflows 来自 `config.config_layer_stack` 中各 project layer 的 `.morpheus/workflows`。
 - session 初始化阶段的 `instruction_files` 应按本地 config 路径读取，不应依赖 primary execution environment 是否存在。
 - ThreadProvider runtime API split 的当前边界是：`ThreadServiceApi` 作为兼容 facade，组合 `ThreadLifecycleRuntime`、`ThreadCollaborationRuntime` 和 `ThreadEventRuntime`；`NativeAgentRuntime` 承载 Morpheus-only `spawn_agent` / `followup_task` / `close_agent` / `list_agents`。后续新增 provider/thread 能力时优先挂到窄 trait 或 provider-neutral handle，不要继续扩大旧 facade。
 - `ThreadLifecycleRuntime` 当前已承载第一批真实 provider-neutral lifecycle 方法：`shutdown_all_threads_bounded`、`shutdown_live_thread`、`remove_live_thread`、status read/subscribe、`subscribe_thread_created`、`active_event_subscriptions`，并由 app-server thread processor/listener idle-unload 和 thread-service `AgentControl` 直接依赖；root start/resume/fork 仍保留在 app-server-local 过渡 trait 中，因为这些请求仍携带完整 `Config`、dynamic tool、environment selection 等 native/app-server 结构。不要把 shell、MCP、approval、dynamic tool、agent job、完整 `ThreadTurnCapability` / `Session` 塞进 ThreadProvider 或 external provider adapter。
@@ -200,11 +200,11 @@
 - `MailboxDeliveryPhase` 已删除；取而代之的是 `TurnState.accepts_async_input_for_current_turn()` 这类更直接的 turn-local gating。mailbox 仍只承载线程级 pending input，但“final answer 后的 late async input 不再扩展当前 turn”的边界仍需保留。
 
 ## Compact Understanding
-- compact prompt 支持 workspace 级 `.codex/compact/COMPACT.md` 与 `CODEX_HOME/compact/COMPACT.md`。
+- compact prompt 支持 workspace 级 `.morpheus/compact/COMPACT.md` 与 `MORPHEUS_HOME/compact/COMPACT.md`。
 - 如果没有自定义 compact prompt，运行时仍会回退到内置 compact prompt。
 - compact prompt 仍是独立的 compact-phase 输入来源；即使收紧 compact 的公开 turn 语义，也不能回退到删除或绕过 `COMPACT.md`。
 - root-worker prototype 当前对 compact history 采用按需加载，而不是默认常驻保存。
-- compact 的 replacement history 应尽量最小化：只保留 initial context 与最近真实 user messages，不再把 `.codex/memory/*.md` 正文复制成 `Memory checkpoint: ...` user messages 塞回 conversation history。
+- compact 的 replacement history 应尽量最小化：只保留 initial context 与最近真实 user messages，不再把 `.morpheus/memory/*.md` 正文复制成 `Memory checkpoint: ...` user messages 塞回 conversation history。
 - 当前主线已进一步收紧 compact 语义：
   - replacement history 现在会追加“当前 compact turn 的最后一条 assistant 输出”，作为后续 continuation seed
   - root-worker 主会话不再把 compact turn / compact row 当作公开对话展示

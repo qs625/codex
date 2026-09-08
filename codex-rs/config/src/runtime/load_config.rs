@@ -846,7 +846,10 @@ impl Config {
             None
         } else {
             let workspace_compact_prompt_path =
-                resolved_cwd.join(".codex").join("compact").join("COMPACT.md");
+                resolved_cwd
+                    .join(codex_config_types::PROJECT_CONFIG_DIR_NAME)
+                    .join("compact")
+                    .join("COMPACT.md");
             match Self::try_read_non_empty_file(
                 fs,
                 Some(&workspace_compact_prompt_path),

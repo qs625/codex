@@ -826,7 +826,7 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
 
         // These are deny-write carveouts, not deny-read paths. They may come from explicit
         // read-only-under-a-writable-root carveouts in the transformed sandbox policy, or from
-        // legacy protected children such as `.git`, `.codex`, and `.agents`.
+        // legacy protected children such as `.git`, `.morpheus`, and `.agents`.
         //
         // Deny ACEs attach to filesystem objects; if an explicit policy carveout does not exist
         // during setup, the sandbox could otherwise create it later under a writable parent and
@@ -1087,7 +1087,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let codex_home = temp.path().join("codex-home");
         let workspace = temp.path().join("workspace");
-        let protected_dir = workspace.join(".codex");
+        let protected_dir = workspace.join(".morpheus");
         let nested_root = protected_dir.join("nested-root");
         fs::create_dir_all(&codex_home).expect("create codex home");
         fs::create_dir_all(&workspace).expect("create workspace");

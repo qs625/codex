@@ -11,6 +11,38 @@
 Define a unified instruction/memory model and make compact refresh current file-backed model context without special-casing AGENTS.md.
 
 ## Active Work
+- id: project-config-directory-morpheus-cutover
+  owner: /self/owner_main
+  checkout: /Users/bytedance/Projects/my-codex
+  branch: refactor/project-config-directory-morpheus
+  task_type: refactor/config-runtime
+  depends_on: main baseline `647842fe19`; completed read-only inventories from `/self/explore_project_morpheus_config_cutover` and `/self/explore_codex_path_classification`
+  files: project-local configuration discovery and layer loading; agents/skills/workflows/hooks/plugins/instructions/memory discovery; sandbox protections; repository `.codex` runtime assets and references; focused tests/docs
+  base_commit: 647842fe19
+  pending_sync_from_main: dev has extensive unrelated tracked work and must not be synchronized; dev-2 and dev-3 are idle but remain unsynchronized while this global exclusive refactor is active
+  status: merged
+  objective: Make `.morpheus/` the canonical project-local Morpheus configuration directory and migrate repository-owned Morpheus assets accordingly. Preserve `MORPHEUS_HOME` user-home behavior, external official `codex_cli` `~/.codex` semantics, `.codex-plugin` ecosystem paths, and compatibility for data formats or identifiers that are not Morpheus project configuration.
+  last_update: 2026-09-08 CST owner_main completed the hard cut to project-local `.morpheus/`, migrated repository-owned runtime assets with Git renames, preserved external `codex_cli` / `~/.codex`, `.codex-plugin`, `dotCodexFolder`, and internal compatibility identifiers, and passed fixed-reviewer review after repairing one mistaken method rename. PM design acceptance confirmed the shared constant is used by config, agent, skill, workflow and external migration entry points; stale project `.codex` has an explicit negative loading test; macOS/Linux/Windows sandbox paths protect `.morpheus`; and remaining `.codex` references are compatibility, negative-test, historical-progress, or PM control-plane cases. The task branch was fast-forwarded to main at `077f27f34d`.
+  next_action: none
+  blockers: none
+  validation: `cargo check -p config-service --lib --quiet`, `cargo check -p skill-service --lib --quiet`, `cargo check -p codex-windows-sandbox --lib --quiet`, `cargo build -p app-server --bin app-server --quiet`, protocol `.morpheus` permission tests, macOS Seatbelt protected-metadata test, workflow-api project tests, agent-role tests, thread-service child-cwd config reload test, app-server repo import lib tests, and 80 Root Worker focused tests passed. Linux-only bwrap test was cfg-filtered on macOS. Full config/skill-service/app-server integration test targets remain blocked by unrelated pre-existing test compile errors; workflow-api full suite has one unrelated stale budget assertion; one thread-service workflow-context fixture mutates cwd without rebuilding config layers. Full-tree rustfmt check remains blocked by existing repository formatting drift and stable-toolchain nightly-option warnings. Fixed reviewer passed after three rounds. PM inspected the 115-file committed diff, verified the hard-cut and compatibility boundaries, and reran `git diff --check 647842fe19..077f27f34d`.
+  commit: 902b08eafd, 077f27f34d
+- id: runtime-restart-terminal-handoff-smoke
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-restart-build-update
+  task_type: bugfix/runtime-lifecycle
+  depends_on: durable terminal restart commit `d1bb9cab6d`; raw archive read commit `9f1bb5dd51`
+  files: apps/root-worker-prototype/electron/installedArtifactUpdate.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs
+  base_commit: a45f585720921e5e478f9917437761b5120ba43a
+  pending_sync_from_main: dev-2 and dev-3 are clean and will be fast-forwarded to the final PM progress commit; dev remains unsynced because it has extensive unrelated tracked work.
+  status: merged
+  objective: Complete real installed-app acceptance for durable terminal hot restart. Raw `app.asar` filesystem operations and updater-owned archive container cleanup must bypass Electron patched `node:fs` through a narrow `original-fs` boundary while preserving rollback, signature backup, and fail-closed behavior.
+  last_update: 2026-09-08 CST second hot smoke `call_CquFhgw2RVCISeDoms7nRFl7` failed before restart because writable preflight still used patched `accessSync` on raw `app.asar`. Owner confirmed installed/source/materialized-worker hashes already matched, expanded the fix across exact archive access/stat/copy/rename/remove/digest and owned container cleanup, completed three fixed-reviewer rounds, and delivered `8dd8fc43d1`. PM merged the complete restart branch to main as `833941f5ec`, recorded progress in `57705d8a95`, updated and signed the installed app, and manually reopened it to load the new Electron main. Final hot request `call_gaT3z8ViGKGaEPsOPwEpUdSV` completed: Electron PID stayed `50320`, app-server changed from `50330` to `51014`, durable intent reached `phase=consumed` and `outcomePhase=completed`, and CDP kept serving the installed renderer. PM then synced the operational source workspace with equivalent commit `92988e42d` and refreshed the installed artifacts from that canonical workspace; installed/source/fixed-main updater hashes all equal `2220c2344125efb00f243d0834cf00413be3840d66385bcc69ac6c7a8b329090`. Repeat hot request `call_NGLX12iIZb56qxZbgChpKxOT` also completed from the synchronized source: Electron PID stayed `51341`, its app-server changed from `51344` to `51693`, renderer PID `51352` and CDP page stayed healthy, and the durable intent again reached consumed/completed. The earlier orphaned app-server PID `51014` was terminated, leaving only the app-owned PID `51693`.
+  next_action: none
+  blockers: none
+  validation: Owner 124/124 focused tests, production build, real Electron 37.10.3 safe-temp update smoke, node syntax, raw boundary scan, and diff checks passed. PM merged-main 124/124 focused tests and production build passed. Direct installed updates returned `{ok:true, updated:true}`; strict codesign passed. Two final hot smokes kept Electron PID stable, replaced the app-server process, preserved a healthy renderer/CDP page, and persisted consumed/completed intents. Final installed `app.asar` mtime is 2026-09-08 11:35:55 CST with SHA-256 `ee16624fc0640a611a55956bd2d24d7428dde36bbc4b861a328932740440627b`.
+  commit: 833941f5ec, 8dd8fc43d115cb1e8dd4a76a38671e0ebde2777c, 9f1bb5dd51a080b9bc9d364d03181ebc693a2111
 - id: revert-terminal-turn-intermediate-item-folding
   owner: /self/my_codex_owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2

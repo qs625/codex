@@ -285,7 +285,7 @@ async fn instruction_sources_match_configured_files() {
 async fn instruction_sources_include_repo_local_files_from_disabled_project_layers() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path().join("repo");
-    let dot_codex = repo_root.join(".codex");
+    let dot_codex = repo_root.join(".morpheus");
     let instruction_path = repo_root.join("memory").join("project.md");
     fs::create_dir_all(instruction_path.parent().expect("instruction parent")).unwrap();
     fs::create_dir_all(&dot_codex).unwrap();
@@ -329,7 +329,7 @@ async fn instruction_sources_include_repo_local_files_from_disabled_project_laye
 async fn instruction_sources_resolve_relative_files_from_disabled_project_layers() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path().join("repo");
-    let dot_codex = repo_root.join(".codex");
+    let dot_codex = repo_root.join(".morpheus");
     let instruction_path = repo_root.join("memory").join("project.md");
     fs::create_dir_all(instruction_path.parent().expect("instruction parent")).unwrap();
     fs::create_dir_all(&dot_codex).unwrap();
@@ -368,7 +368,7 @@ async fn instruction_sources_resolve_relative_files_from_disabled_project_layers
 async fn disabled_project_instruction_files_skip_paths_outside_repo_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path().join("repo");
-    let dot_codex = repo_root.join(".codex");
+    let dot_codex = repo_root.join(".morpheus");
     let external_path = tmp.path().join("outside.md");
     fs::create_dir_all(&dot_codex).unwrap();
     fs::write(&external_path, "secret").unwrap();
@@ -404,7 +404,7 @@ async fn disabled_project_instruction_files_skip_paths_outside_repo_root() {
 async fn disabled_project_instruction_files_skip_symlinks_that_escape_repo_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path().join("repo");
-    let dot_codex = repo_root.join(".codex");
+    let dot_codex = repo_root.join(".morpheus");
     let memory_dir = repo_root.join("memory");
     let external_path = tmp.path().join("outside.md");
     let linked_path = memory_dir.join("linked.md");

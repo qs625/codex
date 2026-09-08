@@ -160,7 +160,10 @@ pub(crate) async fn refresh_spawn_cwd_agent_roles(
     let mut agent_dirs = Vec::new();
     for agents_dir in [
         config.codex_home.join("agents"),
-        config.cwd.join(".codex").join("agents"),
+        config
+            .cwd
+            .join(codex_config_types::PROJECT_CONFIG_DIR_NAME)
+            .join("agents"),
     ] {
         if seen.insert(agents_dir.to_path_buf()) {
             agent_dirs.push(agents_dir);
@@ -170,7 +173,9 @@ pub(crate) async fn refresh_spawn_cwd_agent_roles(
     if let Some(repo_root) =
         resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &config.cwd).await
     {
-        let repo_agents_dir = repo_root.join(".codex").join("agents");
+        let repo_agents_dir = repo_root
+            .join(codex_config_types::PROJECT_CONFIG_DIR_NAME)
+            .join("agents");
         if seen.insert(repo_agents_dir.to_path_buf()) {
             agent_dirs.push(repo_agents_dir);
         }
@@ -363,7 +368,7 @@ mod tests {
         let parent_cwd = temp.path().join("parent");
         let parent_instruction = parent_cwd.join("parent.md");
         let child_cwd = temp.path().join("child");
-        let child_dot_codex = child_cwd.join(".codex");
+        let child_dot_codex = child_cwd.join(".morpheus");
         let child_instruction = child_dot_codex.join("memory/project.md");
         let role_config = child_dot_codex.join("agents/project-pm.toml");
         std::fs::create_dir_all(&codex_home).expect("create codex home");

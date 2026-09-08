@@ -4,11 +4,11 @@ use super::*;
 async fn compact_prompt_override_beats_default_compact_prompt_locations() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
-    std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
+    std::fs::create_dir_all(workspace.join(".morpheus").join("compact"))?;
     std::fs::create_dir_all(codex_home.path().join("compact"))?;
 
     std::fs::write(
-        workspace.join(".codex").join("compact").join("COMPACT.md"),
+        workspace.join(".morpheus").join("compact").join("COMPACT.md"),
         "  workspace compact prompt  ",
     )?;
     std::fs::write(
@@ -39,7 +39,7 @@ async fn compact_prompt_override_beats_default_compact_prompt_locations() -> std
 async fn compact_prompt_override_skips_default_compact_prompt_reads() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
-    std::fs::create_dir_all(workspace.join(".codex").join("compact").join("COMPACT.md"))?;
+    std::fs::create_dir_all(workspace.join(".morpheus").join("compact").join("COMPACT.md"))?;
 
     let config = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
@@ -94,11 +94,11 @@ async fn loads_compact_prompt_from_file() -> std::io::Result<()> {
 async fn loads_default_compact_prompt_from_workspace_before_codex_home() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
-    std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
+    std::fs::create_dir_all(workspace.join(".morpheus").join("compact"))?;
     std::fs::create_dir_all(codex_home.path().join("compact"))?;
 
     std::fs::write(
-        workspace.join(".codex").join("compact").join("COMPACT.md"),
+        workspace.join(".morpheus").join("compact").join("COMPACT.md"),
         "  workspace compact prompt  ",
     )?;
     std::fs::write(
@@ -158,11 +158,11 @@ async fn falls_back_to_codex_home_default_compact_prompt() -> std::io::Result<()
 async fn empty_workspace_default_compact_prompt_falls_back_to_codex_home() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
-    std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
+    std::fs::create_dir_all(workspace.join(".morpheus").join("compact"))?;
     std::fs::create_dir_all(codex_home.path().join("compact"))?;
 
     std::fs::write(
-        workspace.join(".codex").join("compact").join("COMPACT.md"),
+        workspace.join(".morpheus").join("compact").join("COMPACT.md"),
         "   ",
     )?;
     std::fs::write(
@@ -217,13 +217,13 @@ async fn explicit_compact_prompt_file_beats_default_compact_prompt_locations() -
 {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
-    std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
+    std::fs::create_dir_all(workspace.join(".morpheus").join("compact"))?;
     std::fs::create_dir_all(codex_home.path().join("compact"))?;
 
     let explicit_prompt_path = workspace.join("compact_prompt.txt");
     std::fs::write(&explicit_prompt_path, "  explicit compact prompt  ")?;
     std::fs::write(
-        workspace.join(".codex").join("compact").join("COMPACT.md"),
+        workspace.join(".morpheus").join("compact").join("COMPACT.md"),
         "  workspace compact prompt  ",
     )?;
     std::fs::write(
@@ -257,13 +257,13 @@ async fn explicit_compact_prompt_file_error_does_not_fall_back_to_default_locati
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
-    std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
+    std::fs::create_dir_all(workspace.join(".morpheus").join("compact"))?;
     std::fs::create_dir_all(codex_home.path().join("compact"))?;
 
     let explicit_prompt_path = workspace.join("compact_prompt.txt");
     std::fs::write(&explicit_prompt_path, "   ")?;
     std::fs::write(
-        workspace.join(".codex").join("compact").join("COMPACT.md"),
+        workspace.join(".morpheus").join("compact").join("COMPACT.md"),
         "  workspace compact prompt  ",
     )?;
     std::fs::write(

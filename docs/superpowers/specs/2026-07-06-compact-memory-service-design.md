@@ -41,9 +41,9 @@
   - 全局 token cap
   - 每个文件单独 token cap 覆盖
 - 当用户未显式配置时，runtime config 会生成默认 replacement files：
-  - `cwd/.codex/memory/current-work.md`
-  - `cwd/.codex/memory/project-understanding.md`
-  - `cwd/.codex/memory/user-preferences.md`
+  - `cwd/.morpheus/memory/current-work.md`
+  - `cwd/.morpheus/memory/project-understanding.md`
+  - `cwd/.morpheus/memory/user-preferences.md`
 
 ### compact turn 边界
 

@@ -47,11 +47,11 @@ async fn reads_configured_replacement_files_without_missing_file_errors() {
     let tempdir = TempDir::new().expect("create temp dir");
     let cwd = AbsolutePathBuf::try_from(tempdir.path().to_path_buf()).expect("abs cwd");
     let service = FsCompactService::new();
-    tokio::fs::create_dir_all(cwd.join(".codex").join("memory").as_path())
+    tokio::fs::create_dir_all(cwd.join(".morpheus").join("memory").as_path())
         .await
         .expect("create memory dir");
     tokio::fs::write(
-        cwd.join(".codex")
+        cwd.join(".morpheus")
             .join("memory")
             .join("current-work.md")
             .as_path(),
@@ -63,13 +63,13 @@ async fn reads_configured_replacement_files_without_missing_file_errors() {
     let bundle = service
         .read_memory_bundle(&[
             CompactReplacementFile {
-                path: cwd.join(".codex").join("memory").join("current-work.md"),
+                path: cwd.join(".morpheus").join("memory").join("current-work.md"),
                 role: CompactMemoryRole::CurrentWork,
                 label: None,
                 token_limit: 1_500,
             },
             CompactReplacementFile {
-                path: cwd.join(".codex").join("memory").join("missing.md"),
+                path: cwd.join(".morpheus").join("memory").join("missing.md"),
                 role: CompactMemoryRole::Custom,
                 label: Some("missing".to_string()),
                 token_limit: 1_500,
@@ -91,12 +91,12 @@ async fn reads_configured_replacement_files_without_missing_file_errors() {
 async fn read_memory_bundle_truncates_oversized_memory_files() {
     let tempdir = TempDir::new().expect("create temp dir");
     let cwd = AbsolutePathBuf::try_from(tempdir.path().to_path_buf()).expect("abs cwd");
-    tokio::fs::create_dir_all(cwd.join(".codex").join("memory").as_path())
+    tokio::fs::create_dir_all(cwd.join(".morpheus").join("memory").as_path())
         .await
         .expect("create memory dir");
     let oversized = "事实 ".repeat(3_000);
     tokio::fs::write(
-        cwd.join(".codex")
+        cwd.join(".morpheus")
             .join("memory")
             .join("user-preferences.md")
             .as_path(),
@@ -109,7 +109,7 @@ async fn read_memory_bundle_truncates_oversized_memory_files() {
     let bundle = service
         .read_memory_bundle(&[CompactReplacementFile {
             path: cwd
-                .join(".codex")
+                .join(".morpheus")
                 .join("memory")
                 .join("user-preferences.md"),
             role: CompactMemoryRole::UserPreferences,

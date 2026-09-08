@@ -656,7 +656,7 @@ trust_level = "trusted"
     )
     .await?;
 
-    let standalone_agents_dir = repo_root.path().join(".codex").join("agents");
+    let standalone_agents_dir = repo_root.path().join(".morpheus").join("agents");
     tokio::fs::create_dir_all(&standalone_agents_dir).await?;
     tokio::fs::write(
         standalone_agents_dir.join("researcher.toml"),
@@ -827,7 +827,7 @@ trust_level = "trusted"
     )
     .await?;
 
-    let standalone_agents_dir = repo_root.path().join(".codex").join("agents");
+    let standalone_agents_dir = repo_root.path().join(".morpheus").join("agents");
     tokio::fs::create_dir_all(&standalone_agents_dir).await?;
     tokio::fs::write(
         standalone_agents_dir.join("researcher.toml"),
@@ -1028,7 +1028,7 @@ trust_level = "trusted"
 
     let root_agent = repo_root
         .path()
-        .join(".codex")
+        .join(".morpheus")
         .join("agents")
         .join("root.toml");
     std::fs::create_dir_all(
@@ -1048,7 +1048,7 @@ developer_instructions = "Research carefully"
     let nested_agent = repo_root
         .path()
         .join("packages")
-        .join(".codex")
+        .join(".morpheus")
         .join("agents")
         .join("review")
         .join("nested.toml");
@@ -1070,7 +1070,7 @@ developer_instructions = "Review carefully"
     let sibling_agent = repo_root
         .path()
         .join("packages")
-        .join(".codex")
+        .join(".morpheus")
         .join("agents")
         .join("writer.toml");
     std::fs::create_dir_all(
@@ -1143,7 +1143,7 @@ async fn discovers_markdown_agent_role_files_from_agents_dir() -> std::io::Resul
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
     std::fs::create_dir_all(repo_root.path().join(".git"))?;
-    std::fs::create_dir_all(repo_root.path().join(".codex").join("agents"))?;
+    std::fs::create_dir_all(repo_root.path().join(".morpheus").join("agents"))?;
     let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
     std::fs::write(
         codex_home.path().join(CONFIG_TOML_FILE),
@@ -1156,7 +1156,7 @@ trust_level = "trusted"
     std::fs::write(
         repo_root
             .path()
-            .join(".codex")
+            .join(".morpheus")
             .join("agents")
             .join("anything.agent.md"),
         r#"---
@@ -1176,7 +1176,7 @@ Review the code carefully.
     std::fs::write(
         repo_root
             .path()
-            .join(".codex")
+            .join(".morpheus")
             .join("agents")
             .join("limited.agent.md"),
         r#"---
@@ -1192,14 +1192,14 @@ Review with a restricted capability set.
     std::fs::create_dir_all(
         repo_root
             .path()
-            .join(".codex")
+            .join(".morpheus")
             .join("agents")
             .join("nested"),
     )?;
     std::fs::write(
         repo_root
             .path()
-            .join(".codex")
+            .join(".morpheus")
             .join("agents")
             .join("nested")
             .join("nested.md"),
@@ -1274,7 +1274,7 @@ async fn discovered_markdown_agent_defaults_optional_frontmatter_fields() -> std
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
     std::fs::create_dir_all(repo_root.path().join(".git"))?;
-    std::fs::create_dir_all(repo_root.path().join(".codex").join("agents"))?;
+    std::fs::create_dir_all(repo_root.path().join(".morpheus").join("agents"))?;
     let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
     std::fs::write(
         codex_home.path().join(CONFIG_TOML_FILE),
@@ -1287,7 +1287,7 @@ trust_level = "trusted"
     std::fs::write(
         repo_root
             .path()
-            .join(".codex")
+            .join(".morpheus")
             .join("agents")
             .join("optimizer.md"),
         r#"---
@@ -1303,7 +1303,7 @@ Optimize the workflow carefully.
     std::fs::write(
         repo_root
             .path()
-            .join(".codex")
+            .join(".morpheus")
             .join("agents")
             .join("hidden.md"),
         r#"---
@@ -1403,10 +1403,10 @@ async fn ignores_non_directory_agents_discovery_paths() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
     std::fs::create_dir_all(repo_root.path().join(".git"))?;
-    std::fs::create_dir_all(repo_root.path().join(".codex"))?;
+    std::fs::create_dir_all(repo_root.path().join(".morpheus"))?;
     std::fs::write(codex_home.path().join("agents"), "not a directory")?;
     std::fs::write(
-        repo_root.path().join(".codex").join("agents"),
+        repo_root.path().join(".morpheus").join("agents"),
         "not a directory",
     )?;
     let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");

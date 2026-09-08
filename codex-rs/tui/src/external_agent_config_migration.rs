@@ -824,7 +824,7 @@ mod tests {
             ExternalAgentConfigMigrationItem {
                 item_type: ExternalAgentConfigMigrationItemType::Config,
                 description:
-                    "Migrate /Users/alex/.claude/settings.json into /Users/alex/.codex/config.toml"
+                    "Migrate /Users/alex/.claude/settings.json into /Users/alex/.morpheus/config.toml"
                         .to_string(),
                 cwd: None,
                 details: None,

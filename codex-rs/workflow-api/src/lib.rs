@@ -30,6 +30,7 @@ pub use tool_contract::workflow_tool_output_json;
 
 use codex_config_state::ConfigLayerEntry;
 use codex_config_types::ConfigLayerSource;
+use codex_config_types::PROJECT_CONFIG_DIR_NAME;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -352,7 +353,7 @@ pub fn workflow_discovery_context_from_config_layers(
 
 fn project_workflow_roots(cwd: &Path, layers: Vec<ConfigLayerEntry>) -> Vec<PathBuf> {
     if layers.is_empty() {
-        return vec![cwd.join(".codex").join("workflows")];
+        return vec![cwd.join(PROJECT_CONFIG_DIR_NAME).join("workflows")];
     }
 
     let roots = layers
@@ -362,7 +363,7 @@ fn project_workflow_roots(cwd: &Path, layers: Vec<ConfigLayerEntry>) -> Vec<Path
         .map(|folder| folder.join("workflows").to_path_buf())
         .collect::<Vec<_>>();
     if roots.is_empty() {
-        vec![cwd.join(".codex").join("workflows")]
+        vec![cwd.join(PROJECT_CONFIG_DIR_NAME).join("workflows")]
     } else {
         roots
     }
@@ -1248,14 +1249,14 @@ when_to_use: [feature work]
             "home description",
         );
         write_workflow(
-            &cwd.join(".codex/workflows"),
+            &cwd.join(".morpheus/workflows"),
             "feature-dev",
             "project description",
         );
 
         let registry = load_workflow_registry_from_roots(
             codex_home.join("workflows"),
-            vec![cwd.join(".codex/workflows")],
+            vec![cwd.join(".morpheus/workflows")],
         );
 
         assert_eq!(registry.workflows.len(), 1);
@@ -1267,8 +1268,8 @@ when_to_use: [feature work]
     #[test]
     fn duplicate_project_workflow_id_is_excluded() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let lower = temp.path().join("repo/.codex/workflows");
-        let higher = temp.path().join("repo/child/.codex/workflows");
+        let lower = temp.path().join("repo/.morpheus/workflows");
+        let higher = temp.path().join("repo/child/.morpheus/workflows");
         write_workflow(&lower, "feature-dev", "lower description");
         write_workflow(&higher, "feature-dev", "higher description");
 
@@ -1287,7 +1288,7 @@ when_to_use: [feature work]
         let temp = tempfile::tempdir().expect("tempdir");
         let codex_home = temp.path().join("home");
         let cwd = temp.path().join("repo");
-        let dir = cwd.join(".codex/workflows/bad");
+        let dir = cwd.join(".morpheus/workflows/bad");
         fs::create_dir_all(&dir).expect("create workflow dir");
         fs::write(
             dir.join(WORKFLOW_INSTRUCTIONS_FILE),
@@ -1304,7 +1305,7 @@ Bad.
 
         let registry = load_workflow_registry_from_roots(
             codex_home.join("workflows"),
-            vec![cwd.join(".codex/workflows")],
+            vec![cwd.join(".morpheus/workflows")],
         );
 
         assert!(registry.workflows.is_empty());
@@ -1315,7 +1316,7 @@ Bad.
     #[test]
     fn non_typescript_entry_is_invalid() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let workflows_root = temp.path().join("repo/.morpheus/workflows");
         let dir = workflows_root.join("bad");
         fs::create_dir_all(&dir).expect("create workflow dir");
         fs::write(dir.join("workflow.js"), "export default {};").expect("write workflow entry");
@@ -1350,7 +1351,7 @@ Bad.
         let temp = tempfile::tempdir().expect("tempdir");
         let codex_home = temp.path().join("home");
         let cwd = temp.path().join("repo");
-        let workflows_root = cwd.join(".codex/workflows");
+        let workflows_root = cwd.join(".morpheus/workflows");
         write_workflow(&workflows_root, "feature-dev", "project description");
         fs::write(
             workflows_root.join(format!("feature-dev/{WORKFLOW_INSTRUCTIONS_FILE}")),
@@ -1369,7 +1370,7 @@ Use this workflow for feature development.
 
         let registry = load_workflow_registry_from_roots(
             codex_home.join("workflows"),
-            vec![cwd.join(".codex/workflows")],
+            vec![cwd.join(".morpheus/workflows")],
         );
         let details = registry.details("feature-dev").expect("workflow details");
 
@@ -1383,7 +1384,7 @@ Use this workflow for feature development.
     #[test]
     fn details_truncates_large_workflow_instructions() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let workflows_root = temp.path().join("repo/.morpheus/workflows");
         write_workflow(&workflows_root, "feature-dev", "project description");
         fs::write(
             workflows_root.join(format!("feature-dev/{WORKFLOW_INSTRUCTIONS_FILE}")),
@@ -1413,7 +1414,7 @@ entry: workflow.ts
     #[test]
     fn workflow_instructions_frontmatter_is_required() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let workflows_root = temp.path().join("repo/.morpheus/workflows");
         let dir = workflows_root.join("bad");
         fs::create_dir_all(&dir).expect("create workflow dir");
         fs::write(dir.join("workflow.ts"), "export default {};").expect("write workflow entry");
@@ -1440,7 +1441,7 @@ entry: workflow.ts
     #[test]
     fn rendered_context_includes_workflow_frontmatter_only() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let workflows_root = temp.path().join("repo/.morpheus/workflows");
         write_workflow(&workflows_root, "feature-dev", "project description");
 
         let registry = load_workflow_registry_from_roots(
@@ -1460,7 +1461,7 @@ entry: workflow.ts
     #[test]
     fn rendered_context_has_total_budget() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let workflows_root = temp.path().join("repo/.codex/workflows");
+        let workflows_root = temp.path().join("repo/.morpheus/workflows");
         for index in 0..40 {
             let id = format!("workflow-{index:03}");
             let dir = workflows_root.join(&id);

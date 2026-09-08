@@ -40,7 +40,7 @@ mod tests {
                 name: "Feature Development".to_string(),
                 description: "Research, implement, review, and verify.".to_string(),
                 source: WorkflowSource::Project,
-                path: "/repo/.codex/workflows/feature-dev".to_string(),
+                path: "/repo/.morpheus/workflows/feature-dev".to_string(),
                 entry: "workflow.ts".to_string(),
                 version: Some("0.1.0".to_string()),
                 when_to_use: vec!["feature work".to_string()],
