@@ -23,10 +23,10 @@ Define a unified instruction/memory model and make compact refresh current file-
   status: completed
   objective: Move stable project user preferences and project understanding out of `.morpheus/memory/` into canonical `.morpheus/instructions/`, keep current-work as mutable compact/consolidation state, and ensure every successful compact rebuilds the continuing model-visible init context from one fresh snapshot of all current file-backed instruction sources.
   last_update: 2026-09-08 CST owner_main completed the design correction. Stable preferences/project understanding are canonical `.morpheus/instructions/` files; current-work remains mutable memory. PostCompact Continue now precedes one fresh instruction/agent-role/external-tool snapshot. `BeforeLastUserMessage` shares it across replacement history and typed reference/display context while committing the fresh user-instructions baseline; pre-turn `DoNotInject` keeps reference context absent and atomically updates only that user-instructions baseline for the next regular turn. Rollout segment head publication and live/session baseline updates occur only after the complete `Compacted + optional TurnContext` checkpoint is durable.
-  next_action: commit the reviewed and validated task diff, then record the implementation commit hash
+  next_action: PM design acceptance and merge back to main
   blockers: none
   validation: Fixed reviewer `/self/owner_main/reviewer` passed multiple rounds after fixes for PostCompact ordering, checkpoint manifest atomicity, external tool specs, retry draining, fixtures, and the test-only session baseline helper. Owner focused rollout and thread-service tests passed, including the 4-test `process_compacted_history_reinjects` filter; `cargo build -p app-server --bin app-server` passed. The app-server integration test target remains blocked by an unrelated pre-existing non-exhaustive `ConversationArtifact` match in `app-server/tests/suite/thread_read.rs:3833`. Full-package rustfmt check remains unsuitable because of existing repository formatting drift; task diff is checked separately.
-  commit: pending owner implementation commit
+  commit: 728ae1e1de
 - id: project-config-directory-morpheus-cutover
   owner: /self/owner_main
   checkout: /Users/bytedance/Projects/my-codex
