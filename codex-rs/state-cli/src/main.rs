@@ -141,9 +141,9 @@ fn resolve_db_path(args: &Args) -> anyhow::Result<PathBuf> {
 
 fn default_codex_home() -> PathBuf {
     if let Some(home) = home_dir() {
-        return home.join(".codex");
+        return home.join(".morpheus");
     }
-    PathBuf::from(".codex")
+    PathBuf::from(".morpheus")
 }
 
 fn build_filter(args: &Args) -> anyhow::Result<LogFilter> {

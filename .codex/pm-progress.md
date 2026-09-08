@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Define a unified instruction/memory model and make compact refresh current file-backed model context without special-casing AGENTS.md.
+Migrate Morpheus project-local configuration and repository-owned runtime assets from `.codex/` to `.morpheus/` without changing external `codex_cli` or `.codex-plugin` compatibility semantics.
 
 ## Active Work
+- id: project-config-directory-morpheus-cutover
+  owner: /self/owner_main
+  checkout: /Users/bytedance/Projects/my-codex
+  branch: refactor/project-config-directory-morpheus
+  task_type: refactor/config-runtime
+  depends_on: main baseline `647842fe19`; completed read-only inventories from `/self/explore_project_morpheus_config_cutover` and `/self/explore_codex_path_classification`
+  files: project-local configuration discovery and layer loading; agents/skills/workflows/hooks/plugins/instructions/memory discovery; sandbox protections; repository `.codex` runtime assets and references; focused tests/docs
+  base_commit: 647842fe19
+  pending_sync_from_main: dev has extensive unrelated tracked work and must not be synchronized; dev-2 and dev-3 are idle but remain unsynchronized while this global exclusive refactor is active
+  status: completed
+  objective: Make `.morpheus/` the canonical project-local Morpheus configuration directory and migrate repository-owned Morpheus assets accordingly. Preserve `MORPHEUS_HOME` user-home behavior, external official `codex_cli` `~/.codex` semantics, `.codex-plugin` ecosystem paths, and compatibility for data formats or identifiers that are not Morpheus project configuration.
+  last_update: 2026-09-08 CST owner_main completed the hard cut to project-local `.morpheus/`, migrated repository-owned runtime assets with Git renames, preserved external `codex_cli` / `~/.codex`, `.codex-plugin`, `dotCodexFolder`, and internal compatibility identifiers, and passed fixed-reviewer review after repairing one mistaken method rename. Production checks, app-server build, project workflow/config/agent-role/sandbox checks, external-config migration tests, and Root Worker fixture tests passed. Wider test-only targets still expose unrelated baseline failures documented below.
+  next_action: PM performs design acceptance, inspects the committed path-classification boundary, and merges the owner branch if accepted
+  blockers: none
+  validation: `cargo check -p config-service --lib --quiet`, `cargo check -p skill-service --lib --quiet`, `cargo check -p codex-windows-sandbox --lib --quiet`, `cargo build -p app-server --bin app-server --quiet`, protocol `.morpheus` permission tests, macOS Seatbelt protected-metadata test, workflow-api project tests, agent-role tests, thread-service child-cwd config reload test, app-server repo import lib tests, and 80 Root Worker focused tests passed. Linux-only bwrap test was cfg-filtered on macOS. Full config/skill-service/app-server integration test targets remain blocked by unrelated pre-existing test compile errors; workflow-api full suite has one unrelated stale budget assertion; one thread-service workflow-context fixture mutates cwd without rebuilding config layers. Full-tree rustfmt check remains blocked by existing repository formatting drift and stable-toolchain nightly-option warnings. `git diff --check` and path invariants passed.
+  commit: pending owner commit
 - id: runtime-restart-terminal-handoff-smoke
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3

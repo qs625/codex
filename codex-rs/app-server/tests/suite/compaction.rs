@@ -209,7 +209,7 @@ async fn mid_turn_auto_compaction_reinjects_project_agent_role_into_followup_req
     )?;
 
     let workspace = TempDir::new()?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".morpheus");
     std::fs::create_dir_all(&project_config_dir)?;
     let agents_dir = project_config_dir.join("agents");
     std::fs::create_dir_all(&agents_dir)?;
@@ -445,7 +445,7 @@ async fn thread_compact_start_preserves_project_agent_role_in_replacement_histor
     )?;
 
     let workspace = TempDir::new()?;
-    let agents_dir = workspace.path().join(".codex").join("agents");
+    let agents_dir = workspace.path().join(".morpheus").join("agents");
     std::fs::create_dir_all(&agents_dir)?;
     std::fs::write(
         agents_dir.join("manual-compact-role.agent.md"),

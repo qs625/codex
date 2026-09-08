@@ -51,7 +51,7 @@ fn windows_verbatim_path_prefix_does_not_count_as_glob_syntax() {
 async fn restricted_read_implicitly_allows_helper_executables() -> std::io::Result<()> {
     let temp_dir = TempDir::new()?;
     let cwd = temp_dir.path().join("workspace");
-    let codex_home = temp_dir.path().join(".codex");
+    let codex_home = temp_dir.path().join(".morpheus");
     let zsh_path = temp_dir.path().join("runtime").join("zsh");
     let arg0_root = codex_home.join("tmp").join("arg0");
     let allowed_arg0_dir = arg0_root.join("codex-arg0-session");

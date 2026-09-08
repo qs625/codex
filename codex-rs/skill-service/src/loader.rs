@@ -1,5 +1,6 @@
 use crate::system::system_cache_root_dir;
 use codex_config_types::ConfigLayerSource;
+use codex_config_types::PROJECT_CONFIG_DIR_NAME;
 use codex_file_system::ExecutorFileSystem;
 use codex_file_system::LOCAL_FS;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -347,7 +348,7 @@ async fn repo_dot_codex_skill_roots(
     config_layer_stack: &SkillConfigLayerStack,
     cwd: &AbsolutePathBuf,
 ) -> Vec<SkillRoot> {
-    repo_skills_roots_for_dirname(fs, config_layer_stack, cwd, ".codex").await
+    repo_skills_roots_for_dirname(fs, config_layer_stack, cwd, PROJECT_CONFIG_DIR_NAME).await
 }
 
 async fn repo_skills_roots_for_dirname(

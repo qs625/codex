@@ -448,7 +448,7 @@ async fn reducer_ingests_skill_invoked_fact() {
         thread_id: "thread-1".to_string(),
         turn_id: "turn-1".to_string(),
     };
-    let skill_path = PathBuf::from("/Users/abc/.codex/skills/doc/SKILL.md");
+    let skill_path = PathBuf::from("/Users/abc/.morpheus/skills/doc/SKILL.md");
     let expected_skill_id = skill_id_for_local_skill(
         /*repo_url*/ None,
         /*repo_root*/ None,
@@ -503,7 +503,7 @@ async fn reducer_includes_plugin_id_for_plugin_skill_invocations() {
         turn_id: "turn-1".to_string(),
     };
     let skill_path =
-        PathBuf::from("/Users/abc/.codex/plugins/cache/test/sample/skills/doc/SKILL.md");
+        PathBuf::from("/Users/abc/.morpheus/plugins/cache/test/sample/skills/doc/SKILL.md");
 
     reducer
         .ingest(

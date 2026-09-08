@@ -4882,7 +4882,7 @@
     },
     "project_root_markers": {
       "default": null,
-      "description": "Markers used to detect the project root when searching parent directories for `.codex` folders. Defaults to [\".git\"] when unset.",
+      "description": "Markers used to detect the project root when searching parent directories for `.morpheus` folders. Defaults to [\".git\"] when unset.",
       "items": {
         "type": "string"
       },

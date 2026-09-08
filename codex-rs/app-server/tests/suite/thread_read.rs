@@ -2951,7 +2951,7 @@ async fn thread_read_after_auto_compaction_preserves_init_context_without_dup_li
         "Summarize the conversation.",
     )?;
     let workspace = TempDir::new()?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".morpheus");
     std::fs::create_dir_all(&project_config_dir)?;
     let agents_dir = project_config_dir.join("agents");
     std::fs::create_dir_all(&agents_dir)?;

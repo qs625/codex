@@ -24,7 +24,7 @@ function makeWorkflow(
     name: "Feature Development",
     description: "Develop a feature with review and verification",
     source: "project",
-    path: "/repo/.codex/workflows/feature-dev",
+    path: "/repo/.morpheus/workflows/feature-dev",
     entry: "workflow.ts",
     version: null,
     whenToUse: ["new feature development"],
@@ -151,7 +151,7 @@ test("filters commands and skills from the same query", () => {
       makeWorkflow({
         id: "release-triage",
         name: "Release Triage",
-        path: "/repo/.codex/workflows/release-triage",
+        path: "/repo/.morpheus/workflows/release-triage",
         whenToUse: ["release stabilization"],
       }),
     ],

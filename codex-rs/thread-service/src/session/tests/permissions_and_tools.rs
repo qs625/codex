@@ -2620,10 +2620,10 @@ async fn build_initial_context_loads_skills_from_current_cwd_local_roots() {
     let child_cwd = codex_home.path().join("child");
     std::fs::create_dir_all(&child_cwd).expect("create child cwd");
     write_skill(
-        &child_cwd.join(".codex/skills"),
+        &child_cwd.join(".morpheus/skills"),
         "cwd-dot-codex",
         "cwd-dot-codex-skill",
-        "from cwd .codex",
+        "from cwd .morpheus",
     );
     write_skill(
         &child_cwd.join(".agents/skills"),
@@ -2649,7 +2649,7 @@ async fn build_initial_context_loads_skills_from_current_cwd_local_roots() {
         developer_texts
             .iter()
             .any(|text| text.contains("- cwd-dot-codex-skill:")),
-        "expected cwd .codex skill in initial context, got {developer_texts:?}"
+        "expected cwd .morpheus skill in initial context, got {developer_texts:?}"
     );
     assert!(
         developer_texts
@@ -2692,7 +2692,7 @@ Use this workflow when feature work needs a structured process.
     let repo_cwd = codex_home.path().join("repo");
     std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
     write_workflow(
-        &repo_cwd.join(".codex/workflows"),
+        &repo_cwd.join(".morpheus/workflows"),
         "feature-dev",
         "structured feature workflow",
     );
@@ -2753,7 +2753,7 @@ Use this workflow when feature work needs a structured process.
 
     let codex_home = tempfile::tempdir().expect("create codex home");
     let repo_cwd = codex_home.path().join("repo");
-    let dot_codex = repo_cwd.join(".codex");
+    let dot_codex = repo_cwd.join(".morpheus");
     let active_cwd = codex_home.path().join("active-cwd");
     std::fs::create_dir_all(&active_cwd).expect("create active cwd");
     std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
@@ -2830,7 +2830,7 @@ Use this workflow when feature work needs a structured process.
 
     let codex_home = tempfile::tempdir().expect("create codex home");
     let repo_cwd = codex_home.path().join("repo");
-    let dot_codex = repo_cwd.join(".codex");
+    let dot_codex = repo_cwd.join(".morpheus");
     let external_root = codex_home.path().join("external-workflow");
     let active_cwd = codex_home.path().join("active-cwd");
     std::fs::create_dir_all(&active_cwd).expect("create active cwd");
@@ -2888,7 +2888,7 @@ async fn build_initial_context_skips_disabled_project_workflow_markdown_symlinks
 
     let codex_home = tempfile::tempdir().expect("create codex home");
     let repo_cwd = codex_home.path().join("repo");
-    let dot_codex = repo_cwd.join(".codex");
+    let dot_codex = repo_cwd.join(".morpheus");
     let workflow_dir = dot_codex.join("workflows").join("feature-dev");
     let external_markdown_dir = codex_home.path().join("external-workflow-doc");
     let active_cwd = codex_home.path().join("active-cwd");
@@ -2958,7 +2958,7 @@ Use this workflow when feature work needs a structured process.
 async fn build_initial_context_skips_disabled_project_workflow_entry_symlinks_that_escape_repo() {
     let codex_home = tempfile::tempdir().expect("create codex home");
     let repo_cwd = codex_home.path().join("repo");
-    let dot_codex = repo_cwd.join(".codex");
+    let dot_codex = repo_cwd.join(".morpheus");
     let workflow_dir = dot_codex.join("workflows").join("feature-dev");
     let external_entry_dir = codex_home.path().join("external-workflow-entry");
     let active_cwd = codex_home.path().join("active-cwd");
@@ -3059,9 +3059,9 @@ Use this workflow when feature work needs a structured process.
 
     let codex_home = tempfile::tempdir().expect("create codex home");
     let repo_cwd = codex_home.path().join("repo");
-    let repo_dot_codex = repo_cwd.join(".codex");
+    let repo_dot_codex = repo_cwd.join(".morpheus");
     let disabled_repo_root = codex_home.path().join("disabled-repo");
-    let disabled_dot_codex = disabled_repo_root.join(".codex");
+    let disabled_dot_codex = disabled_repo_root.join(".morpheus");
     std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
     write_workflow(
         &repo_dot_codex.join("workflows"),

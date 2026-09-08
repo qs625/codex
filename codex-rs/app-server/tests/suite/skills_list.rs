@@ -385,7 +385,7 @@ async fn skills_list_loads_cwd_roots_when_environment_disabled() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     write_skill(&codex_home, "home-skill")?;
-    let repo_skill_dir = cwd.path().join(".codex/skills/repo-skill");
+    let repo_skill_dir = cwd.path().join(".morpheus/skills/repo-skill");
     std::fs::create_dir_all(&repo_skill_dir)?;
     std::fs::write(
         repo_skill_dir.join("SKILL.md"),
@@ -524,7 +524,7 @@ async fn skills_list_uses_cached_result_until_force_reload() -> Result<()> {
             .all(|skill| skill.name != "late-extra-skill")
     );
 
-    let skill_dir = cwd.path().join(".codex/skills/late-extra-skill");
+    let skill_dir = cwd.path().join(".morpheus/skills/late-extra-skill");
     std::fs::create_dir_all(&skill_dir)?;
     std::fs::write(
         skill_dir.join("SKILL.md"),

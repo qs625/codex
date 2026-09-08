@@ -18,7 +18,7 @@ const FEATURE_DEV: WorkflowSummary = {
   name: "Feature Development",
   description: "Research, implement, review, and verify.",
   source: "project",
-  path: "/repo/.codex/workflows/feature-dev",
+  path: "/repo/.morpheus/workflows/feature-dev",
   entry: "workflow.ts",
   version: "0.1.0",
   whenToUse: [],

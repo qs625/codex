@@ -658,7 +658,7 @@ mod tests {
             },
         ]);
 
-        // The legacy workspace-write root already protects top-level `.codex`, so
+        // The legacy workspace-write root already protects top-level `.morpheus`, so
         // the restricted-token overlay only needs the extra read-only docs carveout.
         let expected_deny_write_paths = vec![docs];
 

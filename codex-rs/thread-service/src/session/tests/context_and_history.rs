@@ -4077,8 +4077,8 @@ async fn session_start_hooks_only_load_from_trusted_project_layers() -> std::io:
     let codex_home = temp.path().join("home");
     let project_root = temp.path().join("project");
     let nested = project_root.join("nested");
-    let root_dot_codex = project_root.join(".codex");
-    let nested_dot_codex = nested.join(".codex");
+    let root_dot_codex = project_root.join(".morpheus");
+    let nested_dot_codex = nested.join(".morpheus");
 
     std::fs::create_dir_all(&codex_home)?;
     std::fs::create_dir_all(&nested_dot_codex)?;
@@ -4127,7 +4127,7 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
     let temp = tempfile::tempdir()?;
     let project_root = temp.path().join("project");
     let nested = project_root.join("nested");
-    let dot_codex = project_root.join(".codex");
+    let dot_codex = project_root.join(".morpheus");
     std::fs::create_dir_all(&nested)?;
     std::fs::write(project_root.join(".git"), "gitdir: here")?;
     write_project_hooks(&dot_codex)?;

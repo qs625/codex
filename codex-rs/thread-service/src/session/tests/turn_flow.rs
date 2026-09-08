@@ -2605,7 +2605,7 @@ sandbox_mode = "read-only"
         config.config_layer_stack = config_service::ConfigLayerStack::new(
             vec![config_service::ConfigLayerEntry::new(
                 codex_config_types::ConfigLayerSource::Project {
-                    dot_codex_folder: project_dir.path().join(".codex").abs(),
+                    dot_codex_folder: project_dir.path().join(".morpheus").abs(),
                 },
                 project_config,
             )],

@@ -35,6 +35,7 @@ use codex_config_state::merge_toml_values;
 use codex_config_toml::config_toml::ConfigToml;
 pub use codex_config_toml::resolve_relative_paths_in_config_toml;
 use codex_config_types::CONFIG_TOML_FILE;
+use codex_config_types::PROJECT_CONFIG_DIR_NAME;
 use codex_config_types::ConfigLayerSource;
 use codex_file_system::ExecutorFileSystem;
 use codex_file_system::LOCAL_FS;
@@ -150,8 +151,8 @@ async fn first_layer_config_error_from_entries(layers: &[ConfigLayerEntry]) -> O
 /// - user      `${MORPHEUS_HOME}/config.toml`
 /// - profile   `${MORPHEUS_HOME}/<name>.config.toml`, when selected
 /// - cwd       `${PWD}/config.toml` (loaded but disabled when the directory is untrusted)
-/// - tree      parent directories up to root looking for `./.codex/config.toml` (loaded but disabled when untrusted)
-/// - repo      `$(git rev-parse --show-toplevel)/.codex/config.toml` (loaded but disabled when untrusted)
+/// - tree      parent directories up to root looking for `./.morpheus/config.toml` (loaded but disabled when untrusted)
+/// - repo      `$(git rev-parse --show-toplevel)/.morpheus/config.toml` (loaded but disabled when untrusted)
 /// - runtime   e.g., --config flags, model selector in UI
 ///
 /// (*) Only available on macOS via managed device profiles.
@@ -891,7 +892,7 @@ impl ProjectTrustContext {
         }
 
         let relative_dir = dir.as_path().strip_prefix(checkout_root.as_path()).ok()?;
-        Some(repo_root.join(relative_dir).join(".codex"))
+        Some(repo_root.join(relative_dir).join(PROJECT_CONFIG_DIR_NAME))
     }
 }
 
@@ -1078,7 +1079,7 @@ async fn load_project_layers(
     let mut layers = Vec::new();
     let mut startup_warnings = Vec::new();
     for dir in dirs {
-        let dot_codex_abs = dir.join(".codex");
+        let dot_codex_abs = dir.join(PROJECT_CONFIG_DIR_NAME);
         if !fs
             .get_metadata(&dot_codex_abs, /*sandbox*/ None)
             .await

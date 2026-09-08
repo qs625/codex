@@ -29,7 +29,7 @@
   "workspaceFolder": "/workspace",
   "mounts": [
     "source=codex-commandhistory-${devcontainerId},target=/commandhistory,type=volume",
-    "source=codex-home-${devcontainerId},target=/home/vscode/.codex,type=volume",
+    "source=codex-home-${devcontainerId},target=/home/vscode/.morpheus,type=volume",
     "source=codex-gh-${devcontainerId},target=/home/vscode/.config/gh,type=volume",
     "source=codex-cargo-registry-${devcontainerId},target=/home/vscode/.cargo/registry,type=volume",
     "source=codex-cargo-git-${devcontainerId},target=/home/vscode/.cargo/git,type=volume",

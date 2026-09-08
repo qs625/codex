@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn outcome_rendering_uses_aliases_when_they_allow_more_skills_to_fit() {
         let root = test_path_buf(
-            "/Users/xl/.codex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix",
+            "/Users/xl/.morpheus/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix",
         )
         .abs();
         let skills = (0..12)
@@ -1253,7 +1253,7 @@ mod tests {
                 "- `r0` = `{}`",
                 normalized_path(
                     &test_path_buf(
-                        "/Users/xl/.codex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix"
+                        "/Users/xl/.morpheus/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix"
                     )
                     .abs()
                 )
@@ -1267,9 +1267,9 @@ mod tests {
     #[test]
     fn outcome_rendering_uses_marketplace_root_for_single_skill_plugin_versions() {
         let github_root =
-            test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated/github/hash123/skills")
+            test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash123/skills")
                 .abs();
-        let marketplace_root = test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated").abs();
+        let marketplace_root = test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated").abs();
         let github = skill_with_path("github:gh-fix-ci", &github_root.join("gh-fix-ci/SKILL.md"));
         let outcome = outcome_with_roots(vec![github.clone()], vec![github_root.clone()]);
         let plan = build_alias_plan(
@@ -1295,7 +1295,7 @@ mod tests {
     #[test]
     fn outcome_rendering_uses_skill_root_for_multiple_skills_in_one_plugin_version() {
         let github_root =
-            test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated/github/hash123/skills")
+            test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash123/skills")
                 .abs();
         let fix_ci = skill_with_path("github:gh-fix-ci", &github_root.join("gh-fix-ci/SKILL.md"));
         let yeet = skill_with_path("github:yeet", &github_root.join("yeet/SKILL.md"));
@@ -1333,7 +1333,7 @@ mod tests {
     #[test]
     fn outcome_rendering_counts_plugin_version_skills_before_budget_omission() {
         let root = test_path_buf(
-            "/Users/xl/.codex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix",
+            "/Users/xl/.morpheus/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix",
         )
         .abs();
         let alpha = skill_with_path("alpha-skill", &root.join("alpha/SKILL.md"));
@@ -1371,10 +1371,10 @@ mod tests {
     #[test]
     fn outcome_rendering_uses_each_skill_root_for_multiple_roots_in_one_plugin_version() {
         let skills_root =
-            test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated/github/hash123/skills")
+            test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash123/skills")
                 .abs();
         let extra_root = test_path_buf(
-            "/Users/xl/.codex/plugins/cache/openai-curated/github/hash123/extra-skills",
+            "/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash123/extra-skills",
         )
         .abs();
         let fix_ci = skill_with_path("github:gh-fix-ci", &skills_root.join("gh-fix-ci/SKILL.md"));
@@ -1416,12 +1416,12 @@ mod tests {
     #[test]
     fn outcome_rendering_extracts_plugin_marketplace_root_for_multiple_plugins() {
         let github_root =
-            test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated/github/hash123/skills")
+            test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash123/skills")
                 .abs();
         let slack_root =
-            test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated/slack/hash456/skills")
+            test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated/slack/hash456/skills")
                 .abs();
-        let marketplace_root = test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated").abs();
+        let marketplace_root = test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated").abs();
         let github = skill_with_path("github:gh-fix-ci", &github_root.join("gh-fix-ci/SKILL.md"));
         let slack = skill_with_path(
             "slack:daily-digest",
@@ -1464,13 +1464,13 @@ mod tests {
     #[test]
     fn outcome_rendering_uses_one_marketplace_root_for_multiple_plugin_versions() {
         let skills_root =
-            test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated/github/hash123/skills")
+            test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash123/skills")
                 .abs();
         let extra_root = test_path_buf(
-            "/Users/xl/.codex/plugins/cache/openai-curated/github/hash456/extra-skills",
+            "/Users/xl/.morpheus/plugins/cache/openai-curated/github/hash456/extra-skills",
         )
         .abs();
-        let marketplace_root = test_path_buf("/Users/xl/.codex/plugins/cache/openai-curated").abs();
+        let marketplace_root = test_path_buf("/Users/xl/.morpheus/plugins/cache/openai-curated").abs();
         let fix_ci = skill_with_path("github:gh-fix-ci", &skills_root.join("gh-fix-ci/SKILL.md"));
         let yeet = skill_with_path("github:yeet", &extra_root.join("yeet/SKILL.md"));
         let outcome = outcome_with_roots(

@@ -238,7 +238,7 @@ mod tests {
                     name: "Feature Development".to_string(),
                     description: "按调研、实现、review/fix、验证流程开发功能".to_string(),
                     source: WorkflowSource::Project,
-                    path: ".codex/workflows/feature-dev".to_string(),
+                    path: ".morpheus/workflows/feature-dev".to_string(),
                     entry: "workflow.ts".to_string(),
                     version: Some("0.1.0".to_string()),
                     when_to_use: Vec::new(),

@@ -23,6 +23,7 @@ mod tui_keymap;
 mod ui;
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
+pub const PROJECT_CONFIG_DIR_NAME: &str = ".morpheus";
 
 pub use agents::AgentRoleToml;
 pub use agents::AgentsToml;
@@ -171,7 +172,7 @@ pub enum ConfigLayerSource {
         profile: Option<String>,
     },
 
-    /// Path to a .codex/ folder within a project. There could be multiple of
+    /// Path to a .morpheus/ folder within a project. There could be multiple of
     /// these between `cwd` and the project/repo root.
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]

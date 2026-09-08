@@ -49,13 +49,13 @@
 
     #[cfg(unix)]
     #[test]
-    fn writable_roots_proactively_protect_missing_dot_codex() {
+    fn writable_roots_proactively_protect_missing_dot_morpheus() {
         let cwd = TempDir::new().expect("tempdir");
         let expected_root = AbsolutePathBuf::from_absolute_path(
             cwd.path().canonicalize().expect("canonicalize cwd"),
         )
         .expect("absolute canonical root");
-        let expected_dot_codex = expected_root.join(".codex");
+        let expected_dot_morpheus = expected_root.join(".morpheus");
 
         let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
             path: FileSystemPath::Special {
@@ -70,7 +70,7 @@
         assert!(
             writable_roots[0]
                 .read_only_subpaths
-                .contains(&expected_dot_codex)
+                .contains(&expected_dot_morpheus)
         );
     }
 
@@ -112,7 +112,7 @@
                 },
                 FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
-                        value: FileSystemSpecialPath::project_roots(Some(".codex".into())),
+                        value: FileSystemSpecialPath::project_roots(Some(".morpheus".into())),
                     },
                     access: FileSystemAccessMode::Read,
                 },
@@ -143,13 +143,13 @@
 
     #[cfg(unix)]
     #[test]
-    fn writable_roots_skip_default_dot_codex_when_explicit_user_rule_exists() {
+    fn writable_roots_skip_default_dot_morpheus_when_explicit_user_rule_exists() {
         let cwd = TempDir::new().expect("tempdir");
         let expected_root = AbsolutePathBuf::from_absolute_path(
             cwd.path().canonicalize().expect("canonicalize cwd"),
         )
         .expect("absolute canonical root");
-        let explicit_dot_codex = expected_root.join(".codex");
+        let explicit_dot_morpheus = expected_root.join(".morpheus");
 
         let policy = FileSystemSandboxPolicy::restricted(vec![
             FileSystemSandboxEntry {
@@ -160,7 +160,7 @@
             },
             FileSystemSandboxEntry {
                 path: FileSystemPath::Path {
-                    path: explicit_dot_codex.clone(),
+                    path: explicit_dot_morpheus.clone(),
                 },
                 access: FileSystemAccessMode::Write,
             },
@@ -174,18 +174,18 @@
         assert!(
             !workspace_root
                 .protected_metadata_names
-                .contains(&".codex".to_string()),
-            "explicit .codex rule should remove the metadata-name protection"
+                .contains(&".morpheus".to_string()),
+            "explicit .morpheus rule should remove the metadata-name protection"
         );
         assert!(
             !workspace_root
                 .read_only_subpaths
-                .contains(&explicit_dot_codex),
-            "explicit .codex rule should win over the default protected carveout"
+                .contains(&explicit_dot_morpheus),
+            "explicit .morpheus rule should win over the default protected carveout"
         );
         assert!(
             policy.can_write_path_with_cwd(
-                explicit_dot_codex.join("config.toml").as_path(),
+                explicit_dot_morpheus.join("config.toml").as_path(),
                 cwd.path()
             )
         );
@@ -196,7 +196,7 @@
         let cwd = TempDir::new().expect("tempdir");
         let dot_git_config = cwd.path().join(".git").join("config");
         let dot_agents_config = cwd.path().join(".agents").join("config");
-        let dot_codex_config = cwd.path().join(".codex").join("config.toml");
+        let dot_morpheus_config = cwd.path().join(".morpheus").join("config.toml");
         let root = AbsolutePathBuf::from_absolute_path(cwd.path()).expect("absolute cwd");
         let file_system_policy =
             FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
@@ -206,7 +206,7 @@
 
         assert!(!file_system_policy.can_write_path_with_cwd(&dot_git_config, cwd.path()));
         assert!(!file_system_policy.can_write_path_with_cwd(&dot_agents_config, cwd.path()));
-        assert!(!file_system_policy.can_write_path_with_cwd(&dot_codex_config, cwd.path()));
+        assert!(!file_system_policy.can_write_path_with_cwd(&dot_morpheus_config, cwd.path()));
 
         let writable_roots = file_system_policy.get_writable_roots_with_cwd(cwd.path());
         assert_eq!(writable_roots.len(), 1);
@@ -215,12 +215,12 @@
             vec![
                 ".git".to_string(),
                 ".agents".to_string(),
-                ".codex".to_string(),
+                ".morpheus".to_string(),
             ]
         );
         assert!(!writable_roots[0].is_path_writable(&dot_git_config));
         assert!(!writable_roots[0].is_path_writable(&dot_agents_config));
-        assert!(!writable_roots[0].is_path_writable(&dot_codex_config));
+        assert!(!writable_roots[0].is_path_writable(&dot_morpheus_config));
     }
 
     #[test]
@@ -267,7 +267,7 @@
         expected_entries.extend(
             default_read_only_subpaths_for_writable_root(
                 &expected_root,
-                /*protect_missing_dot_codex*/ true,
+                /*protect_missing_dot_morpheus*/ true,
             )
             .into_iter()
             .map(|path| FileSystemSandboxEntry {
@@ -290,7 +290,7 @@
         );
         assert!(
             !file_system_policy
-                .can_write_path_with_cwd(Path::new(".codex/config.toml"), relative_cwd,)
+                .can_write_path_with_cwd(Path::new(".morpheus/config.toml"), relative_cwd,)
         );
         assert!(
             !file_system_policy.can_write_path_with_cwd(
@@ -307,10 +307,10 @@
         let real_root = cwd.path().join("real");
         let link_root = cwd.path().join("link");
         let blocked = real_root.join("blocked");
-        let codex_dir = real_root.join(".codex");
+        let codex_dir = real_root.join(".morpheus");
 
         fs::create_dir_all(&blocked).expect("create blocked");
-        fs::create_dir_all(&codex_dir).expect("create .codex");
+        fs::create_dir_all(&codex_dir).expect("create .morpheus");
         symlink_dir(&real_root, &link_root).expect("create symlinked root");
 
         let link_root =
@@ -318,7 +318,7 @@
         let link_blocked = link_root.join("blocked");
         let expected_root = link_root.clone();
         let expected_blocked = link_blocked.clone();
-        let expected_codex = link_root.join(".codex");
+        let expected_codex = link_root.join(".morpheus");
 
         let policy = FileSystemSandboxPolicy::restricted(vec![
             FileSystemSandboxEntry {
@@ -359,11 +359,11 @@
         let link_root = cwd.path().join("link");
         let blocked = real_root.join("blocked");
         let agents_dir = real_root.join(".agents");
-        let codex_dir = real_root.join(".codex");
+        let codex_dir = real_root.join(".morpheus");
 
         fs::create_dir_all(&blocked).expect("create blocked");
         fs::create_dir_all(&agents_dir).expect("create .agents");
-        fs::create_dir_all(&codex_dir).expect("create .codex");
+        fs::create_dir_all(&codex_dir).expect("create .morpheus");
         symlink_dir(&real_root, &link_root).expect("create symlinked cwd");
 
         let link_blocked =
@@ -372,7 +372,7 @@
             AbsolutePathBuf::from_absolute_path(&link_root).expect("absolute symlinked root");
         let expected_blocked = link_blocked.clone();
         let expected_agents = expected_root.join(".agents");
-        let expected_codex = expected_root.join(".codex");
+        let expected_codex = expected_root.join(".morpheus");
 
         let policy = FileSystemSandboxPolicy::restricted(vec![
             FileSystemSandboxEntry {
@@ -428,18 +428,18 @@
         let cwd = TempDir::new().expect("tempdir");
         let root = cwd.path().join("root");
         let decoy = root.join("decoy-codex");
-        let dot_codex = root.join(".codex");
+        let dot_morpheus = root.join(".morpheus");
         fs::create_dir_all(&decoy).expect("create decoy");
-        symlink_dir(&decoy, &dot_codex).expect("create .codex symlink");
+        symlink_dir(&decoy, &dot_morpheus).expect("create .morpheus symlink");
 
         let root = AbsolutePathBuf::from_absolute_path(&root).expect("absolute root");
-        let expected_dot_codex = AbsolutePathBuf::from_absolute_path(
+        let expected_dot_morpheus = AbsolutePathBuf::from_absolute_path(
             root.as_path()
                 .canonicalize()
                 .expect("canonicalize root")
-                .join(".codex"),
+                .join(".morpheus"),
         )
-        .expect("absolute .codex symlink");
+        .expect("absolute .morpheus symlink");
         let unexpected_decoy =
             AbsolutePathBuf::from_absolute_path(decoy.canonicalize().expect("canonicalize decoy"))
                 .expect("absolute canonical decoy");
@@ -453,7 +453,7 @@
         assert_eq!(writable_roots.len(), 1);
         assert_eq!(
             writable_roots[0].read_only_subpaths,
-            vec![expected_dot_codex]
+            vec![expected_dot_morpheus]
         );
         assert!(
             !writable_roots[0]
@@ -613,10 +613,10 @@
         let real_tmpdir = cwd.path().join("real-tmpdir");
         let link_tmpdir = cwd.path().join("link-tmpdir");
         let blocked = real_tmpdir.join("blocked");
-        let codex_dir = real_tmpdir.join(".codex");
+        let codex_dir = real_tmpdir.join(".morpheus");
 
         fs::create_dir_all(&blocked).expect("create blocked");
-        fs::create_dir_all(&codex_dir).expect("create .codex");
+        fs::create_dir_all(&codex_dir).expect("create .morpheus");
         symlink_dir(&real_tmpdir, &link_tmpdir).expect("create symlinked tmpdir");
 
         let link_blocked =
@@ -624,7 +624,7 @@
         let expected_root =
             AbsolutePathBuf::from_absolute_path(&link_tmpdir).expect("absolute symlinked tmpdir");
         let expected_blocked = link_blocked.clone();
-        let expected_codex = expected_root.join(".codex");
+        let expected_codex = expected_root.join(".morpheus");
 
         unsafe {
             std::env::set_var("TMPDIR", &link_tmpdir);

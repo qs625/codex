@@ -3,6 +3,7 @@ use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_types::AgentRoleToml;
 use codex_config_types::AgentsToml;
+use codex_config_types::PROJECT_CONFIG_DIR_NAME;
 use codex_file_system::ExecutorFileSystem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
@@ -96,7 +97,10 @@ pub async fn load_agent_roles(
         merge_agent_roles_from_dirs(
             fs,
             &mut roles,
-            &[codex_home.join("agents"), cwd.join(".codex").join("agents")],
+            &[
+                codex_home.join("agents"),
+                cwd.join(PROJECT_CONFIG_DIR_NAME).join("agents"),
+            ],
             startup_warnings,
         )
         .await?;
@@ -184,7 +188,10 @@ pub async fn load_agent_roles(
         }
     }
 
-    let extra_agent_dirs = [codex_home.join("agents"), cwd.join(".codex").join("agents")];
+    let extra_agent_dirs = [
+        codex_home.join("agents"),
+        cwd.join(PROJECT_CONFIG_DIR_NAME).join("agents"),
+    ];
     let extra_agent_dirs = extra_agent_dirs
         .iter()
         .filter(|agents_dir| !scanned_agent_dirs.contains(agents_dir.as_path()))

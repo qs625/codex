@@ -363,7 +363,7 @@ fn build_seatbelt_access_policy(
             params.push((excluded_param.clone(), excluded_subpath.into_path_buf()));
             // Exclude both the exact protected path and anything beneath it.
             // `subpath` alone leaves a gap for first-time creation of the
-            // protected directory itself, such as `mkdir .codex`.
+            // protected directory itself, such as `mkdir .morpheus`.
             require_parts.push(format!(
                 "(require-not (literal (param \"{excluded_param}\")))"
             ));

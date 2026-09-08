@@ -29,18 +29,18 @@ function readResponse(
     config,
     origins: {
       model: {
-        name: { type: "user", file: "/home/.codex/config.toml", profile: null },
+        name: { type: "user", file: "/home/.morpheus/config.toml", profile: null },
         version: "v1",
       },
       sandbox_mode: {
-        name: { type: "project", dotCodexFolder: "/work/.codex" },
+        name: { type: "project", dotCodexFolder: "/work/.morpheus" },
         version: "project-v1",
       },
       ...overrides.origins,
     },
     layers: [
       {
-        name: { type: "user", file: "/home/.codex/config.toml", profile: null },
+        name: { type: "user", file: "/home/.morpheus/config.toml", profile: null },
         version: "v1",
         config: {},
         disabledReason: null,
@@ -61,7 +61,7 @@ test("buildSettingsConfigState maps supported global config fields", () => {
     }),
   );
 
-  assert.equal(state.userConfigPath, "/home/.codex/config.toml");
+  assert.equal(state.userConfigPath, "/home/.morpheus/config.toml");
   assert.equal(state.userVersion, "v1");
   assert.equal(
     state.fields.find((field) => field.keyPath === "model")?.draftValue,
@@ -600,13 +600,13 @@ test("config inventory includes unknown nested effective config with origins", (
       {
         origins: {
           workflow: {
-            name: { type: "project", dotCodexFolder: "/work/.codex" },
+            name: { type: "project", dotCodexFolder: "/work/.morpheus" },
             version: "project-v1",
           },
           "desktop.customSidebarWidth": {
             name: {
               type: "user",
-              file: "/home/.codex/config.toml",
+              file: "/home/.morpheus/config.toml",
               profile: null,
             },
             version: "v1",
@@ -650,7 +650,7 @@ test("resource overview derives global project and effective resource config", (
           {
             name: {
               type: "user",
-              file: "/home/.codex/config.toml",
+              file: "/home/.morpheus/config.toml",
               profile: null,
             },
             version: "user-v1",
@@ -661,7 +661,7 @@ test("resource overview derives global project and effective resource config", (
             disabledReason: null,
           },
           {
-            name: { type: "project", dotCodexFolder: "/work/.codex" },
+            name: { type: "project", dotCodexFolder: "/work/.morpheus" },
             version: "project-v1",
             config: {
               agents: { owner: { model: "gpt-5.6" } },
