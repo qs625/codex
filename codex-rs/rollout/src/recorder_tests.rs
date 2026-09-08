@@ -41,6 +41,31 @@ fn test_config(codex_home: &Path) -> RolloutConfig {
     }
 }
 
+fn compact_turn_context_item(turn_id: &str) -> TurnContextItem {
+    TurnContextItem {
+        turn_id: Some(turn_id.to_string()),
+        trace_id: None,
+        cwd: PathBuf::from("/tmp"),
+        current_date: None,
+        timezone: None,
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        permission_profile: None,
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "test-model".to_string(),
+        personality: None,
+        collaboration_mode: None,
+        realtime_active: None,
+        effort: None,
+        summary: ReasoningSummaryConfig::Auto,
+        user_instructions: Some("fresh instructions".to_string()),
+        developer_instructions: None,
+        final_output_json_schema: None,
+        truncation_policy: None,
+    }
+}
+
 fn write_session_file(root: &Path, ts: &str, uuid: Uuid) -> std::io::Result<PathBuf> {
     let day_dir = root.join("sessions/2025/01/03");
     fs::create_dir_all(&day_dir)?;
@@ -566,11 +591,14 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
     recorder.flush().await?;
 
     recorder
-        .record_canonical_items(&[RolloutItem::Compacted(CompactedItem {
-            message: "compacted checkpoint".to_string(),
-            replacement_history: None,
-            visible_replacement_history_len: None,
-        })])
+        .record_canonical_items(&[
+            RolloutItem::Compacted(CompactedItem {
+                message: "compacted checkpoint".to_string(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::TurnContext(compact_turn_context_item("compact-turn")),
+        ])
         .await?;
     recorder.flush().await?;
 
@@ -600,6 +628,16 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
             .iter()
             .any(|item| matches!(item, RolloutItem::Compacted(_)))
     );
+    let compact_index = head_items
+        .iter()
+        .position(|item| matches!(item, RolloutItem::Compacted(_)))
+        .expect("compacted checkpoint");
+    assert!(matches!(
+        head_items.get(compact_index + 1),
+        Some(RolloutItem::TurnContext(item))
+            if item.turn_id.as_deref() == Some("compact-turn")
+                && item.user_instructions.as_deref() == Some("fresh instructions")
+    ));
     assert!(
         !std::fs::read_to_string(&head_path)?.contains("before compact"),
         "head segment should not contain pre-compact events"
@@ -630,6 +668,172 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
     assert_eq!(page.items[0].path, head_path);
 
     recorder.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn compact_segment_is_not_published_before_following_checkpoint_items() -> std::io::Result<()>
+{
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let thread_id = ThreadId::new();
+    let recorder = RolloutRecorder::new(
+        &config,
+        RolloutRecorderParams::new(
+            thread_id,
+            /*forked_from_id*/ None,
+            SessionSource::Exec,
+            /*thread_source*/ None,
+            /*root_agent_role*/ None,
+            /*root_agent_path*/ None,
+            BaseInstructions::default(),
+            Vec::new(),
+        ),
+    )
+    .await?;
+    recorder.persist().await?;
+    let initial_path = recorder.rollout_path();
+    recorder.shutdown().await?;
+
+    let append_file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&initial_path)?;
+    let current_rollout_path = std::sync::Arc::new(std::sync::Mutex::new(initial_path.clone()));
+    let mut state = RolloutWriterState::new(
+        Some(tokio::fs::File::from_std(append_file)),
+        /*deferred_log_file_info*/ None,
+        /*meta*/ None,
+        home.path().to_path_buf(),
+        initial_path.clone(),
+        std::sync::Arc::clone(&current_rollout_path),
+        SegmentChain::new(initial_path.clone(), thread_id),
+    );
+    state.prepare_segment_for_compaction().await?;
+    let compacted_item = RolloutItem::Compacted(CompactedItem {
+        message: "interrupted compact checkpoint".to_string(),
+        replacement_history: None,
+        visible_replacement_history_len: None,
+    });
+    state
+        .writer
+        .as_mut()
+        .expect("pending compact segment writer")
+        .write_rollout_item(&compacted_item)
+        .await?;
+    state
+        .pending_segment
+        .as_mut()
+        .expect("pending compact segment")
+        .compact_written = true;
+    state
+        .writer
+        .as_mut()
+        .expect("pending compact segment writer")
+        .file
+        .flush()
+        .await?;
+
+    assert_eq!(
+        current_rollout_path
+            .lock()
+            .expect("current rollout path lock")
+            .as_path(),
+        initial_path.as_path(),
+        "writing only Compacted must not publish the pending segment"
+    );
+    assert_eq!(
+        resolve_current_segment_path(&initial_path).await?,
+        initial_path,
+        "a crash before TurnContext must leave reload on the pre-compact head"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn compact_boundary_failure_drains_written_checkpoint_before_retry() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let thread_id = ThreadId::new();
+    let recorder = RolloutRecorder::new(
+        &config,
+        RolloutRecorderParams::new(
+            thread_id,
+            /*forked_from_id*/ None,
+            SessionSource::Exec,
+            /*thread_source*/ None,
+            /*root_agent_role*/ None,
+            /*root_agent_path*/ None,
+            BaseInstructions::default(),
+            Vec::new(),
+        ),
+    )
+    .await?;
+    recorder.persist().await?;
+    let initial_path = recorder.rollout_path();
+    recorder.shutdown().await?;
+
+    let append_file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&initial_path)?;
+    let current_rollout_path = std::sync::Arc::new(std::sync::Mutex::new(initial_path.clone()));
+    let mut state = RolloutWriterState::new(
+        Some(tokio::fs::File::from_std(append_file)),
+        /*deferred_log_file_info*/ None,
+        /*meta*/ None,
+        home.path().to_path_buf(),
+        initial_path.clone(),
+        std::sync::Arc::clone(&current_rollout_path),
+        SegmentChain::new(initial_path.clone(), thread_id),
+    );
+    state.add_items(vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: "checkpoint-a".to_string(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::TurnContext(compact_turn_context_item("turn-a")),
+        RolloutItem::Compacted(CompactedItem {
+            message: "checkpoint-b".to_string(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::TurnContext(compact_turn_context_item("turn-b")),
+    ]);
+    let manifest_path = segment_manifest_path_for_rollout(&initial_path);
+    fs::create_dir(&manifest_path)?;
+
+    state
+        .write_pending_items_once()
+        .await
+        .expect_err("blocked manifest should fail at the second compact boundary");
+    assert_eq!(state.pending_items.len(), 2);
+    assert!(matches!(
+        state.pending_items.first(),
+        Some(RolloutItem::Compacted(item)) if item.message == "checkpoint-b"
+    ));
+    assert!(
+        state.pending_segment.is_some(),
+        "checkpoint A should remain staged for manifest retry"
+    );
+
+    fs::remove_dir(&manifest_path)?;
+    state.write_pending_items_once().await?;
+    assert!(state.pending_items.is_empty());
+    assert!(state.pending_segment.is_none());
+
+    let head_path = current_rollout_path
+        .lock()
+        .expect("current rollout path lock")
+        .clone();
+    let (head_items, _, _) = RolloutRecorder::load_rollout_items(&head_path).await?;
+    assert!(head_items.iter().any(|item| matches!(
+        item,
+        RolloutItem::Compacted(compacted) if compacted.message == "checkpoint-b"
+    )));
+    assert!(!head_items.iter().any(|item| matches!(
+        item,
+        RolloutItem::Compacted(compacted) if compacted.message == "checkpoint-a"
+    )));
     Ok(())
 }
 

@@ -1103,7 +1103,7 @@ async fn thread_start_response_includes_loaded_instruction_sources() -> Result<(
     let workspace = TempDir::new()?;
     let project_config_dir = workspace.path().join(".morpheus");
     std::fs::create_dir_all(&project_config_dir)?;
-    let instruction_dir = workspace.path().join("memory");
+    let instruction_dir = workspace.path().join("instructions");
     std::fs::create_dir_all(&instruction_dir)?;
     let project_instruction_path = instruction_dir.join("project-understanding.md");
     let user_instruction_path = instruction_dir.join("user-preferences.md");
@@ -1113,8 +1113,8 @@ async fn thread_start_response_includes_loaded_instruction_sources() -> Result<(
         project_config_dir.join("config.toml"),
         r#"
 instruction_files = [
-  "memory/project-understanding.md",
-  "memory/user-preferences.md",
+  "instructions/project-understanding.md",
+  "instructions/user-preferences.md",
 ]
 "#,
     )?;
@@ -1163,7 +1163,7 @@ async fn thread_start_with_project_context_displays_initial_context() -> Result<
     let workspace = TempDir::new()?;
     let project_config_dir = workspace.path().join(".morpheus");
     std::fs::create_dir_all(project_config_dir.join("workflows"))?;
-    let instruction_dir = workspace.path().join("memory");
+    let instruction_dir = workspace.path().join("instructions");
     std::fs::create_dir_all(&instruction_dir)?;
     let project_instruction_path = instruction_dir.join("project-understanding.md");
     let user_instruction_path = instruction_dir.join("user-preferences.md");
@@ -1179,8 +1179,8 @@ async fn thread_start_with_project_context_displays_initial_context() -> Result<
         project_config_dir.join("config.toml"),
         r#"
 instruction_files = [
-  "memory/project-understanding.md",
-  "memory/user-preferences.md",
+  "instructions/project-understanding.md",
+  "instructions/user-preferences.md",
 ]
 "#,
     )?;

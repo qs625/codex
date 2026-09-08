@@ -79,7 +79,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 如果某个 dev checkout 无法 fast-forward、存在未归档改动、或当前不空闲，不得向它派发新任务。
 - 普通开发 owner 必须在所属 dev checkout 提交任务分支并交付验证证据，不直接修改或合并主 checkout。
 - PM 负责在主 checkout 通过 Git merge 引入对应 dev checkout 的提交，处理冲突、记录验收并完成后续同步。
-- 如果 owner 提交包含 `.morpheus/memory/project-understanding.md` 修改，PM 在 merge 时负责检查冲突、去重、过时内容和表述一致性，并将主 checkout 合并结果视为新的 canonical 版本。
+- 如果 owner 提交包含 `.morpheus/instructions/project-understanding.md` 修改，PM 在 merge 时负责检查冲突、去重、过时内容和表述一致性，并将主 checkout 合并结果视为新的 canonical 版本。
 - 不允许把 dev checkout 的改动文件手工复制、覆盖或 apply 回主 checkout 代替 merge。
 - 不得用 destructive reset 覆盖未合并工作。
 
@@ -88,7 +88,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - PM 管理跨 turn、跨 owner、长期推进或需要排队/依赖协调的任务时，必须维护 `.codex/pm-progress.md`。
 - `.codex/pm-progress.md` 是 durable 状态来源；不要依赖记忆或 compact 摘要恢复项目状态。
 - owner 和 reviewer 的关键回报先归纳进 progress file，再决定下一步。
-- 如果 active work 修改了 `.morpheus/memory/project-understanding.md`，progress file 应记录该事实，便于 PM 在 merge 时重点验收。
+- 如果 active work 修改了 `.morpheus/instructions/project-understanding.md`，progress file 应记录该事实，便于 PM 在 merge 时重点验收。
 - `.codex/pm-progress.md` 只保留最近半个月左右的活跃/近期进度和当前仍影响调度的约束；更早的完成记录、过期 known issues 和历史上下文应归档到 `.codex/pm-progress-archive/`，并通过目录内 `index.md` 管理入口。
 - 只要 `Active Work` 非空，PM 当前对话的推进重点应围绕“完成 `.codex/pm-progress.md` 中的 active work”，不要求显式维护 thread goal。
 - 每个 active work 至少记录：
@@ -252,5 +252,5 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - `AGENTS.md` 已更新，或已明确说明无需更新。
 - 依赖关系、合并顺序、同步状态已在 progress file 记录清楚。
 - 普通开发任务已从 dev checkout 的提交 merge 到主 checkout，而不是通过复制文件回收改动。
-- 涉及 `.morpheus/memory/project-understanding.md` 的任务，PM 已在 merge 时检查冲突、重复项、过时项和最终表述。
+- 涉及 `.morpheus/instructions/project-understanding.md` 的任务，PM 已在 merge 时检查冲突、重复项、过时项和最终表述。
 - 空闲 dev checkout 已同步，未同步的 checkout 已记录原因。

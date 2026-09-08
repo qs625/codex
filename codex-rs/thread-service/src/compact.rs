@@ -215,20 +215,13 @@ async fn run_compact_task_inner(
         Arc::clone(&turn_context),
         input,
         initial_context_injection,
+        trigger,
         retained_suffix,
         emit_context_window_error,
     )
     .await;
     let status = compaction_status_from_result(&result);
     let error = result.as_ref().err().map(ToString::to_string);
-    if result.is_ok() {
-        let post_compact_outcome =
-            run_post_compact_hooks(sess.as_ref(), turn_context.as_ref(), trigger).await;
-        if let PostCompactHookOutcome::Stopped = post_compact_outcome {
-            attempt.track(sess.as_ref(), status, error).await;
-            return Err(CodexErr::TurnAborted);
-        }
-    }
     attempt.track(sess.as_ref(), status, error).await;
     result.map(|_| ())
 }
@@ -238,6 +231,7 @@ async fn run_compact_task_inner_impl(
     turn_context: Arc<TurnContext>,
     _input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
+    trigger: CompactionTrigger,
     retained_suffix: Vec<ResponseItem>,
     emit_context_window_error: bool,
 ) -> CodexResult<String> {
@@ -400,13 +394,21 @@ async fn run_compact_task_inner_impl(
         final_output: Some(compacted_message.clone()),
     });
 
+    if let PostCompactHookOutcome::Stopped =
+        run_post_compact_hooks(sess.as_ref(), turn_context.as_ref(), trigger).await
+    {
+        return Err(CodexErr::TurnAborted);
+    }
+    let fresh_initial_context = sess
+        .build_fresh_compact_initial_context(turn_context.as_ref())
+        .await?;
     let mut injected_initial_context_item = None;
     let mut injected_initial_context_len = 0;
     if matches!(
         initial_context_injection,
         InitialContextInjection::BeforeLastUserMessage
     ) {
-        let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
+        let initial_context = fresh_initial_context.response_items;
         injected_initial_context_len = initial_context.len();
         injected_initial_context_item = injected_context_item_from_response_items(&initial_context);
         new_history =
@@ -414,10 +416,9 @@ async fn run_compact_task_inner_impl(
     }
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
-        InitialContextInjection::BeforeLastUserMessage => Some(
-            sess.reference_context_item_for_turn(turn_context.as_ref())
-                .await,
-        ),
+        InitialContextInjection::BeforeLastUserMessage => {
+            Some(fresh_initial_context.reference_context_item)
+        }
     };
     let visible_replacement_history_len = new_history.len();
     let mut persisted_replacement_history = new_history.clone();
@@ -450,8 +451,9 @@ async fn run_compact_task_inner_impl(
         persisted_replacement_history,
         reference_context_item,
         compacted_item,
+        fresh_initial_context.user_instructions,
     )
-        .await;
+    .await?;
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
 

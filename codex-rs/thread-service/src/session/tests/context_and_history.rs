@@ -239,6 +239,206 @@ async fn process_compacted_history_reinjects_agent_file_instructions_into_initia
 }
 
 #[tokio::test]
+async fn fresh_compact_initial_context_uses_one_refreshed_instruction_snapshot() {
+    let instruction_dir = tempfile::tempdir().expect("instruction tempdir");
+    let instruction_path = instruction_dir.path().join("project-instructions.md");
+    std::fs::write(&instruction_path, "startup instruction").expect("write startup instruction");
+    let absolute_instruction_path =
+        AbsolutePathBuf::try_from(instruction_path.clone()).expect("absolute instruction path");
+    let (session, mut turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.instruction_files = vec![absolute_instruction_path];
+        },
+    )
+    .await;
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.user_instructions = Some("startup instruction".to_string());
+    }
+    Arc::get_mut(&mut turn_context)
+        .expect("turn context should not be shared")
+        .user_instructions = Some("startup instruction".to_string());
+    std::fs::write(&instruction_path, "fresh compact instruction")
+        .expect("write refreshed instruction");
+
+    let snapshot = session
+        .build_fresh_compact_initial_context(turn_context.as_ref())
+        .await
+        .expect("fresh compact initial context");
+
+    assert_eq!(
+        snapshot.user_instructions.as_deref(),
+        Some("fresh compact instruction")
+    );
+    assert_eq!(
+        snapshot.reference_context_item.user_instructions.as_deref(),
+        Some("fresh compact instruction")
+    );
+    let initial_context_text = snapshot
+        .response_items
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(initial_context_text.contains("fresh compact instruction"));
+    assert!(!initial_context_text.contains("startup instruction"));
+}
+
+#[tokio::test]
+async fn fresh_compact_initial_context_preserves_external_agent_tool_specs() {
+    let (session, turn_context) = make_session_and_context().await;
+    let external_spec = tool_service_api::ToolSpec::Function(tool_service_api::ResponsesApiTool {
+        name: "spawn_external_agent".to_string(),
+        description: "Spawn an external code agent.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: tool_service_api::JsonSchema::object(
+            std::collections::BTreeMap::new(),
+            /*required*/ None,
+            /*additional_properties*/ None,
+        ),
+        output_schema: None,
+    });
+
+    let snapshot = session
+        .build_fresh_compact_initial_context_with_external_agent_tool_specs(
+            &turn_context,
+            &[external_spec],
+        )
+        .await
+        .expect("fresh compact initial context");
+    let initial_context_text = snapshot
+        .response_items
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(initial_context_text.contains("<external_agent_tools>"));
+    assert!(initial_context_text.contains("\"name\": \"spawn_external_agent\""));
+}
+
+#[tokio::test]
+async fn initial_context_and_reference_baseline_follow_compact_session_instructions() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.user_instructions = Some("stale turn instruction".to_string());
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.user_instructions =
+            Some("fresh compact instruction".to_string());
+    }
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let reference_context_item = session.reference_context_item_for_turn(&turn_context).await;
+
+    let initial_context_text = initial_context
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(initial_context_text.contains("fresh compact instruction"));
+    assert!(!initial_context_text.contains("stale turn instruction"));
+    assert_eq!(
+        reference_context_item.user_instructions.as_deref(),
+        Some("fresh compact instruction")
+    );
+}
+
+#[tokio::test]
+async fn compact_without_injected_context_updates_session_baseline_without_persistence() {
+    let (session, turn_context) = make_session_and_context().await;
+    let compacted_history = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "compacted summary".to_string(),
+        }],
+        phase: None,
+    }];
+
+    session
+        .replace_compacted_history(
+            compacted_history.clone(),
+            None,
+            CompactedItem {
+                message: "compacted summary".to_string(),
+                replacement_history: Some(compacted_history.clone()),
+                visible_replacement_history_len: None,
+            },
+            Some("fresh compact instruction".to_string()),
+        )
+        .await
+        .expect("in-memory compact install");
+
+    let state = session.state.lock().await;
+    assert_eq!(state.history.raw_items(), compacted_history);
+    assert!(state.reference_context_item().is_none());
+    assert_eq!(
+        state.session_configuration.user_instructions.as_deref(),
+        Some("fresh compact instruction")
+    );
+    drop(state);
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let initial_context_text = initial_context
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(initial_context_text.contains("fresh compact instruction"));
+}
+
+#[tokio::test]
 async fn record_context_updates_and_set_reference_context_item_reinjects_full_context_after_clear()
 {
     let (session, turn_context) = make_session_and_context().await;

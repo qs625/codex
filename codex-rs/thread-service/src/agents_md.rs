@@ -49,27 +49,42 @@ impl<'a> AgentsMdManager<'a> {
         &self,
         fs: &dyn ExecutorFileSystem,
     ) -> Option<String> {
-        let instruction_sources = self.visible_instruction_sources();
-        let explicit_instruction_docs = self.read_instruction_files(fs, &instruction_sources).await;
+        match self.try_user_instructions_with_fs(fs).await {
+            Ok(instructions) => instructions,
+            Err(e) => {
+                error!("error trying to load configured instruction files: {e:#}");
+                self.render_user_instructions(None)
+            }
+        }
+    }
 
+    pub(crate) async fn try_user_instructions_with_fs(
+        &self,
+        fs: &dyn ExecutorFileSystem,
+    ) -> io::Result<Option<String>> {
+        let instruction_sources = self.visible_instruction_sources();
+        let explicit_instruction_docs = self
+            .read_instruction_files(fs, &instruction_sources)
+            .await?;
+        Ok(self.render_user_instructions(explicit_instruction_docs))
+    }
+
+    fn render_user_instructions(
+        &self,
+        explicit_instruction_docs: Option<String>,
+    ) -> Option<String> {
         let mut output = String::new();
 
         if let Some(instructions) = self.config.user_instructions.clone() {
             output.push_str(&instructions);
         }
 
-        match explicit_instruction_docs {
-            Ok(Some(docs)) => {
-                if !output.is_empty() {
-                    output.push_str(AGENTS_MD_SEPARATOR);
-                }
-                output.push_str(&docs);
+        if let Some(docs) = explicit_instruction_docs {
+            if !output.is_empty() {
+                output.push_str(AGENTS_MD_SEPARATOR);
             }
-            Ok(None) => {}
-            Err(e) => {
-                error!("error trying to load configured instruction files: {e:#}");
-            }
-        };
+            output.push_str(&docs);
+        }
 
         if self.config.features.enabled(Feature::ChildAgentsMd) {
             if !output.is_empty() {
