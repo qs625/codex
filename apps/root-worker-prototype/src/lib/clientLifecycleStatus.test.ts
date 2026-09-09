@@ -10,7 +10,6 @@ test("client lifecycle failure exposes the host reason", () => {
       lifecycle: {
         type: "clientRelaunch",
         phase: "failed",
-        mode: "hot",
         requestId: "restart-call",
         reason: "Build failed",
       },
@@ -26,7 +25,6 @@ test("client lifecycle non-failure status does not replace the error surface", (
       lifecycle: {
         type: "installedArtifactUpdate",
         phase: "building",
-        mode: "hot",
         requestId: "restart-call",
       },
     }),
@@ -43,6 +41,6 @@ test("client lifecycle failure without a reason has a stable fallback", () => {
         phase: "failed",
       },
     }),
-    "Runtime refresh failed.",
+    "Runtime Capsule restart failed.",
   );
 });

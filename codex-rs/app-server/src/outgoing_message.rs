@@ -912,7 +912,6 @@ mod tests {
         let notification =
             ServerNotification::ClientRelaunchRequested(ClientRelaunchRequestedNotification {
                 request_id: "restart-call".to_string(),
-                mode: app_server_protocol::ClientRelaunchMode::Full,
                 reason: Some("runtime update".to_string()),
                 requested_by_thread_id: Some("thread-1".to_string()),
                 resume_strategy: "client_bootstrap_autoresume".to_string(),
@@ -924,7 +923,6 @@ mod tests {
                 "method": "client/relaunch/requested",
                 "params": {
                     "requestId": "restart-call",
-                    "mode": "full",
                     "reason": "runtime update",
                     "requestedByThreadId": "thread-1",
                     "resumeStrategy": "client_bootstrap_autoresume",

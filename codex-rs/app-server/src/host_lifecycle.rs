@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use app_server_protocol::ClientRelaunchMode;
 use app_server_protocol::ClientRelaunchRequestedNotification;
 use app_server_protocol::ServerNotification;
 use codex_tool_service::HostLifecycleToolRuntime;
-use codex_tool_service::HostRelaunchMode;
 use codex_tool_service::HostRelaunchRequest;
 use codex_tool_service::HostRelaunchResult;
 use codex_tool_service::HostRelaunchStatus;
@@ -46,7 +44,7 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
                     &request,
                     HostRelaunchStatus::Failed,
                     false,
-                    "Invalid runtime refresh request identifier.".to_string(),
+                    "Invalid Runtime Capsule restart request identifier.".to_string(),
                     Some(format!(
                         "requestId must contain between 1 and {MAX_REQUEST_ID_BYTES} UTF-8 bytes"
                     )),
@@ -69,7 +67,6 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
             let notification =
                 ServerNotification::ClientRelaunchRequested(ClientRelaunchRequestedNotification {
                     request_id: request.request_id.clone(),
-                    mode: client_relaunch_mode(&request.mode),
                     reason: request.reason.clone(),
                     requested_by_thread_id: request.requested_by_thread_id.clone(),
                     resume_strategy: RESUME_STRATEGY.to_string(),
@@ -83,7 +80,8 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
                     &request,
                     HostRelaunchStatus::Failed,
                     false,
-                    "Failed to deliver runtime refresh request to the registered Host.".to_string(),
+                    "Failed to deliver Runtime Capsule restart request to the registered Host."
+                        .to_string(),
                     Some(error),
                 );
             }
@@ -92,10 +90,8 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
                 &request,
                 HostRelaunchStatus::Accepted,
                 true,
-                format!(
-                    "Runtime refresh request ({}) was delivered to the registered Host.",
-                    host_relaunch_mode_wire_value(&request.mode),
-                ),
+                "Runtime Capsule restart request was delivered to the registered Host."
+                    .to_string(),
                 request.reason.clone(),
             )
         })
@@ -113,26 +109,10 @@ fn host_relaunch_result(
         request_id: request.request_id.clone(),
         status,
         accepted,
-        relaunching: false,
-        requested_mode: request.mode.clone(),
-        executed_mode: None,
+        restarting: false,
         message,
         reason,
         resume_strategy: RESUME_STRATEGY.to_string(),
-    }
-}
-
-fn host_relaunch_mode_wire_value(mode: &HostRelaunchMode) -> &'static str {
-    match mode {
-        HostRelaunchMode::Hot => "hot",
-        HostRelaunchMode::Full => "full",
-    }
-}
-
-fn client_relaunch_mode(mode: &HostRelaunchMode) -> ClientRelaunchMode {
-    match mode {
-        HostRelaunchMode::Hot => ClientRelaunchMode::Hot,
-        HostRelaunchMode::Full => ClientRelaunchMode::Full,
     }
 }
 
@@ -157,7 +137,7 @@ mod tests {
             AppServerHostLifecycleToolRuntime::new(outgoing, ThreadStateManager::new());
 
         let result = runtime
-            .request_client_relaunch(host_request(HostRelaunchMode::Hot))
+            .request_client_relaunch(host_request())
             .await;
 
         assert_eq!(result.status, HostRelaunchStatus::Unsupported);
@@ -189,12 +169,11 @@ mod tests {
         let runtime = AppServerHostLifecycleToolRuntime::new(outgoing, manager);
 
         let result = runtime
-            .request_client_relaunch(host_request(HostRelaunchMode::Full))
+            .request_client_relaunch(host_request())
             .await;
 
         assert_eq!(result.status, HostRelaunchStatus::Accepted);
         assert!(result.accepted);
-        assert_eq!(result.requested_mode, HostRelaunchMode::Full);
 
         let envelope = rx.recv().await.expect("targeted notification");
         let OutgoingEnvelope::ToConnection {
@@ -210,7 +189,6 @@ mod tests {
         };
         assert_eq!(actual_connection_id, connection_id);
         assert_eq!(notification.request_id, "restart-call");
-        assert_eq!(notification.mode, ClientRelaunchMode::Full);
         assert_eq!(
             notification.requested_by_thread_id.as_deref(),
             Some("thread-1")
@@ -244,7 +222,7 @@ mod tests {
         let runtime = AppServerHostLifecycleToolRuntime::new(outgoing, manager);
 
         let result = runtime
-            .request_client_relaunch(host_request(HostRelaunchMode::Hot))
+            .request_client_relaunch(host_request())
             .await;
 
         assert_eq!(result.status, HostRelaunchStatus::Failed);
@@ -274,14 +252,14 @@ mod tests {
             .await
             .expect("register Host");
         let runtime = AppServerHostLifecycleToolRuntime::new(outgoing, manager);
-        let mut boundary_request = host_request(HostRelaunchMode::Hot);
+        let mut boundary_request = host_request();
         boundary_request.request_id = "é".repeat(MAX_REQUEST_ID_BYTES / 2);
         let boundary_result = runtime.request_client_relaunch(boundary_request).await;
         assert_eq!(boundary_result.status, HostRelaunchStatus::Accepted);
         assert!(boundary_result.accepted);
         rx.recv().await.expect("boundary request notification");
 
-        let mut oversized_request = host_request(HostRelaunchMode::Hot);
+        let mut oversized_request = host_request();
         oversized_request.request_id = "é".repeat(MAX_REQUEST_ID_BYTES / 2 + 1);
         let result = runtime.request_client_relaunch(oversized_request).await;
 
@@ -290,10 +268,9 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    fn host_request(mode: HostRelaunchMode) -> HostRelaunchRequest {
+    fn host_request() -> HostRelaunchRequest {
         HostRelaunchRequest {
             request_id: "restart-call".to_string(),
-            mode,
             reason: Some("runtime update".to_string()),
             requested_by_thread_id: Some("thread-1".to_string()),
         }

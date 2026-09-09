@@ -241,6 +241,18 @@
       ],
       "type": "object"
     },
+    "ClientLifecycleRegisterParams": {
+      "properties": {
+        "hostId": {
+          "description": "Stable identifier for the Electron Host instance owning this connection.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hostId"
+      ],
+      "type": "object"
+    },
     "CollaborationMode": {
       "description": "Collaboration mode for a Codex session.",
       "properties": {
@@ -3973,6 +3985,43 @@
       ],
       "type": "object"
     },
+    "ThreadClientRecoveryRecordParams": {
+      "properties": {
+        "activationId": {
+          "type": "string"
+        },
+        "fallbackReleaseId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "occurredAt": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "recoveryId": {
+          "type": "string"
+        },
+        "releaseId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "activationId",
+        "occurredAt",
+        "reason",
+        "recoveryId",
+        "releaseId",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "ThreadCompactStartParams": {
       "properties": {
         "threadId": {
@@ -5550,6 +5599,30 @@
       "type": "object"
     },
     {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "client/lifecycle/register"
+          ],
+          "title": "Client/lifecycle/registerRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ClientLifecycleRegisterParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Client/lifecycle/registerRequest",
+      "type": "object"
+    },
+    {
       "description": "NEW APIs",
       "properties": {
         "id": {
@@ -5933,6 +6006,30 @@
         "params"
       ],
       "title": "Thread/injectItemsRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/clientRecovery/record"
+          ],
+          "title": "Thread/clientRecovery/recordRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadClientRecoveryRecordParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/clientRecovery/recordRequest",
       "type": "object"
     },
     {

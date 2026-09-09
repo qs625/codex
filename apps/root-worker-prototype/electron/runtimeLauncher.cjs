@@ -1,74 +1,139 @@
+"use strict";
+
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const LAUNCHER_FILE_NAME = "MorpheusLauncher";
-
 function createRuntimeLauncher({
   env = process.env,
-  platform = process.platform,
-  resourcesPath = currentResourcesPath(),
   spawnSync: spawn = spawnSync,
 } = {}) {
-  const launcherPath = resolveRuntimeLauncherPath({
-    env,
-    platform,
-    resourcesPath,
-  });
+  const launcherPath = resolveRuntimeLauncherPath({ env });
   const stateRoot = resolveRuntimeLauncherStateRoot(env);
+  const invocationOptions = { env, spawnSync: spawn };
   const invoke = (args) =>
     invokeLauncher(launcherPath, ["--state-root", stateRoot, ...args], {
-      env,
-      spawnSync: spawn,
+      ...invocationOptions,
     });
+  const invokeMutation = (command, activationId, reason) => {
+    const control = currentControl(invoke(["status"]));
+    return invokeLauncherRequest(
+      launcherPath,
+      stateRoot,
+      command,
+      {
+        activationId: requiredString(activationId),
+        expectedRevision: requiredInteger(control.revision, "revision"),
+        expectedExecutorEpoch: requiredInteger(
+          control.executorEpoch,
+          "executorEpoch",
+        ),
+        reason: normalizeString(reason) ?? "",
+      },
+      invocationOptions,
+    );
+  };
   return {
     supported: Boolean(launcherPath),
     launcherPath,
     stateRoot,
-    prepareFull: (request) =>
-      invokeLauncherRequest(launcherPath, stateRoot, "prepare-full", request, {
-        env,
-        spawnSync: spawn,
-      }),
-    abortFull: (transactionId) =>
-      invoke(["abort-full", "--transaction", requiredString(transactionId)]),
-    activateHot: (request) =>
-      invokeLauncherRequest(launcherPath, stateRoot, "activate-hot", request, {
-        env,
-        spawnSync: spawn,
-      }),
-    commitHot: (transactionId) =>
-      invoke(["commit-hot", "--transaction", requiredString(transactionId)]),
-    rollbackHot: (transactionId) =>
-      invoke(["rollback-hot", "--transaction", requiredString(transactionId)]),
-    ackFailure: (recoveryIdentity) =>
-      invoke([
-        "ack-failure",
-        "--recovery-identity",
-        requiredString(recoveryIdentity),
-      ]),
+    prepareActivation: ({ activationId, manifest, reason, releaseId }) => {
+      const control = currentControl(invoke(["status"]));
+      const response = invokeLauncherRequest(
+        launcherPath,
+        stateRoot,
+        "prepare-activation",
+        {
+          schemaVersion: 1,
+          activationId: requiredString(activationId),
+          releaseId: requiredString(releaseId),
+          expectedRevision: requiredInteger(control.revision, "revision"),
+          expectedExecutorEpoch: requiredInteger(
+            control.executorEpoch,
+            "executorEpoch",
+          ),
+          target: manifest?.target,
+          reason: normalizeString(reason) ?? "",
+        },
+        invocationOptions,
+      );
+      return normalizePrepareActivationResult(response, {
+        activationId,
+        releaseId,
+      });
+    },
+    cancelActivation: (activationId, reason = null) =>
+      invokeMutation("cancel-activation", activationId, reason),
+    requestRollback: (activationId, reason = null) =>
+      invokeMutation("request-rollback", activationId, reason),
+    ackFailure: (activationId, reason = null) =>
+      invokeMutation("ack-failure", activationId, reason),
     status: () => invoke(["status"]),
   };
 }
 
+function currentControl(statusResult) {
+  const result = statusResult?.result ?? statusResult;
+  const control = result?.control ?? result?.state ?? result;
+  if (!control || typeof control !== "object") {
+    throw new Error("Runtime launcher status did not include control state");
+  }
+  return control;
+}
+
+function normalizePrepareActivationResult(
+  response,
+  { activationId, releaseId },
+) {
+  const result = response?.result ?? response;
+  if (!result || typeof result !== "object") {
+    throw new Error("Runtime launcher prepare did not return a typed result");
+  }
+  if (
+    result.activationId !== requiredString(activationId) ||
+    result.releaseId !== requiredString(releaseId)
+  ) {
+    throw new Error(
+      "Runtime launcher prepare result does not match the requested activation",
+    );
+  }
+  if (
+    ![
+      "prepared",
+      "already_prepared",
+      "already_committed",
+      "terminal_failed",
+    ].includes(result.disposition)
+  ) {
+    throw new Error(
+      `Runtime launcher prepare returned unsupported disposition: ${String(result.disposition)}`,
+    );
+  }
+  if (!result.control || typeof result.control !== "object") {
+    throw new Error("Runtime launcher prepare result did not include control state");
+  }
+  return result;
+}
+
 function resolveRuntimeLauncherPath({
   env = process.env,
-  platform = process.platform,
-  resourcesPath = currentResourcesPath(),
 } = {}) {
+  if (normalizeString(env.RUNTIME_CAPSULE_LAUNCHER_PATH)) {
+    return path.resolve(env.RUNTIME_CAPSULE_LAUNCHER_PATH);
+  }
   if (normalizeString(env.MORPHEUS_LAUNCHER_PATH)) {
     return path.resolve(env.MORPHEUS_LAUNCHER_PATH);
   }
-  if (platform !== "darwin" || !resourcesPath) {
-    return null;
-  }
-  return path.join(path.dirname(resourcesPath), "MacOS", LAUNCHER_FILE_NAME);
+  return null;
 }
 
 function resolveRuntimeLauncherStateRoot(env = process.env) {
-  if (normalizeString(env.MORPHEUS_RUNTIME_LAUNCHER_HOME)) {
-    return path.resolve(env.MORPHEUS_RUNTIME_LAUNCHER_HOME);
+  const configured =
+    normalizeString(env.RUNTIME_CAPSULE_LAUNCHER_HOME) ??
+    normalizeString(env.MORPHEUS_RUNTIME_LAUNCHER_HOME);
+  if (configured) {
+    return path.resolve(configured);
   }
   const morpheusHome =
     normalizeString(env.MORPHEUS_HOME) ??
@@ -89,7 +154,7 @@ function invokeLauncherRequest(
 ) {
   assertLauncherAvailable(launcherPath);
   const temporaryRoot = (options.mkdtempSync ?? fs.mkdtempSync)(
-    path.join(os.tmpdir(), "morpheus-launch-request-"),
+    path.join(os.tmpdir(), "runtime-capsule-launch-request-"),
   );
   const requestPath = path.join(temporaryRoot, "request.json");
   try {
@@ -145,7 +210,7 @@ function invokeLauncher(launcherPath, args, options = {}) {
 
 function assertLauncherAvailable(launcherPath) {
   if (!launcherPath) {
-    throw new Error("Stable runtime launcher is unavailable");
+    throw new Error("Runtime Capsule launcher is unavailable");
   }
 }
 
@@ -156,20 +221,23 @@ function requiredString(value) {
   return value;
 }
 
+function requiredInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Runtime launcher status has invalid ${label}`);
+  }
+  return value;
+}
+
 function normalizeString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function currentResourcesPath() {
-  return typeof process.resourcesPath === "string"
-    ? process.resourcesPath
-    : null;
-}
-
 module.exports = {
   createRuntimeLauncher,
+  currentControl,
   invokeLauncher,
   invokeLauncherRequest,
+  normalizePrepareActivationResult,
   resolveRuntimeLauncherPath,
   resolveRuntimeLauncherStateRoot,
 };

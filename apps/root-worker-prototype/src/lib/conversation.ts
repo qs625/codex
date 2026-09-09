@@ -511,10 +511,12 @@ function buildConversationItemEntries(
         author,
         role: "system" as const,
         text: [
-          `Client recovery (${item.mode}): ${item.reason}`,
-          `Build: ${item.buildId}`,
-          item.previousBuildId ? `Previous build: ${item.previousBuildId}` : null,
-          `Transaction: ${item.transactionId}`,
+          `Runtime Capsule recovery: ${item.reason}`,
+          `Release: ${item.releaseId}`,
+          item.fallbackReleaseId
+            ? `Fallback release: ${item.fallbackReleaseId}`
+            : null,
+          `Activation: ${item.activationId}`,
         ]
           .filter((line): line is string => line !== null)
           .join("\n"),

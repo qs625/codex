@@ -434,7 +434,6 @@ declare global {
                 | "fullRelaunchFallback"
                 | "completed"
                 | "failed";
-              mode?: "hot" | "full" | null;
               requestId?: string;
               reason?: string | null;
             };
@@ -444,9 +443,6 @@ declare global {
               alreadyRequested?: boolean;
               busy?: boolean;
               conflict?: boolean;
-              mode?: "hot" | "full" | null;
-              requestedMode?: "hot" | "full" | null;
-              executingMode?: "hot" | "full" | null;
               reason?: string | null;
             };
           };

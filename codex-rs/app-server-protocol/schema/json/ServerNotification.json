@@ -474,6 +474,37 @@
       ],
       "type": "object"
     },
+    "ClientRelaunchRequestedNotification": {
+      "properties": {
+        "reason": {
+          "description": "Optional human-readable reason supplied by the runtime tool caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestId": {
+          "description": "Correlation identifier for this lifecycle operation.",
+          "type": "string"
+        },
+        "requestedByThreadId": {
+          "description": "Thread that requested the client relaunch, when the request originated from a thread turn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resumeStrategy": {
+          "description": "Reminder that post-relaunch continuation is handled by client bootstrap autoresume.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "resumeStrategy"
+      ],
+      "type": "object"
+    },
     "CodexErrorInfo": {
       "description": "This translation layer make sure that we expose codex error code in camel case.\n\nWhen an upstream HTTP status is available (for example, from the Responses API or a provider), it is forwarded in `httpStatusCode` on the relevant `codexErrorInfo` variant.",
       "oneOf": [
@@ -4755,6 +4786,48 @@
         },
         {
           "properties": {
+            "activationId": {
+              "type": "string"
+            },
+            "fallbackReleaseId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "occurredAt": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "releaseId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "clientRecovery"
+              ],
+              "title": "ClientRecoveryThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "activationId",
+            "id",
+            "occurredAt",
+            "reason",
+            "releaseId",
+            "type"
+          ],
+          "title": "ClientRecoveryThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "content": {
               "type": "string"
             },
@@ -6752,6 +6825,26 @@
         "params"
       ],
       "title": "Thread/contextUsage/updatedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "client/relaunch/requested"
+          ],
+          "title": "Client/relaunch/requestedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ClientRelaunchRequestedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Client/relaunch/requestedNotification",
       "type": "object"
     },
     {

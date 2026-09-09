@@ -1247,26 +1247,24 @@ fn client_recovery_projects_to_non_tool_thread_item() {
     let event =
         protocol::protocol::EventMsg::ClientRecovery(protocol::protocol::ClientRecoveryEvent {
             recovery_id: "recovery-1".to_string(),
-            transaction_id: "transaction-1".to_string(),
-            mode: "rollback".to_string(),
-            build_id: "build-2".to_string(),
+            activation_id: "activation-1".to_string(),
+            release_id: "release-2".to_string(),
             reason: "health check failed".to_string(),
             occurred_at: "2026-09-09T08:30:00.000Z".to_string(),
-            previous_build_id: Some("build-1".to_string()),
+            fallback_release_id: Some("release-1".to_string()),
         });
 
     assert_eq!(
         crate::protocol::event_item_projection::project_event_msg_item(&event),
         Some(crate::protocol::event_item_projection::ProjectedEventItem::Completed {
-            turn_id: "transaction-1".to_string(),
+            turn_id: "activation-1".to_string(),
             item: ThreadItem::ClientRecovery {
                 id: "recovery-1".to_string(),
-                transaction_id: "transaction-1".to_string(),
-                mode: "rollback".to_string(),
-                build_id: "build-2".to_string(),
+                activation_id: "activation-1".to_string(),
+                release_id: "release-2".to_string(),
                 reason: "health check failed".to_string(),
                 occurred_at: "2026-09-09T08:30:00.000Z".to_string(),
-                previous_build_id: Some("build-1".to_string()),
+                fallback_release_id: Some("release-1".to_string()),
             },
             completed_at_ms: chrono::DateTime::parse_from_rfc3339(
                 "2026-09-09T08:30:00.000Z",

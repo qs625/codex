@@ -53,9 +53,25 @@ function readExistingSelfProject(projectPath, options = {}) {
   }
 }
 
+function removeSelfProjectIfManagedSync(env = process.env, options = {}) {
+  const projectPath = selfProjectPath(env);
+  const project = readExistingSelfProject(projectPath, options);
+  if (
+    project.id !== SELF_PROJECT_ID ||
+    project.path !== SELF_PROJECT_ID ||
+    project.managedBy !== "morpheus"
+  ) {
+    return false;
+  }
+  const unlinkSync = options.unlinkSync ?? fs.unlinkSync;
+  unlinkSync(projectPath);
+  return true;
+}
+
 module.exports = {
   SELF_PROJECT_FILE_NAME,
   SELF_PROJECT_ID,
   ensureSelfProjectSync,
+  removeSelfProjectIfManagedSync,
   selfProjectPath,
 };

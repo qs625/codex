@@ -949,9 +949,8 @@ impl TurnRequestProcessor {
     ) -> Result<ThreadClientRecoveryRecordResponse, JSONRPCErrorError> {
         for (name, value) in [
             ("recoveryId", params.recovery_id.as_str()),
-            ("transactionId", params.transaction_id.as_str()),
-            ("mode", params.mode.as_str()),
-            ("buildId", params.build_id.as_str()),
+            ("activationId", params.activation_id.as_str()),
+            ("releaseId", params.release_id.as_str()),
             ("reason", params.reason.as_str()),
             ("occurredAt", params.occurred_at.as_str()),
         ] {
@@ -1005,12 +1004,11 @@ impl TurnRequestProcessor {
                 thread_id,
                 protocol::protocol::ClientRecoveryEvent {
                     recovery_id: params.recovery_id,
-                    transaction_id: params.transaction_id,
-                    mode: params.mode,
-                    build_id: params.build_id,
+                    activation_id: params.activation_id,
+                    release_id: params.release_id,
                     reason: params.reason,
                     occurred_at: params.occurred_at,
-                    previous_build_id: params.previous_build_id,
+                    fallback_release_id: params.fallback_release_id,
                 },
             )
             .await

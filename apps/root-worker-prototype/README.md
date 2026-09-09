@@ -45,44 +45,41 @@ pnpm --filter @my-codex/root-worker-prototype package:win
 pnpm --filter @my-codex/root-worker-prototype package:linux
 ```
 
-The macOS app packaging builds release `app-server` and the stable Rust
-`MorpheusLauncher`. The real macOS entrypoint is
-`Contents/MacOS/MorpheusLauncher`; Electron remains a fixed
-`Contents/MacOS/Root Worker Runtime` Host. Initial runtime resources include
-`Contents/Resources/app.asar`, `bin/app-server`,
-`default-config/compact/COMPACT.md`, and a hash manifest consumed by the
-Launcher. Packaging does not bundle a repository source snapshot into the
-`.app` or `.dmg`.
-When launched from Finder or Dock, the app prepares `MORPHEUS_HOME`, preserves
-the desktop process environment with an enhanced `PATH`, and creates
+The macOS package is a stable, read-only outer app whose entrypoint is
+`Contents/MacOS/MorpheusLauncher`. The outer app also contains a complete,
+signed Seed Runtime Capsule under `Contents/Resources/seed-capsule`; that
+Capsule carries the full `Root Worker Runtime.app`, including Electron
+main/preload/renderer, `app-server`, and default config. Packaging does not
+bundle a repository source snapshot into the `.app` or `.dmg`.
+When launched from Finder or Dock, the app prepares `MORPHEUS_HOME`, passes a
+bounded desktop environment allowlist with `PATH`, and creates
 `~/.morpheus/compact/COMPACT.md` only if that file is missing.
 Model-visible instructions also include ordinary, non-hidden files directly
 under `MORPHEUS_HOME/instructions/`, loaded in stable filename order and subject
 to the normal instruction byte budget.
-When a packaged app starts without `ROOT_WORKER_WORKSPACE`, it uses
-`rtk git clone git@github.com:qs625/codex.git ~/.morpheus/source_workspace` the
-first time that writable workspace is missing, then starts `app-server` with
-that real git workspace as both `cwd` and `ROOT_WORKER_WORKSPACE`.
-Existing `source_workspace` contents are never overwritten, pulled, reset, or
-otherwise changed automatically by launch.
-The packaged app maintains
-`~/.morpheus/instructions/morpheus-source-workspace.md` with the effective
-source workspace path and the reminder to run relevant tests before calling
-`request_runtime_restart` with an explicit `mode` of `"hot"` or `"full"`. In a
-packaged macOS app, that restart request uses the source workspace's existing
-frontend and backend build outputs to prepare a candidate containing only
-`app.asar`, `app-server`, the compact prompt, and their manifest. The Host does
-not build, replace installed files in place, or sign the app bundle. It
-ad-hoc-signs only the fixed candidate `resources/bin/app-server` before hashing
-the candidate manifest. The Launcher owns activation and rollback of
-`Contents/Resources` without replacing either executable. Hot mode rejects
-Electron main/preload changes, activates the candidate, restarts app-server,
-reloads renderer windows, and commits; failures roll back to the previous
-resources. Full mode transfers the candidate to the Launcher, stops app-server,
-and exits with the coordinated restart code so the Launcher can activate and
-supervise the next Host. Launcher recovery evidence is recorded on the durable
-`/self` thread before it is acknowledged. Missing build outputs or preparation
-failures leave the installed runtime unchanged.
+The optional source workspace is `~/.morpheus/source_workspace` unless
+`ROOT_WORKER_WORKSPACE` is set. Packaged startup never clones, pulls, resets, or
+otherwise creates source code automatically. Without a valid source workspace,
+the Seed or current external Capsule still runs, while producing a new
+candidate is reported as unsupported.
+When a valid source workspace exists, the packaged app maintains
+`~/.morpheus/instructions/morpheus-source-workspace.md` with its path and a
+reminder to run relevant tests before calling `request_runtime_restart`.
+That request has no mode: it builds and signs one complete Runtime Capsule,
+asks the stable Launcher to prepare it, stops the current `app-server`, and
+exits with the coordinated restart code. The Launcher proves the old Runtime
+tree has stopped before selecting and starting the candidate. Runtime Capsule
+v1 is a trusted cooperative supervision contract, not a hostile same-UID
+sandbox: every manifest prohibits daemonizing, double-forking, `setsid`, and
+process-group escape. The typed completion evidence is
+`CooperativeObservedEmpty`; any observed escape, identity mismatch, timeout,
+ambiguous ownership, or residual process durably blocks selection, fallback,
+commit, and further spawn. It does not claim kernel-contained proof for an
+unobserved malicious escape. Readiness or
+observation failure rolls back to the previous external Capsule, or to the
+read-only Seed when no previous external Capsule exists. Launcher recovery
+evidence is recorded on the durable `/self` thread before it is acknowledged.
+Preparation failures leave the selected Runtime unchanged.
 That generated instruction file is updated only while it still carries the
 Morpheus managed marker; user-managed replacement content is left intact.
 It also maintains `~/.morpheus/self-project.json` as a system `/self` project

@@ -1891,6 +1891,48 @@
         },
         {
           "properties": {
+            "activationId": {
+              "type": "string"
+            },
+            "fallbackReleaseId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "occurredAt": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "releaseId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "clientRecovery"
+              ],
+              "title": "ClientRecoveryThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "activationId",
+            "id",
+            "occurredAt",
+            "reason",
+            "releaseId",
+            "type"
+          ],
+          "title": "ClientRecoveryThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "content": {
               "type": "string"
             },

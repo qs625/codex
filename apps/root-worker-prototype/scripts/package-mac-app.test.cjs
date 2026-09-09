@@ -1,179 +1,156 @@
-const test = require("node:test");
+"use strict";
+
 const assert = require("node:assert/strict");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-
+const test = require("node:test");
 const {
+  LAUNCHER_BINARY_NAME,
+  assembleOuterApp,
   assertMacRuntimeLayout,
   buildElectronPackagerArgs,
+  buildLauncher,
   buildMacAppPackagePlan,
   finalizeMacRuntimeBundle,
-  installMacRuntimeExecutables,
-  writeInstalledRuntimeManifest,
+  prepareSeedCapsule,
 } = require("./package-mac-app.cjs");
 
-test("mac package plan separates stable Launcher and Electron Host paths", () => {
-  const plan = buildMacAppPackagePlan({
-    cwd: "/repo/apps/root-worker-prototype",
-  });
-
+test("package plan separates outer app, payload staging, and Seed Capsule", () => {
+  const plan = buildMacAppPackagePlan({ cwd: "/repo/apps/root-worker-prototype" });
   assert.equal(
+    plan.appBundlePath,
+    "/repo/apps/root-worker-prototype/dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app",
+  );
+  assert.match(plan.payloadBundlePath, /dist-capsule-payload/);
+  assert.match(plan.seedCapsuleDir, /Contents\/Resources\/seed-capsule$/);
+  assert.equal(LAUNCHER_BINARY_NAME, "runtime-capsule-launcher");
+  assert.match(
     plan.launcherBinaryPath,
-    "/repo/codex-rs/target/release/MorpheusLauncher",
+    /target\/release\/runtime-capsule-launcher$/,
   );
-  assert.equal(
-    plan.launcherExecutablePath,
-    "/repo/apps/root-worker-prototype/dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app/Contents/MacOS/MorpheusLauncher",
-  );
-  assert.equal(
-    plan.hostExecutablePath,
-    "/repo/apps/root-worker-prototype/dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app/Contents/MacOS/Root Worker Runtime",
-  );
-  assert.equal(
-    plan.runtimeManifestPath,
-    "/repo/apps/root-worker-prototype/dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app/Contents/Resources/.morpheus-runtime-manifest.json",
-  );
+  assert.match(plan.launcherExecutablePath, /Contents\/MacOS\/MorpheusLauncher$/);
 });
 
-test("electron packager creates app.asar and stages only controlled resources", () => {
-  const cwd = "/repo/apps/root-worker-prototype";
+test("Electron packager creates the complete inner Runtime app", () => {
   const args = buildElectronPackagerArgs({
-    cwd,
-    binResourceDir: path.join(cwd, "dist-package-resources/bin"),
-    defaultConfigResourceDir: path.join(
-      cwd,
-      "dist-package-resources/default-config",
-    ),
+    cwd: "/repo/apps/root-worker-prototype",
+    payloadStagingDir: "/repo/payload",
+    binResourceDir: "/repo/resources/bin",
+    defaultConfigResourceDir: "/repo/resources/default-config",
   });
-
+  assert.deepEqual(args.slice(0, 2), [".", "Root Worker Runtime"]);
+  assert.ok(args.includes("--extend-info=electron/PayloadInfo.plist"));
   assert.ok(args.includes("--asar"));
-  assert.ok(args.includes("--extra-resource=dist-package-resources/bin"));
-  assert.ok(
-    args.includes("--extra-resource=dist-package-resources/default-config"),
+  for (const generated of [
+    "dist-app",
+    "dist-package-resources",
+    "dist-capsule-payload",
+    "dist-seed-capsule",
+  ]) {
+    assert.ok(args.includes(`--ignore=^/${generated}($|/)`));
+  }
+  assert.ok(args.includes("--extra-resource=../../resources/bin"));
+});
+
+test("Launcher build uses the generic Cargo bin and embeds the Seed release", () => {
+  const commands = [];
+  buildLauncher(
+    {
+      codexRsCargoManifestPath: "/repo/codex-rs/Cargo.toml",
+      repoRoot: "/repo",
+    },
+    `sha256:${"a".repeat(64)}`,
+    {
+      runCommand(command, args, options) {
+        commands.push([command, args, options]);
+      },
+    },
+  );
+  assert.equal(commands[0][0], "cargo");
+  assert.ok(commands[0][1].includes("runtime-capsule-launcher"));
+  assert.equal(
+    commands[0][2].env.RUNTIME_CAPSULE_SEED_RELEASE_ID,
+    `sha256:${"a".repeat(64)}`,
   );
   assert.equal(
-    args.some((arg) => arg === "--extra-resource=dist-package-resources/source"),
-    false,
+    commands[0][2].env.RUNTIME_CAPSULE_BUNDLE_ID,
+    "com.openai.root-worker-prototype.dev",
   );
 });
 
-test("packaging renames Electron Host, installs Launcher, and writes initial manifest", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mac-package-test-"));
+test("Seed Capsule contains the signed complete payload and outer app contains only Launcher plus Seed", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "seed-package-"));
   try {
-    const cwd = path.join(root, "apps/root-worker-prototype");
+    const cwd = path.join(root, "apps", "root-worker-prototype");
+    fs.mkdirSync(cwd, { recursive: true });
     const plan = buildMacAppPackagePlan({ cwd });
-    fs.mkdirSync(path.dirname(plan.appBundlePackagerExecutablePath), {
+    const executable = path.join(
+      plan.payloadBundlePath,
+      "Contents",
+      "MacOS",
+      "Root Worker Runtime",
+    );
+    fs.mkdirSync(path.dirname(executable), { recursive: true });
+    fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o755 });
+    fs.mkdirSync(path.dirname(plan.launcherBinaryPath), { recursive: true });
+    fs.writeFileSync(plan.launcherBinaryPath, "launcher", { mode: 0o755 });
+    fs.mkdirSync(path.dirname(plan.outerInfoPlistSourcePath), {
       recursive: true,
     });
-    fs.mkdirSync(
-      path.join(plan.appBundlePath, "Contents/Resources/bin"),
-      { recursive: true },
-    );
-    fs.mkdirSync(
-      path.join(
-        plan.appBundlePath,
-        "Contents/Resources/default-config/compact",
-      ),
-      { recursive: true },
-    );
-    fs.mkdirSync(path.dirname(plan.launcherBinaryPath), { recursive: true });
-    fs.writeFileSync(plan.appBundlePackagerExecutablePath, "electron");
-    fs.writeFileSync(plan.launcherBinaryPath, "launcher");
-    fs.writeFileSync(
-      path.join(plan.appBundlePath, "Contents/Resources/app.asar"),
-      "asar",
-    );
-    fs.writeFileSync(
-      path.join(plan.appBundlePath, "Contents/Resources/bin/app-server"),
-      "server",
-    );
-    fs.writeFileSync(
-      path.join(
-        plan.appBundlePath,
-        "Contents/Resources/default-config/compact/COMPACT.md",
-      ),
-      "prompt",
-    );
-
-    installMacRuntimeExecutables(plan);
+    fs.writeFileSync(plan.outerInfoPlistSourcePath, "<plist/>");
     const commands = [];
-    const manifest = finalizeMacRuntimeBundle(plan, {
-      sourceCommit: "abc123",
+    const manifest = prepareSeedCapsule(plan, {
+      sourceCommit: "deadbeef",
       runCommand(command, args) {
-        commands.push({ command, args });
-        if (
-          command === "codesign" &&
-          args.at(-1).endsWith(path.join("Resources", "bin", "app-server"))
-        ) {
-          fs.appendFileSync(args.at(-1), "-signed");
-        }
+        commands.push([command, args]);
       },
     });
-
-    assert.equal(fs.readFileSync(plan.hostExecutablePath, "utf8"), "electron");
+    assembleOuterApp(plan);
+    assertMacRuntimeLayout(plan, manifest);
+    assert.match(manifest.releaseId, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(commands.filter(([command]) => command === "codesign").length, 2);
     assert.equal(
-      fs.readFileSync(plan.launcherExecutablePath, "utf8"),
-      "launcher",
+      fs.existsSync(path.join(plan.appBundlePath, "Contents", "Frameworks")),
+      false,
     );
-    assert.equal(manifest.entrypoint, "app.asar");
-    assert.equal(
-      manifest.artifacts.find(
-        ({ relativePath }) => relativePath === path.join("bin", "app-server"),
-      ).sha256,
-      crypto
-        .createHash("sha256")
-        .update(
-          fs.readFileSync(
-            path.join(
-              plan.appBundlePath,
-              "Contents/Resources/bin/app-server",
-            ),
-          ),
-        )
-        .digest("hex"),
-    );
-    assert.deepEqual(
-      commands.map(({ command, args }) => [command, ...args]),
-      [
-        ["codesign", "--force", "--sign", "-", path.join(plan.appBundlePath, "Contents/Resources/bin/app-server")],
-        ["/usr/libexec/PlistBuddy", "-c", "Set :CFBundleExecutable MorpheusLauncher", plan.appBundleInfoPlistPath],
-        ["codesign", "--force", "--deep", "--sign", "-", plan.appBundlePath],
-        ["codesign", "--verify", "--deep", "--strict", plan.appBundlePath],
-      ],
-    );
-    assert.equal(
-      writeInstalledRuntimeManifest(plan, { sourceCommit: "abc123" }).buildId,
-      manifest.buildId,
-    );
-    assert.deepEqual(
-      manifest.artifacts.map(({ relativePath }) => relativePath),
-      [
-        "app.asar",
-        path.join("bin", "app-server"),
-        path.join("default-config", "compact", "COMPACT.md"),
-      ],
-    );
-    assert.equal(fs.existsSync(plan.appBundlePackagerExecutablePath), false);
-    assert.equal(fs.statSync(plan.hostExecutablePath).mode & 0o111, 0o111);
-    assert.equal(fs.statSync(plan.launcherExecutablePath).mode & 0o111, 0o111);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
 });
 
-test("mac app Info.plist selects Launcher and retains permission descriptions", () => {
-  const plist = fs.readFileSync(
-    path.join(__dirname, "..", "electron", "Info.plist"),
-    "utf8",
+test("outer signing does not recursively mutate the sealed Seed Capsule", () => {
+  const commands = [];
+  const plan = {
+    appBundleInfoPlistPath: "/tmp/Outer.app/Contents/Info.plist",
+    appBundlePath: "/tmp/Outer.app",
+    launcherExecutablePath: "/tmp/Outer.app/Contents/MacOS/MorpheusLauncher",
+    seedCapsuleDir: "/tmp/Outer.app/Contents/Resources/seed-capsule",
+    sourceAppDir: "/repo",
+  };
+  finalizeMacRuntimeBundle(
+    plan,
+    { releaseId: `sha256:${"a".repeat(64)}` },
+    {
+      fsOps: {
+        lstatSync() {
+          return { isFile: () => true };
+        },
+        existsSync() {
+          return false;
+        },
+      },
+      runCommand(command, args) {
+        commands.push([command, args]);
+      },
+    },
   );
-
-  assert.match(
-    plist,
-    /<key>CFBundleExecutable<\/key>\s*<string>MorpheusLauncher<\/string>/,
-  );
-  assert.match(plist, /<key>NSMicrophoneUsageDescription<\/key>/);
-  assert.match(plist, /<key>NSScreenCaptureUsageDescription<\/key>/);
-  assert.match(plist, /<key>NSAppleEventsUsageDescription<\/key>/);
+  assert.deepEqual(commands[0], [
+    "codesign",
+    ["--force", "--sign", "-", "/tmp/Outer.app"],
+  ]);
+  assert.deepEqual(commands[1], [
+    "codesign",
+    ["--verify", "--deep", "--strict", "/tmp/Outer.app"],
+  ]);
 });

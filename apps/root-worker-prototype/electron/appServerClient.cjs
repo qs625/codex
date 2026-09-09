@@ -8,11 +8,16 @@ const { createInterface } = require("node:readline");
 const { EventEmitter } = require("node:events");
 const { buildDesktopEnvironment } = require("./environment.cjs");
 const {
-  ensureDefaultWorkspaceSync,
   ensureMorpheusSourceInstructionSync,
   ensureWorkspaceExistsSync,
+  removeMorpheusSourceInstructionIfManagedSync,
+  resolveDefaultWorkspace,
+  resolveOperationalWorkspace,
 } = require("./workspace.cjs");
-const { ensureSelfProjectSync } = require("./selfProject.cjs");
+const {
+  ensureSelfProjectSync,
+  removeSelfProjectIfManagedSync,
+} = require("./selfProject.cjs");
 
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
@@ -489,21 +494,22 @@ function prepareAppServerWorkspace(env, options = {}) {
   if (!packagedBinary) {
     return appServerCwd;
   }
-  if (env.ROOT_WORKER_WORKSPACE) {
-    ensureWorkspaceExistsSync(env.ROOT_WORKER_WORKSPACE);
-    ensureMorpheusSourceInstructionSync(env, env.ROOT_WORKER_WORKSPACE, options);
-    ensureSelfProjectSync(env, env.ROOT_WORKER_WORKSPACE, options);
-    return env.ROOT_WORKER_WORKSPACE;
+  const sourceWorkspace = resolveDefaultWorkspace(env, {
+    ...options,
+    isPackagedApp: true,
+    sourceOnly: true,
+  });
+  if (sourceWorkspace) {
+    ensureMorpheusSourceInstructionSync(env, sourceWorkspace, options);
+    ensureSelfProjectSync(env, sourceWorkspace, options);
+    env.ROOT_WORKER_WORKSPACE = sourceWorkspace;
+    return sourceWorkspace;
   }
-  if (!env.ROOT_WORKER_WORKSPACE) {
-    const defaultWorkspace = ensureDefaultWorkspaceSync(env, {
-      ...options,
-      isPackagedApp: true,
-    });
-    env.ROOT_WORKER_WORKSPACE = defaultWorkspace;
-    ensureSelfProjectSync(env, defaultWorkspace, options);
-    appServerCwd = defaultWorkspace;
-  }
+  appServerCwd = resolveOperationalWorkspace(env);
+  ensureWorkspaceExistsSync(appServerCwd);
+  removeMorpheusSourceInstructionIfManagedSync(env, options);
+  removeSelfProjectIfManagedSync(env, options);
+  delete env.ROOT_WORKER_WORKSPACE;
   return appServerCwd;
 }
 

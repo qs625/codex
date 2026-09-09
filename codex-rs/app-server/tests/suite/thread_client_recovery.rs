@@ -37,12 +37,11 @@ fn recovery(thread_id: String, reason: &str) -> ThreadClientRecoveryRecordParams
     ThreadClientRecoveryRecordParams {
         thread_id,
         recovery_id: "recovery-1".into(),
-        transaction_id: "transaction-1".into(),
-        mode: "rollback".into(),
-        build_id: "build-2".into(),
+        activation_id: "activation-1".into(),
+        release_id: "release-2".into(),
         reason: reason.into(),
         occurred_at: "2026-09-09T08:30:00.000Z".into(),
-        previous_build_id: Some("build-1".into()),
+        fallback_release_id: Some("release-1".into()),
     }
 }
 

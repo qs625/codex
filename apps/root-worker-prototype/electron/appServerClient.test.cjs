@@ -144,6 +144,23 @@ test("default app-server binary prefers packaged resources", () => {
   assert.deepEqual(seen, [packagedBinary]);
 });
 
+test("default app-server binary follows the selected external runtime resources", () => {
+  const runtimeRoot = "/tmp/runtime-launcher/artifacts/build-2";
+  const resourcesPath = path.join(
+    runtimeRoot,
+    "payload/Root Worker Runtime.app/Contents/Resources",
+  );
+  const packagedBinary = path.join(resourcesPath, "bin/app-server");
+
+  assert.equal(
+    resolveDefaultAppServerBinary({
+      resourcesPath,
+      existsSync: (candidate) => candidate === packagedBinary,
+    }),
+    `"${packagedBinary}"`,
+  );
+});
+
 test("default app-server launch uses bundled binary without PATH dependency", async () => {
   const resourcesPath = "/Applications/Root Worker.app/Contents/Resources";
   const packagedBinary = path.join(resourcesPath, "bin/app-server");
@@ -164,7 +181,7 @@ test("default app-server launch uses bundled binary without PATH dependency", as
   assert.equal(launch.mobileConnection.enabled, false);
 });
 
-test("packaged app-server launch prepares cloned workspace cwd and env", () => {
+test("packaged app-server launch without source uses operational cwd and no self project", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-packaged-workspace-"));
   const resourcesPath = path.join(dir, "resources");
   const packagedBinary = path.join(resourcesPath, "bin/app-server");
@@ -177,47 +194,66 @@ test("packaged app-server launch prepares cloned workspace cwd and env", () => {
   const cwd = prepareAppServerWorkspace(env, {
     cwd: "/source-tree",
     resourcesPath,
-    cloneTempSuffix: "test",
-    existsSync: (candidate) => candidate === packagedBinary || fs.existsSync(candidate),
-    spawnSync: (command, args, options) => {
-      calls.push({ command, args, cwd: options.cwd });
-      fs.mkdirSync(args[3], { recursive: true });
-      fs.mkdirSync(path.join(args[3], ".git"), { recursive: true });
-      return { status: 0, stderr: "" };
-    },
+    existsSync: (candidate) =>
+      candidate === packagedBinary || fs.existsSync(candidate),
+    spawnSync: (...args) => calls.push(args),
   });
 
-  const workspace = path.join(morpheusHome, "source_workspace");
-  const tempWorkspace = path.join(morpheusHome, ".source_workspace.clone-test");
+  const workspace = path.join(morpheusHome, "root_workspace");
   assert.equal(cwd, workspace);
-  assert.equal(env.ROOT_WORKER_WORKSPACE, workspace);
-  assert.match(
-    fs.readFileSync(
+  assert.equal(env.ROOT_WORKER_WORKSPACE, undefined);
+  assert.equal(
+    fs.existsSync(
       path.join(morpheusHome, "instructions/morpheus-source-workspace.md"),
-      "utf8",
     ),
-    new RegExp(escapeRegExp(workspace)),
+    false,
   );
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(path.join(morpheusHome, "self-project.json"), "utf8")),
-    {
-      id: "/self",
-      path: "/self",
-      workspace,
-      hidden: true,
-      system: true,
-      managedBy: "morpheus",
-    },
-  );
-  assert.deepEqual(calls, [
-    {
-      command: "rtk",
-      args: ["git", "clone", "git@github.com:qs625/codex.git", tempWorkspace],
-      cwd: morpheusHome,
-    },
-  ]);
+  assert.equal(fs.existsSync(path.join(morpheusHome, "self-project.json")), false);
+  assert.deepEqual(calls, []);
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("packaged launch without source removes stale managed source metadata", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-stale-source-"));
+  try {
+    const resourcesPath = path.join(dir, "resources");
+    const packagedBinary = path.join(resourcesPath, "bin/app-server");
+    const morpheusHome = path.join(dir, "home");
+    const instructionPath = path.join(
+      morpheusHome,
+      "instructions/morpheus-source-workspace.md",
+    );
+    const projectPath = path.join(morpheusHome, "self-project.json");
+    fs.mkdirSync(path.dirname(instructionPath), { recursive: true });
+    fs.writeFileSync(
+      instructionPath,
+      "<!-- managed-by-morpheus-source-workspace -->\nstale\n",
+    );
+    fs.writeFileSync(
+      projectPath,
+      `${JSON.stringify({
+        id: "/self",
+        path: "/self",
+        workspace: "/missing/source",
+        managedBy: "morpheus",
+      })}\n`,
+    );
+
+    prepareAppServerWorkspace(
+      { MORPHEUS_HOME: morpheusHome },
+      {
+        resourcesPath,
+        existsSync: (candidate) =>
+          candidate === packagedBinary || fs.existsSync(candidate),
+      },
+    );
+
+    assert.equal(fs.existsSync(instructionPath), false);
+    assert.equal(fs.existsSync(projectPath), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("packaged app-server launch keeps explicit workspace without clone", () => {
@@ -226,6 +262,16 @@ test("packaged app-server launch keeps explicit workspace without clone", () => 
   const packagedBinary = path.join(resourcesPath, "bin/app-server");
   const morpheusHome = path.join(dir, "home");
   const explicitWorkspace = path.join(dir, "custom-workspace");
+  fs.mkdirSync(
+    path.join(explicitWorkspace, "apps/root-worker-prototype"),
+    { recursive: true },
+  );
+  fs.writeFileSync(
+    path.join(explicitWorkspace, "apps/root-worker-prototype/package.json"),
+    "{}\n",
+  );
+  fs.mkdirSync(path.join(explicitWorkspace, "codex-rs"), { recursive: true });
+  fs.writeFileSync(path.join(explicitWorkspace, "codex-rs/Cargo.toml"), "\n");
   const env = {
     MORPHEUS_HOME: morpheusHome,
     ROOT_WORKER_WORKSPACE: explicitWorkspace,
@@ -235,7 +281,8 @@ test("packaged app-server launch keeps explicit workspace without clone", () => 
   const cwd = prepareAppServerWorkspace(env, {
     cwd: "/source-tree",
     resourcesPath,
-    existsSync: (candidate) => candidate === packagedBinary,
+    existsSync: (candidate) =>
+      candidate === packagedBinary || fs.existsSync(candidate),
     spawnSync: (...args) => {
       calls.push(args);
       return { status: 0, stderr: "" };
@@ -706,6 +753,30 @@ test("morpheus home defaults use packaged compact seed before source fallback", 
   assert.equal(
     fs.readFileSync(path.join(dir, "home/compact/COMPACT.md"), "utf8"),
     "packaged compact prompt\n",
+  );
+});
+
+test("morpheus home defaults follow the selected external runtime resources", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-external-seed-"));
+  const runtimeRoot = path.join(dir, "artifacts/build-2");
+  const resourcesPath = path.join(
+    runtimeRoot,
+    "payload/Root Worker Runtime.app/Contents/Resources",
+  );
+  const selectedSeed = path.join(
+    resourcesPath,
+    "default-config/compact/COMPACT.md",
+  );
+  fs.mkdirSync(path.dirname(selectedSeed), { recursive: true });
+  fs.writeFileSync(selectedSeed, "external compact prompt\n");
+
+  ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+    resourcesPath,
+  });
+
+  assert.equal(
+    fs.readFileSync(path.join(dir, "home/compact/COMPACT.md"), "utf8"),
+    "external compact prompt\n",
   );
 });
 

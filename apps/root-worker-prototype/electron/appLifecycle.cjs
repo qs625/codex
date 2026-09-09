@@ -1,3 +1,5 @@
+"use strict";
+
 const FULL_ACTIVATION_EXIT_CODE = 75;
 
 function createAppRelaunchAdapter({
@@ -8,27 +10,18 @@ function createAppRelaunchAdapter({
   logger = console,
 } = {}) {
   let requested = false;
-
   return {
     requestRelaunch(reason = null) {
       if (requested) {
         return { ok: true, relaunching: true, alreadyRequested: true };
       }
-      if (!app || typeof app.relaunch !== "function") {
+      if (!app || typeof app.relaunch !== "function" || typeof app.exit !== "function") {
         return {
           ok: false,
           relaunching: false,
           reason: "Application relaunch is unavailable in this environment",
         };
       }
-      if (typeof app.exit !== "function") {
-        return {
-          ok: false,
-          relaunching: false,
-          reason: "Application exit is unavailable in this environment",
-        };
-      }
-
       try {
         app.relaunch();
       } catch (error) {
@@ -38,20 +31,17 @@ function createAppRelaunchAdapter({
           reason: error instanceof Error ? error.message : String(error),
         };
       }
-
       requested = true;
       scheduleExit(async () => {
-        if (typeof beforeExit === "function") {
-          try {
-            await beforeExit(reason);
-          } catch (error) {
-            logger?.error?.(
-              "[prototype] app relaunch cleanup failed",
-              JSON.stringify({
-                reason: error instanceof Error ? error.message : String(error),
-              }),
-            );
-          }
+        try {
+          await beforeExit?.(reason);
+        } catch (error) {
+          logger?.error?.(
+            "[prototype] app relaunch cleanup failed",
+            JSON.stringify({
+              reason: error instanceof Error ? error.message : String(error),
+            }),
+          );
         }
         app.exit(0);
       }, exitDelayMs);
@@ -79,179 +69,59 @@ function isClientRelaunchNotification(notification) {
   return action === "relaunch" || action === "restart";
 }
 
-function createRendererReloadLifecycleAdapter({
-  fullRelaunch,
-  reloadWindows,
-  broadcastStatus,
-  logger = console,
-} = {}) {
-  let inFlight = null;
-  let inFlightMode = null;
-
-  function requestReloadWithMode({
-    allowFullRelaunchFallback,
-    publicMode,
-    reason,
-    semanticMode,
-  }) {
-    if (inFlight) {
-      if (inFlightMode.semanticMode !== semanticMode) {
-        return Promise.resolve(
-          restartModeConflictResult({
-            requestedMode: publicMode,
-            executingMode: inFlightMode.publicMode,
-            requestedModeLabel: semanticMode,
-            executingModeLabel: inFlightMode.semanticMode,
-          }),
-        );
-      }
-      const executingMode = inFlightMode.publicMode;
-      return inFlight.then((result) =>
-        coalescedRestartResult(result, {
-          requestedMode: publicMode,
-          executingMode,
-        }),
-      );
-    }
-
-    inFlightMode = { publicMode, semanticMode };
-    inFlight = runRendererReload({
-      fullRelaunch,
-      reloadWindows,
-      broadcastStatus,
-      logger,
-      reason,
-      allowFullRelaunchFallback,
-      mode: publicMode,
-    }).finally(() => {
-      inFlight = null;
-      inFlightMode = null;
-    });
-    return inFlight;
-  }
-
-  return {
-    requestReload(reason = null) {
-      return requestReloadWithMode({
-        allowFullRelaunchFallback: true,
-        publicMode: null,
-        reason,
-        semanticMode: "generic reload",
-      });
-    },
-    requestHotReload(reason = null) {
-      return requestReloadWithMode({
-        allowFullRelaunchFallback: false,
-        publicMode: "hot",
-        reason,
-        semanticMode: "hot",
-      });
-    },
-  };
-}
-
-function coalescedRestartResult(result, { requestedMode, executingMode }) {
-  if (result?.busy || result?.conflict) {
-    return {
-      ...result,
-      alreadyRequested: true,
-    };
-  }
-  return {
-    ...result,
-    alreadyRequested: true,
-    requestedMode,
-    executingMode,
-  };
-}
-
-function restartModeConflictResult({
-  requestedMode,
-  executingMode,
-  requestedModeLabel = requestedMode,
-  executingModeLabel = executingMode,
-}) {
-  return {
-    ok: false,
-    busy: true,
-    conflict: true,
-    inPlace: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    mode: null,
-    requestedMode,
-    executingMode,
-    reason: `Runtime refresh mode conflict: requested ${requestedModeLabel} while ${executingModeLabel} is in progress`,
-  };
-}
-
-function normalizeClientRelaunchMode(mode) {
-  if (mode === "hot" || mode === "full") {
-    return mode;
-  }
-  return null;
-}
-
-function normalizeClientRelaunchRequestId(requestId) {
-  return typeof requestId === "string" && requestId.trim()
-    ? requestId.trim()
-    : null;
-}
-
 function createClientRelaunchNotificationHandler({
-  rendererReload,
   installedArtifactUpdate,
   fullRelaunch,
 } = {}) {
   let inFlight = null;
-  let inFlightMode = null;
-
-  return async function handleClientRelaunchNotification(notification) {
+  return function handleClientRelaunchNotification(notification) {
     const reason = notification?.params?.reason ?? notification?.method ?? null;
-    const mode = normalizeClientRelaunchMode(notification?.params?.mode);
     const requestId = normalizeClientRelaunchRequestId(
       notification?.params?.requestId,
     );
-    if (!mode) {
-      return {
+    if (notification?.params?.mode === "hot") {
+      return Promise.resolve({
         ok: false,
+        unsupported: true,
+        legacyModeRejected: true,
         inPlace: false,
         relaunching: false,
         reloaded: false,
         updated: false,
-        mode: null,
         ...requestIdFields(requestId),
-        reason: `Invalid client relaunch mode: ${String(notification?.params?.mode ?? "missing")}`,
-      };
+        reason:
+          "Legacy hot runtime refresh is unsupported; Runtime Capsules always restart the complete Runtime",
+      });
+    }
+    if (
+      notification?.params?.mode !== undefined &&
+      notification.params.mode !== "full"
+    ) {
+      return Promise.resolve({
+        ok: false,
+        unsupported: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        ...requestIdFields(requestId),
+        reason: `Unsupported legacy runtime restart mode: ${String(notification.params.mode)}`,
+      });
     }
     if (inFlight) {
-      if (inFlightMode !== mode) {
-        return restartModeConflictResult({
-          requestedMode: mode,
-          executingMode: inFlightMode,
-        });
-      }
-      const executingMode = inFlightMode;
-      return inFlight.then((result) =>
-        coalescedRestartResult(result, {
-          requestedMode: mode,
-          executingMode,
-        }),
-      );
+      return inFlight.then((result) => ({
+        ...result,
+        alreadyRequested: true,
+        ...requestIdFields(requestId ?? result?.requestId),
+      }));
     }
-
-    inFlightMode = mode;
     inFlight = runClientRelaunchNotification({
       fullRelaunch,
       installedArtifactUpdate,
-      mode,
       reason,
       requestId,
-      rendererReload,
     }).finally(() => {
       inFlight = null;
-      inFlightMode = null;
     });
     return inFlight;
   };
@@ -260,67 +130,38 @@ function createClientRelaunchNotificationHandler({
 async function runClientRelaunchNotification({
   fullRelaunch,
   installedArtifactUpdate,
-  mode,
   reason,
   requestId,
-  rendererReload,
 }) {
   if (
     installedArtifactUpdate &&
     typeof installedArtifactUpdate.requestUpdateAndRelaunch === "function"
   ) {
-    const updateResult =
-      await installedArtifactUpdate.requestUpdateAndRelaunch(
-        reason,
-        mode,
-        requestId,
-      );
-    if (!updateResult.unsupported) {
-      return updateResult;
+    const result = await installedArtifactUpdate.requestUpdateAndRelaunch(
+      reason,
+      requestId,
+    );
+    if (!result?.unsupported || result?.disabled) {
+      return result;
     }
   }
-  if (mode === "full") {
-    const relaunch =
-      fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
-        ? await fullRelaunch.requestRelaunch(reason)
-        : {
-            ok: false,
-            relaunching: false,
-            reason: "Application relaunch adapter is unavailable",
-          };
-    return {
-      ok: Boolean(relaunch.ok),
-      inPlace: false,
-      relaunching: Boolean(relaunch.relaunching),
-      reloaded: false,
-      updated: false,
-      mode,
-      ...requestIdFields(requestId),
-      relaunch,
-      reason: relaunch.reason ?? reason,
-    };
-  }
-  if (!rendererReload || typeof rendererReload.requestReload !== "function") {
-    return {
-      ok: false,
-      inPlace: false,
-      relaunching: false,
-      reloaded: false,
-      reason: "Renderer reload adapter is unavailable",
-      ...requestIdFields(requestId),
-    };
-  }
-  if (typeof rendererReload.requestHotReload === "function") {
-    const result = await rendererReload.requestHotReload(reason);
-    return {
-      ...(result && typeof result === "object" ? result : {}),
-      ...requestIdFields(requestId),
-    };
-  }
-  const result = await rendererReload.requestReload(reason);
+  const relaunch =
+    fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
+      ? await fullRelaunch.requestRelaunch(reason)
+      : {
+          ok: false,
+          relaunching: false,
+          reason: "Application relaunch adapter is unavailable",
+        };
   return {
-    ...(result && typeof result === "object" ? result : {}),
+    ok: Boolean(relaunch.ok),
+    inPlace: false,
+    relaunching: Boolean(relaunch.relaunching),
+    reloaded: false,
+    updated: false,
     ...requestIdFields(requestId),
+    relaunch,
+    reason: relaunch.reason ?? reason,
   };
 }
 
@@ -334,13 +175,12 @@ async function observeClientRelaunchResult(
       lifecycle: {
         type: "clientRelaunch",
         phase: result?.ok ? "completed" : "failed",
-        mode: result?.mode ?? null,
         ...requestIdFields(result?.requestId ?? requestId),
         reason: result?.reason ?? reason,
       },
       relaunch:
         result && typeof result === "object"
-          ? { ...(result.relaunch ?? result), mode: result.mode ?? null }
+          ? result.relaunch ?? result
           : result ?? null,
     });
     return result;
@@ -354,7 +194,6 @@ async function observeClientRelaunchResult(
       lifecycle: {
         type: "clientRelaunch",
         phase: "failed",
-        mode: null,
         ...requestIdFields(requestId),
         reason: message,
       },
@@ -373,10 +212,8 @@ async function observeClientRelaunchResult(
 
 function createInstalledArtifactUpdateLifecycleAdapter({
   appExit,
-  appServerRestart,
   appServerStop,
   cleanupPreparedArtifact,
-  reloadWindows,
   resolvePlan,
   runtimeLauncher,
   updateArtifacts,
@@ -384,61 +221,31 @@ function createInstalledArtifactUpdateLifecycleAdapter({
   logger = console,
 } = {}) {
   let inFlight = null;
-  let inFlightMode = null;
-
   return {
-    requestUpdateAndRelaunch(reason = null, mode = null, requestId = null) {
-      const normalizedMode = normalizeClientRelaunchMode(mode);
-      if (!normalizedMode) {
-        return Promise.resolve({
-          ok: false,
-          unsupported: false,
-          relaunching: false,
-          updated: false,
-          mode: null,
-          ...requestIdFields(requestId),
-          reason: `Invalid installed artifact refresh mode: ${String(mode ?? "missing")}`,
-        });
-      }
+    requestUpdateAndRelaunch(reason = null, requestId = null) {
       if (inFlight) {
-        if (inFlightMode !== normalizedMode) {
-          return Promise.resolve(
-            restartModeConflictResult({
-              requestedMode: normalizedMode,
-              executingMode: inFlightMode,
-            }),
-          );
-        }
-        const executingMode = inFlightMode;
-        return inFlight.then((result) =>
-          coalescedRestartResult(result, {
-            requestedMode: normalizedMode,
-            executingMode,
-          }),
-        );
+        return inFlight.then((result) => ({
+          ...result,
+          alreadyRequested: true,
+          ...requestIdFields(requestId ?? result?.requestId),
+        }));
       }
-      if (!resolvePlan || typeof resolvePlan !== "function") {
+      if (typeof resolvePlan !== "function") {
         return Promise.resolve({ ok: false, unsupported: true });
       }
-
-      inFlightMode = normalizedMode;
       inFlight = resolveAndRunInstalledArtifactUpdate({
         appExit,
-        appServerRestart,
         appServerStop,
         cleanupPreparedArtifact,
-        reloadWindows,
+        resolvePlan,
         runtimeLauncher,
         updateArtifacts,
         broadcastStatus,
         logger,
-        resolvePlan,
         reason,
-        mode: normalizedMode,
         requestId,
       }).finally(() => {
         inFlight = null;
-        inFlightMode = null;
       });
       return inFlight;
     },
@@ -447,447 +254,258 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 
 async function resolveAndRunInstalledArtifactUpdate({
   appExit,
-  appServerRestart,
   appServerStop,
   cleanupPreparedArtifact,
-  reloadWindows,
+  resolvePlan,
   runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
   logger,
-  resolvePlan,
   reason,
-  mode,
   requestId,
 }) {
   let plan;
   try {
     plan = await resolvePlan();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger?.error?.(
-      "[prototype] installed artifact update planning failed",
-      JSON.stringify({ reason: message }),
-    );
-    broadcastStatus?.({
-      lifecycle: {
-        type: "installedArtifactUpdate",
-        phase: "failed",
-        mode,
-        ...requestIdFields(requestId),
-        reason: message,
-      },
+    return installedUpdateFailure(error, {
+      broadcastStatus,
+      logger,
+      phase: "planning",
+      reason,
+      requestId,
     });
-    return {
-      ok: false,
-      unsupported: false,
-      inPlace: false,
-      partial: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      mode,
-      ...requestIdFields(requestId),
-      reason: message,
-    };
   }
   if (!plan) {
     return { ok: false, unsupported: true };
   }
+  if (plan.disabled) {
+    return {
+      ok: false,
+      unsupported: true,
+      disabled: true,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      ...requestIdFields(requestId),
+      reason:
+        plan.reason ??
+        "Runtime Capsule candidate production is unavailable",
+    };
+  }
   return runInstalledArtifactUpdate({
     appExit,
-    appServerRestart,
     appServerStop,
     cleanupPreparedArtifact,
-    reloadWindows,
+    plan,
     runtimeLauncher,
     updateArtifacts,
     broadcastStatus,
     logger,
-    plan,
     reason,
-    mode,
     requestId,
   });
 }
 
 async function runInstalledArtifactUpdate({
   appExit,
-  appServerRestart,
   appServerStop,
   cleanupPreparedArtifact,
-  reloadWindows,
+  plan,
   runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
   logger,
-  plan,
   reason,
-  mode,
   requestId,
 }) {
-  if (!updateArtifacts || typeof updateArtifacts !== "function") {
+  if (typeof updateArtifacts !== "function") {
     return {
       ok: false,
       unsupported: false,
       relaunching: false,
       updated: false,
-      mode,
       ...requestIdFields(requestId),
-      reason: "Installed artifact updater is unavailable",
+      reason: "Runtime Capsule producer is unavailable",
     };
   }
-
   broadcastStatus?.({
     lifecycle: {
       type: "installedArtifactUpdate",
       phase: "preparing",
-      mode,
       ...requestIdFields(requestId),
       reason,
     },
   });
-
+  let update = null;
+  let prepared = null;
   try {
-    const update = await updateArtifacts(plan);
-    if (!update?.ok) {
+    update = await updateArtifacts(plan);
+    if (!update?.ok || !update.activationId || !update.releaseId) {
       throw new Error(
-        update?.reason ?? "Installed artifact update did not complete",
+        update?.reason ?? "Runtime Capsule production did not complete",
+      );
+    }
+    if (!runtimeLauncher?.supported) {
+      throw new Error("Runtime Capsule launcher is unavailable");
+    }
+    prepared = await runtimeLauncher.prepareActivation({
+      activationId: update.activationId,
+      manifest: update.manifest,
+      reason,
+      releaseId: update.releaseId,
+    });
+    if (
+      prepared?.activationId !== update.activationId ||
+      prepared?.releaseId !== update.releaseId
+    ) {
+      throw new Error(
+        "Runtime Capsule prepare result does not match the produced candidate",
+      );
+    }
+    if (prepared.disposition === "terminal_failed") {
+      const outcome = prepared.control?.activation?.receipt?.outcome;
+      throw new Error(
+        `Runtime Capsule activation is terminally unavailable${outcome ? ` (${outcome})` : ""}`,
+      );
+    }
+    if (prepared.disposition === "already_committed") {
+      if (update?.incomingRoot) {
+        await cleanupPreparedCandidate(
+          cleanupPreparedArtifact,
+          update.incomingRoot,
+          logger,
+        );
+      }
+      return {
+        ok: true,
+        activationId: update.activationId,
+        releaseId: update.releaseId,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: true,
+        alreadyCommitted: true,
+        prepared,
+        ...requestIdFields(requestId),
+        reason,
+      };
+    }
+    if (
+      prepared.disposition !== "prepared" &&
+      prepared.disposition !== "already_prepared"
+    ) {
+      throw new Error(
+        `Runtime Capsule prepare returned unsupported disposition: ${String(prepared.disposition)}`,
       );
     }
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
         phase: "prepared",
-        mode,
+        activationId: update.activationId,
+        releaseId: update.releaseId,
         ...requestIdFields(requestId),
         reason,
       },
     });
-    const activationRequest = buildActivationRequest({
-      update,
-      reason,
-    });
-    if (mode === "full") {
-      return await activateFullUpdate({
-        activationRequest,
-        appExit,
-        appServerStop,
-        broadcastStatus,
-        cleanupPreparedArtifact,
-        logger,
-        mode,
-        reason,
-        requestId,
+    const backendStop = await stopUpdatedAppServer(appServerStop, reason);
+    if (!backendStop.ok) {
+      throw await cancelPreparedActivation(
+        backendStop.reason ??
+          "App-server stop failed before Runtime Capsule activation",
         runtimeLauncher,
-        update,
-      });
-    }
-    if (
-      plan.requiresFullRelaunch ||
-      update.changes?.main === true ||
-      update.changes?.preload === true
-    ) {
-      await cleanupPreparedCandidate(
-        cleanupPreparedArtifact,
-        update.preparedRoot,
-        logger,
-      );
-      throw new Error(
-        "Hot activation rejected because Electron main or preload changed",
+        update.activationId,
+        { backendStop },
       );
     }
-    if (!runtimeLauncher?.supported) {
-      await cleanupPreparedCandidate(
-        cleanupPreparedArtifact,
-        update.preparedRoot,
-        logger,
-      );
-      throw new Error("Stable runtime launcher is unavailable");
-    }
-    let activation = null;
-    let backendRestart = null;
-    let reload = null;
-    let activationAttempted = false;
-    try {
-      activationAttempted = true;
-      activation = await runtimeLauncher.activateHot(activationRequest);
-      backendRestart = await restartUpdatedAppServer(appServerRestart, reason);
-      if (!backendRestart.ok) {
-        throw new Error(
-          backendRestart.reason ?? "App-server restart failed after update",
-        );
-      }
-      reload = await reloadUpdatedRenderer(reloadWindows, {
-        broadcastStatus,
-        mode,
-        reason,
-        requestId,
-      });
-      if (!reload.ok) {
-        throw new Error(
-          reload.reason ?? "Renderer reload failed after update",
-        );
-      }
-      const committed = await runtimeLauncher.commitHot(update.transactionId);
-      broadcastStatus?.({
-        lifecycle: {
-          type: "installedArtifactUpdate",
-          phase: "reloaded",
-          mode,
-          ...requestIdFields(requestId),
-          reason,
-        },
-        reload,
-      });
-      return {
-        ok: true,
-        inPlace: true,
-        relaunching: false,
-        reloaded: true,
-        updated: true,
-        activation,
-        backendRestart,
-        committed,
-        mode,
-        ...requestIdFields(requestId),
-        mainProcessUpdate: "unchanged",
-        preloadUpdate: "unchanged",
-        reason,
-        reload,
-      };
-    } catch (error) {
-      if (!activationAttempted) {
-        throw error;
-      }
-      throw await rollbackHotUpdate(
-        error instanceof Error ? error.message : String(error),
+    if (typeof appExit !== "function") {
+      throw await cancelPreparedActivation(
+        "Application exit is unavailable after Runtime Capsule preparation",
         runtimeLauncher,
-        update.transactionId,
-        {
-          activation,
-          appServerRestart,
-          backendRestart,
-          reload,
-          reloadWindows,
-          reason,
-        },
-      );
-    } finally {
-      await cleanupPreparedCandidate(
-        cleanupPreparedArtifact,
-        update.preparedRoot,
-        logger,
+        update.activationId,
+        { backendStop },
       );
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger?.error?.(
-      "[prototype] installed artifact update failed",
-      JSON.stringify({ reason: message }),
-    );
+    appExit(FULL_ACTIVATION_EXIT_CODE);
+    const relaunch = {
+      ok: true,
+      relaunching: true,
+      supervised: true,
+      exitCode: FULL_ACTIVATION_EXIT_CODE,
+    };
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
-        phase: "failed",
-        mode,
+        phase: "relaunching",
+        activationId: update.activationId,
+        releaseId: update.releaseId,
         ...requestIdFields(requestId),
-        reason: message,
+        reason,
       },
+      relaunch,
     });
-    const failure = {
-      ok: false,
+    return {
+      ok: true,
+      activationId: update.activationId,
+      releaseId: update.releaseId,
       inPlace: false,
-      partial: Boolean(error?.partial),
-      relaunching: false,
+      relaunching: true,
       reloaded: false,
-      updated: Boolean(error?.updated),
-      backendRestart: error?.backendRestart,
-      reload: error?.reload,
-      mode,
-      ...requestIdFields(requestId),
-      reason: message,
-    };
-    if (error?.backendStop) {
-      failure.backendStop = error.backendStop;
-    }
-    if (error?.relaunch) {
-      failure.relaunch = error.relaunch;
-    }
-    if (error?.abort) {
-      failure.abort = error.abort;
-    }
-    if (error?.rollback) {
-      failure.rollback = error.rollback;
-    }
-    return failure;
-  }
-}
-
-async function activateFullUpdate({
-  activationRequest,
-  appExit,
-  appServerStop,
-  broadcastStatus,
-  cleanupPreparedArtifact,
-  logger,
-  mode,
-  reason,
-  requestId,
-  runtimeLauncher,
-  update,
-}) {
-  broadcastStatus?.({
-    lifecycle: {
-      type: "installedArtifactUpdate",
-      phase: "relaunching",
-      mode,
+      updated: true,
+      backendStop,
+      prepared,
+      relaunch,
       ...requestIdFields(requestId),
       reason,
-    },
-  });
-  let prepared;
-  try {
-    if (!runtimeLauncher?.supported) {
-      throw new Error("Stable runtime launcher is unavailable");
+    };
+  } catch (error) {
+    if (update?.incomingRoot) {
+      await cleanupPreparedCandidate(
+        cleanupPreparedArtifact,
+        update.incomingRoot,
+        logger,
+      );
     }
-    prepared = await runtimeLauncher.prepareFull(activationRequest);
-  } finally {
-    await cleanupPreparedCandidate(
-      cleanupPreparedArtifact,
-      update.preparedRoot,
+    return installedUpdateFailure(error, {
+      broadcastStatus,
       logger,
-    );
-  }
-  const backendStop = await stopUpdatedAppServer(appServerStop, reason);
-  if (!backendStop.ok) {
-    throw await abortFullUpdate(
-      backendStop.reason ?? "App-server stop failed before app relaunch",
-      runtimeLauncher,
-      update.transactionId,
-      { backendStop },
-    );
-  }
-  if (typeof appExit !== "function") {
-    throw await abortFullUpdate(
-      "Application exit is unavailable after full activation preparation",
-      runtimeLauncher,
-      update.transactionId,
-      { backendStop },
-    );
-  }
-  appExit(FULL_ACTIVATION_EXIT_CODE);
-  const relaunch = {
-    ok: true,
-    relaunching: true,
-    supervised: true,
-    exitCode: FULL_ACTIVATION_EXIT_CODE,
-  };
-  broadcastStatus?.({
-    lifecycle: {
-      type: "installedArtifactUpdate",
-      phase: "relaunching",
-      mode,
-      ...requestIdFields(requestId),
+      phase: prepared ? "prepared" : "preparing",
       reason,
-    },
-    relaunch,
-  });
-  return {
-    ok: true,
-    inPlace: false,
-    relaunching: Boolean(relaunch.relaunching),
-    reloaded: false,
-    updated: true,
-    backendStop,
-    mode,
-    ...requestIdFields(requestId),
-    mainProcessUpdate: "requiresAppRelaunch",
-    preloadUpdate: "requiresAppRelaunch",
-    reason,
-    relaunch,
-    prepared,
-  };
-}
-
-async function abortFullUpdate(
-  message,
-  runtimeLauncher,
-  transactionId,
-  details,
-) {
-  let abort;
-  try {
-    abort = await runtimeLauncher.abortFull(transactionId);
-  } catch (error) {
-    abort = {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
-  return partialInstalledUpdateError(
-    abort?.ok === false
-      ? `${message}; abort-full also failed: ${abort.reason ?? "unknown failure"}`
-      : message,
-    { ...details, abort, updated: false },
-  );
-}
-
-function buildActivationRequest({ update, reason }) {
-  return {
-    schemaVersion: 1,
-    transactionId: update.transactionId,
-    buildId: update.buildId,
-    sourceCommit: update.sourceCommit,
-    preparedRoot: update.preparedRoot,
-    appBundlePath: update.appBundlePath,
-    reason:
-      typeof reason === "string" && reason.trim()
-        ? reason.trim()
-        : "Runtime update requested",
-    changes: {
-      main: update.changes?.main === true,
-      preload: update.changes?.preload === true,
-    },
-  };
-}
-
-async function rollbackHotUpdate(
-  message,
-  runtimeLauncher,
-  transactionId,
-  details,
-) {
-  let rollback;
-  try {
-    rollback = await runtimeLauncher.rollbackHot(transactionId);
-  } catch (error) {
-    rollback = {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
-  if (rollback?.ok === true) {
-    await restartUpdatedAppServer(
-      details.appServerRestart,
-      `rollback: ${details.reason ?? message}`,
-    );
-    await reloadUpdatedRenderer(details.reloadWindows, {
-      mode: "hot",
-      reason: `rollback: ${details.reason ?? message}`,
-      requestId: null,
+      requestId,
+      update,
     });
   }
-  return partialInstalledUpdateError(
-    rollback?.ok === false
-      ? `${message}; rollback also failed: ${rollback.reason ?? "unknown failure"}`
-      : message,
-    {
-      ...details,
-      rollback,
-      updated: false,
-    },
-  );
+}
+
+async function cancelPreparedActivation(
+  message,
+  runtimeLauncher,
+  activationId,
+  details,
+) {
+  let cancellation;
+  try {
+    cancellation = await runtimeLauncher.cancelActivation(
+      activationId,
+      message,
+    );
+  } catch (error) {
+    cancellation = {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const suffix =
+    cancellation?.ok === false
+      ? `; activation cancellation also failed: ${cancellation.reason ?? "unknown failure"}`
+      : "";
+  return Object.assign(new Error(`${message}${suffix}`), {
+    ...details,
+    cancellation,
+    updated: false,
+  });
 }
 
 async function cleanupPreparedCandidate(cleanup, preparedRoot, logger) {
@@ -898,7 +516,7 @@ async function cleanupPreparedCandidate(cleanup, preparedRoot, logger) {
     await cleanup(preparedRoot);
   } catch (error) {
     logger?.warn?.(
-      "[prototype] prepared runtime candidate cleanup failed",
+      "[prototype] Runtime Capsule cleanup failed",
       JSON.stringify({
         reason: error instanceof Error ? error.message : String(error),
       }),
@@ -910,96 +528,106 @@ async function stopUpdatedAppServer(appServerStop, reason) {
   if (!appServerStop || typeof appServerStop.requestStop !== "function") {
     return {
       ok: false,
-      stopped: false,
-      reason:
-        "App-server stop adapter is unavailable before installed app relaunch.",
+      reason: "App-server stop adapter is unavailable",
     };
   }
-  const result = await appServerStop.requestStop(reason);
-  return {
-    ok: Boolean(result?.ok),
-    stopped: Boolean(result?.stopped ?? result?.ok),
-    reason: result?.reason ?? reason,
-  };
-}
-
-async function restartUpdatedAppServer(appServerRestart, reason) {
-  if (!appServerRestart || typeof appServerRestart.requestRestart !== "function") {
-    return {
-      ok: false,
-      restarted: false,
-      reason:
-        "App-server restart adapter is unavailable after installed artifact update.",
-    };
-  }
-  const result = await appServerRestart.requestRestart(reason);
-  return {
-    ok: Boolean(result?.ok),
-    pending: false,
-    restarted: Boolean(result?.restarted ?? result?.ok),
-    pid: result?.pid ?? null,
-    reason: result?.reason ?? reason,
-  };
-}
-
-async function reloadUpdatedRenderer(
-  reloadWindows,
-  { broadcastStatus, mode, reason, requestId },
-) {
-  if (typeof reloadWindows !== "function") {
-    return {
-      ok: false,
-      inPlace: true,
-      relaunching: false,
-      reloaded: false,
-      mode,
-      ...requestIdFields(requestId),
-      reason: "Renderer reload is unavailable after installed artifact update",
-    };
-  }
-  broadcastStatus?.({
-    lifecycle: {
-      type: "installedArtifactUpdate",
-      phase: "reloading",
-      mode,
-      ...requestIdFields(requestId),
-      reason,
-    },
-  });
   try {
-    const reload = await reloadWindows({ reason });
-    return {
-      ok: true,
-      inPlace: true,
-      relaunching: false,
-      reloaded: true,
-      windowsReloaded: reload?.windowsReloaded ?? null,
-      mode,
-      ...requestIdFields(requestId),
-      reason,
-    };
+    const result = await appServerStop.requestStop(
+      reason ?? "Runtime Capsule activation",
+    );
+    return result?.ok === false
+      ? result
+      : { ...(result ?? {}), ok: true };
   } catch (error) {
     return {
       ok: false,
-      inPlace: true,
-      relaunching: false,
-      reloaded: false,
-      mode,
-      ...requestIdFields(requestId),
       reason: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
-function partialInstalledUpdateError(message, details = {}) {
-  const error = new Error(message);
-  error.partial = true;
-  Object.assign(error, details);
-  return error;
+function installedUpdateFailure(
+  error,
+  { broadcastStatus, logger, phase, reason, requestId, update } = {},
+) {
+  const message = error instanceof Error ? error.message : String(error);
+  logger?.error?.(
+    "[prototype] Runtime Capsule update failed",
+    JSON.stringify({ phase, reason: message }),
+  );
+  broadcastStatus?.({
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "failed",
+      activationId: update?.activationId ?? null,
+      releaseId: update?.releaseId ?? null,
+      ...requestIdFields(requestId),
+      reason: message,
+    },
+  });
+  return {
+    ok: false,
+    activationId: update?.activationId ?? null,
+    releaseId: update?.releaseId ?? null,
+    inPlace: false,
+    partial: Boolean(error?.partial),
+    relaunching: false,
+    reloaded: false,
+    updated: Boolean(error?.updated),
+    backendStop: error?.backendStop,
+    cancellation: error?.cancellation,
+    ...requestIdFields(requestId),
+    reason: message,
+  };
+}
+
+function normalizeClientRelaunchRequestId(requestId) {
+  return typeof requestId === "string" && requestId.trim()
+    ? requestId.trim()
+    : null;
 }
 
 function requestIdFields(requestId) {
   return requestId ? { requestId } : {};
+}
+
+function createRendererReloadLifecycleAdapter({
+  fullRelaunch,
+  reloadWindows,
+  broadcastStatus,
+  logger = console,
+} = {}) {
+  let inFlight = null;
+  return {
+    requestReload(reason = null) {
+      if (inFlight) {
+        return inFlight.then((result) => ({
+          ...result,
+          alreadyRequested: true,
+        }));
+      }
+      inFlight = runRendererReload({
+        fullRelaunch,
+        reloadWindows,
+        broadcastStatus,
+        logger,
+        reason,
+      }).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    },
+    requestHotReload() {
+      return Promise.resolve({
+        ok: false,
+        unsupported: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        reason: "Legacy hot runtime refresh is unsupported",
+      });
+    },
+  };
 }
 
 async function runRendererReload({
@@ -1008,46 +636,21 @@ async function runRendererReload({
   broadcastStatus,
   logger,
   reason,
-  allowFullRelaunchFallback = true,
-  mode = null,
 }) {
   if (typeof reloadWindows !== "function") {
-    if (!allowFullRelaunchFallback) {
-      return {
-        ok: false,
-        inPlace: true,
-        relaunching: false,
-        reloaded: false,
-        mode,
-        reason: "Renderer reload is unavailable in this environment",
-      };
-    }
     return requestFullRelaunchFallback(fullRelaunch, reason, {
-      reason: "Renderer reload is unavailable in this environment",
       broadcastStatus,
       logger,
-      mode,
+      reason: "Renderer reload is unavailable in this environment",
     });
   }
-
   broadcastStatus?.({
-    lifecycle: {
-      type: "rendererReload",
-      phase: "reloading",
-      mode,
-      reason,
-    },
+    lifecycle: { type: "rendererReload", phase: "reloading", reason },
   });
-
   try {
     const reload = await reloadWindows({ reason });
     broadcastStatus?.({
-      lifecycle: {
-        type: "rendererReload",
-        phase: "reloaded",
-        mode,
-        reason,
-      },
+      lifecycle: { type: "rendererReload", phase: "reloaded", reason },
     });
     return {
       ok: true,
@@ -1056,25 +659,13 @@ async function runRendererReload({
       reloaded: true,
       alreadyRequested: false,
       windowsReloaded: reload?.windowsReloaded ?? null,
-      mode,
       reason,
     };
   } catch (error) {
-    if (!allowFullRelaunchFallback) {
-      return {
-        ok: false,
-        inPlace: true,
-        relaunching: false,
-        reloaded: false,
-        mode,
-        reason: error instanceof Error ? error.message : String(error),
-      };
-    }
     return requestFullRelaunchFallback(fullRelaunch, reason, {
-      reason: error instanceof Error ? error.message : String(error),
       broadcastStatus,
       logger,
-      mode,
+      reason: error instanceof Error ? error.message : String(error),
     });
   }
 }
@@ -1082,7 +673,7 @@ async function runRendererReload({
 function requestFullRelaunchFallback(
   fullRelaunch,
   reason,
-  { reason: fallbackReason, broadcastStatus, logger, mode = null } = {},
+  { reason: fallbackReason, broadcastStatus, logger } = {},
 ) {
   logger?.warn?.(
     "[prototype] renderer reload unavailable; falling back to full relaunch",
@@ -1102,14 +693,12 @@ function requestFullRelaunchFallback(
     relaunching: Boolean(fallback.relaunching),
     reloaded: false,
     fallback,
-    mode,
     reason: fallback.reason ?? fallbackReason ?? reason,
   };
   broadcastStatus?.({
     lifecycle: {
       type: "rendererReload",
       phase: fallback.ok ? "fullRelaunchFallback" : "failed",
-      mode,
       reason: result.reason,
     },
     relaunch: fallback,

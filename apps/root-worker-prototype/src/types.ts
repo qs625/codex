@@ -156,12 +156,11 @@ export type ThreadItem = ThreadItemTimestamps &
   | {
       type: "clientRecovery";
       id: string;
-      transactionId: string;
-      mode: string;
-      buildId: string;
+      activationId: string;
+      releaseId: string;
       reason: string;
       occurredAt: string;
-      previousBuildId?: string | null;
+      fallbackReleaseId?: string | null;
     }
   | {
       type: "collabAgentStatusUpdate";
@@ -711,9 +710,6 @@ export type NotificationEnvelope = {
       alreadyRequested?: boolean;
       busy?: boolean;
       conflict?: boolean;
-      mode?: "hot" | "full" | null;
-      requestedMode?: "hot" | "full" | null;
-      executingMode?: "hot" | "full" | null;
       reason?: string | null;
     };
     lifecycle?: {
@@ -727,7 +723,6 @@ export type NotificationEnvelope = {
         | "fullRelaunchFallback"
         | "completed"
         | "failed";
-      mode?: "hot" | "full" | null;
       requestId?: string;
       reason?: string | null;
     };

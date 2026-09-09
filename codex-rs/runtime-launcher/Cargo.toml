@@ -10,13 +10,14 @@ path = "src/lib.rs"
 doctest = false
 
 [[bin]]
-name = "MorpheusLauncher"
+name = "runtime-capsule-launcher"
 path = "src/main.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
+chrono = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 libc = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
