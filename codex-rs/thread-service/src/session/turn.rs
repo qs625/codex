@@ -1116,6 +1116,7 @@ fn is_recoverable_invalid_model_input_code(code: Option<&str>) -> bool {
                 | "invalid_value"
                 | "string_too_long"
                 | "json_property_name_too_long"
+                | "property_name_above_max_length"
         )
     )
 }

@@ -10,8 +10,12 @@ use serde_json::Value;
 // the same items when they return as the next request's input. Keep this conservative local guard
 // bounded to the known recursive object-key failure class; unknown constraints still use the
 // provider's structured invalid-input recovery path.
-const MAX_STRUCTURED_JSON_PROPERTY_NAME_BYTES: usize = 1_024;
-const INVALID_PROPERTY_NAME_CODE: &str = "model_context_invalid_json_property_name";
+//
+// The provider reports this as a string-length limit without documenting whether non-ASCII names
+// are measured in Unicode scalar values or encoded bytes. Enforce both upper bounds so the local
+// preflight is never wider than either interpretation of the provider's 256-length contract.
+const MAX_STRUCTURED_JSON_PROPERTY_NAME_LENGTH: usize = 256;
+const INVALID_PROPERTY_NAME_CODE: &str = "property_name_above_max_length";
 
 pub(crate) fn make_responses_input_items_compatible(
     input: &mut Vec<ResponseItem>,
@@ -78,8 +82,8 @@ pub(crate) fn validate_responses_input_items(
         }
         return Err(ApiError::InvalidModelInput(InvalidModelInputError {
             message: format!(
-                "Historical structured model output contains a JSON property name longer than \
-                 {MAX_STRUCTURED_JSON_PROPERTY_NAME_BYTES} bytes."
+                "Historical structured model output contains a JSON property name above the \
+                 provider maximum length of {MAX_STRUCTURED_JSON_PROPERTY_NAME_LENGTH}."
             ),
             error_type: Some("invalid_request_error".to_string()),
             code: Some(INVALID_PROPERTY_NAME_CODE.to_string()),
@@ -108,11 +112,16 @@ fn structured_model_output_value(item: &ResponseItem) -> Option<(&'static str, V
 }
 
 fn contains_oversized_property_name(value: &Value) -> bool {
+    fn property_name_exceeds_provider_limit(name: &str) -> bool {
+        name.chars().count() > MAX_STRUCTURED_JSON_PROPERTY_NAME_LENGTH
+            || name.len() > MAX_STRUCTURED_JSON_PROPERTY_NAME_LENGTH
+    }
+
     fn visit(value: &Value) -> bool {
         match value {
             Value::Object(object) => {
                 for (name, value) in object {
-                    if name.len() > MAX_STRUCTURED_JSON_PROPERTY_NAME_BYTES {
+                    if property_name_exceeds_provider_limit(name) {
                         return true;
                     }
                     if visit(value) {
@@ -211,37 +220,82 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_oversized_recursive_property_name_with_exact_source() {
-        let oversized_name = "x".repeat(1_872);
+    fn preflight_rejects_ascii_property_names_from_257_through_1024_with_exact_source() {
+        for length in [257, 512, 1_024] {
+            let oversized_name = "x".repeat(length);
+            let input = vec![ResponseItem::FunctionCall {
+                id: None,
+                name: "lookup".to_string(),
+                namespace: None,
+                arguments: serde_json::json!({
+                    "outer": {
+                        (oversized_name): true
+                    }
+                })
+                .to_string(),
+                call_id: "call-1".to_string(),
+            }];
+            let sources = vec![Some(target())];
+
+            let error = validate_responses_input_items(&input, &sources)
+                .expect_err("oversized property should be rejected before transport");
+            let ApiError::InvalidModelInput(details) = error else {
+                panic!("expected structured invalid model input");
+            };
+            assert_eq!(details.input_index, Some(0));
+            assert_eq!(details.source, Some(target()));
+            assert_eq!(
+                details.code.as_deref(),
+                Some("property_name_above_max_length")
+            );
+            assert_eq!(
+                details.param.as_deref(),
+                Some("input[0].arguments.<oversized_property_name>")
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_allows_ascii_property_name_at_provider_limit() {
+        let property_name = "x".repeat(256);
         let input = vec![ResponseItem::FunctionCall {
             id: None,
             name: "lookup".to_string(),
             namespace: None,
-            arguments: serde_json::json!({
-                "outer": {
-                    (oversized_name): true
-                }
-            })
-            .to_string(),
+            arguments: serde_json::json!({(property_name): true}).to_string(),
             call_id: "call-1".to_string(),
         }];
-        let sources = vec![Some(target())];
 
-        let error = validate_responses_input_items(&input, &sources)
-            .expect_err("oversized property should be rejected before transport");
-        let ApiError::InvalidModelInput(details) = error else {
-            panic!("expected structured invalid model input");
-        };
-        assert_eq!(details.input_index, Some(0));
-        assert_eq!(details.source, Some(target()));
-        assert_eq!(
-            details.code.as_deref(),
-            Some("model_context_invalid_json_property_name")
-        );
-        assert_eq!(
-            details.param.as_deref(),
-            Some("input[0].arguments.<oversized_property_name>")
-        );
+        assert!(validate_responses_input_items(&input, &[Some(target())]).is_ok());
+    }
+
+    #[test]
+    fn preflight_conservatively_enforces_multibyte_property_name_boundary() {
+        let accepted_name = "界".repeat(85);
+        assert_eq!(accepted_name.chars().count(), 85);
+        assert_eq!(accepted_name.len(), 255);
+        let accepted = vec![ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: serde_json::json!({(accepted_name): true}).to_string(),
+            call_id: "call-1".to_string(),
+        }];
+        assert!(validate_responses_input_items(&accepted, &[Some(target())]).is_ok());
+
+        let rejected_name = "界".repeat(86);
+        assert_eq!(rejected_name.chars().count(), 86);
+        assert_eq!(rejected_name.len(), 258);
+        let rejected = vec![ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: serde_json::json!({(rejected_name): true}).to_string(),
+            call_id: "call-1".to_string(),
+        }];
+        let error = validate_responses_input_items(&rejected, &[Some(target())])
+            .expect_err("conservative preflight should reject a multibyte name above 256 bytes");
+        assert!(matches!(error, ApiError::InvalidModelInput(_)));
     }
 
     #[test]

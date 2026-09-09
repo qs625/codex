@@ -496,6 +496,225 @@ async fn regular_continuation_respects_existing_quarantine_cap() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn property_name_error_sse_envelope_quarantines_actual_source_and_retries()
+-> anyhow::Result<()> {
+    struct PropertyNameResponder {
+        call_count: AtomicUsize,
+        requests: Arc<StdMutex<Vec<serde_json::Value>>>,
+    }
+
+    impl wiremock::Respond for PropertyNameResponder {
+        fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let request_body = if request
+                .headers
+                .get("content-encoding")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.eq_ignore_ascii_case("zstd"))
+            {
+                zstd::stream::decode_all(std::io::Cursor::new(&request.body))
+                    .expect("zstd request body should decode")
+            } else {
+                request.body.clone()
+            };
+            let request_json: serde_json::Value =
+                serde_json::from_slice(&request_body).expect("request body should be valid JSON");
+            self.requests
+                .lock()
+                .expect("request capture mutex poisoned")
+                .push(request_json.clone());
+            let call_number = self.call_count.fetch_add(1, AtomicOrdering::SeqCst);
+            let body = if call_number == 0 {
+                let input = request_json["input"]
+                    .as_array()
+                    .expect("request input should be an array");
+                let transaction_index = input
+                    .iter()
+                    .position(|item| {
+                        item.get("type").and_then(serde_json::Value::as_str)
+                            == Some("function_call")
+                            && item.get("call_id").and_then(serde_json::Value::as_str)
+                                == Some("property-name-poison")
+                    })
+                    .expect("first request should contain the poison transaction");
+                sse(vec![serde_json::json!({
+                    "type": "response.failed",
+                    "response": {
+                        "id": "resp-invalid-property-name",
+                        "error": {
+                            "message": "Expected a string with maximum length 256",
+                            "type": "invalid_request_error",
+                            "code": "property_name_above_max_length",
+                            "param": format!("input[{transaction_index}].arguments.outer")
+                        }
+                    }
+                })])
+            } else {
+                sse(vec![
+                    ev_response_created("resp-retry"),
+                    ev_assistant_message("msg-retry", "recovered"),
+                    ev_completed("resp-retry"),
+                ])
+            };
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body)
+        }
+    }
+
+    let server = start_mock_server().await;
+    let captured_requests = Arc::new(StdMutex::new(Vec::new()));
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/v1/responses"))
+        .respond_with(PropertyNameResponder {
+            call_count: AtomicUsize::new(0),
+            requests: Arc::clone(&captured_requests),
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.model_provider.supports_websockets = false;
+    });
+    let test = builder.build(&server).await?;
+    let target = protocol::error::ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: "property-name-poison".to_string(),
+    };
+    test.codex
+        .inject_conversation_items(vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "lookup".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: target.call_id.clone(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: target.call_id.clone(),
+                output: protocol::models::FunctionCallOutputPayload::from_text("done".to_string()),
+            },
+        ])
+        .await?;
+
+    test.submit_turn("continue").await?;
+
+    let requests = captured_requests
+        .lock()
+        .expect("request capture mutex poisoned");
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0]["input"].as_array().is_some_and(|input| {
+        input.iter().any(|item| {
+            item.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+                && item.get("call_id").and_then(serde_json::Value::as_str)
+                    == Some(target.call_id.as_str())
+        })
+    }));
+    assert!(!requests[1]["input"].as_array().is_some_and(|input| {
+        input.iter().any(|item| {
+            item.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+                && item.get("call_id").and_then(serde_json::Value::as_str)
+                    == Some(target.call_id.as_str())
+        })
+    }));
+    assert!(
+        requests[1]
+            .to_string()
+            .contains("provider_code=property_name_above_max_length"),
+        "retry should contain the bounded typed quarantine notice"
+    );
+    drop(requests);
+    test.codex.flush_rollout().await?;
+    let stored = test.codex.load_history(/*include_archived*/ true).await?;
+    assert!(stored.items.iter().any(|item| matches!(
+        item,
+        RolloutItem::ResponseItem(ResponseItem::ModelContextQuarantine {
+            target:
+                protocol::error::ModelContextQuarantineReference::ToolTransaction {
+                    kind: protocol::error::ModelInputItemKind::FunctionCall,
+                    call_id,
+                },
+            error_code: Some(error_code),
+            error_param: Some(error_param),
+            ..
+        }) if call_id == &target.call_id
+            && error_code == "property_name_above_max_length"
+            && error_param.contains(".arguments.outer")
+    )));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn property_name_preflight_quarantines_257_character_key_before_transport()
+-> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let response = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-preflight-retry"),
+            ev_assistant_message("msg-preflight-retry", "recovered"),
+            ev_completed("resp-preflight-retry"),
+        ]),
+    )
+    .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.model_provider.supports_websockets = false;
+    });
+    let test = builder.build(&server).await?;
+    let target = protocol::error::ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: "property-name-preflight-poison".to_string(),
+    };
+    let oversized_name = "x".repeat(257);
+    test.codex
+        .inject_conversation_items(vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "lookup".to_string(),
+                namespace: None,
+                arguments: serde_json::json!({(oversized_name): true}).to_string(),
+                call_id: target.call_id.clone(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: target.call_id.clone(),
+                output: protocol::models::FunctionCallOutputPayload::from_text("done".to_string()),
+            },
+        ])
+        .await?;
+
+    test.submit_turn("continue").await?;
+
+    let requests = response.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "the rejected request must not reach transport; only the clean retry is sent"
+    );
+    assert!(!requests[0].has_function_call(&target.call_id));
+    assert!(
+        requests[0].body_contains_text("provider_code=property_name_above_max_length"),
+        "the clean retry should carry the bounded typed quarantine notice"
+    );
+    test.codex.flush_rollout().await?;
+    let stored = test.codex.load_history(/*include_archived*/ true).await?;
+    assert!(stored.items.iter().any(|item| matches!(
+        item,
+        RolloutItem::ResponseItem(ResponseItem::ModelContextQuarantine {
+            target:
+                protocol::error::ModelContextQuarantineReference::ToolTransaction {
+                    kind: protocol::error::ModelInputItemKind::FunctionCall,
+                    call_id,
+                },
+            error_code: Some(error_code),
+            ..
+        }) if call_id == &target.call_id
+            && error_code == "property_name_above_max_length"
+    )));
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial(auto_compact_test_hook)]
 async fn suffix_compact_quarantines_invalid_model_input_and_retries_same_plan() {
