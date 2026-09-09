@@ -18,13 +18,13 @@ Move Morpheus updateable Electron runtime resources outside the signed macOS App
   task_type: feature/runtime-packaging-lifecycle
   depends_on: `runtime-restart-plan-resources-path-tdz` merged; stable Launcher integration `a96bc0eb0f`
   files: macOS package layout and Electron entrypoint; Launcher artifact/state/activation/rollback; installed artifact preparation; Electron ready/full/hot coordination; focused packaging, transaction and real installed-app tests
-  base_commit: e4745ee36f
-  pending_sync_from_main: none; dev-3 fast-forwarded to `e4745ee36f`
-  status: planned
+  base_commit: 08c704430e
+  pending_sync_from_main: none; dev-3 fast-forwarded to `08c704430e`
+  status: in_progress
   objective: Keep the signed macOS App Bundle stable with only Launcher, the Electron executable/frameworks and required macOS metadata, while loading `app.asar`, app-server, default configuration and other updateable runtime resources directly from a versioned external runtime directory under `MORPHEUS_HOME`.
-  last_update: 2026-09-09 CST user selected the external-runtime architecture. The intended boundary is that Launcher atomically manages external `current`/`previous` versions and launches the stable Electron Host against the selected external `app.asar`; hot/full activation and rollback must not copy resources back into `/Applications`, mutate the App Bundle, or re-sign it. A first-install bootstrap source is still awaiting user confirmation because a strict shell-only App Bundle cannot supply the initial runtime itself.
-  next_action: confirm the first-install runtime source, then dispatch the complete runtime/state-machine brief to the fixed dev-3 owner and reviewer
-  blockers: first-install/bootstrap source decision
+  last_update: 2026-09-09 CST user selected a signed read-only Seed Runtime inside the App Bundle. Launcher must prefer a verified external `current`, fall back to Seed when external runtime is absent or invalid, and show a native fatal error only if Seed is also invalid. Seed is an immutable recovery floor rather than a third rotating history generation. Source workspace and self-evolution are optional: normal application startup must not clone/build source, and missing workspace must produce an explicit unsupported restart result rather than preventing Seed operation. No UI enablement toggle is included in this phase; an explicitly configured/existing workspace is the enablement condition, and `/self` must not be materialized with a nonexistent cwd.
+  next_action: fixed dev-3 owner implements the external runtime/Seed state-machine change, reuses its fixed reviewer, and returns focused plus real packaged macOS evidence
+  blockers: none
   validation: pending; must cover missing/corrupt current, verified first bootstrap, current/previous atomicity, hot renderer/app-server activation, full main/preload activation, ready-before-commit rollback, post-ready crash-loop rollback, App Bundle immutability/hash stability, no activation-time codesign, and real packaged macOS launch/restart
   commit:
 - id: runtime-restart-plan-resources-path-tdz
