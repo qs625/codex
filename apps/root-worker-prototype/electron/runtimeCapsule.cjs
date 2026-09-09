@@ -14,6 +14,12 @@ const PROHIBITED_PROCESS_BEHAVIORS = Object.freeze([
   "daemonize",
   "double-fork",
   "setsid",
+  "process-group-escape",
+]);
+const LEGACY_PROHIBITED_PROCESS_BEHAVIORS = Object.freeze([
+  "daemonize",
+  "double-fork",
+  "setsid",
 ]);
 const MIN_READINESS_TIMEOUT_MS = 1_000;
 const MAX_READINESS_TIMEOUT_MS = 120_000;
@@ -147,17 +153,23 @@ function validateRuntimeCapsuleManifest(manifest) {
     throw new Error("Unsupported Capsule readiness protocol");
   }
   requireReadinessTimeout(manifest.launch.readiness.timeoutMs);
+  const prohibitedBehaviors =
+    manifest.processSupervision?.prohibitedBehaviors;
+  const hasSupportedProhibitedBehaviors =
+    Array.isArray(prohibitedBehaviors) &&
+    [PROHIBITED_PROCESS_BEHAVIORS, LEGACY_PROHIBITED_PROCESS_BEHAVIORS].some(
+      (supported) =>
+        prohibitedBehaviors.length === supported.length &&
+        prohibitedBehaviors.every(
+          (behavior, index) => behavior === supported[index],
+        ),
+    );
   if (
     manifest.processSupervision?.contract !== PROCESS_SUPERVISION_CONTRACT ||
-    !Array.isArray(manifest.processSupervision?.prohibitedBehaviors) ||
-    manifest.processSupervision.prohibitedBehaviors.length !==
-      PROHIBITED_PROCESS_BEHAVIORS.length ||
-    manifest.processSupervision.prohibitedBehaviors.some(
-      (behavior, index) => behavior !== PROHIBITED_PROCESS_BEHAVIORS[index],
-    )
+    !hasSupportedProhibitedBehaviors
   ) {
     throw new Error(
-      "Capsule must declare cooperative observed supervision and prohibit daemonize, double-fork, setsid, and process-group escape",
+      "Capsule must declare cooperative observed supervision and a supported prohibited-process contract",
     );
   }
   if (!Array.isArray(manifest.entries) || manifest.entries.length === 0) {
@@ -558,6 +570,7 @@ function sha256(value) {
 module.exports = {
   CAPSULE_MANIFEST_FILE,
   CAPSULE_SCHEMA_VERSION,
+  LEGACY_PROHIBITED_PROCESS_BEHAVIORS,
   PROCESS_SUPERVISION_CONTRACT,
   PROHIBITED_PROCESS_BEHAVIORS,
   READINESS_PROTOCOL,
