@@ -36,13 +36,13 @@ Implement a minimal stable Launcher for Morpheus self-update: the model builds a
   files: tool-service request context and host-lifecycle tool spec/dispatch authorization; thread-service tool request construction; focused visibility and forged-dispatch tests
   base_commit: 6748ef5d46
   pending_sync_from_main: none; dev-2 fast-forwarded to current main before dispatch
-  status: planned
+  status: ready_to_merge
   objective: Make `request_runtime_restart` available and executable only from the exact canonical `/self` thread. `/self` descendants and every other root or child thread must not receive the model-visible tool and must be rejected if a call is forged or replayed through a lower-level dispatch path.
-  last_update: 2026-09-09 CST user explicitly restricted restart authority to the exact `/self` thread. PM identified the current tool is globally emitted by `tool-service/domains/host_lifecycle.rs`; the tool request builder in thread-service can provide the authoritative current canonical agent path without UI or cwd heuristics.
-  next_action: fixed dev-2 owner implements dual-layer visibility and dispatch authorization using authoritative canonical agent-path context, reuses its fixed reviewer, validates the root/child/forged-call matrix, and submits a dev commit
+  last_update: 2026-09-09 CST fixed dev-2 owner delivered `6eb3ef9feb`. `ToolSpecRequest` now carries the authoritative current `AgentPath`; host-lifecycle spec visibility requires exact `/self`, and dispatch repeats the same fail-closed authorization before argument parsing, display events, goal accounting or host side effects. `/self/child`, other project roots/children, `/root` and missing identity are denied; exact `/self` preserves the original schema, terminal `FinishTurn`, display and host semantics. PM diff inspection confirms the implementation follows the requested narrow copied-fact boundary and does not use cwd, role, provider, UI or prefix heuristics.
+  next_action: PM merges `6eb3ef9feb` to main, reruns focused request-plumbing/API/build validation, then fast-forwards idle dev-2
   blockers: none
-  validation: pending
-  commit:
+  validation: fixed reviewer passed; owner `cargo check -p codex-tool-service-api`, thread-service request-path test, app-server build and diff check passed. Host-lifecycle lib test target is blocked before test execution by unrelated existing tool-service test mock/planning compile debt.
+  commit: 6eb3ef9feb
 - id: full-terminal-panel-multi-tab
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
