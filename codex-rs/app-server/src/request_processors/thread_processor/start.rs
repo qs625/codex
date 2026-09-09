@@ -355,14 +355,7 @@ mod root_thread_provider_route_tests {
                 None,
                 "approval reviewer",
             ),
-            (
-                None,
-                Some(vec![dynamic_tool]),
-                None,
-                None,
-                None,
-                "dynamic tools",
-            ),
+            (None, Some(vec![dynamic_tool]), None, None, None, "dynamic tools"),
             (
                 None,
                 None,
@@ -371,14 +364,7 @@ mod root_thread_provider_route_tests {
                 None,
                 "clear history",
             ),
-            (
-                None,
-                None,
-                None,
-                Some(vec![environment]),
-                None,
-                "environments",
-            ),
+            (None, None, None, Some(vec![environment]), None, "environments"),
             (
                 None,
                 None,

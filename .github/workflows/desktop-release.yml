@@ -60,6 +60,21 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
 
+      - name: Install CI rtk shim
+        shell: pwsh
+        run: |
+          $rtkBin = Join-Path $env:RUNNER_TEMP "rtk-bin"
+          New-Item -ItemType Directory -Force -Path $rtkBin | Out-Null
+          if ($IsWindows) {
+            $rtkPath = Join-Path $rtkBin "rtk.cmd"
+            Set-Content -Path $rtkPath -Value "@echo off`r`n%*`r`nexit /b %ERRORLEVEL%`r`n"
+          } else {
+            $rtkPath = Join-Path $rtkBin "rtk"
+            Set-Content -Path $rtkPath -Value "#!/usr/bin/env sh`nexec `"$@`"`n"
+            chmod +x $rtkPath
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $rtkBin
+
       - name: Install Linux build dependencies
         if: ${{ runner.os == 'Linux' }}
         shell: bash

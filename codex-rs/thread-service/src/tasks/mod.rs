@@ -4,7 +4,6 @@ mod regular;
 mod review;
 mod user_shell;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -132,56 +131,19 @@ enum FinishedTurnPreparation {
     Noop,
 }
 
-struct RecordedFinishedTurnLeftover {
-    restart_for_leftover_pending_input: bool,
-    cold_recovery_ids: HashSet<String>,
-}
-
-fn extend_client_recoveries_from_pending_input(
-    recoveries: &mut Vec<(protocol::models::ResponseItem, String)>,
-    pending_input: Vec<PendingInputItem>,
-) {
-    recoveries.extend(pending_input.into_iter().filter_map(|item| match item {
-        PendingInputItem::RecordedResponseItem {
-            response_item,
-            recovery_id,
-        } => Some((response_item, recovery_id)),
-        _ => None,
-    }));
-}
-
-fn should_auto_start_client_recovery(
-    had_queued_client_recovery: bool,
-    requeued_handled_failure: bool,
-    requested_retry_for_cold_recovery: bool,
-) -> bool {
-    had_queued_client_recovery || requeued_handled_failure || requested_retry_for_cold_recovery
-}
-
-fn active_turn_has_abortable_tasks(active_turn: &ActiveTurn) -> bool {
-    !active_turn.tasks.is_empty()
-}
-
 impl FinishedTurnPreparation {
     async fn record_leftover(
         self,
         sess: &Session,
         turn_context: &TurnContext,
-    ) -> Option<RecordedFinishedTurnLeftover> {
+    ) -> Option<bool> {
         match self {
             FinishedTurnPreparation::Noop => None,
             FinishedTurnPreparation::Ready {
                 leftover_pending_input,
             } => {
                 let mut restart_for_leftover_pending_input = false;
-                let mut cold_recovery_ids = HashSet::new();
                 for pending_input_item in leftover_pending_input {
-                    if let Some(recovery_id) = pending_input_item.recovery_id() {
-                        cold_recovery_ids.insert(recovery_id.to_string());
-                        sess.queue_response_items_for_next_turn(vec![pending_input_item])
-                            .await;
-                        continue;
-                    }
                     match inspect_pending_input(sess, turn_context, pending_input_item).await {
                         PendingInputHookDisposition::Accepted(pending_input) => {
                             restart_for_leftover_pending_input = true;
@@ -195,10 +157,7 @@ impl FinishedTurnPreparation {
                         }
                     }
                 }
-                Some(RecordedFinishedTurnLeftover {
-                    restart_for_leftover_pending_input,
-                    cold_recovery_ids,
-                })
+                Some(restart_for_leftover_pending_input)
             }
         }
     }
@@ -595,7 +554,7 @@ impl Session {
     async fn finalize_finished_turn_state(
         &self,
         turn_state: &Arc<tokio::sync::Mutex<crate::state::TurnState>>,
-    ) -> Option<()> {
+    ) -> Option<bool> {
         let _scheduler = self.scheduler.lock().await;
         let mut active = self.active_turn.lock().await;
         let active_turn = active.as_ref()?;
@@ -603,8 +562,10 @@ impl Session {
             return None;
         }
 
+        self.sync_mailbox_pending_buffer().await;
+        let has_thread_pending_work = self.has_thread_pending_work_locked().await;
         *active = None;
-        Some(())
+        Some(has_thread_pending_work)
     }
 
     /// Starts a regular turn when the session is idle and pending work is waiting.
@@ -623,10 +584,7 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "regular turn reservation must atomically check and set active-turn state"
     )]
-    pub(crate) fn start_regular_turn_if_idle_with_sub_id(
-        self: &Arc<Self>,
-        sub_id: String,
-    ) -> BoxFuture<'static, bool> {
+    pub(crate) fn start_regular_turn_if_idle_with_sub_id(self: &Arc<Self>, sub_id: String) -> BoxFuture<'static, bool> {
         let session = Arc::clone(self);
         Box::pin(async move {
             {
@@ -643,11 +601,7 @@ impl Session {
                 .maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
                 .await;
             session
-                .start_task(
-                    turn_context,
-                    Vec::new(),
-                    RegularTask::allow_empty_follow_up(),
-                )
+                .start_task(turn_context, Vec::new(), RegularTask::allow_empty_follow_up())
                 .await;
             true
         })
@@ -688,18 +642,18 @@ impl Session {
 
     pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
         let mut aborted_turn = false;
+        let mut active_turn_to_clear = None;
         let mut turn_context = None;
-        let mut requeued_client_recovery = false;
-        if let Some(mut active_turn) = self.take_active_turn_with_tasks().await {
+        if let Some(mut active_turn) = self.take_active_turn().await {
             let tasks = active_turn.drain_tasks();
             aborted_turn = !tasks.is_empty();
             turn_context = tasks.first().map(|task| Arc::clone(&task.turn_context));
             for task in tasks {
                 self.handle_task_abort(task, reason.clone()).await;
             }
-            requeued_client_recovery = self
-                .recover_client_recoveries_after_abort(&active_turn, turn_context.as_deref())
-                .await;
+            if aborted_turn {
+                active_turn_to_clear = Some(active_turn);
+            }
         }
 
         if let Some(turn_context) = turn_context.as_deref() {
@@ -720,7 +674,12 @@ impl Session {
         {
             warn!("failed to handle goal turn abort: {err}");
         }
-        if reason == TurnAbortReason::Interrupted && (aborted_turn || requeued_client_recovery) {
+        if let Some(active_turn) = active_turn_to_clear {
+            // Let interrupted tasks observe cancellation before dropping pending approvals, or an
+            // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
+            let _ = active_turn.clear_pending().await;
+        }
+        if reason == TurnAbortReason::Interrupted && aborted_turn {
             self.maybe_start_turn_for_pending_work().await;
         }
     }
@@ -769,8 +728,7 @@ impl Session {
         }
         // Let interrupted tasks observe cancellation before dropping pending approvals, or an
         // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
-        self.recover_client_recoveries_after_abort(&active_turn, turn_context.as_deref())
-            .await;
+        let _ = active_turn.clear_pending().await;
 
         if reason == TurnAbortReason::Interrupted {
             self.maybe_start_turn_for_pending_work().await;
@@ -819,8 +777,6 @@ impl Session {
         let mut turn_tool_calls = 0_u64;
         let mut records_turn_token_usage_on_span = false;
         let mut terminal_handoff = false;
-        let mut succeeded_client_recoveries = Vec::new();
-        let mut pending_client_recoveries = Vec::new();
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             if let Some(at) = active.as_mut()
@@ -844,8 +800,6 @@ impl Session {
             turn_tool_calls = ts.tool_calls;
             token_usage_at_turn_start = Some(ts.token_usage_at_turn_start.clone());
             terminal_handoff = ts.terminal_handoff();
-            (succeeded_client_recoveries, pending_client_recoveries) =
-                ts.client_recoveries_by_completion();
         }
         // Emit token usage metrics.
         if let Some(token_usage_at_turn_start) = token_usage_at_turn_start {
@@ -989,7 +943,7 @@ impl Session {
         {
             warn!("failed to finish turn goal accounting: {err}");
         }
-        let recorded_leftover = if should_clear_active_turn {
+        let restart_for_leftover_pending_input = if should_clear_active_turn {
             let preparation = if let Some(turn_state) = turn_state.as_ref() {
                 self.prepare_finished_turn_state(turn_state).await
             } else {
@@ -1001,29 +955,6 @@ impl Session {
         } else {
             None
         };
-
-        let pending_client_recoveries_to_requeue = if should_clear_active_turn {
-            pending_client_recoveries
-        } else {
-            Vec::new()
-        };
-        let mut handled_failure_recoveries = Vec::new();
-        if should_clear_active_turn && !succeeded_client_recoveries.is_empty() {
-            let recovery_ids = succeeded_client_recoveries
-                .iter()
-                .map(|(_, recovery_id)| recovery_id.clone())
-                .collect();
-            match self
-                .record_client_recoveries_handled(turn_context.as_ref(), recovery_ids)
-                .await
-            {
-                Ok(()) => {}
-                Err(err) => {
-                    warn!("failed to persist handled client recovery state: {err}");
-                    handled_failure_recoveries = succeeded_client_recoveries;
-                }
-            }
-        }
 
         let event = EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: turn_context.sub_id.clone(),
@@ -1039,52 +970,16 @@ impl Session {
             .await
             .clear_turn(&turn_context.sub_id);
 
-        let finished_turn_action = match recorded_leftover {
-            Some(RecordedFinishedTurnLeftover {
-                restart_for_leftover_pending_input,
-                mut cold_recovery_ids,
-            }) => {
-                let finalized = if let Some(turn_state) = turn_state.as_ref() {
+        let finished_turn_action = match restart_for_leftover_pending_input {
+            Some(restart_for_leftover_pending_input) => {
+                let has_thread_pending_work = if let Some(turn_state) = turn_state.as_ref() {
                     self.finalize_finished_turn_state(turn_state)
                         .await
-                        .is_some()
+                        .unwrap_or(false)
                 } else {
                     false
                 };
-                if !finalized {
-                    return;
-                }
-                cold_recovery_ids.extend(
-                    pending_client_recoveries_to_requeue
-                        .iter()
-                        .map(|(_, recovery_id)| recovery_id.clone()),
-                );
-                self.enqueue_client_recoveries_for_next_turn(pending_client_recoveries_to_requeue)
-                    .await;
-                let requeued_handled_failure = self
-                    .enqueue_client_recoveries_for_next_turn(handled_failure_recoveries)
-                    .await;
-                let had_queued_client_recovery = self
-                    .has_queued_client_recovery_excluding(&cold_recovery_ids)
-                    .await;
-                let has_thread_pending_work = self
-                    .has_thread_pending_work_excluding_recoveries(&cold_recovery_ids)
-                    .await;
-                let client_recovery_retry_wakes = if let Some(turn_state) = turn_state.as_ref() {
-                    turn_state.lock().await.client_recovery_retry_wakes()
-                } else {
-                    HashSet::new()
-                };
-                let requested_retry_for_cold_recovery = cold_recovery_ids
-                    .iter()
-                    .any(|recovery_id| client_recovery_retry_wakes.contains(recovery_id));
-                if should_auto_start_client_recovery(
-                    had_queued_client_recovery,
-                    requeued_handled_failure,
-                    requested_retry_for_cold_recovery,
-                ) {
-                    FinishedTurnAction::StartPendingWork
-                } else if terminal_handoff {
+                if terminal_handoff {
                     FinishedTurnAction::Noop
                 } else if has_thread_pending_work {
                     FinishedTurnAction::StartPendingWork
@@ -1103,10 +998,7 @@ impl Session {
                 spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::PendingWork);
             }
             FinishedTurnAction::StartLeftoverPendingInput => {
-                spawn_follow_up_turn_start(
-                    Arc::clone(self),
-                    FollowUpTurnStart::LeftoverPendingInput,
-                );
+                spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::LeftoverPendingInput);
             }
             FinishedTurnAction::ContinueGoalOrNotifyParent => {
                 if let Err(err) = self
@@ -1122,52 +1014,9 @@ impl Session {
         }
     }
 
-    async fn recover_client_recoveries_after_abort(
-        &self,
-        active_turn: &ActiveTurn,
-        turn_context: Option<&TurnContext>,
-    ) -> bool {
-        let (succeeded, mut recoveries_to_requeue) = active_turn
-            .turn_state
-            .lock()
-            .await
-            .client_recoveries_by_completion();
-        if !succeeded.is_empty() {
-            let recovery_ids = succeeded
-                .iter()
-                .map(|(_, recovery_id)| recovery_id.clone())
-                .collect();
-            match turn_context {
-                Some(turn_context) => {
-                    if let Err(err) = self
-                        .record_client_recoveries_handled(turn_context, recovery_ids)
-                        .await
-                    {
-                        warn!(
-                            "failed to persist handled client recovery state during abort: {err}"
-                        );
-                        recoveries_to_requeue.extend(succeeded);
-                    }
-                }
-                None => {
-                    warn!("missing turn context while finalizing aborted client recovery");
-                    recoveries_to_requeue.extend(succeeded);
-                }
-            }
-        }
-        let pending_input = active_turn.clear_pending().await;
-        extend_client_recoveries_from_pending_input(&mut recoveries_to_requeue, pending_input);
-        self.enqueue_client_recoveries_for_next_turn(recoveries_to_requeue)
-            .await
-    }
-
-    async fn take_active_turn_with_tasks(&self) -> Option<ActiveTurn> {
+    async fn take_active_turn(&self) -> Option<ActiveTurn> {
         let mut active = self.active_turn.lock().await;
-        if active.as_ref().is_some_and(active_turn_has_abortable_tasks) {
-            active.take()
-        } else {
-            None
-        }
+        active.take()
     }
 
     pub(crate) async fn close_unified_exec_processes(&self) {

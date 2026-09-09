@@ -1,9 +1,9 @@
 use app_server_protocol::DynamicToolCallOutputContentItem;
 use app_server_protocol::DynamicToolCallResponse;
-use protocol::ThreadId;
 use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use protocol::dynamic_tools::DynamicToolResponse as CoreDynamicToolResponse;
 use protocol::protocol::Op;
+use protocol::ThreadId;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::error;
@@ -44,13 +44,10 @@ pub(crate) async fn on_call_response(
         success,
     };
     if let Err(err) = live_thread_command
-        .submit_live_thread_op(
-            conversation_id,
-            Op::DynamicToolResponse {
-                id: call_id.clone(),
-                response: core_response,
-            },
-        )
+        .submit_live_thread_op(conversation_id, Op::DynamicToolResponse {
+            id: call_id.clone(),
+            response: core_response,
+        })
         .await
     {
         error!("failed to submit DynamicToolResponse: {err}");

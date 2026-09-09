@@ -320,16 +320,17 @@ pub(crate) async fn handle_output_item_done(
                 .await;
 
             output.tool_is_terminal_control =
-                ctx.sess.services.tool_service.tool_is_terminal_control(
-                    tool_service_api::ToolParallelRequest {
+                ctx.sess
+                    .services
+                    .tool_service
+                    .tool_is_terminal_control(tool_service_api::ToolParallelRequest {
                         tool: crate::session::turn::tool_service_request(
                             &ctx.sess,
                             &ctx.turn_context,
                             &ctx.tool_inputs,
                         ),
                         call: &call,
-                    },
-                );
+                    });
             let cancellation_token = ctx.cancellation_token.child_token();
             let tool_future: InFlightFuture<'static> =
                 Box::pin(crate::session::turn::handle_tool_call(

@@ -1558,43 +1558,6 @@ impl ThreadService {
         )
     }
 
-    pub async fn ensure_live_native_agent_reference(
-        &self,
-        current_thread_id: ThreadId,
-        current_session_source: &SessionSource,
-        config: Config,
-        agent_reference: &str,
-    ) -> CodexResult<ThreadId> {
-        self.agent_control()
-            .resolve_agent_reference(
-                current_thread_id,
-                current_session_source,
-                Some(config),
-                agent_reference,
-            )
-            .await
-    }
-
-    pub async fn thread_exists_live_or_persisted(&self, thread_id: ThreadId) -> CodexResult<bool> {
-        if thread_service_api::LiveThreadInspectionRuntime::is_live_thread_loaded(self, thread_id)
-            .await
-        {
-            return Ok(true);
-        }
-        match self
-            .read_thread(ReadThreadParams {
-                thread_id,
-                include_archived: true,
-                include_history: true,
-            })
-            .await
-        {
-            Ok(_) => Ok(true),
-            Err(CodexErr::ThreadNotFound(_)) => Ok(false),
-            Err(err) => Err(err),
-        }
-    }
-
     fn root_external_agent_control(&self) -> AgentControl {
         AgentControl::new_with_external_registry(
             Arc::downgrade(&self.state),
@@ -2307,10 +2270,6 @@ impl ThreadServiceState {
             if let Err(err) = new_thread.thread.apply_goal_resume_runtime_effects().await {
                 warn!("failed to apply goal resume runtime effects: {err}");
             }
-            new_thread
-                .thread
-                .maybe_start_pending_client_recovery()
-                .await;
         }
         Ok(new_thread)
     }
@@ -2596,36 +2555,6 @@ impl thread_service_api::LiveThreadConversationRuntime for ThreadServiceState {
         async move {
             let thread = self.get_thread(thread_id).await?;
             thread.append_message(item).await
-        }
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadRecoveryRuntime for ThreadServiceState {
-    fn record_live_thread_recovery(
-        &self,
-        thread_id: ThreadId,
-        input: ResponseItem,
-        event: protocol::protocol::EventMsg,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.record_client_recovery(input, event).await
-        }
-    }
-
-    fn resume_live_thread_recovery(
-        &self,
-        thread_id: ThreadId,
-        input: ResponseItem,
-        recovery_id: String,
-        turn_id: String,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread
-                .resume_client_recovery(input, recovery_id, turn_id)
-                .await
         }
     }
 }
@@ -3095,39 +3024,6 @@ impl thread_service_api::LiveThreadConversationRuntime for ThreadService {
             self.state.as_ref(),
             thread_id,
             item,
-        )
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadRecoveryRuntime for ThreadService {
-    fn record_live_thread_recovery(
-        &self,
-        thread_id: ThreadId,
-        input: ResponseItem,
-        event: protocol::protocol::EventMsg,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        thread_service_api::LiveThreadRecoveryRuntime::record_live_thread_recovery(
-            self.state.as_ref(),
-            thread_id,
-            input,
-            event,
-        )
-    }
-
-    fn resume_live_thread_recovery(
-        &self,
-        thread_id: ThreadId,
-        input: ResponseItem,
-        recovery_id: String,
-        turn_id: String,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        thread_service_api::LiveThreadRecoveryRuntime::resume_live_thread_recovery(
-            self.state.as_ref(),
-            thread_id,
-            input,
-            recovery_id,
-            turn_id,
         )
     }
 }

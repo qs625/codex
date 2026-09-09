@@ -154,8 +154,8 @@ mod tests {
     use config_service::ThreadConfigLoader;
     use config_service::ThreadConfigSource;
     use pretty_assertions::assert_eq;
-    use protocol::error::Result as CodexResult;
     use protocol::protocol::SessionSource;
+    use protocol::error::Result as CodexResult;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;

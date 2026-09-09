@@ -1,8 +1,5 @@
-use super::active_turn_has_abortable_tasks;
 use super::emit_turn_memory_metric;
 use super::emit_turn_network_proxy_metric;
-use super::extend_client_recoveries_from_pending_input;
-use super::should_auto_start_client_recovery;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
@@ -74,47 +71,6 @@ fn metric_point(resource_metrics: &ResourceMetrics, name: &str) -> (BTreeMap<Str
         },
         _ => panic!("unexpected counter data type"),
     }
-}
-
-#[test]
-fn abort_recovery_collection_keeps_undrained_recorded_marker() {
-    let response_item = protocol::models::ResponseItem::Message {
-        id: Some("client-recovery:tx-1:req-1".to_string()),
-        role: "user".to_string(),
-        content: vec![protocol::models::ContentItem::InputText {
-            text: "Inspect recovery evidence.".to_string(),
-        }],
-        phase: None,
-    };
-    let mut recoveries = Vec::new();
-
-    extend_client_recoveries_from_pending_input(
-        &mut recoveries,
-        vec![crate::PendingInputItem::RecordedResponseItem {
-            response_item: response_item.clone(),
-            recovery_id: "client-recovery:tx-1:req-1".to_string(),
-        }],
-    );
-
-    assert_eq!(
-        recoveries,
-        vec![(response_item, "client-recovery:tx-1:req-1".to_string())]
-    );
-}
-
-#[test]
-fn failed_recovery_run_does_not_auto_start_without_new_wake() {
-    assert!(!should_auto_start_client_recovery(false, false, false));
-    assert!(should_auto_start_client_recovery(true, false, false));
-    assert!(should_auto_start_client_recovery(false, true, false));
-    assert!(should_auto_start_client_recovery(false, false, true));
-}
-
-#[test]
-fn finishing_active_turn_is_not_taken_by_abort_all_tasks() {
-    assert!(!active_turn_has_abortable_tasks(
-        &crate::state::ActiveTurn::default()
-    ));
 }
 
 #[test]

@@ -79,9 +79,6 @@ const {
   observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 const {
-  cleanupOwnedPreparedArtifactsWithLauncher,
-  releaseOwnedPreparedArtifactLease,
-  removeOwnedPreparedArtifact,
   resolveInstalledArtifactUpdatePlanInWorker,
   updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
@@ -96,20 +93,10 @@ const {
   expectedRuntimeRestartPrompt,
 } = require("./runtimeRestartIntent.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
-const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
-const {
-  buildLauncherRecoveryRecordParams,
-  createLauncherQueueDrainRestartRequester,
-  createRuntimeLaunchReadiness,
-  prepareCanonicalLauncherFailureEvidence,
-  readLauncherFailureEvidence,
-  recordClaimedLauncherFailureRecovery,
-} = require("./runtimeLaunchState.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
-const runtimeLauncher = createRuntimeLauncher();
 const lspManager = new LspManager();
 const appRelaunch = createAppRelaunchAdapter({
   app,
@@ -134,33 +121,9 @@ const installedArtifactUpdateLifecycle =
     appServerStop: {
       requestStop: (reason) => appServerClient.stop(reason),
     },
-    appExit: (code) => app.exit(code),
-    cleanupPreparedArtifact: (
-      preparedRoot,
-      preparedArtifactsRoot,
-      ownerCapability,
-    ) =>
-      removeOwnedPreparedArtifact(preparedRoot, {
-        ownerCapability,
-        preparedArtifactsRoot,
-      }),
-    releasePreparedArtifactLease: (
-      preparedRoot,
-      preparedArtifactsRoot,
-      ownerCapability,
-    ) =>
-      releaseOwnedPreparedArtifactLease(preparedRoot, {
-        ownerCapability,
-        preparedArtifactsRoot,
-      }),
+    fullRelaunch: appRelaunch,
     reloadWindows: reloadRendererWindows,
-    recoverLauncherFailure: ({ evidence, evidencePath }) =>
-      recordLauncherFailureEvidence(evidence, evidencePath),
-    runtimeLauncher,
-    resolvePlan: () => {
-      cleanupPreparedArtifacts();
-      return resolveInstalledArtifactUpdatePlanInWorker();
-    },
+    resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
     updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
     broadcastStatus: (status) =>
       broadcast("codex:status", {
@@ -184,20 +147,10 @@ let autoResumeCoordinator = null;
 let runtimeRestartController = null;
 let runtimeRestartIntentStore = null;
 let quittingAfterAppServerStop = false;
-let launcherFailureRecoveryPromise = null;
-const requestLauncherQueueDrainRestart =
-  createLauncherQueueDrainRestartRequester({
-    appExit: (code) => app.exit(code),
-  });
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
-const runtimeLaunchReadiness = createRuntimeLaunchReadiness({
-  env: process.env,
-  fs,
-  onReady: () => recoverLauncherFailureEvidence(),
-});
 
 applyRemoteDebuggingConfig(app, process.env, console);
 
@@ -229,11 +182,6 @@ async function createWindow() {
   });
 
   windows.add(window);
-  window.webContents.once("did-finish-load", () => {
-    void runtimeLaunchReadiness.markRendererReady().catch((error) => {
-      console.error("[prototype] failed to record renderer readiness", error);
-    });
-  });
   window.on("closed", () => {
     destroyBrowserPanel(window);
     windows.delete(window);
@@ -808,7 +756,6 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
-  cleanupPreparedArtifacts();
   registerLocalFilePreviewProtocol();
   configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
     permission === "media" && !isBrowserPanelWebContents(webContents),
@@ -819,8 +766,6 @@ app.whenReady().then(() => {
   );
   void ensureDefaultWorkspace()
     .then(async () => {
-      await appServerClient.ready();
-      await runtimeLaunchReadiness.markAppServerReady();
       await primeMicrophoneAccessPrompt();
       return createWindow();
     })
@@ -833,27 +778,6 @@ app.whenReady().then(() => {
     }
   });
 });
-
-function cleanupPreparedArtifacts() {
-  if (
-    process.platform !== "darwin" ||
-    typeof process.resourcesPath !== "string"
-  ) {
-    return;
-  }
-  try {
-    cleanupOwnedPreparedArtifactsWithLauncher({
-      appBundlePath: path.dirname(path.dirname(process.resourcesPath)),
-      runtimeLauncher,
-      logger: console,
-    });
-  } catch (error) {
-    console.warn(
-      "[prototype] prepared artifact cleanup failed",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -1437,87 +1361,6 @@ async function recoverRuntimeRestartRecord(record) {
     skills: [],
     images: [],
   });
-}
-
-function recoverLauncherFailureEvidence() {
-  if (launcherFailureRecoveryPromise) {
-    return launcherFailureRecoveryPromise;
-  }
-  launcherFailureRecoveryPromise = runLauncherFailureEvidenceRecovery().finally(
-    () => {
-      launcherFailureRecoveryPromise = null;
-    },
-  );
-  return launcherFailureRecoveryPromise;
-}
-
-async function runLauncherFailureEvidenceRecovery() {
-  const evidencePath = process.env.MORPHEUS_LAUNCH_FAILURE_EVIDENCE_PATH;
-  const rawEvidence = await readLauncherFailureEvidence(evidencePath, fs);
-  if (!rawEvidence) {
-    return { recovered: false };
-  }
-  return recordLauncherFailureEvidence(rawEvidence, evidencePath);
-}
-
-async function recordLauncherFailureEvidence(rawEvidence, evidencePath) {
-  const locatorEvidence = rawEvidence?.evidenceSnapshot
-    ? rawEvidence
-    : await readLauncherFailureEvidence(evidencePath, fs);
-  if (!locatorEvidence) {
-    throw new Error("Launcher failure evidence disappeared before recording");
-  }
-  const evidence = await prepareCanonicalLauncherFailureEvidence({
-    initialEvidence: locatorEvidence,
-    runtimeLauncher,
-  });
-  let targetThreadId = "/self";
-  if (
-    evidence.requestedByThreadId === null ||
-    evidence.requestedByThreadId === undefined
-  ) {
-    const listResult = await listThreads(defaultWorkspace);
-    targetThreadId =
-      listResult.materializedSelfThreadId ??
-      listResult.threads.find(
-        (thread) =>
-          thread.agentPath === "/self" ||
-          thread.path === "/self" ||
-          thread.name === "/self" ||
-          thread.taskName === "self",
-      )?.id ??
-      null;
-    if (!targetThreadId) {
-      throw new Error(
-        "Launcher failure evidence could not resolve the required /self thread",
-      );
-    }
-  }
-  const finalized = await recordClaimedLauncherFailureRecovery({
-    evidence,
-    recordRecovery: () =>
-      appServerClient.request(
-        "client/lifecycle/recovery/record",
-        buildLauncherRecoveryRecordParams(evidence, targetThreadId),
-      ),
-    consumeRestartIntent: (requestId) =>
-      getRuntimeRestartIntentStore().consumeRecoveredGroup(requestId),
-    finalizeFailureClaim: (expected) => {
-      if (!runtimeLauncher.supported) {
-        throw new Error(
-          "Runtime launcher is required to finalize failure evidence",
-        );
-      }
-      return runtimeLauncher.finalizeFailureClaim(expected);
-    },
-    requestQueueDrainRestart: requestLauncherQueueDrainRestart,
-  });
-  return {
-    recovered: true,
-    targetThreadId,
-    recoveryIdentity: evidence.recoveryIdentity,
-    ...finalized,
-  };
 }
 
 async function listThreads(cwd) {

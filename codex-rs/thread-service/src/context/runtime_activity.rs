@@ -63,16 +63,15 @@ fn render_running_command(command: &RunningCommandSnapshot) -> String {
         CommandNotificationFilter::Exit => "exit",
     };
     let label = command_label(&command.command);
-    let latest_output_tail =
-        command
-            .latest_output_tail
-            .as_deref()
-            .map_or_else(String::new, |output| {
-                format!(
-                    "\n      <latest_output_tail>{}</latest_output_tail>",
-                    xml_escape(output)
-                )
-            });
+    let latest_output_tail = command.latest_output_tail.as_deref().map_or_else(
+        String::new,
+        |output| {
+            format!(
+                "\n      <latest_output_tail>{}</latest_output_tail>",
+                xml_escape(output)
+            )
+        },
+    );
     format!(
         "\n    <command>\n      <command_id>{}</command_id>\n      <call_id>{}</call_id>\n      <label>{}</label>\n      <tty>{}</tty>\n      <notify_on>{notify_on}</notify_on>\n      <cwd>{}</cwd>\n      <command_text>{}</command_text>{latest_output_tail}\n    </command>",
         command.process_id,

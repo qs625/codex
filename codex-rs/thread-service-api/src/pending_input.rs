@@ -8,10 +8,6 @@ use protocol::protocol::InterAgentCommunication;
 pub enum PendingInputItem {
     HookInspectable(ResponseItem),
     ResponseItem(ResponseItem),
-    RecordedResponseItem {
-        response_item: ResponseItem,
-        recovery_id: String,
-    },
     InterAgentCommunication(InterAgentCommunication),
 }
 
@@ -19,16 +15,7 @@ impl PendingInputItem {
     pub fn trigger_turn(&self) -> bool {
         match self {
             Self::InterAgentCommunication(communication) => communication.trigger_turn,
-            Self::HookInspectable(_)
-            | Self::ResponseItem(_)
-            | Self::RecordedResponseItem { .. } => true,
-        }
-    }
-
-    pub fn recovery_id(&self) -> Option<&str> {
-        match self {
-            Self::RecordedResponseItem { recovery_id, .. } => Some(recovery_id),
-            _ => None,
+            Self::HookInspectable(_) | Self::ResponseItem(_) => true,
         }
     }
 
@@ -36,7 +23,6 @@ impl PendingInputItem {
         match self {
             Self::HookInspectable(item) => item,
             Self::ResponseItem(item) => item,
-            Self::RecordedResponseItem { response_item, .. } => response_item,
             Self::InterAgentCommunication(communication) => ResponseItem::InterAgentCommunication {
                 id: None,
                 communication,

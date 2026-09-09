@@ -57,7 +57,6 @@ use app_server_protocol::ServerRequestPayload;
 use app_server_protocol::ThreadContextUsageUpdatedNotification;
 use app_server_protocol::ThreadGoalUpdatedNotification;
 use app_server_protocol::ThreadItem;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadRealtimeClosedNotification;
 use app_server_protocol::ThreadRealtimeErrorNotification;
 use app_server_protocol::ThreadRealtimeItemAddedNotification;
@@ -68,6 +67,7 @@ use app_server_protocol::ThreadRealtimeTranscriptDeltaNotification;
 use app_server_protocol::ThreadRealtimeTranscriptDoneNotification;
 use app_server_protocol::ThreadRollbackResponse;
 use app_server_protocol::ThreadSkillsUpdatedNotification;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::ThreadTokenUsageUpdatedNotification;
 use app_server_protocol::ToolRequestUserInputOption;
@@ -601,8 +601,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
                 .await;
         }
-        msg @ (EventMsg::ClientRecoveryRecorded(_)
-        | EventMsg::ItemStarted(_)
+        msg @ (EventMsg::ItemStarted(_)
         | EventMsg::CommandWaitStarted(_)
         | EventMsg::CommandWaitCompleted(_)
         | EventMsg::CommandWriteStdinCompleted(_)
@@ -827,8 +826,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 let stored_thread = match live_thread_history
                     .read_live_thread(
                         conversation_id,
-                        /*include_archived*/ true,
-                        /*include_history*/ true,
+                        /*include_archived*/ true, /*include_history*/ true,
                     )
                     .await
                 {

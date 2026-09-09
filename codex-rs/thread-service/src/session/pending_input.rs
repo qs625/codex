@@ -238,115 +238,6 @@ impl Session {
         should_start_turn
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "recovery deduplication and next-turn queueing must remain scheduler-atomic"
-    )]
-    pub(crate) async fn enqueue_recorded_recovery_for_next_turn_if_absent(
-        &self,
-        response_item: ResponseItem,
-        recovery_id: String,
-    ) -> bool {
-        let should_start_turn = {
-            let _scheduler = self.scheduler.lock().await;
-            let active = self.active_turn.lock().await;
-            let mut active_turn_state = match active.as_ref() {
-                Some(active_turn) => Some(active_turn.turn_state.lock().await),
-                None => None,
-            };
-            if let Some(turn_state) = active_turn_state.as_mut() {
-                if turn_state.has_client_recovery(&recovery_id)
-                    || turn_state
-                        .pending_input()
-                        .iter()
-                        .any(|item| item.recovery_id() == Some(recovery_id.as_str()))
-                {
-                    turn_state.request_client_recovery_retry(recovery_id);
-                    return false;
-                }
-            }
-            let mut idle_pending_input = self.idle_pending_input.lock().await;
-            if idle_pending_input
-                .iter()
-                .any(|item| item.recovery_id() == Some(recovery_id.as_str()))
-            {
-                match active_turn_state.as_mut() {
-                    Some(turn_state) => {
-                        turn_state.request_client_recovery_retry(recovery_id);
-                        false
-                    }
-                    None => true,
-                }
-            } else {
-                idle_pending_input.push(PendingInputItem::RecordedResponseItem {
-                    response_item,
-                    recovery_id,
-                });
-                active.is_none()
-            }
-        };
-        self.note_thread_wait_event(ThreadWaitSource::QueuedInput);
-        should_start_turn
-    }
-
-    pub(crate) async fn enqueue_client_recoveries_for_next_turn(
-        &self,
-        recoveries: Vec<(ResponseItem, String)>,
-    ) -> bool {
-        let mut should_start_turn = false;
-        for (response_item, recovery_id) in recoveries {
-            should_start_turn |= self
-                .enqueue_recorded_recovery_for_next_turn_if_absent(response_item, recovery_id)
-                .await;
-        }
-        should_start_turn
-    }
-
-    pub(crate) async fn begin_client_recovery_run(&self, sub_id: &str) {
-        let Some(turn_state) = self.turn_state_for_sub_id(sub_id).await else {
-            return;
-        };
-        turn_state.lock().await.begin_client_recovery_run();
-    }
-
-    pub(crate) async fn mark_client_recovery_run_succeeded(&self, sub_id: &str) {
-        let Some(turn_state) = self.turn_state_for_sub_id(sub_id).await else {
-            return;
-        };
-        turn_state.lock().await.mark_client_recovery_run_succeeded();
-    }
-
-    pub(crate) async fn has_queued_client_recovery_excluding(
-        &self,
-        excluded_recovery_ids: &std::collections::HashSet<String>,
-    ) -> bool {
-        self.idle_pending_input.lock().await.iter().any(|item| {
-            item.recovery_id()
-                .is_some_and(|recovery_id| !excluded_recovery_ids.contains(recovery_id))
-        })
-    }
-
-    pub(crate) async fn has_thread_pending_work_excluding_recoveries(
-        &self,
-        excluded_recovery_ids: &std::collections::HashSet<String>,
-    ) -> bool {
-        let _scheduler = self.scheduler.lock().await;
-        self.sync_mailbox_pending_buffer().await;
-        if self
-            .idle_pending_input
-            .lock()
-            .await
-            .iter()
-            .any(|item| match item.recovery_id() {
-                Some(recovery_id) => !excluded_recovery_ids.contains(recovery_id),
-                None => true,
-            })
-        {
-            return true;
-        }
-        self.mailbox_rx.lock().await.has_pending_trigger_turn()
-    }
-
     #[cfg(test)]
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
         let _scheduler = self.scheduler.lock().await;
@@ -471,17 +362,10 @@ impl Session {
             match active.as_mut() {
                 Some(at) => {
                     let mut ts = at.turn_state.lock().await;
-                    let pending_input = ts.take_pending_input();
-                    for item in &pending_input {
-                        if let PendingInputItem::RecordedResponseItem {
-                            response_item,
-                            recovery_id,
-                        } = item
-                        {
-                            ts.record_client_recovery(recovery_id.clone(), response_item.clone());
-                        }
-                    }
-                    (pending_input, ts.accepts_async_input_for_current_turn())
+                    (
+                        ts.take_pending_input(),
+                        ts.accepts_async_input_for_current_turn(),
+                    )
                 }
                 None => (Vec::new(), true),
             }
@@ -727,9 +611,7 @@ fn matches_child_completion(item: &PendingInputItem, child_thread_id: ThreadId) 
             communication.operation == InterAgentOperation::ChildCompletion
                 && communication.sender_thread_id == Some(child_thread_id)
         }
-        PendingInputItem::ResponseItem(_)
-        | PendingInputItem::RecordedResponseItem { .. }
-        | PendingInputItem::HookInspectable(_) => false,
+        PendingInputItem::ResponseItem(_) | PendingInputItem::HookInspectable(_) => false,
     }
 }
 
@@ -752,10 +634,6 @@ fn thread_wait_source_for_pending_input_item(item: &PendingInputItem) -> ThreadW
             thread_wait_source_for_communication(communication)
         }
         PendingInputItem::ResponseItem(ResponseItem::Message { role, .. })
-        | PendingInputItem::RecordedResponseItem {
-            response_item: ResponseItem::Message { role, .. },
-            ..
-        }
         | PendingInputItem::HookInspectable(ResponseItem::Message { role, .. })
             if role == "user" =>
         {
@@ -777,9 +655,9 @@ fn thread_wait_source_for_pending_input_item(item: &PendingInputItem) -> ThreadW
             kind: protocol::models::CommandExecutionNotificationKind::Exit,
             ..
         }) => ThreadWaitSource::CommandExit,
-        PendingInputItem::HookInspectable(_)
-        | PendingInputItem::ResponseItem(_)
-        | PendingInputItem::RecordedResponseItem { .. } => ThreadWaitSource::AsyncInput,
+        PendingInputItem::HookInspectable(_) | PendingInputItem::ResponseItem(_) => {
+            ThreadWaitSource::AsyncInput
+        }
     }
 }
 
@@ -868,8 +746,6 @@ fn thread_poll_event_for_pending_input(
                 created_at_ms: *created_at_ms,
             },
         ),
-        PendingInputItem::ResponseItem(_)
-        | PendingInputItem::RecordedResponseItem { .. }
-        | PendingInputItem::HookInspectable(_) => None,
+        PendingInputItem::ResponseItem(_) | PendingInputItem::HookInspectable(_) => None,
     }
 }

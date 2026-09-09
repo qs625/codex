@@ -84,7 +84,6 @@ function buildElectronPackagerArgs({
     `--arch=${electronArch}`,
     `--out=${distDirName}`,
     "--overwrite",
-    "--asar",
     "--ignore=^/dist-app($|/)",
     "--ignore=^/dist-package-resources($|/)",
     "--no-prune",
@@ -139,10 +138,11 @@ function packagePlatformApp({
   assertSupportedPackagingPlatform(platform, process.platform);
   const plan = buildPlatformPackagePlan({ cwd, platform });
   fs.rmSync(plan.distDir, { force: true, recursive: true });
-  run("pnpm", ["build"], { cwd });
+  run("rtk", ["pnpm", "build"], { cwd });
   run(
-    "cargo",
+    "rtk",
     [
+      "cargo",
       "build",
       "--manifest-path",
       path.relative(cwd, plan.codexRsCargoManifestPath),
@@ -156,8 +156,9 @@ function packagePlatformApp({
   );
   preparePlatformPackageResources(plan);
   run(
-    "pnpm",
+    "rtk",
     [
+      "pnpm",
       "dlx",
       "@electron/packager",
       ...buildElectronPackagerArgs({
@@ -213,31 +214,11 @@ function run(command, args, options) {
   }
 }
 
-function buildRunInvocation(
-  command,
-  args,
-  platform = process.platform,
-  {
-    nodeExecutable = process.execPath,
-    pnpmExecutable = process.env.npm_execpath,
-  } = {},
-) {
-  if (command === "pnpm" && platform === "win32") {
-    if (!pnpmExecutable) {
-      throw new Error(
-        "Windows desktop packaging must run through a pnpm script so npm_execpath is available.",
-      );
-    }
-    return {
-      command: nodeExecutable,
-      args: [pnpmExecutable, ...args],
-      spawnOptions: {},
-    };
-  }
+function buildRunInvocation(command, args, platform = process.platform) {
   return {
     command,
     args,
-    spawnOptions: {},
+    spawnOptions: command === "rtk" && platform === "win32" ? { shell: true } : {},
   };
 }
 

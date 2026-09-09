@@ -109,10 +109,10 @@ use app_server_protocol::Thread;
 use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadItem;
-use app_server_protocol::ThreadLifecycleStatus as AppServerThreadLifecycleStatus;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadSource as AppServerThreadSource;
 use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadLifecycleStatus as AppServerThreadLifecycleStatus;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnCompletedNotification;
 use app_server_protocol::TurnDiffUpdatedNotification;
@@ -131,7 +131,7 @@ use plugin_service_api::AppConnectorId;
 use plugin_service_api::PluginCapabilitySummary;
 use plugin_service_api::PluginId;
 use plugin_service_api::PluginTelemetryMetadata;
-use pretty_assertions::assert_eq as pretty_assert_eq;
+use pretty_assertions::assert_eq;
 use protocol::approvals::NetworkApprovalProtocol;
 use protocol::config_types::ApprovalsReviewer;
 use protocol::config_types::ModeKind;
@@ -185,7 +185,6 @@ fn sample_thread_with_metadata(
         skills: Vec::new(),
         token_usage: None,
         context_usage: None,
-        stats: None,
         turns: Vec::new(),
         active_subscription_items: None,
         active_command_items: None,
@@ -537,7 +536,7 @@ async fn ingest_rejected_turn_steer(
         )
         .await;
 
-    pretty_assert_eq!(out.len(), 1);
+    assert_eq!(out.len(), 1);
     serde_json::to_value(&out[0]).expect("serialize turn steer event")
 }
 
@@ -889,6 +888,7 @@ fn expected_absolute_path(path: &PathBuf) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
+
 
 mod lifecycle_and_reviews;
 mod path_and_lines;

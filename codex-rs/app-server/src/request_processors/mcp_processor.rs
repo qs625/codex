@@ -717,10 +717,7 @@ mod tests {
             Box::pin(async move { self.loaded_thread_ids.contains(&thread_id) })
         }
 
-        fn live_thread_info(
-            &self,
-            thread_id: ThreadId,
-        ) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
+        fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
             Box::pin(async move { Err(CodexErr::ThreadNotFound(thread_id)) })
         }
 

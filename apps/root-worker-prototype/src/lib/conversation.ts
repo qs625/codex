@@ -161,24 +161,6 @@ function buildConversationItemEntries(
     ];
   }
 
-  if (item.type === "clientRecovery") {
-    return [
-      {
-        id: item.id,
-        kind: "tool" as const,
-        author,
-        role: "system" as const,
-        text: `Recovered ${item.recoveredBuildId || "previous build"} after ${item.failurePhase || "launcher failure"}.`,
-        timestamp,
-        attachments: [],
-        toolName: "Runtime recovery evidence",
-        toolStatus: "completed",
-        toolDetails: formatClientRecoveryDetails(item),
-        toolCategory: "context",
-      },
-    ];
-  }
-
   if (item.type === "agentMessage") {
     return [
       {
@@ -613,36 +595,6 @@ function buildConversationItemEntries(
       attachments: [],
     },
   ];
-}
-
-function formatClientRecoveryDetails(
-  item: Extract<ThreadItem, { type: "clientRecovery" }>,
-): string {
-  const rows = [
-    ["Recovery identity", item.recoveryIdentity],
-    ["Launcher claim", item.launcherClaimId],
-    ["Launcher evidence version", item.launcherEvidenceVersion],
-    ["Transaction", item.transactionId],
-    ["Request", item.requestId],
-    ["Failed build", item.failedBuildId],
-    ["Failed build hash", item.failedBuildHash],
-    ["Source commit", item.sourceCommit],
-    ["Recovered build", item.recoveredBuildId],
-    ["Mode", item.mode],
-    ["Failure phase", item.failurePhase],
-    ["Exit code", item.exitCode == null ? null : String(item.exitCode)],
-    ["Signal", item.signal],
-    [
-      "Ready timeout",
-      item.readyTimeoutMs == null ? null : `${item.readyTimeoutMs} ms`,
-    ],
-    ["Requested by thread", item.requestedByThreadId],
-    ["Evidence", item.evidencePath],
-    ["Log", item.logPath],
-    ["Transaction record", item.transactionPath],
-    ["Recovery prompt", item.prompt],
-  ].filter((row): row is [string, string] => Boolean(row[1]));
-  return rows.map(([label, value]) => `${label}\n${value}`).join("\n\n");
 }
 
 function summarizeConversationArtifact(

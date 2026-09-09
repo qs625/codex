@@ -9,9 +9,9 @@ use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadArchiveResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadUnarchiveParams;
 use app_server_protocol::ThreadUnarchiveResponse;
 use app_server_protocol::ThreadUnarchivedNotification;
@@ -22,10 +22,10 @@ use app_test_support::McpProcess;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
 use codex_arg0::Arg0DispatchPaths;
-use codex_exec_server::EnvironmentManager;
-use codex_feedback::CodexFeedback;
 use config_service::CloudRequirementsLoader;
 use config_service::LoaderOverrides;
+use codex_exec_server::EnvironmentManager;
+use codex_feedback::CodexFeedback;
 use pretty_assertions::assert_eq;
 use protocol::ThreadId;
 use protocol::models::BaseInstructions;
@@ -172,10 +172,7 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
         unarchived_thread.updated_at > old_timestamp,
         "expected updated_at to be bumped on unarchive"
     );
-    assert_eq!(
-        unarchived_thread.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
-    );
+    assert_eq!(unarchived_thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
 
     // Wire contract: thread title field is `name`, serialized as null when unset.
     let thread_json = unarchive_result

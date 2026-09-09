@@ -173,8 +173,6 @@ fn should_persist_exec_command_end(
 fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
     match ev {
         EventMsg::UserMessage(_)
-        | EventMsg::ClientRecoveryRecorded(_)
-        | EventMsg::ClientRecoveryHandled(_)
         | EventMsg::AgentMessage(_)
         | EventMsg::AgentReasoning(_)
         | EventMsg::AgentReasoningRawContent(_)
@@ -312,8 +310,6 @@ mod tests {
     use protocol::protocol::CollabResumeEndEvent;
     use protocol::protocol::CollabWaitingBeginEvent;
     use protocol::protocol::CollabWaitingEndEvent;
-    use protocol::protocol::ClientRecoveryHandledEvent;
-    use protocol::protocol::ClientRecoveryRecordedEvent;
     use protocol::protocol::EventMsg;
     use protocol::protocol::ExternalTerminalStatus;
     use protocol::protocol::ExternalTerminalStatusEvent;
@@ -326,57 +322,6 @@ mod tests {
     use protocol::protocol::ThreadContextUsageToolBreakdown;
     use protocol::protocol::ThreadContextUsageUpdatedEvent;
     use protocol::protocol::ThreadLifecycleStatus;
-
-    #[test]
-    fn limited_mode_persists_typed_client_recovery_identity() {
-        let recovery_identity =
-            "11111111-1111-4111-8111-111111111111".to_string();
-        let recovery_id = format!("client-recovery:{recovery_identity}");
-        let events = [
-            EventMsg::ClientRecoveryRecorded(ClientRecoveryRecordedEvent {
-                id: recovery_id.clone(),
-                turn_id: recovery_id.clone(),
-                recovery_identity: Some(recovery_identity.clone()),
-                launcher_claim_id: Some(
-                    "22222222-2222-4222-8222-222222222222".into(),
-                ),
-                launcher_evidence_version: Some(
-                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                        .into(),
-                ),
-                transaction_id: "tx".into(),
-                request_id: "request".into(),
-                failed_build_id: "failed".into(),
-                failed_build_hash: "hash".into(),
-                source_commit: "commit".into(),
-                requested_by_thread_id: None,
-                mode: "full".into(),
-                failure_phase: "launch".into(),
-                exit_code: None,
-                signal: None,
-                ready_timeout_ms: None,
-                log_path: None,
-                transaction_path: None,
-                recovered_build_id: "recovered".into(),
-                prompt: "recover".into(),
-                evidence_path: "/tmp/evidence".into(),
-                recorded_at_ms: 1,
-            }),
-            EventMsg::ClientRecoveryHandled(ClientRecoveryHandledEvent {
-                recovery_id,
-                recovery_identity: Some(recovery_identity),
-                turn_id: "turn".into(),
-                handled_at_ms: 2,
-            }),
-        ];
-
-        for event in events {
-            assert!(should_persist_event_msg(
-                &event,
-                EventPersistenceMode::Limited
-            ));
-        }
-    }
 
     #[test]
     fn limited_mode_persists_thread_context_usage() {

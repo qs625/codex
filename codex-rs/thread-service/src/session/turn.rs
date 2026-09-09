@@ -190,7 +190,6 @@ pub(crate) async fn run_turn(
     prewarmed_client_session: Option<OwnedModelTurnClientApi>,
     cancellation_token: CancellationToken,
 ) -> Option<String> {
-    sess.begin_client_recovery_run(&turn_context.sub_id).await;
     if input.is_empty() && !allow_empty_input_without_pending && !sess.has_pending_input().await {
         return None;
     }
@@ -565,22 +564,7 @@ pub(crate) async fn run_turn(
             if pending_input_exceeds_context_window(&pending_input, turn_context.as_ref()) {
                 current_turn_input_exceeds_context_window = true;
             }
-            match pending_input {
-                PendingInputRecord::RecordedConversationItem {
-                    recovery_id,
-                    response_item,
-                } => {
-                    sess.record_client_recovery_input_for_turn(
-                        turn_context.as_ref(),
-                        recovery_id,
-                        &response_item,
-                    )
-                    .await;
-                }
-                pending_input => {
-                    record_pending_input(sess.as_ref(), turn_context.as_ref(), pending_input).await;
-                }
-            }
+            record_pending_input(sess.as_ref(), turn_context.as_ref(), pending_input).await;
         }
         record_additional_contexts(
             sess.as_ref(),
@@ -652,8 +636,6 @@ pub(crate) async fn run_turn(
                 } = sampling_request_output;
                 if finish_turn {
                     sess.mark_current_turn_terminal_handoff().await;
-                    sess.mark_client_recovery_run_succeeded(&turn_context.sub_id)
-                        .await;
                     last_agent_message = sampling_request_last_agent_message;
                     break;
                 }
@@ -828,8 +810,6 @@ pub(crate) async fn run_turn(
                         .await;
                         return None;
                     }
-                    sess.mark_client_recovery_run_succeeded(&turn_context.sub_id)
-                        .await;
                     break;
                 }
                 continue;
@@ -1087,7 +1067,6 @@ fn pending_input_exceeds_context_window(
             user_input_exceeds_context_window(content, turn_context)
         }
         PendingInputRecord::ConversationItem { .. }
-        | PendingInputRecord::RecordedConversationItem { .. }
         | PendingInputRecord::InterAgentCommunication { .. } => false,
     }
 }

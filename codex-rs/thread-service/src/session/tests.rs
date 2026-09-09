@@ -68,7 +68,6 @@ use protocol::permissions::FileSystemPath;
 use protocol::permissions::FileSystemSandboxEntry;
 use protocol::permissions::FileSystemSandboxPolicy;
 use protocol::permissions::FileSystemSpecialPath;
-use protocol::protocol::ClientRecoveryRecordedEvent;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::TurnEnvironmentSelection;
 use protocol::request_permissions::PermissionGrantScope;

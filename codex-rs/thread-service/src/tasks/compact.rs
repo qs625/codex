@@ -1,13 +1,13 @@
-use std::future::Future;
 use std::sync::Arc;
+use std::future::Future;
 
 use super::SessionTask;
 use super::SessionTaskContext;
+use codex_extension_api::ExtensionData;
 use crate::session::session::Session;
 use crate::session::turn::run_turn;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
-use codex_extension_api::ExtensionData;
 use protocol::user_input::UserInput;
 use tokio_util::sync::CancellationToken;
 

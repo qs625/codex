@@ -206,36 +206,6 @@ pub enum ThreadItem {
     UserMessage { id: String, content: Vec<UserInput> },
     #[serde(rename_all = "camelCase")]
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
-    ClientRecovery {
-        id: String,
-        recovery_identity: Option<String>,
-        launcher_claim_id: Option<String>,
-        launcher_evidence_version: Option<String>,
-        transaction_id: String,
-        request_id: String,
-        failed_build_id: String,
-        failed_build_hash: String,
-        source_commit: String,
-        requested_by_thread_id: Option<String>,
-        mode: String,
-        failure_phase: String,
-        exit_code: Option<i32>,
-        signal: Option<String>,
-        #[cfg_attr(
-            feature = "schema-export",
-            ts(optional = nullable, type = "number | null")
-        )]
-        ready_timeout_ms: Option<i64>,
-        log_path: Option<String>,
-        transaction_path: Option<String>,
-        recovered_build_id: String,
-        prompt: String,
-        evidence_path: String,
-        #[cfg_attr(feature = "schema-export", ts(type = "number"))]
-        recorded_at_ms: i64,
-    },
-    #[serde(rename_all = "camelCase")]
-    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
     HookPrompt {
         id: String,
         fragments: Vec<HookPromptFragment>,
@@ -627,7 +597,6 @@ impl ThreadItem {
     pub fn id(&self) -> &str {
         match self {
             ThreadItem::UserMessage { id, .. }
-            | ThreadItem::ClientRecovery { id, .. }
             | ThreadItem::HookPrompt { id, .. }
             | ThreadItem::InjectedContext { id, .. }
             | ThreadItem::AgentMessage { id, .. }

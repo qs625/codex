@@ -118,8 +118,6 @@ pub fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::SessionConfigured(_)
         | EventMsg::ThreadGoalUpdated(_)
         | EventMsg::ThreadSkillsUpdated(_)
-        | EventMsg::ClientRecoveryRecorded(_)
-        | EventMsg::ClientRecoveryHandled(_)
         | EventMsg::McpStartupUpdate(_)
         | EventMsg::McpStartupComplete(_)
         | EventMsg::McpToolCallBegin(_)

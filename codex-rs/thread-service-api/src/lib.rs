@@ -35,7 +35,6 @@ use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::Event;
-use protocol::protocol::EventMsg;
 use protocol::protocol::Op;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionConfiguredEvent;
@@ -299,31 +298,6 @@ pub trait LiveThreadConversationRuntime: Send + Sync {
         &self,
         thread_id: ThreadId,
         item: ResponseItem,
-    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
-}
-
-/// Trusted client recovery recording surface for live native threads.
-///
-/// `record_live_thread_recovery` must durably persist the typed recovery
-/// evidence before returning, then queue the model-visible input and wake or
-/// start the target thread. The turn that drains the pending recovery marker
-/// owns recording that model-visible input in history and rollout.
-/// `resume_live_thread_recovery` requeues already durable, unhandled recovery
-/// evidence without recording a duplicate typed event.
-pub trait LiveThreadRecoveryRuntime: Send + Sync {
-    fn record_live_thread_recovery(
-        &self,
-        thread_id: ThreadId,
-        input: ResponseItem,
-        event: EventMsg,
-    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
-
-    fn resume_live_thread_recovery(
-        &self,
-        thread_id: ThreadId,
-        input: ResponseItem,
-        recovery_id: String,
-        turn_id: String,
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 }
 

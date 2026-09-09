@@ -161,27 +161,6 @@ function createRuntimeRestartIntentStore(
       });
     },
 
-    consumeRecoveredGroup(requestId) {
-      return transact((state) => {
-        const timestamp = now();
-        const consumed = [];
-        for (const record of state.records) {
-          if (
-            record.requestId !== requestId &&
-            record.coalescedInto !== requestId
-          ) {
-            continue;
-          }
-          record.outcomePhase = effectivePhase(record);
-          record.phase = "consumed";
-          record.updatedAtMs = timestamp;
-          clearRecoveryClaim(record);
-          consumed.push({ ...record });
-        }
-        return consumed;
-      });
-    },
-
     releaseClaim(requestId, claimId) {
       return transact((state) => {
         const record = state.records.find(

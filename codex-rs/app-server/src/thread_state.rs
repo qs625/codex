@@ -2,6 +2,7 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadGoal;
+use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnError;
 use codex_file_watcher::WatchRegistration;
@@ -14,7 +15,6 @@ use rollout::state_db::StateDbHandle;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
-use thread_history::ThreadHistoryBuilder;
 use thread_service_api::ThreadConfigSnapshot;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
@@ -333,16 +333,13 @@ impl ThreadStateManager {
         if capabilities.host_lifecycle {
             return Ok(());
         }
-        if let Some(existing_connection_id) =
-            state
-                .live_connections
-                .iter()
-                .find_map(|(candidate_connection_id, capabilities)| {
-                    capabilities
-                        .host_lifecycle
-                        .then_some(*candidate_connection_id)
-                })
-        {
+        if let Some(existing_connection_id) = state.live_connections.iter().find_map(
+            |(candidate_connection_id, capabilities)| {
+                capabilities
+                    .host_lifecycle
+                    .then_some(*candidate_connection_id)
+            },
+        ) {
             return Err(HostLifecycleRegistrationError::AlreadyRegistered(
                 existing_connection_id,
             ));
@@ -362,13 +359,6 @@ impl ThreadStateManager {
                 capabilities.host_lifecycle.then_some(*connection_id)
             })
             .min_by_key(|connection_id| connection_id.0)
-    }
-
-    pub(crate) async fn is_registered_host_lifecycle_connection(
-        &self,
-        connection_id: ConnectionId,
-    ) -> bool {
-        self.host_lifecycle_connection().await == Some(connection_id)
     }
 
     pub(crate) async fn subscribed_connection_ids(&self, thread_id: ThreadId) -> Vec<ConnectionId> {
@@ -587,25 +577,13 @@ mod host_lifecycle_tests {
             )
             .await;
 
-        assert_eq!(
-            manager.register_host_lifecycle_connection(first).await,
-            Ok(())
-        );
-        assert_eq!(
-            manager.register_host_lifecycle_connection(first).await,
-            Ok(())
-        );
+        assert_eq!(manager.register_host_lifecycle_connection(first).await, Ok(()));
+        assert_eq!(manager.register_host_lifecycle_connection(first).await, Ok(()));
         assert_eq!(
             manager.register_host_lifecycle_connection(second).await,
             Err(HostLifecycleRegistrationError::AlreadyRegistered(first))
         );
         assert_eq!(manager.host_lifecycle_connection().await, Some(first));
-        assert!(manager.is_registered_host_lifecycle_connection(first).await);
-        assert!(
-            !manager
-                .is_registered_host_lifecycle_connection(second)
-                .await
-        );
     }
 
     #[tokio::test]
@@ -639,10 +617,7 @@ mod host_lifecycle_tests {
         manager.remove_connection(first).await;
 
         assert_eq!(manager.host_lifecycle_connection().await, None);
-        assert_eq!(
-            manager.register_host_lifecycle_connection(second).await,
-            Ok(())
-        );
+        assert_eq!(manager.register_host_lifecycle_connection(second).await, Ok(()));
         assert_eq!(manager.host_lifecycle_connection().await, Some(second));
     }
 

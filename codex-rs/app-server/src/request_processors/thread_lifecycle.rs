@@ -1,6 +1,6 @@
+use super::*;
 use super::context_usage_replay::ThreadUsageSource;
 use super::thread_processor::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
-use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
@@ -67,10 +67,7 @@ impl UnloadingState {
             .await?;
         let has_subscribers = (*has_subscribers_rx.borrow(), Instant::now());
         let is_active = (
-            matches!(
-                *thread_status_rx.borrow(),
-                ThreadLifecycleStatus::Active { .. }
-            ),
+            matches!(*thread_status_rx.borrow(), ThreadLifecycleStatus::Active { .. }),
             Instant::now(),
         );
         Some(Self {
@@ -97,10 +94,7 @@ impl UnloadingState {
             self.has_subscribers = (has_subscribers, Instant::now());
         }
 
-        let is_active = matches!(
-            *self.thread_status_rx.borrow(),
-            ThreadLifecycleStatus::Active { .. }
-        );
+        let is_active = matches!(*self.thread_status_rx.borrow(), ThreadLifecycleStatus::Active { .. });
         if self.is_active.0 != is_active {
             self.is_active = (is_active, Instant::now());
         }

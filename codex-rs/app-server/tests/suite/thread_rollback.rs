@@ -2,13 +2,13 @@ use anyhow::Result;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadItem;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadRollbackParams;
 use app_server_protocol::ThreadRollbackResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
@@ -131,10 +131,7 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
     );
 
     assert_eq!(rolled_back_thread.turns.len(), 2);
-    assert_eq!(
-        rolled_back_thread.lifecycle_status,
-        ThreadLifecycleStatus::completed(None)
-    );
+    assert_eq!(rolled_back_thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     assert_eq!(
         rolled_back_thread
             .turns
@@ -177,10 +174,7 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
     assert_eq!(thread.turns.len(), 2);
-    assert_eq!(
-        thread.lifecycle_status,
-        ThreadLifecycleStatus::completed(None)
-    );
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     assert_eq!(
         thread
             .turns

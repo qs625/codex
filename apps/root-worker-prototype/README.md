@@ -56,7 +56,7 @@ Model-visible instructions also include ordinary, non-hidden files directly
 under `MORPHEUS_HOME/instructions/`, loaded in stable filename order and subject
 to the normal instruction byte budget.
 When a packaged app starts without `ROOT_WORKER_WORKSPACE`, it uses
-`git clone git@github.com:qs625/codex.git ~/.morpheus/source_workspace` the
+`rtk git clone git@github.com:qs625/codex.git ~/.morpheus/source_workspace` the
 first time that writable workspace is missing, then starts `app-server` with
 that real git workspace as both `cwd` and `ROOT_WORKER_WORKSPACE`.
 Existing `source_workspace` contents are never overwritten, pulled, reset, or
@@ -64,31 +64,16 @@ otherwise changed automatically by launch.
 The packaged app maintains
 `~/.morpheus/instructions/morpheus-source-workspace.md` with the effective
 source workspace path and the reminder to run relevant tests before calling
-`request_runtime_restart` with an explicit `mode` of `"hot"` or `"full"`.
-On macOS, the bundle's stable OS entry point is the Rust
-`Contents/MacOS/MorpheusLauncher`; the replaceable Electron executable lives at
-`Contents/MacOS/Root Worker Runtime`. The Electron host uses the source
-workspace's existing frontend and backend build outputs to prepare a candidate
-containing `app.asar`, bundled `app-server`, and default config resources plus
-a manifest with content hashes. The Launcher only consumes that prepared
-candidate: it does not run `cargo` or `pnpm`, and candidate manifests cannot
-replace the Launcher executable or path.
-
-The Launcher durably tracks current, previous, and in-progress activation
-state. Full mode stops the running Electron host with a coordinated exit, then
-the Launcher switches the runtime and requires matching app-server and renderer
-readiness before committing. Hot mode is explicitly activated by the host,
-which restarts app-server and reloads renderer windows before committing.
-Activation, signing, verification, readiness, and post-readiness crash-loop
-failures restore the previous runtime through a recoverable transaction. An
-unacknowledged failure evidence file is reinjected across supervised restarts
-until the trusted host records it on the materialized `/self` thread; the
-result is a typed conversation item that is also available after history
-reload. Missing build outputs or preparation failures leave the installed
-runtime unchanged.
-
-The generated instruction file is updated only while it still carries the
-Morpheus managed marker; user-managed replacement content is left intact.
+`request_runtime_restart` with an explicit `mode` of `"hot"` or `"full"`. In a
+packaged macOS app, that restart request uses the source workspace's existing
+frontend and backend build outputs to refresh the installed `app.asar`, bundled
+`app-server`, and default config resources, then re-signs the current app before
+applying the requested mode. Hot mode restarts the app-server and reloads
+renderer windows; full mode stops the app-server and performs a full app
+relaunch. Missing build outputs or update failures leave the currently
+installed artifacts in place instead of reloading stale code. That generated
+file is updated only while it still carries the Morpheus managed marker;
+user-managed replacement content is left intact.
 It also maintains `~/.morpheus/self-project.json` as a system `/self` project
 record whose workspace is the same Morpheus source workspace. The Electron IPC
 contract exposes `getSelfProject` and `startSelfCommand` for a dedicated self

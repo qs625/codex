@@ -181,8 +181,8 @@ test("packaged app-server launch prepares cloned workspace cwd and env", () => {
     existsSync: (candidate) => candidate === packagedBinary || fs.existsSync(candidate),
     spawnSync: (command, args, options) => {
       calls.push({ command, args, cwd: options.cwd });
-      fs.mkdirSync(args[2], { recursive: true });
-      fs.mkdirSync(path.join(args[2], ".git"), { recursive: true });
+      fs.mkdirSync(args[3], { recursive: true });
+      fs.mkdirSync(path.join(args[3], ".git"), { recursive: true });
       return { status: 0, stderr: "" };
     },
   });
@@ -211,8 +211,8 @@ test("packaged app-server launch prepares cloned workspace cwd and env", () => {
   );
   assert.deepEqual(calls, [
     {
-      command: "git",
-      args: ["clone", "git@github.com:qs625/codex.git", tempWorkspace],
+      command: "rtk",
+      args: ["git", "clone", "git@github.com:qs625/codex.git", tempWorkspace],
       cwd: morpheusHome,
     },
   ]);

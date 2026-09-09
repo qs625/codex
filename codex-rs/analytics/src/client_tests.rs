@@ -20,9 +20,9 @@ use app_server_protocol::Thread;
 use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadForkResponse;
-use app_server_protocol::ThreadLifecycleStatus as AppServerThreadLifecycleStatus;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadLifecycleStatus as AppServerThreadLifecycleStatus;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
@@ -142,7 +142,6 @@ fn sample_thread(thread_id: &str) -> Thread {
         skills: Vec::new(),
         token_usage: None,
         context_usage: None,
-        stats: None,
         turns: Vec::new(),
         active_subscription_items: None,
         active_command_items: None,

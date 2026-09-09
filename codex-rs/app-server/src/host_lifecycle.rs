@@ -39,7 +39,9 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
         request: HostRelaunchRequest,
     ) -> ToolServiceFuture<'a, HostRelaunchResult> {
         Box::pin(async move {
-            if request.request_id.is_empty() || request.request_id.len() > MAX_REQUEST_ID_BYTES {
+            if request.request_id.is_empty()
+                || request.request_id.len() > MAX_REQUEST_ID_BYTES
+            {
                 return host_relaunch_result(
                     &request,
                     HostRelaunchStatus::Failed,
@@ -50,7 +52,10 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
                     )),
                 );
             }
-            let Some(connection_id) = self.thread_state_manager.host_lifecycle_connection().await
+            let Some(connection_id) = self
+                .thread_state_manager
+                .host_lifecycle_connection()
+                .await
             else {
                 return host_relaunch_result(
                     &request,
@@ -148,7 +153,8 @@ mod tests {
             tx,
             AnalyticsEventsClient::disabled(),
         ));
-        let runtime = AppServerHostLifecycleToolRuntime::new(outgoing, ThreadStateManager::new());
+        let runtime =
+            AppServerHostLifecycleToolRuntime::new(outgoing, ThreadStateManager::new());
 
         let result = runtime
             .request_client_relaunch(host_request(HostRelaunchMode::Hot))
@@ -194,9 +200,9 @@ mod tests {
         let OutgoingEnvelope::ToConnection {
             connection_id: actual_connection_id,
             message:
-                OutgoingMessage::AppServerNotification(ServerNotification::ClientRelaunchRequested(
-                    notification,
-                )),
+                OutgoingMessage::AppServerNotification(
+                    ServerNotification::ClientRelaunchRequested(notification),
+                ),
             write_complete_tx: None,
         } = envelope
         else {

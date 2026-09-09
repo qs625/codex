@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use app_server_protocol::ServerNotification;
 use app_server_protocol::Thread;
+use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::ThreadTokenUsageUpdatedNotification;
 use app_server_protocol::Turn;
@@ -20,7 +21,6 @@ use app_server_protocol::TurnStatus;
 use protocol::ThreadId;
 use protocol::protocol::EventMsg;
 use protocol::protocol::RolloutItem;
-use thread_history::ThreadHistoryBuilder;
 
 use super::context_usage_replay::ThreadUsageSource;
 use crate::outgoing_message::ConnectionId;
@@ -131,11 +131,11 @@ fn latest_token_usage_turn_id(thread: &Thread) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use thread_history::build_turns_from_rollout_items;
     use pretty_assertions::assert_eq;
     use protocol::protocol::AgentMessageEvent;
     use protocol::protocol::TokenCountEvent;
     use protocol::protocol::UserMessageEvent;
-    use thread_history::build_turns_from_rollout_items;
 
     #[test]
     fn replay_attribution_uses_already_loaded_history() {

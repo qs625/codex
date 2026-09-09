@@ -245,8 +245,6 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::ThreadGoalUpdated(_)
         | EventMsg::ThreadSkillsUpdated(_)
-        | EventMsg::ClientRecoveryRecorded(_)
-        | EventMsg::ClientRecoveryHandled(_)
         | EventMsg::TurnStarted(_)
         | EventMsg::TurnComplete(_)
         | EventMsg::TokenCount(_)
@@ -342,8 +340,6 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
         | EventMsg::AgentReasoningSectionBreak(_)
         | EventMsg::ThreadGoalUpdated(_)
         | EventMsg::ThreadSkillsUpdated(_)
-        | EventMsg::ClientRecoveryRecorded(_)
-        | EventMsg::ClientRecoveryHandled(_)
         | EventMsg::McpStartupUpdate(_)
         | EventMsg::McpStartupComplete(_)
         | EventMsg::McpToolCallBegin(_)
@@ -453,8 +449,6 @@ fn execution_status_for_abort_reason(reason: &TurnAbortReason) -> ExecutionStatu
 mod tests {
     use super::*;
     use protocol::ThreadId;
-    use protocol::protocol::ClientRecoveryHandledEvent;
-    use protocol::protocol::ClientRecoveryRecordedEvent;
     use protocol::protocol::CollabListAgentsEndEvent;
 
     #[test]
@@ -475,49 +469,5 @@ mod tests {
         };
 
         assert_eq!(status, ExecutionStatus::Failed);
-    }
-
-    #[test]
-    fn client_recovery_history_events_do_not_create_runtime_trace_events() {
-        let events = [
-            EventMsg::ClientRecoveryRecorded(ClientRecoveryRecordedEvent {
-                id: "client-recovery:11111111-1111-4111-8111-111111111111".into(),
-                turn_id: "recovery-turn".into(),
-                recovery_identity: Some("11111111-1111-4111-8111-111111111111".into()),
-                launcher_claim_id: Some("22222222-2222-4222-8222-222222222222".into()),
-                launcher_evidence_version: Some(
-                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                        .into(),
-                ),
-                transaction_id: "tx-1".into(),
-                request_id: "request-1".into(),
-                failed_build_id: "failed-build".into(),
-                failed_build_hash: "failed-hash".into(),
-                source_commit: "source-commit".into(),
-                requested_by_thread_id: None,
-                mode: "full".into(),
-                failure_phase: "ready-timeout".into(),
-                exit_code: None,
-                signal: None,
-                ready_timeout_ms: Some(30_000),
-                log_path: None,
-                transaction_path: None,
-                recovered_build_id: "recovered-build".into(),
-                prompt: "Inspect recovery evidence.".into(),
-                evidence_path: "/tmp/recovery-evidence.json".into(),
-                recorded_at_ms: 1,
-            }),
-            EventMsg::ClientRecoveryHandled(ClientRecoveryHandledEvent {
-                recovery_id: "client-recovery:11111111-1111-4111-8111-111111111111".into(),
-                recovery_identity: Some("11111111-1111-4111-8111-111111111111".into()),
-                turn_id: "recovery-turn".into(),
-                handled_at_ms: 2,
-            }),
-        ];
-
-        for event in &events {
-            assert!(tool_runtime_trace_event(event).is_none());
-            assert!(wrapped_protocol_event_type(event).is_none());
-        }
     }
 }

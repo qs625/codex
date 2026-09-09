@@ -34,7 +34,6 @@ pub(super) fn redact_thread_resume_payloads(thread: &mut Thread) {
             }
             ThreadItem::ImageGeneration { .. } => false,
             ThreadItem::UserMessage { .. }
-            | ThreadItem::ClientRecovery { .. }
             | ThreadItem::HookPrompt { .. }
             | ThreadItem::InjectedContext { .. }
             | ThreadItem::AgentMessage { .. }
@@ -189,41 +188,6 @@ mod tests {
                 duration_ms: Some(8),
             }
         );
-    }
-
-    #[test]
-    fn keeps_client_recovery_typed_payload() {
-        let recovery = ThreadItem::ClientRecovery {
-            id: "client-recovery:11111111-1111-4111-8111-111111111111".to_string(),
-            recovery_identity: Some("11111111-1111-4111-8111-111111111111".to_string()),
-            launcher_claim_id: Some("22222222-2222-4222-8222-222222222222".to_string()),
-            launcher_evidence_version: Some(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    .to_string(),
-            ),
-            transaction_id: "tx-1".to_string(),
-            request_id: "req-1".to_string(),
-            failed_build_id: "failed-build".to_string(),
-            failed_build_hash: "failed-hash".to_string(),
-            source_commit: "source-commit".to_string(),
-            requested_by_thread_id: Some("thread-requester".to_string()),
-            mode: "full".to_string(),
-            failure_phase: "ready-timeout".to_string(),
-            exit_code: Some(1),
-            signal: Some("SIGTERM".to_string()),
-            ready_timeout_ms: Some(30_000),
-            log_path: Some("/tmp/recovery.log".to_string()),
-            transaction_path: Some("/tmp/transaction.json".to_string()),
-            recovered_build_id: "recovered-build".to_string(),
-            prompt: "Inspect recovery evidence.".to_string(),
-            evidence_path: "/tmp/evidence.json".to_string(),
-            recorded_at_ms: 42,
-        };
-        let mut thread = test_thread(vec![recovery.clone()]);
-
-        redact_thread_resume_payloads(&mut thread);
-
-        assert_eq!(thread.turns[0].items, vec![recovery]);
     }
 
     fn test_thread(items: Vec<ThreadItem>) -> Thread {

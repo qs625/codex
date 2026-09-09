@@ -130,15 +130,13 @@ pub(super) async fn handle_exec_approval_request(
         )
         .await;
     }
-    let proposed_execpolicy_amendment_v2 =
-        proposed_execpolicy_amendment.map(V2ExecPolicyAmendment::from);
-    let proposed_network_policy_amendments_v2 =
-        proposed_network_policy_amendments.map(|amendments| {
-            amendments
-                .into_iter()
-                .map(V2NetworkPolicyAmendment::from)
-                .collect()
-        });
+    let proposed_execpolicy_amendment_v2 = proposed_execpolicy_amendment.map(V2ExecPolicyAmendment::from);
+    let proposed_network_policy_amendments_v2 = proposed_network_policy_amendments.map(|amendments| {
+        amendments
+            .into_iter()
+            .map(V2NetworkPolicyAmendment::from)
+            .collect()
+    });
     let additional_permissions = additional_permissions.map(V2AdditionalPermissionProfile::from);
 
     let params = CommandExecutionRequestApprovalParams {
@@ -266,16 +264,13 @@ pub(super) async fn handle_elicitation_request(
                 "failed to parse typed MCP elicitation schema"
             );
             if let Err(err) = live_thread_command
-                .submit_live_thread_op(
-                    conversation_id,
-                    Op::ResolveElicitation {
-                        server_name: request.server_name,
-                        request_id: request.id,
-                        decision: protocol::approvals::ElicitationAction::Cancel,
-                        content: None,
-                        meta: None,
-                    },
-                )
+                .submit_live_thread_op(conversation_id, Op::ResolveElicitation {
+                    server_name: request.server_name,
+                    request_id: request.id,
+                    decision: protocol::approvals::ElicitationAction::Cancel,
+                    content: None,
+                    meta: None,
+                })
                 .await
             {
                 error!("failed to submit ResolveElicitation: {err}");
@@ -334,17 +329,14 @@ pub(super) async fn handle_request_permissions(
                 );
                 drop(permission_guard);
                 if let Err(err) = live_thread_command
-                    .submit_live_thread_op(
-                        conversation_id,
-                        Op::RequestPermissionsResponse {
-                            id: request.call_id,
-                            response: CoreRequestPermissionsResponse {
-                                permissions: Default::default(),
-                                scope: CorePermissionGrantScope::Turn,
-                                strict_auto_review: false,
-                            },
+                    .submit_live_thread_op(conversation_id, Op::RequestPermissionsResponse {
+                        id: request.call_id,
+                        response: CoreRequestPermissionsResponse {
+                            permissions: Default::default(),
+                            scope: CorePermissionGrantScope::Turn,
+                            strict_auto_review: false,
                         },
-                    )
+                    })
                     .await
                 {
                     error!("failed to submit RequestPermissionsResponse: {err}");
@@ -423,7 +415,12 @@ pub(super) async fn handle_dynamic_tool_call_request(
         .send_request(ServerRequestPayload::DynamicToolCall(params))
         .await;
     tokio::spawn(async move {
-        crate::dynamic_tools::on_call_response(conversation_id, call_id, rx, live_thread_command)
-            .await;
+        crate::dynamic_tools::on_call_response(
+            conversation_id,
+            call_id,
+            rx,
+            live_thread_command,
+        )
+        .await;
     });
 }

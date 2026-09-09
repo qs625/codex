@@ -390,18 +390,3 @@ test("requestId accepts the byte limit and rejects an oversized value", async ()
     assert.match(oversized.reason, /UTF-8 bytes/);
   });
 });
-
-test("typed launcher recovery consumes the durable request group only after ack", async () => {
-  await withStore(async (store) => {
-    await store.accept(notification("restart-1"));
-    await store.accept(notification("restart-2"));
-
-    const consumed = await store.consumeRecoveredGroup("restart-1");
-
-    assert.deepEqual(
-      consumed.map((record) => record.requestId),
-      ["restart-1", "restart-2"],
-    );
-    assert.deepEqual(await store.recoverable(), []);
-  });
-});

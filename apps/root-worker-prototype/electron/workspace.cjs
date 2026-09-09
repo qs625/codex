@@ -85,8 +85,8 @@ function cloneInstalledSourceWorkspaceIfNeededSync(
   cleanupPath(tempWorkspace, options);
   const spawn = options.spawnSync ?? spawnSync;
   const result = spawn(
-    "git",
-    ["clone", INSTALLED_SOURCE_ORIGIN_URL, tempWorkspace],
+    "rtk",
+    ["git", "clone", INSTALLED_SOURCE_ORIGIN_URL, tempWorkspace],
     {
       cwd: parentDir,
       encoding: "utf8",
@@ -101,7 +101,7 @@ function cloneInstalledSourceWorkspaceIfNeededSync(
     cleanupPath(tempWorkspace, options);
     const stderr = result.stderr ? String(result.stderr).trim() : "";
     throw new Error(
-      `git clone ${INSTALLED_SOURCE_ORIGIN_URL} ${workspace} exited with ${result.status}${stderr ? `: ${stderr}` : ""}`,
+      `rtk git clone ${INSTALLED_SOURCE_ORIGIN_URL} ${workspace} exited with ${result.status}${stderr ? `: ${stderr}` : ""}`,
     );
   }
   if (pathExistsSync(workspace, options)) {

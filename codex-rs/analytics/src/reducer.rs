@@ -358,7 +358,6 @@ impl TurnToolCounts {
             ThreadItem::WebSearch { .. } => self.web_search += 1,
             ThreadItem::ImageGeneration { .. } => self.image_generation += 1,
             ThreadItem::UserMessage { .. }
-            | ThreadItem::ClientRecovery { .. }
             | ThreadItem::HookPrompt { .. }
             | ThreadItem::InjectedContext { .. }
             | ThreadItem::AgentMessage { .. }
@@ -1602,7 +1601,6 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::WebSearch { id, .. }
         | ThreadItem::ImageGeneration { id, .. } => Some(id),
         ThreadItem::UserMessage { .. }
-        | ThreadItem::ClientRecovery { .. }
         | ThreadItem::HookPrompt { .. }
         | ThreadItem::InjectedContext { .. }
         | ThreadItem::AgentMessage { .. }
@@ -2687,47 +2685,5 @@ mod tests {
             guardian_review_result(GuardianApprovalReviewStatus::TimedOut),
             Some((ReviewStatus::TimedOut, ReviewResolution::None))
         ));
-    }
-
-    #[test]
-    fn client_recovery_item_does_not_change_tool_aggregates() {
-        let item = ThreadItem::ClientRecovery {
-            id: "client-recovery:11111111-1111-4111-8111-111111111111".into(),
-            recovery_identity: Some("11111111-1111-4111-8111-111111111111".into()),
-            launcher_claim_id: Some("22222222-2222-4222-8222-222222222222".into()),
-            launcher_evidence_version: Some(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
-            ),
-            transaction_id: "tx-1".into(),
-            request_id: "request-1".into(),
-            failed_build_id: "failed-build".into(),
-            failed_build_hash: "failed-hash".into(),
-            source_commit: "source-commit".into(),
-            requested_by_thread_id: None,
-            mode: "full".into(),
-            failure_phase: "ready-timeout".into(),
-            exit_code: None,
-            signal: None,
-            ready_timeout_ms: Some(30_000),
-            log_path: None,
-            transaction_path: None,
-            recovered_build_id: "recovered-build".into(),
-            prompt: "Inspect recovery evidence.".into(),
-            evidence_path: "/tmp/recovery-evidence.json".into(),
-            recorded_at_ms: 1,
-        };
-        let mut counts = TurnToolCounts::default();
-
-        counts.record(&item);
-
-        std::assert_eq!(counts.total, 0);
-        std::assert_eq!(counts.shell_command, 0);
-        std::assert_eq!(counts.file_change, 0);
-        std::assert_eq!(counts.mcp_tool_call, 0);
-        std::assert_eq!(counts.dynamic_tool_call, 0);
-        std::assert_eq!(counts.subagent_tool_call, 0);
-        std::assert_eq!(counts.web_search, 0);
-        std::assert_eq!(counts.image_generation, 0);
-        std::assert_eq!(tracked_tool_item_id(&item), None);
     }
 }

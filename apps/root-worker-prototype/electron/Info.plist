@@ -5,8 +5,6 @@
 <dict>
   <key>CFBundleDisplayName</key>
   <string>Root Worker Prototype</string>
-  <key>CFBundleExecutable</key>
-  <string>MorpheusLauncher</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Root Worker Prototype uses the microphone to transcribe voice input into the composer.</string>
   <key>NSScreenCaptureUsageDescription</key>
