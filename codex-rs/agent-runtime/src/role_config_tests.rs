@@ -2,12 +2,12 @@ use crate::AGENT_TYPE_UNAVAILABLE_ERROR;
 use crate::apply_role_to_config;
 use codex_agent_roles::AgentCapabilityAllowlist;
 use codex_agent_roles::AgentRoleConfig;
+use codex_config_types::ConfigLayerSource;
 use config_service::CONFIG_TOML_FILE;
 use config_service::Config;
 use config_service::ConfigBuilder;
 use config_service::ConfigLayerStackOrdering;
 use config_service::ConfigOverrides;
-use codex_config_types::ConfigLayerSource;
 use pretty_assertions::assert_eq;
 use protocol::config_types::ReasoningSummary;
 use protocol::config_types::Verbosity;
@@ -75,30 +75,97 @@ async fn apply_role_returns_error_for_unknown_role() {
 }
 
 #[tokio::test]
-#[ignore = "No role requiring it for now"]
-async fn apply_explorer_role_sets_model_and_adds_session_flags_layer() {
+async fn apply_role_rejects_worker_and_explorer_without_external_definitions() {
     let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
-    let before_layers = session_flags_layer_count(&config);
 
-    apply_role_to_config(&mut config, Some("explorer"))
-        .await
-        .expect("explorer role should apply");
+    for role_name in ["worker", "explorer"] {
+        let err = apply_role_to_config(&mut config, Some(role_name))
+            .await
+            .expect_err("removed built-in role should fail without an external definition");
 
-    assert_eq!(config.model.as_deref(), Some("gpt-5.4-mini"));
-    assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::Medium));
-    assert_eq!(session_flags_layer_count(&config), before_layers + 1);
+        assert_eq!(err, format!("unknown agent_type '{role_name}'"));
+    }
 }
 
 #[tokio::test]
-async fn apply_empty_explorer_role_preserves_current_model_and_reasoning_effort() {
+async fn apply_external_explorer_role_uses_external_config() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let role_path = write_role_config(
+        &home,
+        "explorer.toml",
+        "model = \"gpt-5.4-mini\"\nmodel_reasoning_effort = \"medium\"\n",
+    )
+    .await;
+    config.agent_roles.insert(
+        "explorer".to_string(),
+        AgentRoleConfig {
+            description: Some("External explorer.".to_string()),
+            config_file: Some(role_path),
+            ..Default::default()
+        },
+    );
+
+    apply_role_to_config(&mut config, Some("explorer"))
+        .await
+        .expect("external explorer role should apply");
+
+    assert_eq!(config.model.as_deref(), Some("gpt-5.4-mini"));
+    assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::Medium));
+}
+
+#[tokio::test]
+async fn apply_external_worker_role_uses_external_markdown_definition() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let role_path = write_role_config(
+        &home,
+        "worker.md",
+        r#"---
+name: worker
+description: External worker.
+model: worker-model
+---
+
+Follow the externally configured worker instructions.
+"#,
+    )
+    .await;
+    config.agent_roles.insert(
+        "worker".to_string(),
+        AgentRoleConfig {
+            description: Some("External worker.".to_string()),
+            config_file: Some(role_path),
+            ..Default::default()
+        },
+    );
+
+    apply_role_to_config(&mut config, Some("worker"))
+        .await
+        .expect("external worker role should apply");
+
+    assert_eq!(config.model.as_deref(), Some("worker-model"));
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("Follow the externally configured worker instructions.")
+    );
+}
+
+#[tokio::test]
+async fn apply_external_empty_explorer_role_preserves_current_model_and_reasoning_effort() {
     let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
     let before_layers = session_flags_layer_count(&config);
     config.model = Some("gpt-5.4-mini".to_string());
     config.model_reasoning_effort = Some(ReasoningEffort::High);
+    config.agent_roles.insert(
+        "explorer".to_string(),
+        AgentRoleConfig {
+            description: Some("External explorer.".to_string()),
+            ..Default::default()
+        },
+    );
 
     apply_role_to_config(&mut config, Some("explorer"))
         .await
-        .expect("explorer role should apply");
+        .expect("external explorer role should apply");
 
     assert_eq!(config.model.as_deref(), Some("gpt-5.4-mini"));
     assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));

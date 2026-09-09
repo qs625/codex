@@ -126,26 +126,63 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn build_deduplicates_user_defined_built_in_roles() {
-        let user_defined_roles = BTreeMap::from([
-            (
-                "explorer".to_string(),
-                AgentRoleConfig {
-                    description: Some("user override".to_string()),
-                    config_file: None,
-                    nickname_candidates: None,
-                    ..Default::default()
-                },
-            ),
-            ("researcher".to_string(), AgentRoleConfig::default()),
-        ]);
+    fn build_without_external_roles_only_lists_default() {
+        let spec = build(&BTreeMap::new());
+
+        assert!(spec.contains("default: {\nDefault agent.\n}"));
+        assert!(!spec.contains("worker:"));
+        assert!(!spec.contains("explorer:"));
+    }
+
+    #[test]
+    fn build_lists_external_worker_without_explorer() {
+        let user_defined_roles = BTreeMap::from([(
+            "worker".to_string(),
+            AgentRoleConfig {
+                description: Some("External worker.".to_string()),
+                ..Default::default()
+            },
+        )]);
 
         let spec = build(&user_defined_roles);
 
-        assert!(spec.contains("researcher: no description"));
-        assert!(spec.contains("explorer: {\nuser override\n}"));
+        assert!(spec.contains("worker: {\nExternal worker.\n}"));
+        assert!(!spec.contains("explorer:"));
         assert!(spec.contains("default: {\nDefault agent.\n}"));
-        assert!(!spec.contains("Explorers are fast and authoritative."));
+    }
+
+    #[test]
+    fn build_lists_external_explorer_without_worker() {
+        let user_defined_roles = BTreeMap::from([(
+            "explorer".to_string(),
+            AgentRoleConfig {
+                description: Some("External explorer.".to_string()),
+                ..Default::default()
+            },
+        )]);
+
+        let spec = build(&user_defined_roles);
+
+        assert!(spec.contains("explorer: {\nExternal explorer.\n}"));
+        assert!(!spec.contains("worker:"));
+        assert!(spec.contains("default: {\nDefault agent.\n}"));
+    }
+
+    #[test]
+    fn build_deduplicates_external_default_override() {
+        let user_defined_roles = BTreeMap::from([(
+            DEFAULT_ROLE_NAME.to_string(),
+            AgentRoleConfig {
+                description: Some("External default.".to_string()),
+                ..Default::default()
+            },
+        )]);
+
+        let spec = build(&user_defined_roles);
+
+        assert!(spec.contains("default: {\nExternal default.\n}"));
+        assert!(!spec.contains("Default agent."));
+        assert_eq!(spec.matches("default: {").count(), 1);
     }
 
     #[test]
@@ -186,7 +223,7 @@ mod tests {
 
         let spec = build(&user_defined_roles);
 
-        assert!(spec.contains("11 additional roles omitted."));
+        assert!(spec.contains("9 additional roles omitted."));
         assert!(spec.contains(&"x".repeat(1024)));
         assert!(!spec.contains(&"x".repeat(1025)));
     }

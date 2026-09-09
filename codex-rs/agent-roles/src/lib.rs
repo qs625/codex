@@ -1451,6 +1451,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn built_in_roles_only_include_default() {
+        let roles = built_in_configs();
+
+        assert_eq!(
+            roles.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["default"]
+        );
+        assert!(roles.get("worker").is_none());
+        assert!(roles.get("explorer").is_none());
+    }
+
+    #[test]
+    fn resolve_role_config_requires_external_worker_and_explorer_definitions() {
+        let no_external_roles = BTreeMap::new();
+        assert!(resolve_role_config(&no_external_roles, "worker").is_none());
+        assert!(resolve_role_config(&no_external_roles, "explorer").is_none());
+        assert!(resolve_role_config(&no_external_roles, "missing-role").is_none());
+        assert!(resolve_role_config(&no_external_roles, DEFAULT_ROLE_NAME).is_some());
+
+        let external_roles = BTreeMap::from([
+            (
+                "worker".to_string(),
+                AgentRoleConfig {
+                    description: Some("External worker.".to_string()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "explorer".to_string(),
+                AgentRoleConfig {
+                    description: Some("External explorer.".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            resolve_role_config(&external_roles, "worker")
+                .and_then(|role| role.description.as_deref()),
+            Some("External worker.")
+        );
+        assert_eq!(
+            resolve_role_config(&external_roles, "explorer")
+                .and_then(|role| role.description.as_deref()),
+            Some("External explorer.")
+        );
+    }
+
+    #[test]
+    fn resolve_role_config_keeps_external_override_priority() {
+        let external_roles = BTreeMap::from([(
+            DEFAULT_ROLE_NAME.to_string(),
+            AgentRoleConfig {
+                description: Some("External default.".to_string()),
+                ..Default::default()
+            },
+        )]);
+
+        assert_eq!(
+            resolve_role_config(&external_roles, DEFAULT_ROLE_NAME)
+                .and_then(|role| role.description.as_deref()),
+            Some("External default.")
+        );
+    }
+
+    #[test]
     fn markdown_agent_description_has_hard_length_limit() {
         let description = "x".repeat(MAX_AGENT_ROLE_DESCRIPTION_LEN + 1);
         let contents =
