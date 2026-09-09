@@ -260,7 +260,10 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
     .await??;
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
-    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     assert_eq!(thread.turns.len(), 2);
     assert_eq!(thread.turns[0].status, TurnStatus::Completed);
     assert_eq!(thread.turns[1].id, turn_id);
@@ -282,7 +285,10 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
         ..
     } = to_response::<ThreadResumeResponse>(second_resume_resp)?;
 
-    assert_eq!(resumed_again.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed_again.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     assert_eq!(resumed_again.turns.len(), 2);
     assert_eq!(resumed_again.turns[1].id, turn_id);
     assert_eq!(resumed_again.turns[1].status, TurnStatus::Interrupted);
@@ -303,7 +309,10 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
         ..
     } = to_response::<ThreadReadResponse>(read_resp)?;
 
-    assert_eq!(read_thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        read_thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     assert_eq!(read_thread.turns.len(), 2);
     assert_eq!(read_thread.turns[1].id, turn_id);
     assert_eq!(read_thread.turns[1].status, TurnStatus::Interrupted);
@@ -351,7 +360,10 @@ async fn thread_resume_without_overrides_does_not_change_updated_at_or_mtime() -
     let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
     assert_eq!(thread.updated_at, before_resume.updated_at);
-    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     let after_modified = std::fs::metadata(&rollout.rollout_file_path)?.modified()?;
     assert_eq!(after_modified, rollout.before_modified);
@@ -466,7 +478,10 @@ async fn thread_resume_keeps_in_flight_turn_streaming() -> Result<()> {
         thread: resumed_thread,
         ..
     } = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_ne!(resumed_thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+    assert_ne!(
+        resumed_thread.lifecycle_status,
+        ThreadLifecycleStatus::NotLoaded
+    );
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -845,7 +860,10 @@ async fn thread_resume_rejoins_running_thread_even_with_override_mismatch() -> R
     // can legitimately observe the thread as idle.
     match &thread.lifecycle_status {
         ThreadLifecycleStatus::Active { active_flags } => {
-            assert_eq!(active_flags.as_slice(), [ThreadLifecycleActiveFlag::Running])
+            assert_eq!(
+                active_flags.as_slice(),
+                [ThreadLifecycleActiveFlag::Running]
+            )
         }
         ThreadLifecycleStatus::Final { .. } => {}
         status => panic!("unexpected thread status after running resume: {status:?}"),
@@ -932,7 +950,10 @@ async fn thread_resume_can_skip_turns_when_thread_is_running() -> Result<()> {
     } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
     assert_eq!(resumed.id, thread.id);
-    assert_eq!(resumed.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     assert!(resumed.turns.is_empty());
 
     Ok(())

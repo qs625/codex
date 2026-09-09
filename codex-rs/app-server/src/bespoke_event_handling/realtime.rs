@@ -45,9 +45,7 @@ pub(super) async fn handle_realtime_conversation_event(
                 }),
             };
             outgoing
-                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(
-                    notification,
-                ))
+                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(notification))
                 .await;
         }
         RealtimeEvent::InputTranscriptDelta(event) => {
@@ -119,9 +117,7 @@ pub(super) async fn handle_realtime_conversation_event(
                 }),
             };
             outgoing
-                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(
-                    notification,
-                ))
+                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(notification))
                 .await;
         }
         RealtimeEvent::ResponseDone(_) => {}
@@ -131,9 +127,7 @@ pub(super) async fn handle_realtime_conversation_event(
                 item,
             };
             outgoing
-                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(
-                    notification,
-                ))
+                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(notification))
                 .await;
         }
         RealtimeEvent::ConversationItemDone { .. } | RealtimeEvent::NoopRequested(_) => {}
@@ -149,9 +143,7 @@ pub(super) async fn handle_realtime_conversation_event(
                 }),
             };
             outgoing
-                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(
-                    notification,
-                ))
+                .send_server_notification(ServerNotification::ThreadRealtimeItemAdded(notification))
                 .await;
         }
         RealtimeEvent::Error(message) => {

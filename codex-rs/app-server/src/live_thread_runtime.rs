@@ -408,9 +408,7 @@ where
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(
-            self, thread_id,
-        ))
+        Box::pin(LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(self, thread_id))
     }
 
     fn continue_thread_active_goal_if_idle(

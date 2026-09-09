@@ -35,6 +35,95 @@ pub struct UserMessageEvent {
     pub text_elements: Vec<crate::user_input::TextElement>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct ClientRecoveryRecordedEvent {
+    pub id: String,
+    pub turn_id: String,
+    #[serde(default)]
+    pub recovery_identity: Option<String>,
+    #[serde(default)]
+    pub launcher_claim_id: Option<String>,
+    #[serde(default)]
+    pub launcher_evidence_version: Option<String>,
+    pub transaction_id: String,
+    pub request_id: String,
+    pub failed_build_id: String,
+    pub failed_build_hash: String,
+    pub source_commit: String,
+    pub requested_by_thread_id: Option<String>,
+    pub mode: String,
+    pub failure_phase: String,
+    pub exit_code: Option<i32>,
+    pub signal: Option<String>,
+    pub ready_timeout_ms: Option<i64>,
+    pub log_path: Option<String>,
+    pub transaction_path: Option<String>,
+    pub recovered_build_id: String,
+    pub prompt: String,
+    pub evidence_path: String,
+    pub recorded_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct ClientRecoveryHandledEvent {
+    pub recovery_id: String,
+    #[serde(default)]
+    pub recovery_identity: Option<String>,
+    pub turn_id: String,
+    pub handled_at_ms: i64,
+}
+
+#[cfg(test)]
+mod client_recovery_event_tests {
+    use super::ClientRecoveryHandledEvent;
+    use super::ClientRecoveryRecordedEvent;
+
+    #[test]
+    fn legacy_events_without_recovery_identity_remain_readable() {
+        let recorded: ClientRecoveryRecordedEvent = serde_json::from_value(
+            serde_json::json!({
+                "id": "client-recovery:legacy-tx:legacy-request",
+                "turnId": "legacy-turn",
+                "transactionId": "legacy-tx",
+                "requestId": "legacy-request",
+                "failedBuildId": "failed",
+                "failedBuildHash": "hash",
+                "sourceCommit": "commit",
+                "requestedByThreadId": null,
+                "mode": "full",
+                "failurePhase": "launch",
+                "exitCode": null,
+                "signal": null,
+                "readyTimeoutMs": null,
+                "logPath": null,
+                "transactionPath": null,
+                "recoveredBuildId": "recovered",
+                "prompt": "recover",
+                "evidencePath": "/tmp/evidence",
+                "recordedAtMs": 1
+            }),
+        )
+        .expect("legacy recorded event");
+        assert_eq!(recorded.recovery_identity, None);
+        assert_eq!(recorded.launcher_claim_id, None);
+        assert_eq!(recorded.launcher_evidence_version, None);
+
+        let handled: ClientRecoveryHandledEvent = serde_json::from_value(
+            serde_json::json!({
+                "recoveryId": recorded.id,
+                "turnId": "turn-1",
+                "handledAtMs": 2
+            }),
+        )
+        .expect("legacy handled event");
+        assert_eq!(handled.recovery_identity, None);
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct AgentReasoningEvent {
     pub text: String,

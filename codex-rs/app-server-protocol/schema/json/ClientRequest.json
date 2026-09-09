@@ -241,6 +241,119 @@
       ],
       "type": "object"
     },
+    "ClientLifecycleRecoveryRecordParams": {
+      "properties": {
+        "evidencePath": {
+          "type": "string"
+        },
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "failedBuildHash": {
+          "type": "string"
+        },
+        "failedBuildId": {
+          "type": "string"
+        },
+        "failurePhase": {
+          "type": "string"
+        },
+        "launcherClaimId": {
+          "type": "string"
+        },
+        "launcherEvidenceVersion": {
+          "type": "string"
+        },
+        "logPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "readyTimeoutMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "recoveredBuildId": {
+          "type": "string"
+        },
+        "recoveryIdentity": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "requestedByThreadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceCommit": {
+          "type": "string"
+        },
+        "targetThreadId": {
+          "type": "string"
+        },
+        "transactionId": {
+          "type": "string"
+        },
+        "transactionPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "evidencePath",
+        "failedBuildHash",
+        "failedBuildId",
+        "failurePhase",
+        "launcherClaimId",
+        "launcherEvidenceVersion",
+        "mode",
+        "prompt",
+        "recoveredBuildId",
+        "recoveryIdentity",
+        "requestId",
+        "sourceCommit",
+        "targetThreadId",
+        "transactionId"
+      ],
+      "type": "object"
+    },
+    "ClientLifecycleRegisterParams": {
+      "properties": {
+        "hostId": {
+          "description": "Stable identifier for the Electron Host instance owning this connection.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hostId"
+      ],
+      "type": "object"
+    },
     "CollaborationMode": {
       "description": "Collaboration mode for a Codex session.",
       "properties": {
@@ -5547,6 +5660,54 @@
         "params"
       ],
       "title": "InitializeRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "client/lifecycle/register"
+          ],
+          "title": "Client/lifecycle/registerRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ClientLifecycleRegisterParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Client/lifecycle/registerRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "client/lifecycle/recovery/record"
+          ],
+          "title": "Client/lifecycle/recovery/recordRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ClientLifecycleRecoveryRecordParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Client/lifecycle/recovery/recordRequest",
       "type": "object"
     },
     {

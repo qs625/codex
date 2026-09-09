@@ -120,6 +120,9 @@ impl ThreadHistoryBuilder {
     pub fn handle_event(&mut self, event: &EventMsg) {
         match event {
             EventMsg::UserMessage(payload) => self.handle_user_message(payload),
+            EventMsg::ClientRecoveryRecorded(_) if project_event_msg_item(event).is_some() => {
+                self.handle_projected_event_item(event);
+            }
             EventMsg::AgentMessage(payload) => self.handle_agent_message(
                 payload.message.clone(),
                 payload.phase.clone(),

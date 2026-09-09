@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ClientRelaunchMode": {
+      "enum": [
+        "hot",
+        "full"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "mode": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ClientRelaunchMode"
+        }
+      ],
+      "description": "Required refresh mode chosen by the runtime tool caller."
+    },
+    "reason": {
+      "description": "Optional human-readable reason supplied by the runtime tool caller.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requestId": {
+      "description": "Correlation identifier for this lifecycle operation.",
+      "type": "string"
+    },
+    "requestedByThreadId": {
+      "description": "Thread that requested the client relaunch, when the request originated from a thread turn.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resumeStrategy": {
+      "description": "Reminder that post-relaunch continuation is handled by client bootstrap autoresume.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mode",
+    "requestId",
+    "resumeStrategy"
+  ],
+  "title": "ClientRelaunchRequestedNotification",
+  "type": "object"
+}

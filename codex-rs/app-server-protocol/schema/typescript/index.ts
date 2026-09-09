@@ -38,7 +38,13 @@ export type { ChatgptAuthTokensRefreshParams } from "./ChatgptAuthTokensRefreshP
 export type { ChatgptAuthTokensRefreshReason } from "./ChatgptAuthTokensRefreshReason";
 export type { ChatgptAuthTokensRefreshResponse } from "./ChatgptAuthTokensRefreshResponse";
 export type { ClientInfo } from "./ClientInfo";
+export type { ClientLifecycleRecoveryRecordParams } from "./ClientLifecycleRecoveryRecordParams";
+export type { ClientLifecycleRecoveryRecordResponse } from "./ClientLifecycleRecoveryRecordResponse";
+export type { ClientLifecycleRegisterParams } from "./ClientLifecycleRegisterParams";
+export type { ClientLifecycleRegisterResponse } from "./ClientLifecycleRegisterResponse";
 export type { ClientNotification } from "./ClientNotification";
+export type { ClientRelaunchMode } from "./ClientRelaunchMode";
+export type { ClientRelaunchRequestedNotification } from "./ClientRelaunchRequestedNotification";
 export type { ClientRequest } from "./ClientRequest";
 export type { CodexErrorInfo } from "./CodexErrorInfo";
 export type { CollabAgentOperation } from "./CollabAgentOperation";

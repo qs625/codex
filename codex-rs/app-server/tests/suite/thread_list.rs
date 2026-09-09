@@ -5,6 +5,7 @@ use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::SessionSource;
 use app_server_protocol::SortDirection;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListCwdFilter;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadSortKey;
@@ -12,7 +13,6 @@ use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadSourceKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
 use app_server_protocol::UserInput;
@@ -287,7 +287,10 @@ async fn thread_list_reports_system_error_idle_flag_after_failed_turn() -> Resul
         .iter()
         .find(|candidate| candidate.id == thread.id)
         .expect("expected started thread to be listed");
-    assert_eq!(listed.lifecycle_status, ThreadLifecycleStatus::system_error(None),);
+    assert_eq!(
+        listed.lifecycle_status,
+        ThreadLifecycleStatus::system_error(None),
+    );
 
     Ok(())
 }
@@ -350,10 +353,7 @@ fn prepend_path_env(path: &Path) -> Result<String> {
     Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
 }
 
-async fn start_hidden_external_root_thread(
-    mcp: &mut McpProcess,
-    cwd: &Path,
-) -> Result<String> {
+async fn start_hidden_external_root_thread(mcp: &mut McpProcess, cwd: &Path) -> Result<String> {
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
             thread_provider: Some("claude_cli".to_string()),
@@ -863,11 +863,7 @@ sqlite = true
     metadata.cwd = stale_cwd.clone();
     metadata.agent_path = Some("/my_codex".to_string());
     state_db.upsert_thread(&metadata).await?;
-    let rollout_path = rollout_path(
-        codex_home.path(),
-        "2025-01-02T10-00-00",
-        thread_id.as_str(),
-    );
+    let rollout_path = rollout_path(codex_home.path(), "2025-01-02T10-00-00", thread_id.as_str());
     std::fs::remove_file(&rollout_path)?;
 
     let request_id = mcp

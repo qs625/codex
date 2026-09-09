@@ -2209,6 +2209,7 @@ fn external_status_from_command_status(
 fn codex_thread_item_type_name(item: &app_server_protocol::ThreadItem) -> &'static str {
     match item {
         app_server_protocol::ThreadItem::UserMessage { .. } => "userMessage",
+        app_server_protocol::ThreadItem::ClientRecovery { .. } => "clientRecovery",
         app_server_protocol::ThreadItem::HookPrompt { .. } => "hookPrompt",
         app_server_protocol::ThreadItem::InjectedContext { .. } => "injectedContext",
         app_server_protocol::ThreadItem::AgentMessage { .. } => "agentMessage",
@@ -2588,6 +2589,46 @@ mod tests {
     use wiremock::ResponseTemplate;
     use wiremock::matchers::method;
     use wiremock::matchers::path;
+
+    #[test]
+    fn codex_client_recovery_keeps_its_stable_display_type_name() {
+        let item = app_server_protocol::ThreadItem::ClientRecovery {
+            id: "client-recovery:11111111-1111-4111-8111-111111111111".into(),
+            recovery_identity: Some("11111111-1111-4111-8111-111111111111".into()),
+            launcher_claim_id: Some("22222222-2222-4222-8222-222222222222".into()),
+            launcher_evidence_version: Some(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            ),
+            transaction_id: "tx-1".into(),
+            request_id: "request-1".into(),
+            failed_build_id: "failed-build".into(),
+            failed_build_hash: "failed-hash".into(),
+            source_commit: "source-commit".into(),
+            requested_by_thread_id: None,
+            mode: "full".into(),
+            failure_phase: "ready-timeout".into(),
+            exit_code: None,
+            signal: None,
+            ready_timeout_ms: Some(30_000),
+            log_path: None,
+            transaction_path: None,
+            recovered_build_id: "recovered-build".into(),
+            prompt: "Inspect recovery evidence.".into(),
+            evidence_path: "/tmp/recovery-evidence.json".into(),
+            recorded_at_ms: 1,
+        };
+
+        assert_eq!(codex_thread_item_type_name(&item), "clientRecovery");
+        assert_eq!(
+            codex_provider_display_event_from_thread_item(
+                item,
+                &Arc::new(Mutex::new(HashSet::new())),
+            ),
+            Some(ExternalProviderDisplayEvent::FallbackMessage(
+                "codex_cli emitted unsupported display item `clientRecovery`".into()
+            ))
+        );
+    }
 
     #[test]
     fn parses_codex_jsonl_completion_and_unknown_status() {

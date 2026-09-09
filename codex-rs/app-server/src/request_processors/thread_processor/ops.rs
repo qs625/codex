@@ -143,8 +143,7 @@ fn thread_status_changed_lifecycle_status(
 
     let has_in_progress_turn =
         has_in_progress_turn || matches!(live_agent_status, Some(AgentStatus::Running));
-    let resolved_watch_status =
-        resolve_thread_status(watch_status, has_in_progress_turn);
+    let resolved_watch_status = resolve_thread_status(watch_status, has_in_progress_turn);
     if matches!(
         resolved_watch_status,
         ThreadLifecycleStatus::Active { .. }

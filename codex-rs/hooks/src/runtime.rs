@@ -115,6 +115,10 @@ pub enum PendingInputRecord {
     ConversationItem {
         response_item: ResponseItem,
     },
+    RecordedConversationItem {
+        recovery_id: String,
+        response_item: ResponseItem,
+    },
     InterAgentCommunication {
         pending_input: PendingInputItem,
     },
@@ -444,6 +448,17 @@ where
                 },
             ));
         }
+        PendingInputItem::RecordedResponseItem {
+            recovery_id,
+            response_item,
+        } => {
+            return PendingInputHookDisposition::Accepted(Box::new(
+                PendingInputRecord::RecordedConversationItem {
+                    recovery_id,
+                    response_item,
+                },
+            ));
+        }
         PendingInputItem::InterAgentCommunication(communication) => {
             return PendingInputHookDisposition::Accepted(Box::new(
                 PendingInputRecord::InterAgentCommunication {
@@ -493,10 +508,20 @@ where
             host.record_model_items_and_emit_display_events(turn, vec![response_item])
                 .await;
         }
+        PendingInputRecord::RecordedConversationItem { .. } => {}
         PendingInputRecord::InterAgentCommunication { pending_input } => {
             let response_item = pending_input.into_response_item();
             host.record_model_items_and_emit_display_events(turn, vec![response_item])
                 .await;
+        }
+    }
+}
+
+impl PendingInputRecord {
+    pub fn recovery_id(&self) -> Option<&str> {
+        match self {
+            Self::RecordedConversationItem { recovery_id, .. } => Some(recovery_id),
+            _ => None,
         }
     }
 }

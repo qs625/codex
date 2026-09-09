@@ -1358,6 +1358,103 @@ impl Session {
         self.send_thread_context_usage_event(turn_context).await;
     }
 
+    pub(crate) async fn record_client_recovery_event(
+        &self,
+        event_id: String,
+        event: EventMsg,
+    ) -> CodexResult<()> {
+        let live_thread = self
+            .live_thread_for_persistence("record client recovery evidence")
+            .map_err(|err| CodexErr::Fatal(err.to_string()))?;
+        live_thread
+            .append_items(&[RolloutItem::EventMsg(event.clone())])
+            .await
+            .map_err(|err| CodexErr::Fatal(format!("failed to persist client recovery: {err}")))?;
+        live_thread.flush().await.map_err(|err| {
+            CodexErr::Fatal(format!("failed to flush client recovery evidence: {err}"))
+        })?;
+        self.services
+            .rollout_thread_trace
+            .record_protocol_event(&event);
+        self.deliver_event_raw(Event {
+            id: event_id,
+            msg: event,
+        })
+        .await;
+        Ok(())
+    }
+
+    pub(crate) async fn record_client_recoveries_handled(
+        &self,
+        turn_context: &TurnContext,
+        recovery_ids: Vec<String>,
+    ) -> CodexResult<()> {
+        if recovery_ids.is_empty() {
+            return Ok(());
+        }
+        let handled_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(i64::MAX as u128) as i64;
+        let events = recovery_ids
+            .into_iter()
+            .map(|recovery_id| {
+                let recovery_identity = recovery_id
+                    .strip_prefix("client-recovery:")
+                    .filter(|identity| uuid::Uuid::parse_str(identity).is_ok())
+                    .map(ToOwned::to_owned);
+                EventMsg::ClientRecoveryHandled(protocol::protocol::ClientRecoveryHandledEvent {
+                    recovery_id,
+                    recovery_identity,
+                    turn_id: turn_context.sub_id.clone(),
+                    handled_at_ms,
+                })
+            })
+            .collect::<Vec<_>>();
+        let live_thread = self
+            .live_thread_for_persistence("record handled client recovery")
+            .map_err(|err| CodexErr::Fatal(err.to_string()))?;
+        let rollout_items = events
+            .iter()
+            .cloned()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        live_thread
+            .append_items(&rollout_items)
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!("failed to persist handled client recovery: {err}"))
+            })?;
+        live_thread.flush().await.map_err(|err| {
+            CodexErr::Fatal(format!("failed to flush handled client recovery: {err}"))
+        })?;
+        for event in &events {
+            self.services
+                .rollout_thread_trace
+                .record_protocol_event(event);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn record_client_recovery_input_for_turn(
+        &self,
+        turn_context: &TurnContext,
+        recovery_id: String,
+        input: &ResponseItem,
+    ) {
+        let already_recorded = self.clone_history().await.raw_items().iter().any(|item| {
+            matches!(
+                item,
+                ResponseItem::Message { id: Some(id), .. } if id == &recovery_id
+            )
+        });
+        if !already_recorded {
+            self.record_conversation_items(turn_context, std::slice::from_ref(input))
+                .await;
+        }
+    }
+
     pub(crate) async fn record_model_items_and_emit_display_events(
         &self,
         turn_context: &TurnContext,

@@ -22,8 +22,8 @@ use crate::review_format::render_review_output_text;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
-use config_service::Constrained;
 use codex_features::Feature;
+use config_service::Constrained;
 use protocol::user_input::UserInput;
 use std::sync::LazyLock;
 

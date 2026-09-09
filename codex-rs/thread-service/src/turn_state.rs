@@ -1,6 +1,7 @@
 //! Turn-scoped mutable state that does not depend on concrete session runtime types.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -25,6 +26,10 @@ pub struct TurnState {
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
     pending_input: Vec<PendingInputItem>,
+    client_recoveries: HashMap<String, protocol::models::ResponseItem>,
+    client_recoveries_in_current_run: HashSet<String>,
+    succeeded_client_recoveries: HashSet<String>,
+    client_recovery_retry_wakes: HashSet<String>,
     accepts_async_input_for_current_turn: bool,
     granted_permissions: Option<AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
@@ -43,6 +48,10 @@ impl Default for TurnState {
             pending_elicitations: HashMap::default(),
             pending_dynamic_tools: HashMap::default(),
             pending_input: Vec::default(),
+            client_recoveries: HashMap::default(),
+            client_recoveries_in_current_run: HashSet::default(),
+            succeeded_client_recoveries: HashSet::default(),
+            client_recovery_retry_wakes: HashSet::default(),
             accepts_async_input_for_current_turn: true,
             granted_permissions: None,
             strict_auto_review_enabled: false,
@@ -205,6 +214,67 @@ impl TurnState {
 
     pub fn has_pending_input(&self) -> bool {
         !self.pending_input.is_empty()
+    }
+
+    pub fn record_client_recovery(
+        &mut self,
+        recovery_id: String,
+        response_item: protocol::models::ResponseItem,
+    ) {
+        self.client_recoveries
+            .insert(recovery_id.clone(), response_item);
+        if !self.succeeded_client_recoveries.contains(&recovery_id) {
+            self.client_recoveries_in_current_run.insert(recovery_id);
+        }
+    }
+
+    pub fn has_client_recovery(&self, recovery_id: &str) -> bool {
+        self.client_recoveries.contains_key(recovery_id)
+    }
+
+    pub fn client_recoveries(&self) -> Vec<(protocol::models::ResponseItem, String)> {
+        self.client_recoveries
+            .iter()
+            .map(|(recovery_id, response_item)| (response_item.clone(), recovery_id.clone()))
+            .collect()
+    }
+
+    pub fn begin_client_recovery_run(&mut self) {
+        self.client_recoveries_in_current_run = self
+            .client_recoveries
+            .keys()
+            .filter(|recovery_id| !self.succeeded_client_recoveries.contains(*recovery_id))
+            .cloned()
+            .collect();
+    }
+
+    pub fn mark_client_recovery_run_succeeded(&mut self) {
+        self.succeeded_client_recoveries
+            .extend(self.client_recoveries_in_current_run.iter().cloned());
+    }
+
+    pub fn client_recoveries_by_completion(
+        &self,
+    ) -> (
+        Vec<(protocol::models::ResponseItem, String)>,
+        Vec<(protocol::models::ResponseItem, String)>,
+    ) {
+        self.client_recoveries
+            .iter()
+            .map(|(recovery_id, response_item)| (response_item.clone(), recovery_id.clone()))
+            .partition(|(_, recovery_id)| self.succeeded_client_recoveries.contains(recovery_id))
+    }
+
+    pub fn request_client_recovery_retry(&mut self, recovery_id: String) {
+        self.client_recovery_retry_wakes.insert(recovery_id);
+    }
+
+    pub fn client_recovery_retry_wakes(&self) -> HashSet<String> {
+        self.client_recovery_retry_wakes.clone()
+    }
+
+    pub fn has_client_recovery_retry_wake(&self, recovery_id: &str) -> bool {
+        self.client_recovery_retry_wakes.contains(recovery_id)
     }
 
     pub fn accept_async_input_for_current_turn(&mut self) {

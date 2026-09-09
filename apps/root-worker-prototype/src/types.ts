@@ -42,6 +42,30 @@ export type ThreadItem = ThreadItemTimestamps &
       }>;
     }
   | {
+      type: "clientRecovery";
+      id: string;
+      recoveryIdentity: string | null;
+      launcherClaimId: string | null;
+      launcherEvidenceVersion: string | null;
+      transactionId: string;
+      requestId: string;
+      failedBuildId: string;
+      failedBuildHash: string;
+      sourceCommit: string;
+      requestedByThreadId: string | null;
+      mode: string;
+      failurePhase: string;
+      exitCode: number | null;
+      signal: string | null;
+      readyTimeoutMs: number | null;
+      logPath: string | null;
+      transactionPath: string | null;
+      recoveredBuildId: string;
+      prompt: string;
+      evidencePath: string;
+      recordedAtMs: number;
+    }
+  | {
       type: "agentMessage";
       id: string;
       text: string;

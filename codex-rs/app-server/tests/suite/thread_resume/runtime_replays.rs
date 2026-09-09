@@ -379,7 +379,10 @@ async fn thread_resume_with_overrides_defers_updated_at_until_turn_start() -> Re
     } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
     assert_eq!(resumed_thread.updated_at, updated_at);
-    assert_eq!(resumed_thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed_thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     let after_resume_modified = std::fs::metadata(&rollout_file_path)?.modified()?;
     assert_eq!(after_resume_modified, before_modified);
@@ -647,7 +650,10 @@ async fn thread_resume_can_load_source_by_external_path() -> Result<()> {
         normalized_existing_path(&thread_path)?
     );
     assert_eq!(resumed.preview, "external path history");
-    assert_eq!(resumed.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     Ok(())
 }
@@ -695,7 +701,10 @@ async fn thread_resume_supports_history_and_overrides() -> Result<()> {
     assert!(!resumed.id.is_empty());
     assert_eq!(model_provider, "mock_provider");
     assert_eq!(resumed.preview, history_text);
-    assert_eq!(resumed.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     Ok(())
 }
@@ -807,12 +816,7 @@ async fn thread_read_after_restart_keeps_unified_exec_command_execution_items() 
                 status,
                 exit_code,
                 ..
-            } if id == "uexec-reload-1" => Some((
-                id.clone(),
-                *source,
-                status.clone(),
-                *exit_code,
-            )),
+            } if id == "uexec-reload-1" => Some((id.clone(), *source, status.clone(), *exit_code)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -983,7 +987,10 @@ async fn thread_resume_accepts_personality_override() -> Result<()> {
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resume.thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     let turn_id = secondary
         .send_turn_start_request(TurnStartParams {

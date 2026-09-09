@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::event_mapping::injected_context_item_from_response_items;
 use crate::client_common::PromptBuildParams;
 use crate::client_common::build_prompt;
+use crate::event_mapping::injected_context_item_from_response_items;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
@@ -17,8 +17,8 @@ use codex_analytics_api::CompactionStatus;
 use codex_analytics_api::CompactionStrategy;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::now_unix_seconds;
-use codex_features::Feature;
 use codex_config_types::CompactReplacementFileRole as ConfigCompactReplacementFileRole;
+use codex_features::Feature;
 use codex_turn_items::last_assistant_message_from_turn;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
@@ -29,6 +29,7 @@ use compact_service_api::CompactReplacementFile;
 use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
 use compact_service_api::SoftCompactThresholds;
+use futures::StreamExt;
 use hooks::PostCompactHookOutcome;
 use hooks::PreCompactHookOutcome;
 use hooks::run_post_compact_hooks;
@@ -41,21 +42,19 @@ use protocol::items::TurnItem;
 use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
-use protocol::protocol::CompactedItem;
 use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::CompactedItem;
 use protocol::protocol::ErrorEvent;
 use protocol::protocol::EventMsg;
 use protocol::protocol::TurnStartedEvent;
 use protocol::protocol::WarningEvent;
 use protocol::user_input::UserInput;
-use futures::StreamExt;
 use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 pub(crate) const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
-pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
-    "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
+pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str = "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -245,8 +244,11 @@ async fn run_compact_task_inner_impl(
         let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
         sess.emit_turn_item_started(&turn_context, &started_compaction_item)
             .await;
-        sess.record_conversation_items(&turn_context, std::slice::from_ref(&initial_input_for_turn))
-            .await;
+        sess.record_conversation_items(
+            &turn_context,
+            std::slice::from_ref(&initial_input_for_turn),
+        )
+        .await;
     }
 
     let max_retries = turn_context.provider.info().stream_max_retries();

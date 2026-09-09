@@ -5,8 +5,8 @@ use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
 use codex_agent_runtime::ThreadIdleReason;
 use codex_agent_runtime::ThreadPostTurnState;
-use config_service::ConstraintResult;
 use codex_features::Feature;
+use config_service::ConstraintResult;
 use mcp_service_api::McpToolRuntime;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
@@ -380,6 +380,62 @@ impl CodexThread {
         }
 
         Ok(submission_id)
+    }
+
+    pub async fn record_client_recovery(
+        &self,
+        input: ResponseItem,
+        event: protocol::protocol::EventMsg,
+    ) -> CodexResult<String> {
+        let submission_id = uuid::Uuid::new_v4().to_string();
+        let (event_turn_id, recovery_id) = match &event {
+            protocol::protocol::EventMsg::ClientRecoveryRecorded(event) => {
+                (event.turn_id.clone(), event.id.clone())
+            }
+            _ => (submission_id.clone(), submission_id.clone()),
+        };
+        self.codex
+            .session
+            .record_client_recovery_event(event_turn_id.clone(), event)
+            .await?;
+        self.schedule_client_recovery(input, recovery_id, event_turn_id)
+            .await;
+        Ok(submission_id)
+    }
+
+    pub async fn resume_client_recovery(
+        &self,
+        input: ResponseItem,
+        recovery_id: String,
+        turn_id: String,
+    ) -> CodexResult<String> {
+        let submission_id = uuid::Uuid::new_v4().to_string();
+        self.schedule_client_recovery(input, recovery_id, turn_id)
+            .await;
+        Ok(submission_id)
+    }
+
+    async fn schedule_client_recovery(
+        &self,
+        input: ResponseItem,
+        recovery_id: String,
+        turn_id: String,
+    ) {
+        let should_start_turn = self
+            .codex
+            .session
+            .enqueue_recorded_recovery_for_next_turn_if_absent(input, recovery_id)
+            .await;
+        if should_start_turn {
+            self.codex
+                .session
+                .maybe_start_turn_for_pending_work_with_sub_id(turn_id)
+                .await;
+        }
+    }
+
+    pub async fn maybe_start_pending_client_recovery(&self) {
+        self.codex.session.maybe_start_turn_for_pending_work().await;
     }
 
     /// Append raw Responses API items to the thread's model-visible history.

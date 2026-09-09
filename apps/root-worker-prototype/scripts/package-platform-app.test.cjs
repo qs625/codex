@@ -59,6 +59,7 @@ test("platform packager args include runtime resources without source snapshot",
   assert.ok(args.includes("--platform=linux"));
   assert.ok(args.includes("--arch=x64"));
   assert.ok(args.includes("--extra-resource=dist-package-resources/bin"));
+  assert.ok(args.includes("--asar"));
   assert.ok(
     args.includes("--extra-resource=dist-package-resources/default-config"),
   );
@@ -115,15 +116,26 @@ test("escapePowerShellPath doubles single quotes", () => {
   assert.equal(escapePowerShellPath("C:\\It's\\App"), "C:\\It''s\\App");
 });
 
-test("windows rtk subprocesses run through the shell for cmd shims", () => {
-  assert.deepEqual(buildRunInvocation("rtk", ["pnpm", "build"], "win32"), {
-    command: "rtk",
-    args: ["pnpm", "build"],
-    spawnOptions: { shell: true },
+test("windows pnpm subprocesses use the current pnpm JS entry without a shell", () => {
+  const runtime = {
+    nodeExecutable: "C:\\Program Files\\nodejs\\node.exe",
+    pnpmExecutable: "C:\\pnpm\\pnpm.cjs",
+  };
+  const args = [
+    "dlx",
+    "@electron/packager",
+    ".",
+    "Root Worker Prototype",
+    "--ignore=^/dist-app($|/)",
+  ];
+  assert.deepEqual(buildRunInvocation("pnpm", args, "win32", runtime), {
+    command: runtime.nodeExecutable,
+    args: [runtime.pnpmExecutable, ...args],
+    spawnOptions: {},
   });
-  assert.deepEqual(buildRunInvocation("rtk", ["pnpm", "build"], "linux"), {
-    command: "rtk",
-    args: ["pnpm", "build"],
+  assert.deepEqual(buildRunInvocation("pnpm", ["build"], "linux"), {
+    command: "pnpm",
+    args: ["build"],
     spawnOptions: {},
   });
   assert.deepEqual(buildRunInvocation("tar", ["-czf"], "win32"), {
@@ -131,4 +143,12 @@ test("windows rtk subprocesses run through the shell for cmd shims", () => {
     args: ["-czf"],
     spawnOptions: {},
   });
+  assert.throws(
+    () =>
+      buildRunInvocation("pnpm", ["build"], "win32", {
+        nodeExecutable: runtime.nodeExecutable,
+        pnpmExecutable: "",
+      }),
+    /must run through a pnpm script/,
+  );
 });

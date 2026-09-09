@@ -50,6 +50,7 @@ use std::time::Duration;
 use tempfile::tempdir;
 use thread_service_api::PersistedThreadProviderFactsSelector;
 use thread_store_api::AppendThreadItemsParams;
+use thread_store_api::ArchiveThreadParams;
 use thread_store_api::ExternalLiveRestoreEligibility;
 use thread_store_api::ResumeThreadParams;
 use wiremock::MockServer;
@@ -134,6 +135,98 @@ fn live_thread_snapshot_for_config(
             thread_source: Some(ThreadSource::User),
         },
     }
+}
+
+#[tokio::test]
+async fn recovery_requester_existence_checks_live_and_persisted_threads() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let auth_manager =
+        AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db = init_state_db(&config).await;
+    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let manager = test_thread_service_manager(
+        &config,
+        auth_manager,
+        thread_store.clone(),
+        state_db,
+        TEST_INSTALLATION_ID.to_string(),
+    );
+
+    assert!(
+        !manager
+            .thread_exists_live_or_persisted(ThreadId::new())
+            .await
+            .expect("check unknown requester")
+    );
+
+    let thread = manager
+        .start_thread(config)
+        .await
+        .expect("start requester thread");
+    assert!(
+        manager
+            .thread_exists_live_or_persisted(thread.thread_id)
+            .await
+            .expect("check live requester")
+    );
+
+    thread.thread.ensure_rollout_materialized().await;
+    thread
+        .thread
+        .flush_rollout()
+        .await
+        .expect("flush requester rollout");
+    thread
+        .thread
+        .shutdown_and_wait()
+        .await
+        .expect("shutdown requester");
+    let _ = manager.remove_thread(&thread.thread_id).await;
+    assert!(
+        manager
+            .thread_exists_live_or_persisted(thread.thread_id)
+            .await
+            .expect("check persisted requester")
+    );
+
+    thread_store
+        .archive_thread(ArchiveThreadParams {
+            thread_id: thread.thread_id,
+        })
+        .await
+        .expect("archive persisted requester");
+    assert!(
+        manager
+            .thread_exists_live_or_persisted(thread.thread_id)
+            .await
+            .expect("check archived persisted requester")
+    );
+
+    let archived_thread = manager
+        .read_thread(ReadThreadParams {
+            thread_id: thread.thread_id,
+            include_archived: true,
+            include_history: false,
+        })
+        .await
+        .expect("read archived requester path");
+    std::fs::remove_file(
+        archived_thread
+            .rollout_path
+            .expect("archived requester rollout path"),
+    )
+    .expect("remove archived requester rollout");
+    assert!(
+        !manager
+            .thread_exists_live_or_persisted(thread.thread_id)
+            .await
+            .expect("stale persisted requester metadata must not count")
+    );
 }
 
 #[tokio::test]

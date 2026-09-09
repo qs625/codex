@@ -1107,6 +1107,159 @@
       ],
       "type": "object"
     },
+    "ClientLifecycleRecoveryRecordParams": {
+      "properties": {
+        "evidencePath": {
+          "type": "string"
+        },
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "failedBuildHash": {
+          "type": "string"
+        },
+        "failedBuildId": {
+          "type": "string"
+        },
+        "failurePhase": {
+          "type": "string"
+        },
+        "launcherClaimId": {
+          "type": "string"
+        },
+        "launcherEvidenceVersion": {
+          "type": "string"
+        },
+        "logPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "readyTimeoutMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "recoveredBuildId": {
+          "type": "string"
+        },
+        "recoveryIdentity": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "requestedByThreadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceCommit": {
+          "type": "string"
+        },
+        "targetThreadId": {
+          "type": "string"
+        },
+        "transactionId": {
+          "type": "string"
+        },
+        "transactionPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "evidencePath",
+        "failedBuildHash",
+        "failedBuildId",
+        "failurePhase",
+        "launcherClaimId",
+        "launcherEvidenceVersion",
+        "mode",
+        "prompt",
+        "recoveredBuildId",
+        "recoveryIdentity",
+        "requestId",
+        "sourceCommit",
+        "targetThreadId",
+        "transactionId"
+      ],
+      "type": "object"
+    },
+    "ClientLifecycleRecoveryRecordResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "duplicate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "accepted",
+        "duplicate"
+      ],
+      "title": "ClientLifecycleRecoveryRecordResponse",
+      "type": "object"
+    },
+    "ClientLifecycleRegisterParams": {
+      "properties": {
+        "hostId": {
+          "description": "Stable identifier for the Electron Host instance owning this connection.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hostId"
+      ],
+      "type": "object"
+    },
+    "ClientLifecycleRegisterResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registered": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hostId",
+        "registered"
+      ],
+      "title": "ClientLifecycleRegisterResponse",
+      "type": "object"
+    },
     "ClientNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "oneOf": [
@@ -1128,6 +1281,53 @@
         }
       ],
       "title": "ClientNotification"
+    },
+    "ClientRelaunchMode": {
+      "enum": [
+        "hot",
+        "full"
+      ],
+      "type": "string"
+    },
+    "ClientRelaunchRequestedNotification": {
+      "properties": {
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ClientRelaunchMode"
+            }
+          ],
+          "description": "Required refresh mode chosen by the runtime tool caller."
+        },
+        "reason": {
+          "description": "Optional human-readable reason supplied by the runtime tool caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestId": {
+          "description": "Correlation identifier for this lifecycle operation.",
+          "type": "string"
+        },
+        "requestedByThreadId": {
+          "description": "Thread that requested the client relaunch, when the request originated from a thread turn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resumeStrategy": {
+          "description": "Reminder that post-relaunch continuation is handled by client bootstrap autoresume.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "requestId",
+        "resumeStrategy"
+      ],
+      "type": "object"
     },
     "ClientRequest": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1155,6 +1355,54 @@
             "params"
           ],
           "title": "InitializeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "client/lifecycle/register"
+              ],
+              "title": "Client/lifecycle/registerRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ClientLifecycleRegisterParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Client/lifecycle/registerRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "client/lifecycle/recovery/record"
+              ],
+              "title": "Client/lifecycle/recovery/recordRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ClientLifecycleRecoveryRecordParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Client/lifecycle/recovery/recordRequest",
           "type": "object"
         },
         {
@@ -5616,7 +5864,7 @@
           ]
         },
         "includeHome": {
-          "description": "If true, include detection under the user's home (~/.claude, ~/.morpheus, etc.).",
+          "description": "If true, include detection under the user's home (~/.claude, ~/.codex, etc.).",
           "type": "boolean"
         }
       },
@@ -13638,6 +13886,26 @@
           "properties": {
             "method": {
               "enum": [
+                "client/relaunch/requested"
+              ],
+              "title": "Client/relaunch/requestedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ClientRelaunchRequestedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Client/relaunch/requestedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "workflow/run/updated"
               ],
               "title": "Workflow/run/updatedNotificationMethod",
@@ -16448,6 +16716,127 @@
             "type"
           ],
           "title": "UserMessageThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "evidencePath": {
+              "type": "string"
+            },
+            "exitCode": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "failedBuildHash": {
+              "type": "string"
+            },
+            "failedBuildId": {
+              "type": "string"
+            },
+            "failurePhase": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "launcherClaimId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "launcherEvidenceVersion": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "logPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mode": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "readyTimeoutMs": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "recordedAtMs": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "recoveredBuildId": {
+              "type": "string"
+            },
+            "recoveryIdentity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "requestId": {
+              "type": "string"
+            },
+            "requestedByThreadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "signal": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sourceCommit": {
+              "type": "string"
+            },
+            "transactionId": {
+              "type": "string"
+            },
+            "transactionPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "clientRecovery"
+              ],
+              "title": "ClientRecoveryThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidencePath",
+            "failedBuildHash",
+            "failedBuildId",
+            "failurePhase",
+            "id",
+            "mode",
+            "prompt",
+            "recordedAtMs",
+            "recoveredBuildId",
+            "requestId",
+            "sourceCommit",
+            "transactionId",
+            "type"
+          ],
+          "title": "ClientRecoveryThreadItem",
           "type": "object"
         },
         {

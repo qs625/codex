@@ -3,6 +3,7 @@ use app_server_protocol::GitInfo;
 use app_server_protocol::JSONRPCError;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use app_server_protocol::ThreadMetadataUpdateParams;
 use app_server_protocol::ThreadMetadataUpdateResponse;
@@ -12,7 +13,6 @@ use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
@@ -86,7 +86,10 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
             origin_url: None,
         })
     );
-    assert_eq!(updated.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        updated.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     let updated_thread_json = update_result
         .get("thread")
         .and_then(Value::as_object)
@@ -125,7 +128,10 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
             origin_url: None,
         })
     );
-    assert_eq!(read.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        read.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     Ok(())
 }

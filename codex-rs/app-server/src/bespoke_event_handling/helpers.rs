@@ -389,10 +389,13 @@ pub(super) async fn on_request_user_input_response(
                 answers: HashMap::new(),
             };
             if let Err(err) = live_thread_command
-                .submit_live_thread_op(conversation_id, Op::UserInputAnswer {
-                    id: event_turn_id,
-                    response: empty,
-                })
+                .submit_live_thread_op(
+                    conversation_id,
+                    Op::UserInputAnswer {
+                        id: event_turn_id,
+                        response: empty,
+                    },
+                )
                 .await
             {
                 error!("failed to submit UserInputAnswer: {err}");
@@ -405,10 +408,13 @@ pub(super) async fn on_request_user_input_response(
                 answers: HashMap::new(),
             };
             if let Err(err) = live_thread_command
-                .submit_live_thread_op(conversation_id, Op::UserInputAnswer {
-                    id: event_turn_id,
-                    response: empty,
-                })
+                .submit_live_thread_op(
+                    conversation_id,
+                    Op::UserInputAnswer {
+                        id: event_turn_id,
+                        response: empty,
+                    },
+                )
                 .await
             {
                 error!("failed to submit UserInputAnswer: {err}");
@@ -440,10 +446,13 @@ pub(super) async fn on_request_user_input_response(
     };
 
     if let Err(err) = live_thread_command
-        .submit_live_thread_op(conversation_id, Op::UserInputAnswer {
-            id: event_turn_id,
-            response,
-        })
+        .submit_live_thread_op(
+            conversation_id,
+            Op::UserInputAnswer {
+                id: event_turn_id,
+                response,
+            },
+        )
         .await
     {
         error!("failed to submit UserInputAnswer: {err}");
@@ -466,13 +475,16 @@ pub(super) async fn on_mcp_server_elicitation_response(
     let response = mcp_server_elicitation_response_from_client_result(response);
 
     if let Err(err) = live_thread_command
-        .submit_live_thread_op(conversation_id, Op::ResolveElicitation {
-            server_name,
-            request_id,
-            decision: response.action.to_core(),
-            content: response.content,
-            meta: response.meta,
-        })
+        .submit_live_thread_op(
+            conversation_id,
+            Op::ResolveElicitation {
+                server_name,
+                request_id,
+                decision: response.action.to_core(),
+                content: response.content,
+                meta: response.meta,
+            },
+        )
         .await
     {
         error!("failed to submit ResolveElicitation: {err}");
@@ -546,10 +558,13 @@ pub(super) async fn on_request_permissions_response(
     outgoing.track_effective_permissions_approval_response(pending_request_id, response.clone());
 
     if let Err(err) = live_thread_command
-        .submit_live_thread_op(conversation_id, Op::RequestPermissionsResponse {
-            id: call_id,
-            response,
-        })
+        .submit_live_thread_op(
+            conversation_id,
+            Op::RequestPermissionsResponse {
+                id: call_id,
+                response,
+            },
+        )
         .await
     {
         error!("failed to submit RequestPermissionsResponse: {err}");
@@ -699,10 +714,13 @@ pub(super) async fn on_file_change_request_approval_response(
     };
 
     if let Err(err) = live_thread_command
-        .submit_live_thread_op(conversation_id, Op::PatchApproval {
-            id: item_id,
-            decision,
-        })
+        .submit_live_thread_op(
+            conversation_id,
+            Op::PatchApproval {
+                id: item_id,
+                decision,
+            },
+        )
         .await
     {
         error!("failed to submit PatchApproval: {err}");
@@ -823,11 +841,14 @@ pub(super) async fn on_command_execution_request_approval_response(
     }
 
     if let Err(err) = live_thread_command
-        .submit_live_thread_op(conversation_id, Op::ExecApproval {
-            id: approval_id.unwrap_or_else(|| item_id.clone()),
-            turn_id: Some(event_turn_id),
-            decision,
-        })
+        .submit_live_thread_op(
+            conversation_id,
+            Op::ExecApproval {
+                id: approval_id.unwrap_or_else(|| item_id.clone()),
+                turn_id: Some(event_turn_id),
+                decision,
+            },
+        )
         .await
     {
         error!("failed to submit ExecApproval: {err}");

@@ -84,8 +84,8 @@ test("ensureDefaultWorkspace clones installed source workspace when missing", as
       cloneTempSuffix: "test",
       spawnSync: (command, args, options) => {
         calls.push({ command, args, cwd: options.cwd, encoding: options.encoding });
-        fsSync.mkdirSync(args[3], { recursive: true });
-        fsSync.mkdirSync(path.join(args[3], ".git"), { recursive: true });
+        fsSync.mkdirSync(args[2], { recursive: true });
+        fsSync.mkdirSync(path.join(args[2], ".git"), { recursive: true });
         return { status: 0, stderr: "" };
       },
     },
@@ -95,8 +95,8 @@ test("ensureDefaultWorkspace clones installed source workspace when missing", as
   const tempWorkspace = path.join(morpheusHome, ".source_workspace.clone-test");
   assert.deepEqual(calls, [
     {
-      command: "rtk",
-      args: ["git", "clone", INSTALLED_SOURCE_ORIGIN_URL, tempWorkspace],
+      command: "git",
+      args: ["clone", INSTALLED_SOURCE_ORIGIN_URL, tempWorkspace],
       cwd: morpheusHome,
       encoding: "utf8",
     },
@@ -228,13 +228,13 @@ test("ensureDefaultWorkspace surfaces clone failure and removes partial workspac
         isPackagedApp: true,
         cloneTempSuffix: "failed",
         spawnSync: (_command, args) => {
-          fsSync.mkdirSync(args[3], { recursive: true });
-          fsSync.writeFileSync(path.join(args[3], "partial"), "partial\n");
+          fsSync.mkdirSync(args[2], { recursive: true });
+          fsSync.writeFileSync(path.join(args[2], "partial"), "partial\n");
           return { status: 128, stderr: "clone failed\n" };
         },
       },
     ),
-    /rtk git clone git@github\.com:qs625\/codex\.git .* exited with 128: clone failed/,
+    /git clone git@github\.com:qs625\/codex\.git .* exited with 128: clone failed/,
   );
   assert.equal(fsSync.existsSync(workspace), false);
 
@@ -254,15 +254,15 @@ test("ensureDefaultWorkspace clone failure does not remove externally created wo
         isPackagedApp: true,
         cloneTempSuffix: "race",
         spawnSync: (_command, args) => {
-          fsSync.mkdirSync(args[3], { recursive: true });
-          fsSync.writeFileSync(path.join(args[3], "partial"), "partial\n");
+          fsSync.mkdirSync(args[2], { recursive: true });
+          fsSync.writeFileSync(path.join(args[2], "partial"), "partial\n");
           fsSync.mkdirSync(workspace, { recursive: true });
           fsSync.writeFileSync(path.join(workspace, "user-file"), "keep\n");
           return { status: 128, stderr: "clone failed\n" };
         },
       },
     ),
-    /rtk git clone git@github\.com:qs625\/codex\.git .* exited with 128: clone failed/,
+    /git clone git@github\.com:qs625\/codex\.git .* exited with 128: clone failed/,
   );
   assert.equal(fsSync.existsSync(tempWorkspace), false);
   assert.equal(fsSync.readFileSync(path.join(workspace, "user-file"), "utf8"), "keep\n");
@@ -282,8 +282,8 @@ test("ensureDefaultWorkspace successful clone does not replace raced workspace",
       isPackagedApp: true,
       cloneTempSuffix: "race-install",
       spawnSync: (_command, args) => {
-        fsSync.mkdirSync(args[3], { recursive: true });
-        fsSync.mkdirSync(path.join(args[3], ".git"), { recursive: true });
+        fsSync.mkdirSync(args[2], { recursive: true });
+        fsSync.mkdirSync(path.join(args[2], ".git"), { recursive: true });
         return { status: 0, stderr: "" };
       },
       mkdirSync: (target, options) => {

@@ -18,8 +18,8 @@ mod runtime;
 mod start;
 mod support;
 
-pub(crate) use self::runtime::thread_processor_new_thread;
 pub(super) use self::ops::unsupported_external_root_active_op;
+pub(crate) use self::runtime::thread_processor_new_thread;
 use self::runtime::*;
 pub(super) use self::support::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
 pub(crate) use self::support::thread_from_stored_thread;

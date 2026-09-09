@@ -1279,10 +1279,7 @@ impl Session {
     }
 
     #[cfg(test)]
-    pub(crate) async fn set_user_instructions_for_test(
-        &self,
-        user_instructions: Option<String>,
-    ) {
+    pub(crate) async fn set_user_instructions_for_test(&self, user_instructions: Option<String>) {
         let mut state = self.state.lock().await;
         state.session_configuration.user_instructions = user_instructions;
     }
@@ -1458,6 +1455,8 @@ impl Session {
             }
             InitialHistory::Resumed(resumed_history) => {
                 let rollout_items = resumed_history.history;
+                let pending_client_recoveries =
+                    pending_client_recoveries_from_rollout(&rollout_items);
                 let previous_turn_settings = self
                     .apply_rollout_reconstruction(&turn_context, &rollout_items)
                     .await;
@@ -1493,6 +1492,13 @@ impl Session {
                 // turn/start overrides can be merged before we write to the rollout.
                 if !is_subagent {
                     let _ = self.flush_rollout().await;
+                }
+                for (response_item, recovery_id) in pending_client_recoveries {
+                    self.enqueue_recorded_recovery_for_next_turn_if_absent(
+                        response_item,
+                        recovery_id,
+                    )
+                    .await;
                 }
             }
             InitialHistory::Forked(rollout_items) => {
@@ -2209,6 +2215,42 @@ pub(crate) fn emit_subagent_session_started(
         subagent_source,
         created_at,
     });
+}
+
+fn pending_client_recoveries_from_rollout(
+    rollout_items: &[RolloutItem],
+) -> Vec<(ResponseItem, String)> {
+    let handled = rollout_items
+        .iter()
+        .filter_map(|item| match item {
+            RolloutItem::EventMsg(EventMsg::ClientRecoveryHandled(event)) => {
+                Some(event.recovery_id.as_str())
+            }
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut pending = HashSet::new();
+    rollout_items
+        .iter()
+        .filter_map(|item| match item {
+            RolloutItem::EventMsg(EventMsg::ClientRecoveryRecorded(event))
+                if !handled.contains(event.id.as_str()) && pending.insert(event.id.as_str()) =>
+            {
+                Some((
+                    ResponseItem::Message {
+                        id: Some(event.id.clone()),
+                        role: "user".to_string(),
+                        content: vec![ContentItem::InputText {
+                            text: event.prompt.clone(),
+                        }],
+                        phase: None,
+                    },
+                    event.id.clone(),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Builds the hook engine for one config snapshot, including any enabled plugin hooks.

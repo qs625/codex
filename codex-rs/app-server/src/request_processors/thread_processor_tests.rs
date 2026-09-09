@@ -54,18 +54,18 @@ mod thread_processor_behavior_tests {
     use app_server_protocol::CommandExecutionStatus;
     use app_server_protocol::ServerRequestPayload;
     use app_server_protocol::SessionSource as ApiSessionSource;
-    use app_server_protocol::ThreadLifecycleWaitReason;
     use app_server_protocol::ThreadItem;
+    use app_server_protocol::ThreadLifecycleWaitReason;
     use app_server_protocol::ToolRequestUserInputParams;
     use chrono::DateTime;
     use chrono::Utc;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
+    use config_service::CloudRequirementsLoader;
     use config_service::LoaderOverrides;
     use config_service::SessionThreadConfig;
     use config_service::StaticThreadConfigLoader;
     use config_service::ThreadConfigSource;
-    use config_service::CloudRequirementsLoader;
-    use codex_utils_absolute_path::test_support::PathBufExt;
-    use codex_utils_absolute_path::test_support::test_path_buf;
     use model_service_api::ModelProviderInfo;
     use model_service_api::WireApi;
     use pretty_assertions::assert_eq;
@@ -78,8 +78,8 @@ mod thread_processor_behavior_tests {
     use protocol::permissions::FileSystemPath;
     use protocol::permissions::FileSystemSandboxEntry;
     use protocol::permissions::NetworkSandboxPolicy;
-    use protocol::protocol::AskForApproval;
     use protocol::protocol::AgentMessageEvent;
+    use protocol::protocol::AskForApproval;
     use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
     use protocol::protocol::SandboxPolicy;
@@ -233,7 +233,9 @@ mod thread_processor_behavior_tests {
             .await;
         assert_eq!(
             status,
-            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription }
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription
+            }
         );
 
         sync_active_event_subscriptions(
@@ -395,12 +397,14 @@ mod thread_processor_behavior_tests {
         assert_eq!(state.active_in_progress_turn_snapshot(), None);
 
         let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
-                turn_id: "turn-1".to_string(),
-                started_at: Some(1),
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
             RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
                 protocol::protocol::ExecCommandEndEvent {
                     call_id: "exec-1".to_string(),
@@ -487,12 +491,14 @@ mod thread_processor_behavior_tests {
             active_command_items: None,
         };
         let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
-                turn_id: "turn-1".to_string(),
-                started_at: Some(1),
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
             RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
                 protocol::protocol::ExecCommandEndEvent {
                     call_id: "exec-1".to_string(),
@@ -545,30 +551,36 @@ mod thread_processor_behavior_tests {
 
     fn compacted_display_history_items() -> Vec<RolloutItem> {
         vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
-                turn_id: "old-turn".to_string(),
-                started_at: Some(1),
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "old-turn".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
             RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
                 message: "old answer".to_string(),
                 phase: None,
                 memory_citation: None,
             })),
-            RolloutItem::EventMsg(EventMsg::TurnComplete(protocol::protocol::TurnCompleteEvent {
-                turn_id: "old-turn".to_string(),
-                last_agent_message: None,
-                completed_at: Some(2),
-                duration_ms: Some(1),
-                time_to_first_token_ms: None,
-            })),
-            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
-                turn_id: "compact-turn".to_string(),
-                started_at: Some(3),
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(
+                protocol::protocol::TurnCompleteEvent {
+                    turn_id: "old-turn".to_string(),
+                    last_agent_message: None,
+                    completed_at: Some(2),
+                    duration_ms: Some(1),
+                    time_to_first_token_ms: None,
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "compact-turn".to_string(),
+                    started_at: Some(3),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
             RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
                 message: "pre compact".to_string(),
                 phase: None,
@@ -584,19 +596,23 @@ mod thread_processor_behavior_tests {
                 phase: None,
                 memory_citation: None,
             })),
-            RolloutItem::EventMsg(EventMsg::TurnComplete(protocol::protocol::TurnCompleteEvent {
-                turn_id: "compact-turn".to_string(),
-                last_agent_message: None,
-                completed_at: Some(4),
-                duration_ms: Some(1),
-                time_to_first_token_ms: None,
-            })),
-            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
-                turn_id: "new-turn".to_string(),
-                started_at: Some(5),
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(
+                protocol::protocol::TurnCompleteEvent {
+                    turn_id: "compact-turn".to_string(),
+                    last_agent_message: None,
+                    completed_at: Some(4),
+                    duration_ms: Some(1),
+                    time_to_first_token_ms: None,
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "new-turn".to_string(),
+                    started_at: Some(5),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
             RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
                 message: "new answer".to_string(),
                 phase: None,
@@ -738,7 +754,10 @@ mod thread_processor_behavior_tests {
         );
 
         assert_eq!(
-            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["compact-turn", "new-turn"]
         );
         assert_eq!(

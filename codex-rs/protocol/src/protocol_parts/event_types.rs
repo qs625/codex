@@ -68,6 +68,12 @@ pub enum EventMsg {
     /// User/system input message (what was sent to the model)
     UserMessage(UserMessageEvent),
 
+    /// Trusted Host evidence that a client runtime recovery completed.
+    ClientRecoveryRecorded(ClientRecoveryRecordedEvent),
+
+    /// Durable fact that a model turn consumed trusted client recovery input.
+    ClientRecoveryHandled(ClientRecoveryHandledEvent),
+
     /// Reasoning event from agent.
     AgentReasoning(AgentReasoningEvent),
 

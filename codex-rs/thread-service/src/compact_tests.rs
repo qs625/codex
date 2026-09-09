@@ -430,9 +430,7 @@ async fn process_compacted_history_reinjects_user_instructions_into_initial_cont
     let (session, mut turn_context) = crate::session::tests::make_session_and_context().await;
     turn_context.user_instructions = Some("Loaded from instruction_files".to_string());
     session
-        .set_user_instructions_for_test(Some(
-            "Loaded from instruction_files".to_string(),
-        ))
+        .set_user_instructions_for_test(Some("Loaded from instruction_files".to_string()))
         .await;
     let compacted_history = vec![ResponseItem::Message {
         id: None,

@@ -396,6 +396,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::ClientLifecycleRegisterResponse,
     },
+    ClientLifecycleRecoveryRecord => "client/lifecycle/recovery/record" {
+        params: v2::ClientLifecycleRecoveryRecordParams,
+        serialization: thread_id(params.target_thread_id),
+        response: v2::ClientLifecycleRecoveryRecordResponse,
+    },
 
     /// NEW APIs
     // Thread lifecycle

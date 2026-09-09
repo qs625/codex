@@ -1600,6 +1600,127 @@
         },
         {
           "properties": {
+            "evidencePath": {
+              "type": "string"
+            },
+            "exitCode": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "failedBuildHash": {
+              "type": "string"
+            },
+            "failedBuildId": {
+              "type": "string"
+            },
+            "failurePhase": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "launcherClaimId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "launcherEvidenceVersion": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "logPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mode": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "readyTimeoutMs": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "recordedAtMs": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "recoveredBuildId": {
+              "type": "string"
+            },
+            "recoveryIdentity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "requestId": {
+              "type": "string"
+            },
+            "requestedByThreadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "signal": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sourceCommit": {
+              "type": "string"
+            },
+            "transactionId": {
+              "type": "string"
+            },
+            "transactionPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "clientRecovery"
+              ],
+              "title": "ClientRecoveryThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidencePath",
+            "failedBuildHash",
+            "failedBuildId",
+            "failurePhase",
+            "id",
+            "mode",
+            "prompt",
+            "recordedAtMs",
+            "recoveredBuildId",
+            "requestId",
+            "sourceCommit",
+            "transactionId",
+            "type"
+          ],
+          "title": "ClientRecoveryThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "fragments": {
               "items": {
                 "$ref": "#/definitions/HookPromptFragment"

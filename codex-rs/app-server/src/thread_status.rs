@@ -7,8 +7,8 @@ use app_server_protocol::ServerNotification;
 use app_server_protocol::Thread;
 use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadLifecycleFinalStatus;
-use app_server_protocol::ThreadLifecycleWaitReason;
 use app_server_protocol::ThreadLifecycleStatus;
+use app_server_protocol::ThreadLifecycleWaitReason;
 use app_server_protocol::ThreadStatusChangedNotification;
 use protocol::ThreadId;
 use std::collections::HashMap;
@@ -693,7 +693,9 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription },
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription
+            },
         );
 
         manager
@@ -734,7 +736,9 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::Command },
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::Command
+            },
         );
     }
 
@@ -784,8 +788,10 @@ mod tests {
 
     #[test]
     fn resolves_in_progress_turn_to_active_status() {
-        let status =
-            resolve_thread_status(ThreadLifecycleStatus::completed(None), /*has_in_progress_turn*/ true);
+        let status = resolve_thread_status(
+            ThreadLifecycleStatus::completed(None),
+            /*has_in_progress_turn*/ true,
+        );
         assert_eq!(
             status,
             ThreadLifecycleStatus::Active {
@@ -793,8 +799,10 @@ mod tests {
             }
         );
 
-        let status =
-            resolve_thread_status(ThreadLifecycleStatus::NotLoaded, /*has_in_progress_turn*/ true);
+        let status = resolve_thread_status(
+            ThreadLifecycleStatus::NotLoaded,
+            /*has_in_progress_turn*/ true,
+        );
         assert_eq!(
             status,
             ThreadLifecycleStatus::Active {
@@ -806,7 +814,10 @@ mod tests {
     #[test]
     fn keeps_status_when_no_in_progress_turn() {
         assert_eq!(
-            resolve_thread_status(ThreadLifecycleStatus::completed(None), /*has_in_progress_turn*/ false),
+            resolve_thread_status(
+                ThreadLifecycleStatus::completed(None),
+                /*has_in_progress_turn*/ false
+            ),
             ThreadLifecycleStatus::completed(None)
         );
         assert_eq!(
@@ -866,7 +877,9 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription },
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription
+            },
         );
 
         manager.note_system_error(INTERACTIVE_THREAD_ID).await;
@@ -1027,7 +1040,9 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                lifecycle_status: ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription },
+                lifecycle_status: ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::EventSubscription
+                },
             },
         );
 
@@ -1129,7 +1144,10 @@ mod tests {
                 .is_err(),
             "unrelated thread watcher should not receive an update"
         );
-        assert_eq!(*non_interactive_rx.borrow(), ThreadLifecycleStatus::completed(None));
+        assert_eq!(
+            *non_interactive_rx.borrow(),
+            ThreadLifecycleStatus::completed(None)
+        );
     }
 
     async fn wait_for_status(

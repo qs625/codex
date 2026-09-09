@@ -1,25 +1,26 @@
-const fs = require("node:fs");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { Worker } = require("node:worker_threads");
-const {
-  isPackagedApp,
-  resolveDefaultWorkspace,
-} = require("./workspace.cjs");
 const { buildDesktopEnvironment } = require("./environment.cjs");
+const { isPackagedApp, resolveDefaultWorkspace } = require("./workspace.cjs");
 
-const APP_NAME = "Root Worker Prototype";
-const APP_PLATFORM_DIR = "Root Worker Prototype-darwin-arm64";
-const SOURCE_APP_RELATIVE_PATH = path.join("apps", "root-worker-prototype");
 const APP_ASAR_RELATIVE_PATH = "app.asar";
 const APP_SERVER_RELATIVE_PATH = path.join("bin", "app-server");
-const APP_SERVER_BINARY_NAME = "app-server";
 const DEFAULT_CONFIG_RELATIVE_PATH = "default-config";
-const SIGNATURE_RELATIVE_PATH = path.join("Contents", "_CodeSignature");
-const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
 const ELECTRON_SHELL_RELATIVE_DIR = "electron";
+const PREPARED_ARTIFACT_SCHEMA_VERSION = 1;
+const PREPARED_ARTIFACT_BUILDING_PREFIX = "morpheus-prepared-building-";
+const PREPARED_ARTIFACT_PREFIX = "morpheus-prepared-runtime-";
+const PREPARED_ARTIFACT_OWNER_FILE = ".morpheus-prepared-artifact.json";
+const PREPARED_ARTIFACT_OWNER_SCHEMA_VERSION = 1;
+const PREPARED_ARTIFACT_PRODUCER_LEASE_MS = 10 * 60 * 1000;
+const PREPARED_ARTIFACT_GC_CURSOR_FILE = ".morpheus-prepared-gc-cursor";
+const PREPARED_ARTIFACT_GC_LIMIT = 32;
+const PREPARED_ARTIFACT_GC_SCAN_LIMIT = 256;
+const SOURCE_APP_RELATIVE_PATH = path.join("apps", "root-worker-prototype");
 const INSTALLED_ARTIFACT_WORKER_FILES = [
   "environment.cjs",
   "installedArtifactUpdate.cjs",
@@ -29,51 +30,46 @@ const INSTALLED_ARTIFACT_WORKER_FILES = [
 let installedArtifactWorkerBundlePath = null;
 
 function resolveInstalledArtifactUpdatePlan({
+  cargoCwd,
   commandEnv,
+  desktopEnvironmentOptions,
   env = process.env,
   platform = process.platform,
   resourcesPath = currentResourcesPath(),
-  workspace,
-  appName = APP_NAME,
-  appPlatformDir = APP_PLATFORM_DIR,
-  isPackaged = isPackagedApp({ resourcesPath }),
   spawnSync: spawn = spawnSync,
+  workspace,
+  isPackaged = isPackagedApp({ resourcesPath }),
 } = {}) {
   if (platform !== "darwin" || !isPackaged || !resourcesPath) {
     return null;
   }
-
   const resolvedWorkspace =
     workspace ?? resolveDefaultWorkspace(env, { isPackagedApp: true });
   if (!resolvedWorkspace) {
     return null;
   }
-
-  const appBundlePath = path.dirname(path.dirname(resourcesPath));
   const sourceAppDir = path.join(resolvedWorkspace, SOURCE_APP_RELATIVE_PATH);
   const codexRsDir = path.join(resolvedWorkspace, "codex-rs");
-  const codexRsCargoManifestPath = path.join(codexRsDir, "Cargo.toml");
-  const resolvedCommandEnv = commandEnv ?? buildDesktopEnvironment(env);
-  const cargoTargetDir = resolveCargoTargetDirectory({
-    codexRsCargoManifestPath,
+  const resolvedCommandEnv = {
+    ...(commandEnv ?? buildDesktopEnvironment(env, desktopEnvironmentOptions)),
+  };
+  const targetDir = resolveCargoTargetDirectory({
+    cargoCwd: cargoCwd ?? resolvedWorkspace,
     codexRsDir,
     env: resolvedCommandEnv,
     spawnSync: spawn,
   });
-
+  const appBundlePath = path.dirname(path.dirname(resourcesPath));
+  const preparedArtifactsRoot = resolvePreparedArtifactsRoot(env, {
+    required: false,
+  });
   const shellUpdate = resolveElectronShellUpdate({
     resourcesPath,
     sourceAppDir,
   });
-
   return {
     appBundlePath,
-    appServerBinaryPath: path.join(
-      cargoTargetDir,
-      "release",
-      APP_SERVER_BINARY_NAME,
-    ),
-    codexRsCargoManifestPath,
+    appServerBinaryPath: path.join(targetDir, "release", "app-server"),
     commandEnv: resolvedCommandEnv,
     defaultCompactPromptSourcePath: path.join(
       codexRsDir,
@@ -83,19 +79,59 @@ function resolveInstalledArtifactUpdatePlan({
       "prompt.md",
     ),
     frontendDistPath: path.join(sourceAppDir, "dist"),
+    preparedArtifactsRoot,
     resourcesPath,
     requiresFullRelaunch: shellUpdate.changed,
-    runtimeUpdate: {
-      electronShell: shellUpdate,
-    },
+    runtimeUpdate: { electronShell: shellUpdate },
     sourceAppDir,
     workspace: resolvedWorkspace,
-    artifacts: [
-      { kind: "file", relativePath: APP_ASAR_RELATIVE_PATH },
-      { kind: "file", relativePath: APP_SERVER_RELATIVE_PATH },
-      { kind: "directory", relativePath: DEFAULT_CONFIG_RELATIVE_PATH },
-    ],
   };
+}
+
+function resolveCargoTargetDirectory({
+  cargoCwd,
+  codexRsDir,
+  env = process.env,
+  spawnSync: spawn = spawnSync,
+}) {
+  const configuredTarget = normalizeString(env.CARGO_TARGET_DIR);
+  if (!configuredTarget) {
+    return path.join(path.resolve(codexRsDir), "target");
+  }
+  if (configuredTarget && path.isAbsolute(configuredTarget)) {
+    return path.resolve(configuredTarget);
+  }
+  const commandCwd = path.resolve(cargoCwd);
+  const result = spawn(
+    "cargo",
+    [
+      "metadata",
+      "--format-version",
+      "1",
+      "--no-deps",
+      "--manifest-path",
+      path.join(codexRsDir, "Cargo.toml"),
+    ],
+    {
+      cwd: commandCwd,
+      encoding: "utf8",
+      env,
+      stdio: "pipe",
+    },
+  );
+  if (!result?.error && result?.status === 0) {
+    try {
+      const targetDirectory = normalizeString(
+        JSON.parse(result.stdout)?.target_directory,
+      );
+      if (targetDirectory) {
+        return path.resolve(commandCwd, targetDirectory);
+      }
+    } catch {
+      // Fall back to Cargo's cwd-relative CARGO_TARGET_DIR semantics below.
+    }
+  }
+  return path.resolve(commandCwd, configuredTarget ?? "target");
 }
 
 function resolveElectronShellUpdate({
@@ -115,29 +151,19 @@ function resolveElectronShellUpdate({
   const missingInstalledPaths = [];
   const missingSourcePaths = [];
   for (const relativePath of shellRelativePaths) {
-    const sourcePath = path.join(sourceAppDir, relativePath);
-    const installedPath = path.join(
-      resourcesPath,
-      APP_ASAR_RELATIVE_PATH,
+    const sourceDigest = readDigest(
+      path.join(sourceAppDir, relativePath),
+      readFileSync,
+      missingSourcePaths,
       relativePath,
     );
-    let sourceDigest;
-    let installedDigest;
-    try {
-      sourceDigest = bufferDigest(readFileSync(sourcePath));
-    } catch {
-      missingSourcePaths.push(relativePath);
-      changedPaths.push(relativePath);
-      continue;
-    }
-    try {
-      installedDigest = bufferDigest(readFileSync(installedPath));
-    } catch {
-      missingInstalledPaths.push(relativePath);
-      changedPaths.push(relativePath);
-      continue;
-    }
-    if (sourceDigest !== installedDigest) {
+    const installedDigest = readDigest(
+      path.join(resourcesPath, APP_ASAR_RELATIVE_PATH, relativePath),
+      readFileSync,
+      missingInstalledPaths,
+      relativePath,
+    );
+    if (!sourceDigest || !installedDigest || sourceDigest !== installedDigest) {
       changedPaths.push(relativePath);
     }
   }
@@ -166,7 +192,7 @@ function listElectronShellRelativePaths(appRoot, options = {}) {
   const electronRoot = path.join(appRoot, ELECTRON_SHELL_RELATIVE_DIR);
   const relativePaths = [];
   try {
-    collectElectronShellSourceFiles({
+    collectElectronShellFiles({
       currentPath: electronRoot,
       electronRoot,
       relativePaths,
@@ -180,7 +206,7 @@ function listElectronShellRelativePaths(appRoot, options = {}) {
   return relativePaths.sort();
 }
 
-function collectElectronShellSourceFiles({
+function collectElectronShellFiles({
   currentPath,
   electronRoot,
   relativePaths,
@@ -189,216 +215,874 @@ function collectElectronShellSourceFiles({
   for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
     const entryPath = path.join(currentPath, entry.name);
     if (entry.isDirectory()) {
-      collectElectronShellSourceFiles({
+      collectElectronShellFiles({
         currentPath: entryPath,
         electronRoot,
         relativePaths,
         readdirSync,
       });
-      continue;
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith(".cjs") &&
+      !entry.name.endsWith(".test.cjs")
+    ) {
+      relativePaths.push(
+        path.join(
+          ELECTRON_SHELL_RELATIVE_DIR,
+          path.relative(electronRoot, entryPath),
+        ),
+      );
     }
-    if (!entry.isFile() || !entry.name.endsWith(".cjs")) {
-      continue;
-    }
-    if (entry.name.endsWith(".test.cjs")) {
-      continue;
-    }
-    relativePaths.push(
-      path.join(
-        ELECTRON_SHELL_RELATIVE_DIR,
-        path.relative(electronRoot, entryPath),
-      ),
-    );
   }
 }
 
-function resolveCargoTargetDirectory({
-  codexRsCargoManifestPath,
-  codexRsDir,
-  env = buildDesktopEnvironment(),
-  spawnSync: spawn = spawnSync,
-} = {}) {
-  const result = spawn(
-    "cargo",
-    [
-      "metadata",
-      "--format-version=1",
-      "--no-deps",
-      "--manifest-path",
-      codexRsCargoManifestPath,
-    ],
-    {
-      cwd: codexRsDir,
-      encoding: "utf8",
-      env,
-      stdio: "pipe",
-    },
-  );
-  assertSuccessfulSpawn(
-    result,
-    "cargo metadata --format-version=1 --no-deps --manifest-path <Cargo.toml>",
-    { cwd: codexRsDir },
-  );
-
-  let metadata;
+function readDigest(filePath, readFileSync, missingPaths, relativePath) {
   try {
-    metadata = JSON.parse(result.stdout);
-  } catch (error) {
-    throw new Error(
-      `Failed to parse cargo metadata for app-server target directory${formatCause(error)}`,
-    );
+    return sha256(readFileSync(filePath));
+  } catch {
+    missingPaths.push(relativePath);
+    return null;
   }
-  if (
-    !metadata ||
-    typeof metadata.target_directory !== "string" ||
-    metadata.target_directory.length === 0
-  ) {
-    throw new Error("Cargo metadata did not include target_directory.");
-  }
-  return metadata.target_directory;
 }
 
 function updateInstalledArtifacts(plan, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const logger = options.logger ?? console;
-  const prepareArtifacts = options.prepareArtifacts ?? prepareDirectArtifacts;
-  const replaceArtifacts =
-    options.replaceArtifacts ?? replaceInstalledArtifactsSync;
-  const codesign = options.codesign ?? codesignInstalledApp;
+  return prepareInstalledArtifacts(plan, options);
+}
 
-  assertSourceWorkspace(plan, options);
-  assertInstalledTargetsWritable(plan, options);
-
-  const prepared = prepareArtifacts(plan, {
-    ...options,
-    spawnSync: spawn,
-    logger,
-  });
-  const stagedPlan = {
-    ...plan,
-    stagedResourcesPath: prepared.stagedResourcesPath,
+function prepareInstalledArtifacts(plan, options = {}) {
+  assertPreparedArtifactSources(plan, options);
+  const fsOps = {
+    chmodSync: options.chmodSync ?? fs.chmodSync,
+    cpSync: options.cpSync ?? fs.cpSync,
+    lstatSync: options.lstatSync ?? fs.lstatSync,
+    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
+    mkdtempSync: options.mkdtempSync ?? fs.mkdtempSync,
+    readFileSync: options.readFileSync ?? fs.readFileSync,
+    realpathSync: options.realpathSync ?? fs.realpathSync,
+    renameSync: options.renameSync ?? fs.renameSync,
+    rmSync: options.rmSync ?? fs.rmSync,
+    statSync: options.statSync ?? fs.statSync,
+    writeFileSync: options.writeFileSync ?? fs.writeFileSync,
   };
-  let replacement = null;
-  let preservePreparedArtifacts = false;
-  let preserveReplacementBackup = false;
-  let preserveSignatureBackup = false;
-  let signatureBackup = null;
+  const transactionId = options.transactionId ?? crypto.randomUUID();
+  const ownerCapability = {
+    ownerToken: options.ownerToken ?? crypto.randomUUID(),
+    producerPid: process.pid,
+    transactionId,
+  };
+  const preparedArtifactsRoot =
+    options.preparedArtifactsRoot ??
+    plan.preparedArtifactsRoot ??
+    resolvePreparedArtifactsRoot(options.env ?? plan.commandEnv);
+  const canonicalPreparedArtifactsRoot = canonicalizePreparedArtifactsRoot(
+    preparedArtifactsRoot,
+    fsOps,
+  );
+  const preparedRoot = options.preparedRoot
+    ? validatePreparedArtifactCandidatePath(
+        options.preparedRoot,
+        canonicalPreparedArtifactsRoot,
+        fsOps,
+        { allowMissing: true },
+      )
+    : null;
+  if (preparedRoot && pathExists(preparedRoot, fsOps)) {
+    throw new Error("Prepared artifact publish target already exists");
+  }
+  const buildingRoot = fsOps.mkdtempSync(
+    path.join(
+      canonicalPreparedArtifactsRoot,
+      PREPARED_ARTIFACT_BUILDING_PREFIX,
+    ),
+  );
+  const publishedRoot =
+    preparedRoot ??
+    path.join(
+      canonicalPreparedArtifactsRoot,
+      `${PREPARED_ARTIFACT_PREFIX}${path.basename(buildingRoot).slice(
+        PREPARED_ARTIFACT_BUILDING_PREFIX.length,
+      )}`,
+    );
+  const resourcesRoot = path.join(buildingRoot, "resources");
+  const appSourceRoot = path.join(buildingRoot, "app-source");
+  const appAsarArtifactPath = APP_ASAR_RELATIVE_PATH;
+  const appServerArtifactPath = APP_SERVER_RELATIVE_PATH;
+  const compactPromptArtifactPath = path.join(
+    DEFAULT_CONFIG_RELATIVE_PATH,
+    "compact",
+    "COMPACT.md",
+  );
+  const appAsarPath = path.join(resourcesRoot, appAsarArtifactPath);
+  const appServerPath = path.join(resourcesRoot, appServerArtifactPath);
+  const compactPromptPath = path.join(
+    resourcesRoot,
+    compactPromptArtifactPath,
+  );
   try {
-    assertStagedArtifacts(stagedPlan, options);
-    replacement = replaceArtifacts(stagedPlan, {
-      ...options,
-      keepBackup: true,
-      replacementWorkRoot: prepared.stagingRoot,
+    writePreparedArtifactOwnerMarker(buildingRoot, transactionId, fsOps, {
+      now: options.now,
+      ownerToken: ownerCapability.ownerToken,
     });
-    assertInstalledArtifactsMatchStaged(stagedPlan, options);
-    signatureBackup = backupSignatureMetadataSync(stagedPlan, {
-      ...options,
-      fsOps: replacement.fsOps,
-      signatureBackupRoot: prepared.stagingRoot,
-      updateId: replacement.updateId,
+    fsOps.mkdirSync(path.dirname(appAsarPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(appServerPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(compactPromptPath), { recursive: true });
+    fsOps.cpSync(plan.sourceAppDir, appSourceRoot, {
+      recursive: true,
+      filter: preparedAppSourceFilter,
     });
-    codesign(stagedPlan, {
-      env: resolveCommandEnvironment(stagedPlan, options),
-      logger,
-      spawnSync: spawn,
-      stdio: options.stdio,
+    packAppAsar(plan, appSourceRoot, appAsarPath, options);
+    fsOps.cpSync(plan.appServerBinaryPath, appServerPath);
+    fsOps.cpSync(plan.defaultCompactPromptSourcePath, compactPromptPath);
+
+    const artifacts = [
+      artifactDescriptor(resourcesRoot, appAsarArtifactPath, "file", fsOps),
+      artifactDescriptor(
+        resourcesRoot,
+        appServerArtifactPath,
+        "executable",
+        fsOps,
+      ),
+      artifactDescriptor(
+        resourcesRoot,
+        compactPromptArtifactPath,
+        "file",
+        fsOps,
+      ),
+    ];
+    const sourceCommit =
+      normalizeString(options.sourceCommit) ??
+      resolveSourceCommit(plan.workspace, {
+        ...options,
+        env: options.env ?? plan.commandEnv,
+      });
+    const buildId =
+      normalizeString(options.buildId) ??
+      sha256(
+        Buffer.from(
+          JSON.stringify({
+            sourceCommit,
+            artifacts: artifacts.map(({ relativePath, sha256 }) => ({
+              relativePath,
+              sha256,
+            })),
+          }),
+        ),
+      ).slice(0, 24);
+    const manifest = {
+      schemaVersion: PREPARED_ARTIFACT_SCHEMA_VERSION,
+      buildId,
+      sourceCommit,
+      artifacts,
+      changes: {
+        main: plan.runtimeUpdate?.electronShell?.changed === true,
+        preload: plan.runtimeUpdate?.electronShell?.changedPaths?.includes(
+          "electron/preload.cjs",
+        ) ?? false,
+      },
+    };
+    if (
+      manifest.artifacts.some(
+        ({ relativePath }) =>
+          relativePath ===
+            path.join("Contents", "MacOS", "MorpheusLauncher") ||
+          path.basename(relativePath) === "MorpheusLauncher",
+      )
+    ) {
+      throw new Error(
+        "Prepared runtime artifacts must not replace the stable launcher",
+      );
+    }
+    fsOps.writeFileSync(
+      path.join(buildingRoot, "manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    writePreparedArtifactOwnerMarker(buildingRoot, transactionId, fsOps, {
+      now: options.publishNow,
+      ownerToken: ownerCapability.ownerToken,
     });
+    fsOps.renameSync(buildingRoot, publishedRoot);
+    return {
+      ok: true,
+      updated: false,
+      appBundlePath: plan.appBundlePath,
+      buildId,
+      manifest,
+      preparedArtifactOwner: ownerCapability,
+      preparedArtifactsRoot: canonicalPreparedArtifactsRoot,
+      preparedRoot: publishedRoot,
+      sourceCommit,
+      transactionId,
+    };
   } catch (error) {
-    preservePreparedArtifacts = error?.preserveArtifactBackup === true;
-    let failure = error;
-    if (replacement) {
-      const rollbackErrors = restoreBackups(
-        stagedPlan,
-        replacement.backupDir,
-        replacement.fsOps,
-        stagedPlan.artifacts,
-        options,
-      );
-      preserveReplacementBackup = rollbackErrors.length > 0;
-      failure = appendSecondaryFailures(
-        failure,
-        "installed artifact rollback",
-        rollbackErrors,
-      );
+    fsOps.rmSync(buildingRoot, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+function resolvePreparedArtifactsRoot(
+  env = process.env,
+  { required = true } = {},
+) {
+  const launcherHome = normalizeString(env?.MORPHEUS_RUNTIME_LAUNCHER_HOME);
+  if (launcherHome) {
+    return path.join(path.resolve(launcherHome), "producer-artifacts");
+  }
+  const morpheusHome =
+    normalizeString(env?.MORPHEUS_HOME) ??
+    (normalizeString(env?.HOME)
+      ? path.join(path.resolve(env.HOME), ".morpheus")
+      : null);
+  if (!morpheusHome) {
+    if (!required) {
+      return null;
     }
-    if (signatureBackup) {
-      try {
-        restoreSignatureMetadataSync(signatureBackup);
-      } catch (restoreError) {
-        preservePreparedArtifacts = true;
-        preserveSignatureBackup = true;
-        failure = appendSecondaryFailures(
-          failure,
-          "signature rollback",
-          [restoreError],
-        );
+    throw new Error(
+      "MORPHEUS_HOME or HOME is required for prepared runtime artifacts",
+    );
+  }
+  return path.join(
+    path.resolve(morpheusHome),
+    "runtime-launcher",
+    "producer-artifacts",
+  );
+}
+
+function writePreparedArtifactOwnerMarker(
+  preparedRoot,
+  transactionId,
+  fsOps,
+  options = {},
+) {
+  const now = options.now ?? Date.now();
+  const ownerToken = options.ownerToken ?? crypto.randomUUID();
+  fsOps.writeFileSync(
+    path.join(preparedRoot, PREPARED_ARTIFACT_OWNER_FILE),
+    `${JSON.stringify({
+      schemaVersion: PREPARED_ARTIFACT_OWNER_SCHEMA_VERSION,
+      transactionId,
+      state: "published",
+      ownerToken,
+      producerPid: process.pid,
+      producerLeaseExpiresAt: new Date(
+        now + PREPARED_ARTIFACT_PRODUCER_LEASE_MS,
+      ).toISOString(),
+    })}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
+function releaseOwnedPreparedArtifactLease(preparedRoot, options = {}) {
+  const fsOps = {
+    ...preparedArtifactGcFileSystem(options),
+    renameSync: options.renameSync ?? fs.renameSync,
+    writeFileSync: options.writeFileSync ?? fs.writeFileSync,
+  };
+  const parentRoot =
+    options.preparedArtifactsRoot ??
+    resolvePreparedArtifactsRoot(options.env);
+  const canonicalParent = canonicalizePreparedArtifactsRoot(parentRoot, fsOps);
+  const candidate = validatePreparedArtifactCandidatePath(
+    preparedRoot,
+    canonicalParent,
+    fsOps,
+  );
+  const marker = readPreparedArtifactOwnerMarker(candidate, fsOps);
+  assertPreparedArtifactOwnerCapability(marker, options.ownerCapability);
+  const markerPath = path.join(candidate, PREPARED_ARTIFACT_OWNER_FILE);
+  writeFileAtomicallyNoFollow({
+    contents: `${JSON.stringify({
+      ...marker,
+      state: "handedOff",
+      producerLeaseExpiresAt: null,
+      handedOffAt: new Date(options.now ?? Date.now()).toISOString(),
+    })}\n`,
+    directory: candidate,
+    fsOps,
+    randomUUID: options.randomUUID,
+    targetPath: markerPath,
+    temporaryPrefix: `${PREPARED_ARTIFACT_OWNER_FILE}.handoff-${process.pid}-`,
+  });
+  return { ok: true, released: candidate };
+}
+
+function removeOwnedPreparedArtifact(preparedRoot, options = {}) {
+  const fsOps = preparedArtifactGcFileSystem(options);
+  const parentRoot =
+    options.preparedArtifactsRoot ??
+    resolvePreparedArtifactsRoot(options.env);
+  const canonicalParent = canonicalizePreparedArtifactsRoot(parentRoot, fsOps);
+  const candidate = validatePreparedArtifactCandidatePath(
+    preparedRoot,
+    canonicalParent,
+    fsOps,
+  );
+  const marker = readPreparedArtifactOwnerMarker(candidate, fsOps);
+  assertPreparedArtifactOwnerCapability(marker, options.ownerCapability);
+  fsOps.rmSync(candidate, { force: true, recursive: true });
+  return { ok: true, removed: candidate };
+}
+
+function garbageCollectOwnedPreparedArtifacts(options = {}) {
+  const fsOps = preparedArtifactGcFileSystem(options);
+  const parentRoot =
+    options.preparedArtifactsRoot ??
+    resolvePreparedArtifactsRoot(options.env);
+  const canonicalParent = canonicalizePreparedArtifactsRoot(parentRoot, fsOps);
+  const activePreparedRoots = new Set();
+  for (const active of options.activePreparedRoots ?? []) {
+    addActivePreparedRootAliases(activePreparedRoots, active, fsOps);
+  }
+  const result = { removed: [], preserved: [], rejected: [] };
+  const removalLimit = Math.max(
+    0,
+    Math.min(
+      PREPARED_ARTIFACT_GC_LIMIT,
+      Number.isSafeInteger(options.limit)
+        ? options.limit
+        : PREPARED_ARTIFACT_GC_LIMIT,
+    ),
+  );
+  const scanLimit = Math.max(
+    removalLimit,
+    Math.min(
+      PREPARED_ARTIFACT_GC_SCAN_LIMIT,
+      Number.isSafeInteger(options.scanLimit)
+        ? options.scanLimit
+        : PREPARED_ARTIFACT_GC_SCAN_LIMIT,
+    ),
+  );
+  const entries = fsOps
+    .readdirSync(canonicalParent, { withFileTypes: true })
+    .filter((entry) => entry.name.startsWith(PREPARED_ARTIFACT_PREFIX))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const cursor = readPreparedArtifactGcCursor(canonicalParent, fsOps);
+  const selectedEntries = selectPreparedArtifactGcEntries(
+    entries,
+    cursor,
+    scanLimit,
+  );
+  const candidates = [];
+  const now = options.now ?? Date.now();
+  for (const entry of selectedEntries) {
+    const candidatePath = path.join(canonicalParent, entry.name);
+    try {
+      const candidate = validatePreparedArtifactCandidatePath(
+        candidatePath,
+        canonicalParent,
+        fsOps,
+      );
+      if (activePreparedRoots.has(candidate)) {
+        result.preserved.push(candidate);
+        continue;
       }
-    }
-    throw failure;
-  } finally {
-    if (signatureBackup && !preserveSignatureBackup) {
-      try {
-        cleanupSignatureBackupSync(signatureBackup);
-      } catch (error) {
-        logger?.warn?.(
-          `[prototype] signature backup cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      const marker = readPreparedArtifactOwnerMarker(candidate, fsOps);
+      if (
+        hasActiveProducerLease(
+          marker,
+          now,
+          options.isProcessAlive ?? isProcessAlive,
+        )
+      ) {
+        result.preserved.push(candidate);
+        continue;
       }
-    } else if (signatureBackup) {
-      logger?.warn?.(
-        `[prototype] preserving signature backup after rollback failure: ${signatureBackup.backupPath}`,
-      );
-    }
-    if (replacement && !preserveReplacementBackup) {
-      cleanupRawArchiveContainerBestEffort(
-        replacement.backupDir,
-        replacement.fsOps,
-        options,
-        logger,
-        "replacement backup cleanup",
-      );
-    } else if (replacement) {
-      logger?.warn?.(
-        `[prototype] preserving replacement backup after rollback failure: ${replacement.backupDir}`,
-      );
-    }
-    if (!preservePreparedArtifacts && !preserveReplacementBackup) {
-      cleanupRawArchiveContainerBestEffort(
-        prepared.stagingRoot,
-        prepared.fsOps,
-        options,
-        logger,
-        "prepared artifact cleanup",
-      );
-    } else {
-      logger?.warn?.(
-        `[prototype] preserving prepared artifacts after rollback failure: ${prepared.stagingRoot}`,
-      );
+      candidates.push(candidate);
+    } catch (error) {
+      result.rejected.push({
+        path: candidatePath,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
+  if (selectedEntries.length > 0) {
+    writePreparedArtifactGcCursor(
+      canonicalParent,
+      selectedEntries.at(-1).name,
+      fsOps,
+    );
+  }
+  if (typeof options.refreshActivePreparedRoots === "function") {
+    let refreshed;
+    try {
+      refreshed = options.refreshActivePreparedRoots();
+    } catch {
+      refreshed = null;
+    }
+    if (!Array.isArray(refreshed)) {
+      result.preserved.push(...candidates);
+      return result;
+    }
+    for (const active of refreshed) {
+      addActivePreparedRootAliases(activePreparedRoots, active, fsOps);
+    }
+  }
+  for (const candidate of candidates) {
+    if (result.removed.length >= removalLimit) {
+      break;
+    }
+    if (activePreparedRoots.has(candidate)) {
+      result.preserved.push(candidate);
+      continue;
+    }
+    try {
+      fsOps.rmSync(candidate, { force: true, recursive: true });
+      result.removed.push(candidate);
+    } catch (error) {
+      result.rejected.push({
+        path: candidate,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return result;
+}
 
+function cleanupOwnedPreparedArtifactsWithLauncher({
+  appBundlePath,
+  env = process.env,
+  isProcessAlive: processIsAlive,
+  logger = console,
+  now,
+  runtimeLauncher,
+} = {}) {
+  if (
+    !runtimeLauncher?.supported ||
+    typeof runtimeLauncher.status !== "function" ||
+    !appBundlePath
+  ) {
+    return { skipped: true, reason: "launcher status unavailable" };
+  }
+  let status;
+  try {
+    status = runtimeLauncher.status(appBundlePath);
+  } catch (error) {
+    logger?.warn?.(
+      `[prototype] prepared artifact cleanup deferred: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return { skipped: true, reason: "launcher status failed" };
+  }
+  const transaction = status?.result?.transaction;
+  const activePreparedRoots = activePreparedRootsFromTransaction(transaction);
+  return garbageCollectOwnedPreparedArtifacts({
+    activePreparedRoots,
+    env,
+    isProcessAlive: processIsAlive,
+    now,
+    refreshActivePreparedRoots: () => {
+      const refreshed = runtimeLauncher.status(appBundlePath);
+      return activePreparedRootsFromTransaction(
+        refreshed?.result?.transaction,
+      );
+    },
+  });
+}
+
+function validatePreparedArtifactCandidatePath(
+  candidatePath,
+  canonicalParent,
+  fsOps,
+  { allowMissing = false } = {},
+) {
+  if (typeof candidatePath !== "string" || !path.isAbsolute(candidatePath)) {
+    throw new Error("Prepared artifact path must be absolute");
+  }
+  const resolved = path.resolve(candidatePath);
+  const comparableResolved = resolveKnownDarwinSystemPathAlias(resolved);
+  const comparableParent = resolveKnownDarwinSystemPathAlias(canonicalParent);
+  if (
+    path.dirname(comparableResolved) !== comparableParent ||
+    !path.basename(resolved).startsWith(PREPARED_ARTIFACT_PREFIX)
+  ) {
+    throw new Error("Prepared artifact path is outside the controlled parent");
+  }
+  let stat;
+  try {
+    stat = fsOps.lstatSync(resolved);
+  } catch (error) {
+    if (allowMissing && error?.code === "ENOENT") {
+      return comparableResolved;
+    }
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error("Prepared artifact candidate must be a real directory");
+  }
+  const canonicalCandidate = fsOps.realpathSync(resolved);
+  if (
+    path.dirname(resolveKnownDarwinSystemPathAlias(canonicalCandidate)) !==
+    comparableParent
+  ) {
+    throw new Error("Prepared artifact candidate escapes the controlled parent");
+  }
+  return canonicalCandidate;
+}
+
+function addActivePreparedRootAliases(activeRoots, candidatePath, fsOps) {
+  if (
+    typeof candidatePath !== "string" ||
+    !path.isAbsolute(candidatePath)
+  ) {
+    return;
+  }
+  const resolved = path.resolve(candidatePath);
+  activeRoots.add(resolved);
+  activeRoots.add(resolveKnownDarwinSystemPathAlias(resolved));
+  try {
+    activeRoots.add(fsOps.realpathSync(resolved));
+  } catch {}
+}
+
+function resolveKnownDarwinSystemPathAlias(targetPath) {
+  // macOS exposes the system-owned /var alias through /private/var. Keep this
+  // mapping explicit instead of realpath-ing an arbitrary candidate parent.
+  if (
+    process.platform === "darwin" &&
+    (targetPath === "/var" || targetPath.startsWith("/var/"))
+  ) {
+    return `/private${targetPath}`;
+  }
+  return targetPath;
+}
+
+function readPreparedArtifactOwnerMarker(candidate, fsOps) {
+  const markerPath = path.join(candidate, PREPARED_ARTIFACT_OWNER_FILE);
+  const markerStat = fsOps.lstatSync(markerPath);
+  if (markerStat.isSymbolicLink() || !markerStat.isFile()) {
+    throw new Error("Prepared artifact owner marker is not a regular file");
+  }
+  const marker = JSON.parse(fsOps.readFileSync(markerPath, "utf8"));
+  if (
+    marker?.schemaVersion !== PREPARED_ARTIFACT_OWNER_SCHEMA_VERSION ||
+    !normalizeString(marker?.transactionId) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      normalizeString(marker?.ownerToken) ?? "",
+    ) ||
+    !Number.isSafeInteger(marker?.producerPid) ||
+    marker.producerPid <= 0 ||
+    !["published", "handedOff"].includes(marker?.state) ||
+    (marker.state === "published" &&
+      !Number.isFinite(Date.parse(marker.producerLeaseExpiresAt)))
+  ) {
+    throw new Error("Prepared artifact owner marker is invalid");
+  }
+  return marker;
+}
+
+function assertPreparedArtifactOwnerCapability(marker, expected) {
+  if (
+    !expected ||
+    marker.ownerToken !== expected.ownerToken ||
+    marker.transactionId !== expected.transactionId ||
+    marker.producerPid !== expected.producerPid
+  ) {
+    throw new Error("Prepared artifact owner capability does not match");
+  }
+}
+
+function preparedArtifactGcFileSystem(options) {
   return {
-    ok: true,
-    updated: true,
-    workspace: plan.workspace,
-    appBundlePath: plan.appBundlePath,
+    chmodSync: options.chmodSync ?? fs.chmodSync,
+    closeSync: options.closeSync ?? fs.closeSync,
+    lstatSync: options.lstatSync ?? fs.lstatSync,
+    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
+    openSync: options.openSync ?? fs.openSync,
+    randomUUID: options.randomUUID ?? crypto.randomUUID,
+    readFileSync: options.readFileSync ?? fs.readFileSync,
+    readdirSync: options.readdirSync ?? fs.readdirSync,
+    realpathSync: options.realpathSync ?? fs.realpathSync,
+    renameSync: options.renameSync ?? fs.renameSync,
+    rmSync: options.rmSync ?? fs.rmSync,
+    writeFileSync: options.writeFileSync ?? fs.writeFileSync,
   };
 }
 
-function resolveInstalledArtifactUpdatePlanInWorker(options = {}) {
-  const workerOptions = {
-    commandEnv: options.commandEnv,
-    env: options.env ?? { ...process.env },
-    platform: options.platform ?? process.platform,
-    resourcesPath: options.resourcesPath ?? currentResourcesPath(),
-    workspace: options.workspace,
-  };
-  if (Object.hasOwn(options, "isPackaged")) {
-    workerOptions.isPackaged = options.isPackaged;
+function hasActiveProducerLease(marker, now, processIsAlive) {
+  if (marker?.state !== "published") {
+    return false;
   }
+  const expiresAt = Date.parse(marker.producerLeaseExpiresAt);
+  return (
+    Number.isFinite(expiresAt) &&
+    expiresAt > now &&
+    processIsAlive(marker.producerPid)
+  );
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function activePreparedRootsFromTransaction(transaction) {
+  const phase = normalizeString(transaction?.phase)?.toLowerCase();
+  return phase === "prepared" &&
+    typeof transaction?.request?.preparedRoot === "string"
+    ? [transaction.request.preparedRoot]
+    : [];
+}
+
+function readPreparedArtifactGcCursor(parentRoot, fsOps) {
+  const cursorPath = path.join(
+    parentRoot,
+    PREPARED_ARTIFACT_GC_CURSOR_FILE,
+  );
+  try {
+    const stat = fsOps.lstatSync(cursorPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error("Prepared artifact GC cursor must be a regular file");
+    }
+    return normalizeString(
+      fsOps.readFileSync(cursorPath, "utf8"),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function writePreparedArtifactGcCursor(parentRoot, cursor, fsOps) {
+  const cursorPath = path.join(
+    parentRoot,
+    PREPARED_ARTIFACT_GC_CURSOR_FILE,
+  );
+  try {
+    const stat = fsOps.lstatSync(cursorPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error("Prepared artifact GC cursor must be a regular file");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  writeFileAtomicallyNoFollow({
+    contents: `${cursor}\n`,
+    directory: parentRoot,
+    fsOps,
+    randomUUID: fsOps.randomUUID,
+    targetPath: cursorPath,
+    temporaryPrefix: `${PREPARED_ARTIFACT_GC_CURSOR_FILE}.${process.pid}.`,
+  });
+}
+
+function writeFileAtomicallyNoFollow({
+  contents,
+  directory,
+  fsOps,
+  randomUUID = crypto.randomUUID,
+  targetPath,
+  temporaryPrefix,
+}) {
+  const temporaryPath = path.join(
+    directory,
+    `${temporaryPrefix}${randomUUID()}`,
+  );
+  let created = false;
+  let descriptor;
+  try {
+    descriptor = fsOps.openSync(temporaryPath, "wx", 0o600);
+    created = true;
+    fsOps.writeFileSync(descriptor, contents, { encoding: "utf8" });
+    fsOps.closeSync(descriptor);
+    descriptor = undefined;
+    fsOps.renameSync(temporaryPath, targetPath);
+    created = false;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        fsOps.closeSync(descriptor);
+      } catch {}
+    }
+    if (created) {
+      try {
+        fsOps.rmSync(temporaryPath, { force: true });
+      } catch {}
+    }
+  }
+}
+
+function selectPreparedArtifactGcEntries(entries, cursor, limit) {
+  if (entries.length === 0 || limit === 0) {
+    return [];
+  }
+  const startIndex = cursor
+    ? Math.max(
+        0,
+        entries.findIndex((entry) => entry.name > cursor),
+      )
+    : 0;
+  const selected = [];
+  for (
+    let offset = 0;
+    offset < Math.min(limit, entries.length);
+    offset += 1
+  ) {
+    selected.push(entries[(startIndex + offset) % entries.length]);
+  }
+  return selected;
+}
+
+function canonicalizePreparedArtifactsRoot(parentRoot, fsOps) {
+  fsOps.mkdirSync(parentRoot, { recursive: true, mode: 0o700 });
+  let stat = fsOps.lstatSync(parentRoot);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error("Prepared artifact parent must be a real directory");
+  }
+  const currentUid =
+    typeof process.getuid === "function" ? process.getuid() : null;
+  if (
+    currentUid !== null &&
+    typeof stat.uid === "number" &&
+    stat.uid !== currentUid
+  ) {
+    throw new Error("Prepared artifact parent is not owned by the current user");
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    fsOps.chmodSync(parentRoot, 0o700);
+    stat = fsOps.lstatSync(parentRoot);
+    if ((stat.mode & 0o077) !== 0) {
+      throw new Error("Prepared artifact parent permissions are not private");
+    }
+  }
+  return fsOps.realpathSync(parentRoot);
+}
+
+function pathExists(targetPath, fsOps) {
+  try {
+    fsOps.lstatSync(targetPath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function artifactDescriptor(resourcesRoot, relativePath, kind, fsOps) {
+  const artifactPath = path.join(resourcesRoot, relativePath);
+  if (!fsOps.statSync(artifactPath).isFile()) {
+    throw new Error(`Prepared artifact is not a file: ${artifactPath}`);
+  }
+  return {
+    relativePath,
+    sha256: sha256(fsOps.readFileSync(artifactPath)),
+    kind,
+  };
+}
+
+function packAppAsar(plan, appSourceRoot, appAsarPath, options = {}) {
+  const spawn = options.spawnSync ?? spawnSync;
+  const result = spawn(
+    "pnpm",
+    ["dlx", "@electron/asar", "pack", appSourceRoot, appAsarPath],
+    {
+      cwd: plan.workspace,
+      encoding: "utf8",
+      env: options.env ?? plan.commandEnv ?? process.env,
+      stdio: options.stdio ?? "pipe",
+    },
+  );
+  assertSuccessfulSpawn(result, "pnpm dlx @electron/asar pack");
+}
+
+function resolveSourceCommit(workspace, options = {}) {
+  const spawn = options.spawnSync ?? spawnSync;
+  const result = spawn("git", ["rev-parse", "HEAD"], {
+    cwd: workspace,
+    encoding: "utf8",
+    env: options.env ?? process.env,
+    stdio: "pipe",
+  });
+  assertSuccessfulSpawn(result, "git rev-parse HEAD");
+  const sourceCommit = normalizeString(result.stdout);
+  if (!sourceCommit) {
+    throw new Error("git rev-parse HEAD returned an empty source commit");
+  }
+  return sourceCommit;
+}
+
+function assertPreparedArtifactSources(plan, options = {}) {
+  const statSync = options.statSync ?? fs.statSync;
+  assertPathType(statSync, plan.sourceAppDir, "directory", "source app");
+  assertPathType(statSync, plan.frontendDistPath, "directory", "frontend dist");
+  assertPathType(
+    statSync,
+    plan.appServerBinaryPath,
+    "file",
+    "release app-server binary",
+  );
+  assertPathType(
+    statSync,
+    plan.defaultCompactPromptSourcePath,
+    "file",
+    "default compact prompt",
+  );
+}
+
+function assertPathType(statSync, targetPath, expectedType, label) {
+  let stat;
+  try {
+    stat = statSync(targetPath);
+  } catch (error) {
+    throw new Error(`Missing ${label}: ${targetPath}`, { cause: error });
+  }
+  const matches =
+    expectedType === "directory" ? stat.isDirectory() : stat.isFile();
+  if (!matches) {
+    throw new Error(`Expected ${label} to be a ${expectedType}: ${targetPath}`);
+  }
+}
+
+function preparedAppSourceFilter(source) {
+  const name = path.basename(source);
+  return (
+    name !== "dist-app" &&
+    name !== "dist-package-resources" &&
+    !name.startsWith(PREPARED_ARTIFACT_PREFIX)
+  );
+}
+
+function assertSuccessfulSpawn(result, label) {
+  if (result?.error) {
+    throw result.error;
+  }
+  if (result?.status !== 0) {
+    const stderr = normalizeString(result?.stderr);
+    throw new Error(
+      `${label} exited with ${String(result?.status)}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+}
+
+function resolveInstalledArtifactUpdatePlanInWorker(options = {}) {
+  const env = options.env ?? { ...process.env };
+  const commandEnv = {
+    ...(options.commandEnv ??
+      buildDesktopEnvironment(env, options.desktopEnvironmentOptions)),
+  };
   return runInstalledArtifactWorker(
     "resolvePlan",
-    workerOptions,
+    {
+      cargoCwd: options.cargoCwd,
+      commandEnv,
+      env,
+      platform: options.platform ?? process.platform,
+      resourcesPath: options.resourcesPath ?? currentResourcesPath(),
+      workspace: options.workspace,
+      ...(Object.hasOwn(options, "isPackaged")
+        ? { isPackaged: options.isPackaged }
+        : {}),
+    },
     options.workerOptions,
   );
 }
@@ -425,40 +1109,24 @@ function runInstalledArtifactWorker(operation, payload, options = {}) {
     });
     let settled = false;
     const settle = (callback, value) => {
-      if (settled) {
-        return;
+      if (!settled) {
+        settled = true;
+        callback(value);
       }
-      settled = true;
-      callback(value);
     };
     worker.once("message", (message) => {
       if (message?.ok) {
         settle(resolve, message.result);
         return;
       }
-      const error = new Error(
-        message?.error?.message ?? "Installed artifact worker failed",
-      );
-      if (message?.error?.name) {
-        error.name = message.error.name;
-      }
-      if (message?.error?.stack) {
-        error.stack = message.error.stack;
-      }
-      settle(reject, error);
+      settle(reject, new Error(message?.error?.message ?? "Artifact worker failed"));
     });
     worker.once("error", (error) => settle(reject, error));
     worker.once("exit", (code) => {
       if (code !== 0) {
-        settle(
-          reject,
-          new Error(`Installed artifact worker exited with code ${code}`),
-        );
+        settle(reject, new Error(`Artifact worker exited with code ${code}`));
       } else if (!settled) {
-        settle(
-          reject,
-          new Error("Installed artifact worker exited without a result"),
-        );
+        settle(reject, new Error("Artifact worker exited without a result"));
       }
     });
   });
@@ -468,769 +1136,35 @@ function materializeInstalledArtifactWorkerBundle(options = {}) {
   if (installedArtifactWorkerBundlePath) {
     return installedArtifactWorkerBundlePath;
   }
-  const mkdtempSync = options.mkdtempSync ?? fs.mkdtempSync;
-  const copyFileSync = options.copyFileSync ?? fs.copyFileSync;
-  const rmSync = options.rmSync ?? fs.rmSync;
-  const bundlePath = mkdtempSync(
+  const bundlePath = (options.mkdtempSync ?? fs.mkdtempSync)(
     path.join(os.tmpdir(), "morpheus-installed-artifact-worker-"),
   );
   try {
     for (const fileName of INSTALLED_ARTIFACT_WORKER_FILES) {
-      copyFileSync(path.join(__dirname, fileName), path.join(bundlePath, fileName));
+      (options.copyFileSync ?? fs.copyFileSync)(
+        path.join(__dirname, fileName),
+        path.join(bundlePath, fileName),
+      );
     }
   } catch (error) {
-    rmSync(bundlePath, { force: true, recursive: true });
+    (options.rmSync ?? fs.rmSync)(bundlePath, { force: true, recursive: true });
     throw error;
   }
   installedArtifactWorkerBundlePath = bundlePath;
   process.once("exit", () => {
     try {
-      rmSync(bundlePath, { force: true, recursive: true });
-    } catch {
-      // Best-effort cleanup only; a stale temp bundle is safe to remove later.
-    }
+      fs.rmSync(bundlePath, { force: true, recursive: true });
+    } catch {}
   });
   return bundlePath;
 }
 
-function prepareDirectArtifacts(plan, options = {}) {
-  const fsOps = {
-    cpSync: options.cpSync ?? fs.cpSync,
-    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
-    rmSync: options.rmSync ?? fs.rmSync,
-  };
-  buildDirectArtifactSources(plan, options);
-  assertDirectArtifactSources(plan, options);
-  const stagingRoot =
-    options.directStagingRoot ??
-    fs.mkdtempSync(path.join(os.tmpdir(), DIRECT_REFRESH_STAGING_PREFIX));
-  const stagedResourcesPath = path.join(stagingRoot, "resources");
-  const appSourceStagingPath = path.join(stagingRoot, "app-source");
-  const stagedAppAsarPath = path.join(
-    stagedResourcesPath,
-    APP_ASAR_RELATIVE_PATH,
-  );
-  const stagedAppServerPath = path.join(
-    stagedResourcesPath,
-    APP_SERVER_RELATIVE_PATH,
-  );
-  const stagedDefaultCompactPath = path.join(
-    stagedResourcesPath,
-    DEFAULT_CONFIG_RELATIVE_PATH,
-    "compact",
-    "COMPACT.md",
-  );
-
-  cleanupRawArchiveContainer(stagingRoot, fsOps, options);
-  try {
-    fsOps.mkdirSync(path.dirname(stagedAppAsarPath), { recursive: true });
-    fsOps.mkdirSync(path.dirname(stagedAppServerPath), { recursive: true });
-    fsOps.mkdirSync(path.dirname(stagedDefaultCompactPath), { recursive: true });
-    fsOps.cpSync(plan.sourceAppDir, appSourceStagingPath, {
-      recursive: true,
-      filter: directAppSourceFilter,
-    });
-    packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options);
-    fsOps.cpSync(plan.appServerBinaryPath, stagedAppServerPath);
-    fsOps.cpSync(plan.defaultCompactPromptSourcePath, stagedDefaultCompactPath);
-  } catch (error) {
-    cleanupRawArchiveContainerBestEffort(
-      stagingRoot,
-      fsOps,
-      options,
-      options.logger ?? console,
-      "failed artifact preparation cleanup",
-    );
-    throw error;
-  }
-
-  return {
-    fsOps,
-    stagedResourcesPath,
-    stagingRoot,
-  };
-}
-
-function buildDirectArtifactSources(plan, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const env = resolveCommandEnvironment(plan, options);
-  const stdio = options.stdio ?? "pipe";
-  const frontendBuild = spawn(
-    "pnpm",
-    ["--filter", "@my-codex/root-worker-prototype", "build"],
-    {
-      cwd: plan.workspace,
-      encoding: "utf8",
-      env,
-      stdio,
-    },
-  );
-  assertSuccessfulSpawn(
-    frontendBuild,
-    "pnpm --filter @my-codex/root-worker-prototype build",
-    { cwd: plan.workspace },
-  );
-  assertPathType(
-    options.statSync ?? fs.statSync,
-    plan.frontendDistPath,
-    "directory",
-    "frontend dist",
-  );
-
-  const codexRsDir = path.dirname(plan.codexRsCargoManifestPath);
-  const appServerBuild = spawn(
-    "cargo",
-    [
-      "build",
-      "--release",
-      "--package",
-      "app-server",
-      "--bin",
-      APP_SERVER_BINARY_NAME,
-      "--manifest-path",
-      plan.codexRsCargoManifestPath,
-    ],
-    {
-      cwd: codexRsDir,
-      encoding: "utf8",
-      env,
-      stdio,
-    },
-  );
-  assertSuccessfulSpawn(
-    appServerBuild,
-    "cargo build --release --package app-server --bin app-server --manifest-path <Cargo.toml>",
-    { cwd: codexRsDir },
-  );
-  assertPathType(
-    options.statSync ?? fs.statSync,
-    plan.appServerBinaryPath,
-    "file",
-    "release app-server binary",
-  );
-}
-
-function packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const env = resolveCommandEnvironment(plan, options);
-  const result = spawn(
-    "pnpm",
-    [
-      "dlx",
-      "@electron/asar",
-      "pack",
-      appSourceStagingPath,
-      stagedAppAsarPath,
-    ],
-    {
-      cwd: plan.workspace,
-      encoding: "utf8",
-      env,
-      stdio: options.stdio ?? "pipe",
-    },
-  );
-  assertSuccessfulSpawn(
-    result,
-    "pnpm dlx @electron/asar pack <source> <app.asar>",
-    { cwd: plan.workspace },
-  );
-}
-
-function codesignInstalledApp(plan, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const env = resolveCommandEnvironment(plan, options);
-  const result = spawn(
-    "codesign",
-    ["--force", "--deep", "--sign", "-", plan.appBundlePath],
-    {
-      cwd: plan.workspace,
-      encoding: "utf8",
-      env,
-      stdio: options.stdio ?? "pipe",
-    },
-  );
-  assertSuccessfulSpawn(result, "codesign --force --deep --sign - <app>", {
-    cwd: plan.workspace,
-  });
-}
-
-function resolveCommandEnvironment(plan, options = {}) {
-  return plan.commandEnv ?? options.env ?? buildDesktopEnvironment();
-}
-
-function assertSuccessfulSpawn(result, label, context = {}) {
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const stdout = result.stdout ? String(result.stdout).trim() : "";
-    const stderr = result.stderr ? String(result.stderr).trim() : "";
-    const details = [
-      `exited with ${result.status}`,
-      context.cwd ? `cwd=${context.cwd}` : null,
-      stdout ? `stdout=${truncateOutput(stdout)}` : null,
-      stderr ? `stderr=${truncateOutput(stderr)}` : null,
-    ]
-      .filter(Boolean)
-      .join("; ");
-    throw new Error(`${label} ${details}`);
-  }
-}
-
-function truncateOutput(value, maxLength = 4000) {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength)}...<truncated>`;
-}
-
-function assertDirectArtifactSources(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  assertPathType(statSync, plan.frontendDistPath, "directory", "frontend dist");
-  assertPathType(
-    statSync,
-    plan.appServerBinaryPath,
-    "file",
-    "release app-server binary",
-  );
-  assertPathType(
-    statSync,
-    plan.defaultCompactPromptSourcePath,
-    "file",
-    "default compact prompt",
-  );
-}
-
-function assertPathType(statSync, targetPath, expectedType, label) {
-  let stat;
-  try {
-    stat = statSync(targetPath);
-  } catch (error) {
-    throw new Error(`Missing ${label}: ${targetPath}${formatCause(error)}`);
-  }
-  const matches =
-    expectedType === "directory" ? stat.isDirectory() : stat.isFile();
-  if (!matches) {
-    throw new Error(`Expected ${label} to be a ${expectedType}: ${targetPath}`);
-  }
-}
-
-function directAppSourceFilter(source) {
-  const name = path.basename(source);
-  return (
-    name !== "dist-app" &&
-    name !== "dist-package-resources" &&
-    !name.startsWith(DIRECT_REFRESH_STAGING_PREFIX)
-  );
-}
-
-function assertSourceWorkspace(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  if (!statSync(plan.sourceAppDir).isDirectory()) {
-    throw new Error(
-      `Morpheus source app directory is missing: ${plan.sourceAppDir}`,
-    );
-  }
-}
-
-function assertInstalledTargetsWritable(plan, options = {}) {
-  const accessSync = options.accessSync ?? fs.accessSync;
-  const constants = options.constants ?? fs.constants;
-  accessSync(plan.resourcesPath, constants.W_OK);
-  accessSync(plan.appBundlePath, constants.W_OK);
-  for (const artifact of plan.artifacts) {
-    const artifactAccessSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: accessSync,
-      methodName: "accessSync",
-      operation: "preflight writable check",
-      options,
-    });
-    artifactAccessSync(
-      path.join(plan.resourcesPath, artifact.relativePath),
-      constants.W_OK,
-    );
-  }
-}
-
-function assertStagedArtifacts(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  for (const artifact of plan.artifacts) {
-    const artifactPath = path.join(
-      plan.stagedResourcesPath,
-      artifact.relativePath,
-    );
-    const artifactStatSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: statSync,
-      methodName: "statSync",
-      operation: "staged artifact type check",
-      options,
-    });
-    const stat = artifactStatSync(artifactPath);
-    if (artifact.kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
-      throw new Error(
-        `Prepared refresh artifact has unexpected type: ${artifactPath}`,
-      );
-    }
-  }
-}
-
-function assertInstalledArtifactsMatchStaged(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  for (const artifact of plan.artifacts) {
-    const stagedPath = path.join(plan.stagedResourcesPath, artifact.relativePath);
-    const installedPath = path.join(plan.resourcesPath, artifact.relativePath);
-    if (artifact.kind === "directory") {
-      assertDirectoryDigestsEqual(statSync, stagedPath, installedPath);
-      continue;
-    }
-    const fileOptions =
-      isRawAppAsarArtifact(artifact)
-        ? {
-            ...options,
-            readFileSync: resolveRawAppAsarFileSystemMethod({
-              defaultMethod: options.readFileSync ?? fs.readFileSync,
-              methodName: "readFileSync",
-              operation: "postcondition digest",
-              options,
-            }),
-          }
-        : options;
-    assertFileDigestsEqual(stagedPath, installedPath, fileOptions);
-  }
-}
-
-function isRawAppAsarArtifact(artifact) {
-  return (
-    artifact?.kind === "file" &&
-    artifact.relativePath === APP_ASAR_RELATIVE_PATH
-  );
-}
-
-function resolveRawAppAsarFileSystemMethod({
-  defaultMethod,
-  methodName,
-  operation,
-  options = {},
-}) {
-  const injectedMethodName =
-    methodName === "readFileSync" ? "rawReadFileSync" : null;
-  if (
-    injectedMethodName &&
-    typeof options[injectedMethodName] === "function"
-  ) {
-    return options[injectedMethodName];
-  }
-  if (options.rawArchiveFileSystem != null) {
-    return requireRawAppAsarMethod(
-      options.rawArchiveFileSystem,
-      methodName,
-      operation,
-    );
-  }
-  const isElectron =
-    options.isElectron ?? typeof process.versions?.electron === "string";
-  if (isElectron) {
-    const loadOriginalFileSystem =
-      options.loadOriginalFileSystem ?? (() => require("original-fs"));
-    let originalFileSystem;
-    try {
-      originalFileSystem = loadOriginalFileSystem();
-    } catch (error) {
-      throw new Error(
-        `Failed to load Electron original-fs ${methodName} for raw app.asar ${operation}${formatCause(error)}`,
-        { cause: error },
-      );
-    }
-    return requireRawAppAsarMethod(
-      originalFileSystem,
-      methodName,
-      operation,
-    );
-  }
-  return defaultMethod;
-}
-
-function requireRawAppAsarMethod(fileSystem, methodName, operation) {
-  const method = fileSystem?.[methodName];
-  if (typeof method !== "function") {
-    throw new Error(
-      `Electron original-fs does not provide ${methodName} for raw app.asar ${operation}`,
-    );
-  }
-  return method;
-}
-
-function resolveArtifactFileSystemMethod({
-  artifact,
-  defaultMethod,
-  methodName,
-  operation,
-  options,
-}) {
-  if (!isRawAppAsarArtifact(artifact)) {
-    return defaultMethod;
-  }
-  return resolveRawAppAsarFileSystemMethod({
-    defaultMethod,
-    methodName,
-    operation,
-    options,
-  });
-}
-
-function assertDirectoryDigestsEqual(statSync, stagedPath, installedPath) {
-  const stagedFiles = listDirectoryFiles(stagedPath);
-  const installedFiles = listDirectoryFiles(installedPath);
-  if (JSON.stringify(installedFiles) !== JSON.stringify(stagedFiles)) {
-    throw new Error(
-      `Installed directory files differ from staged artifact: ${installedPath}`,
-    );
-  }
-  for (const relativePath of stagedFiles) {
-    const stagedFile = path.join(stagedPath, relativePath);
-    const installedFile = path.join(installedPath, relativePath);
-    assertPathType(statSync, installedFile, "file", "installed artifact file");
-    assertFileDigestsEqual(stagedFile, installedFile);
-  }
-}
-
-function assertFileDigestsEqual(stagedPath, installedPath, options = {}) {
-  const stagedHash = fileDigest(stagedPath, options);
-  const installedHash = fileDigest(installedPath, options);
-  if (stagedHash !== installedHash) {
-    throw new Error(
-      `Installed artifact does not match staged artifact: ${installedPath}`,
-    );
-  }
-}
-
-function fileDigest(filePath, options = {}) {
-  const readFileSync = options.readFileSync ?? fs.readFileSync;
-  return bufferDigest(readFileSync(filePath));
-}
-
-function bufferDigest(buffer) {
+function sha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-function listDirectoryFiles(rootPath) {
-  const files = [];
-  collectDirectoryFiles(rootPath, rootPath, files);
-  return files.sort();
-}
-
-function collectDirectoryFiles(rootPath, currentPath, files) {
-  for (const entry of fs.readdirSync(currentPath, { withFileTypes: true })) {
-    const entryPath = path.join(currentPath, entry.name);
-    if (entry.isDirectory()) {
-      collectDirectoryFiles(rootPath, entryPath, files);
-      continue;
-    }
-    if (entry.isFile()) {
-      files.push(path.relative(rootPath, entryPath));
-    }
-  }
-}
-
-function formatCause(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message ? ` (${message})` : "";
-}
-
-function replaceInstalledArtifactsSync(plan, options = {}) {
-  const fsOps = {
-    cpSync: options.cpSync ?? fs.cpSync,
-    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
-    renameSync: options.renameSync ?? fs.renameSync,
-    rmSync: options.rmSync ?? fs.rmSync,
-  };
-  const updateId =
-    options.updateId ??
-    `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  const workRoot = options.replacementWorkRoot ?? os.tmpdir();
-  const stagingDir = path.join(
-    workRoot,
-    `.morpheus-update-staging-${updateId}`,
-  );
-  const backupDir = path.join(
-    workRoot,
-    `.morpheus-update-backup-${updateId}`,
-  );
-
-  cleanupRawArchiveContainer(stagingDir, fsOps, options);
-  cleanupRawArchiveContainer(backupDir, fsOps, options);
-  fsOps.mkdirSync(stagingDir, { recursive: true });
-  fsOps.mkdirSync(backupDir, { recursive: true });
-
-  let completed = false;
-  let operationError = null;
-  let preserveBackup = false;
-  const backedUpArtifacts = [];
-  try {
-    for (const artifact of plan.artifacts) {
-      const artifactCpSync = resolveArtifactFileSystemMethod({
-        artifact,
-        defaultMethod: fsOps.cpSync,
-        methodName: "cpSync",
-        operation: "replacement staging copy",
-        options,
-      });
-      artifactCpSync(
-        path.join(plan.stagedResourcesPath, artifact.relativePath),
-        path.join(stagingDir, artifact.relativePath),
-        { recursive: artifact.kind === "directory" },
-      );
-    }
-
-    for (const artifact of plan.artifacts) {
-      const artifactRenameSync = resolveArtifactFileSystemMethod({
-        artifact,
-        defaultMethod: fsOps.renameSync,
-        methodName: "renameSync",
-        operation: "installed artifact backup",
-        options,
-      });
-      fsOps.mkdirSync(path.dirname(path.join(backupDir, artifact.relativePath)), {
-        recursive: true,
-      });
-      try {
-        artifactRenameSync(
-          path.join(plan.resourcesPath, artifact.relativePath),
-          path.join(backupDir, artifact.relativePath),
-        );
-        backedUpArtifacts.push(artifact);
-      } catch (error) {
-        const rollbackErrors = restoreBackups(
-          plan,
-          backupDir,
-          fsOps,
-          backedUpArtifacts,
-          options,
-        );
-        preserveBackup = rollbackErrors.length > 0;
-        const failure = appendSecondaryFailures(
-          error,
-          "partial backup rollback",
-          rollbackErrors,
-        );
-        if (preserveBackup) {
-          markPreservedArtifactBackup(failure, backupDir);
-        }
-        throw failure;
-      }
-    }
-
-    try {
-      for (const artifact of plan.artifacts) {
-        const artifactRenameSync = resolveArtifactFileSystemMethod({
-          artifact,
-          defaultMethod: fsOps.renameSync,
-          methodName: "renameSync",
-          operation: "installed artifact replacement",
-          options,
-        });
-        fsOps.mkdirSync(
-          path.dirname(path.join(plan.resourcesPath, artifact.relativePath)),
-          {
-            recursive: true,
-          },
-        );
-        artifactRenameSync(
-          path.join(stagingDir, artifact.relativePath),
-          path.join(plan.resourcesPath, artifact.relativePath),
-        );
-      }
-    } catch (error) {
-      const rollbackErrors = restoreBackups(
-        plan,
-        backupDir,
-        fsOps,
-        backedUpArtifacts,
-        options,
-      );
-      preserveBackup = rollbackErrors.length > 0;
-      const failure = appendSecondaryFailures(
-        error,
-        "partial replacement rollback",
-        rollbackErrors,
-      );
-      if (preserveBackup) {
-        markPreservedArtifactBackup(failure, backupDir);
-      }
-      throw failure;
-    }
-    completed = true;
-  } catch (error) {
-    operationError = error;
-    throw error;
-  } finally {
-    const logger = options.logger ?? console;
-    cleanupRawArchiveContainerBestEffort(
-      stagingDir,
-      fsOps,
-      options,
-      logger,
-      operationError
-        ? "failed replacement staging cleanup"
-        : "replacement staging cleanup",
-    );
-    if ((!options.keepBackup || !completed) && !preserveBackup) {
-      cleanupRawArchiveContainerBestEffort(
-        backupDir,
-        fsOps,
-        options,
-        logger,
-        operationError
-          ? "failed replacement backup cleanup"
-          : "replacement backup cleanup",
-      );
-    } else if (preserveBackup) {
-      logger?.warn?.(
-        `[prototype] preserving replacement backup after rollback failure: ${backupDir}`,
-      );
-    }
-  }
-
-  return { backupDir, fsOps, stagingDir, updateId };
-}
-
-function restoreBackups(
-  plan,
-  backupDir,
-  fsOps,
-  artifacts = plan.artifacts,
-  options = {},
-) {
-  const errors = [];
-  for (const artifact of artifacts) {
-    const target = path.join(plan.resourcesPath, artifact.relativePath);
-    const backup = path.join(backupDir, artifact.relativePath);
-    const artifactRmSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: fsOps.rmSync,
-      methodName: "rmSync",
-      operation: "rollback target cleanup",
-      options,
-    });
-    const artifactRenameSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: fsOps.renameSync,
-      methodName: "renameSync",
-      operation: "rollback backup restore",
-      options,
-    });
-    try {
-      artifactRmSync(target, { recursive: true, force: true });
-    } catch (error) {
-      errors.push(error);
-      continue;
-    }
-    try {
-      artifactRenameSync(backup, target);
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  return errors;
-}
-
-function backupSignatureMetadataSync(plan, options = {}) {
-  const fsOps = options.fsOps ?? {
-    cpSync: options.cpSync ?? fs.cpSync,
-    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
-    renameSync: options.renameSync ?? fs.renameSync,
-    rmSync: options.rmSync ?? fs.rmSync,
-  };
-  const existsSync = options.existsSync ?? fs.existsSync;
-  const signaturePath = path.join(plan.appBundlePath, SIGNATURE_RELATIVE_PATH);
-  const backupRoot =
-    options.signatureBackupRoot ??
-    path.join(
-      os.tmpdir(),
-      `${DIRECT_REFRESH_STAGING_PREFIX}signature-${options.updateId ?? "current"}`,
-    );
-  const backupPath = path.join(
-    backupRoot,
-    `.morpheus-signature-backup-${options.updateId ?? "current"}`,
-  );
-  cleanupPath(backupPath, fsOps);
-  if (!existsSync(signaturePath)) {
-    return { backupPath, existed: false, fsOps, signaturePath };
-  }
-  fsOps.mkdirSync(path.dirname(backupPath), { recursive: true });
-  fsOps.cpSync(signaturePath, backupPath, { recursive: true });
-  return { backupPath, existed: true, fsOps, signaturePath };
-}
-
-function restoreSignatureMetadataSync(signatureBackup) {
-  cleanupPath(signatureBackup.signaturePath, signatureBackup.fsOps);
-  if (signatureBackup.existed) {
-    signatureBackup.fsOps.renameSync(
-      signatureBackup.backupPath,
-      signatureBackup.signaturePath,
-    );
-  }
-}
-
-function cleanupSignatureBackupSync(signatureBackup) {
-  cleanupPath(signatureBackup.backupPath, signatureBackup.fsOps);
-}
-
-function cleanupPath(targetPath, fsOps) {
-  fsOps.rmSync(targetPath, { recursive: true, force: true });
-}
-
-function cleanupRawArchiveContainer(targetPath, fsOps, options = {}) {
-  const rmSync = resolveRawAppAsarFileSystemMethod({
-    defaultMethod: fsOps.rmSync,
-    methodName: "rmSync",
-    operation: "updater temporary container cleanup",
-    options,
-  });
-  rmSync(targetPath, { recursive: true, force: true });
-}
-
-function cleanupRawArchiveContainerBestEffort(
-  targetPath,
-  fsOps,
-  options,
-  logger,
-  operation,
-) {
-  try {
-    cleanupRawArchiveContainer(targetPath, fsOps, options);
-  } catch (error) {
-    logger?.warn?.(
-      `[prototype] ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-function appendSecondaryFailures(error, operation, secondaryErrors) {
-  if (!Array.isArray(secondaryErrors) || secondaryErrors.length === 0) {
-    return error;
-  }
-  const primaryMessage = error instanceof Error ? error.message : String(error);
-  const details = secondaryErrors
-    .map((secondaryError) =>
-      secondaryError instanceof Error
-        ? secondaryError.message
-        : String(secondaryError),
-    )
-    .join("; ");
-  return new Error(`${primaryMessage}; ${operation} also failed: ${details}`, {
-    cause: error,
-  });
-}
-
-function markPreservedArtifactBackup(error, backupDir) {
-  if (!error || typeof error !== "object") {
-    return;
-  }
-  error.preserveArtifactBackup = true;
-  error.artifactBackupDir = backupDir;
+function normalizeString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function currentResourcesPath() {
@@ -1243,13 +1177,17 @@ module.exports = {
   APP_ASAR_RELATIVE_PATH,
   APP_SERVER_RELATIVE_PATH,
   DEFAULT_CONFIG_RELATIVE_PATH,
-  SIGNATURE_RELATIVE_PATH,
-  backupSignatureMetadataSync,
-  buildDirectArtifactSources,
+  PREPARED_ARTIFACT_SCHEMA_VERSION,
+  PREPARED_ARTIFACT_OWNER_FILE,
+  cleanupOwnedPreparedArtifactsWithLauncher,
+  garbageCollectOwnedPreparedArtifacts,
   packAppAsar,
-  prepareDirectArtifacts,
-  listInstalledElectronShellRelativePaths,
+  prepareInstalledArtifacts,
+  releaseOwnedPreparedArtifactLease,
+  removeOwnedPreparedArtifact,
+  resolvePreparedArtifactsRoot,
   listElectronShellSourceRelativePaths,
+  listInstalledElectronShellRelativePaths,
   resolveElectronShellUpdate,
   resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
@@ -1258,6 +1196,4 @@ module.exports = {
   runInstalledArtifactWorker,
   updateInstalledArtifacts,
   updateInstalledArtifactsInWorker,
-  replaceInstalledArtifactsSync,
-  restoreSignatureMetadataSync,
 };

@@ -407,19 +407,26 @@ async fn in_progress_poll_event_turn_reads_active_status() -> Result<()> {
         )
         .await??;
         let ThreadReadResponse { thread } = to_response(thread_read_resp)?;
-        saw_in_progress_poll_event = thread.turns.iter().flat_map(|turn| &turn.items).any(|item| {
-            matches!(
-                item,
-                ThreadItem::BuiltinToolCall {
-                    tool,
-                    status,
-                    ..
-                } if tool == "poll_event" && *status == DynamicToolCallStatus::InProgress
-            )
-        });
+        saw_in_progress_poll_event = thread
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .any(|item| {
+                matches!(
+                    item,
+                    ThreadItem::BuiltinToolCall {
+                        tool,
+                        status,
+                        ..
+                    } if tool == "poll_event" && *status == DynamicToolCallStatus::InProgress
+                )
+            });
         if saw_in_progress_poll_event {
             assert!(
-                matches!(thread.lifecycle_status, ThreadLifecycleStatus::Active { .. }),
+                matches!(
+                    thread.lifecycle_status,
+                    ThreadLifecycleStatus::Active { .. }
+                ),
                 "in-progress turn must stay active, got {:?}",
                 thread.lifecycle_status
             );

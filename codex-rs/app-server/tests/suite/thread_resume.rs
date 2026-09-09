@@ -14,11 +14,12 @@ use app_server_protocol::RequestId;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::SessionSource;
-use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadGoalClearResponse;
 use app_server_protocol::ThreadGoalSetResponse;
 use app_server_protocol::ThreadGoalStatus;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use app_server_protocol::ThreadMetadataUpdateParams;
 use app_server_protocol::ThreadReadParams;
@@ -28,7 +29,6 @@ use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::TurnItemsView;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
@@ -49,9 +49,9 @@ use app_test_support::test_absolute_path;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use chrono::Utc;
-use config_service::types::AuthCredentialsStoreMode;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use config_service::types::AuthCredentialsStoreMode;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use protocol::ThreadId;
@@ -142,7 +142,6 @@ async fn wait_for_responses_request_count(
     .await??;
     Ok(())
 }
-
 
 mod basic_resume;
 mod goals_and_usage;

@@ -51,6 +51,8 @@ use protocol::protocol::ApplyPatchApprovalRequestEvent;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::CodexErrorInfo;
 use protocol::protocol::CommandExecutionNotificationDisplayEvent;
+use protocol::protocol::ClientRecoveryHandledEvent;
+use protocol::protocol::ClientRecoveryRecordedEvent;
 use protocol::protocol::CompactedItem;
 use protocol::protocol::ContextCompactedEvent;
 use protocol::protocol::DynamicToolCallResponseEvent;

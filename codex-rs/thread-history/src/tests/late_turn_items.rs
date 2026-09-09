@@ -1,5 +1,188 @@
 use super::*;
 
+#[test]
+fn client_recovery_event_replays_as_typed_thread_item() {
+    let first_identity = "11111111-1111-4111-8111-111111111111";
+    let second_identity = "22222222-2222-4222-8222-222222222222";
+    let first = ClientRecoveryRecordedEvent {
+        id: format!("client-recovery:{first_identity}"),
+        turn_id: format!("client-recovery:{first_identity}"),
+        recovery_identity: Some(
+            first_identity.into(),
+        ),
+        launcher_claim_id: Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into()),
+        launcher_evidence_version: Some(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        ),
+        transaction_id: "tx-1".into(),
+        request_id: "req-1".into(),
+        failed_build_id: "build-bad".into(),
+        failed_build_hash: "bad-hash".into(),
+        source_commit: "source-commit".into(),
+        requested_by_thread_id: None,
+        mode: "full".into(),
+        failure_phase: "ready-timeout".into(),
+        exit_code: Some(1),
+        signal: None,
+        ready_timeout_ms: Some(30_000),
+        log_path: Some("/tmp/recovery.log".into()),
+        transaction_path: Some("/tmp/transaction.json".into()),
+        recovered_build_id: "build-good".into(),
+        prompt: "Inspect the rollback evidence.".into(),
+        evidence_path: "/tmp/evidence.json".into(),
+        recorded_at_ms: 42,
+    };
+    let mut second = first.clone();
+    second.id = format!("client-recovery:{second_identity}");
+    second.turn_id = second.id.clone();
+    second.recovery_identity = Some(second_identity.into());
+    second.launcher_claim_id =
+        Some("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into());
+    second.launcher_evidence_version = Some(
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            .into(),
+    );
+    second.prompt = "Inspect the second rollback evidence.".into();
+    second.evidence_path = "/tmp/evidence-2.json".into();
+    second.recorded_at_ms = 43;
+
+    let turns = build_turns_from_rollout_items(&[
+        RolloutItem::EventMsg(EventMsg::ClientRecoveryRecorded(first)),
+        RolloutItem::EventMsg(EventMsg::ClientRecoveryRecorded(second)),
+    ]);
+
+    assert_eq!(turns.len(), 2);
+    assert_eq!(
+        turns[0].items[0],
+        ThreadItem::ClientRecovery {
+            id: format!("client-recovery:{first_identity}"),
+            recovery_identity: Some(first_identity.into()),
+            launcher_claim_id: Some(
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+            ),
+            launcher_evidence_version: Some(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .into(),
+            ),
+            transaction_id: "tx-1".into(),
+            request_id: "req-1".into(),
+            failed_build_id: "build-bad".into(),
+            failed_build_hash: "bad-hash".into(),
+            source_commit: "source-commit".into(),
+            requested_by_thread_id: None,
+            mode: "full".into(),
+            failure_phase: "ready-timeout".into(),
+            exit_code: Some(1),
+            signal: None,
+            ready_timeout_ms: Some(30_000),
+            log_path: Some("/tmp/recovery.log".into()),
+            transaction_path: Some("/tmp/transaction.json".into()),
+            recovered_build_id: "build-good".into(),
+            prompt: "Inspect the rollback evidence.".into(),
+            evidence_path: "/tmp/evidence.json".into(),
+            recorded_at_ms: 42,
+        }
+    );
+    assert!(matches!(
+        &turns[1].items[0],
+        ThreadItem::ClientRecovery {
+            recovery_identity: Some(recovery_identity),
+            transaction_id,
+            request_id,
+            ..
+        } if recovery_identity == second_identity
+            && transaction_id == "tx-1"
+            && request_id == "req-1"
+    ));
+}
+
+#[test]
+fn legacy_recovery_handled_event_does_not_reorder_reloaded_items() {
+    let legacy_id = "client-recovery:legacy-tx:legacy-request";
+    let legacy = ClientRecoveryRecordedEvent {
+        id: legacy_id.into(),
+        turn_id: "legacy-turn".into(),
+        recovery_identity: None,
+        launcher_claim_id: None,
+        launcher_evidence_version: None,
+        transaction_id: "legacy-tx".into(),
+        request_id: "legacy-request".into(),
+        failed_build_id: "legacy-failed".into(),
+        failed_build_hash: "legacy-hash".into(),
+        source_commit: "legacy-commit".into(),
+        requested_by_thread_id: None,
+        mode: "full".into(),
+        failure_phase: "launch".into(),
+        exit_code: None,
+        signal: None,
+        ready_timeout_ms: None,
+        log_path: None,
+        transaction_path: None,
+        recovered_build_id: "legacy-recovered".into(),
+        prompt: "Inspect legacy recovery evidence.".into(),
+        evidence_path: "/tmp/legacy-evidence.json".into(),
+        recorded_at_ms: 40,
+    };
+    let modern_identity = "22222222-2222-4222-8222-222222222222";
+    let mut modern = legacy.clone();
+    modern.id = format!("client-recovery:{modern_identity}");
+    modern.turn_id = "modern-turn".into();
+    modern.recovery_identity = Some(modern_identity.into());
+    modern.launcher_claim_id =
+        Some("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into());
+    modern.launcher_evidence_version = Some(
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            .into(),
+    );
+    modern.transaction_id = "modern-tx".into();
+    modern.request_id = "modern-request".into();
+    modern.recorded_at_ms = 42;
+
+    let turns = build_turns_from_rollout_items(&[
+        RolloutItem::EventMsg(EventMsg::ClientRecoveryRecorded(legacy)),
+        RolloutItem::EventMsg(EventMsg::ClientRecoveryHandled(
+            ClientRecoveryHandledEvent {
+                recovery_id: legacy_id.into(),
+                recovery_identity: None,
+                turn_id: "legacy-turn".into(),
+                handled_at_ms: 41,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::ClientRecoveryRecorded(modern)),
+    ]);
+
+    assert_eq!(
+        turns
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["legacy-turn", "modern-turn"]
+    );
+    assert!(matches!(
+        &turns[0].items[0],
+        ThreadItem::ClientRecovery {
+            recovery_identity: None,
+            launcher_claim_id: None,
+            launcher_evidence_version: None,
+            transaction_id,
+            request_id,
+            ..
+        } if transaction_id == "legacy-tx" && request_id == "legacy-request"
+    ));
+    assert!(matches!(
+        &turns[1].items[0],
+        ThreadItem::ClientRecovery {
+            recovery_identity: Some(identity),
+            launcher_claim_id: Some(claim_id),
+            launcher_evidence_version: Some(evidence_version),
+            ..
+        } if identity == modern_identity
+            && claim_id == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+            && evidence_version
+                == "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ));
+}
+
     #[test]
     fn raw_assistant_response_item_does_not_update_current_turn_display() {
         let events = [
@@ -596,4 +779,3 @@ use super::*;
             }
         );
     }
-

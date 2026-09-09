@@ -51,6 +51,33 @@ pub enum ProjectedEventItem {
 /// replay share this display projection.
 pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
     match event {
+        EventMsg::ClientRecoveryRecorded(event) => Some(ProjectedEventItem::Completed {
+            turn_id: event.turn_id.clone(),
+            item: ThreadItem::ClientRecovery {
+                id: event.id.clone(),
+                recovery_identity: event.recovery_identity.clone(),
+                launcher_claim_id: event.launcher_claim_id.clone(),
+                launcher_evidence_version: event.launcher_evidence_version.clone(),
+                transaction_id: event.transaction_id.clone(),
+                request_id: event.request_id.clone(),
+                failed_build_id: event.failed_build_id.clone(),
+                failed_build_hash: event.failed_build_hash.clone(),
+                source_commit: event.source_commit.clone(),
+                requested_by_thread_id: event.requested_by_thread_id.clone(),
+                mode: event.mode.clone(),
+                failure_phase: event.failure_phase.clone(),
+                exit_code: event.exit_code,
+                signal: event.signal.clone(),
+                ready_timeout_ms: event.ready_timeout_ms,
+                log_path: event.log_path.clone(),
+                transaction_path: event.transaction_path.clone(),
+                recovered_build_id: event.recovered_build_id.clone(),
+                prompt: event.prompt.clone(),
+                evidence_path: event.evidence_path.clone(),
+                recorded_at_ms: event.recorded_at_ms,
+            },
+            completed_at_ms: event.recorded_at_ms,
+        }),
         EventMsg::ItemStarted(event) => {
             let item = thread_item_from_turn_item(event.item.clone())?;
             Some(ProjectedEventItem::Started {
@@ -474,8 +501,147 @@ mod tests {
     use protocol::models::WorkflowRunProgressKind;
     use protocol::protocol::CommandExecutionNotificationDisplayEvent;
     use protocol::protocol::CommandWaitDisplayEvent;
+    use protocol::protocol::ClientRecoveryRecordedEvent;
     use protocol::protocol::CommandWriteStdinDisplayEvent;
     use protocol::protocol::WorkflowRunProgressDisplayEvent;
+
+    #[test]
+    fn projects_client_recovery_as_completed_typed_item() {
+        let projected = project_event_msg_item(&EventMsg::ClientRecoveryRecorded(
+            ClientRecoveryRecordedEvent {
+                id: "recovery-1".into(),
+                turn_id: "turn-recovery".into(),
+                recovery_identity: Some(
+                    "11111111-1111-4111-8111-111111111111".into(),
+                ),
+                launcher_claim_id: Some(
+                    "22222222-2222-4222-8222-222222222222".into(),
+                ),
+                launcher_evidence_version: Some(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .into(),
+                ),
+                transaction_id: "tx-1".into(),
+                request_id: "req-1".into(),
+                failed_build_id: "failed".into(),
+                failed_build_hash: "hash".into(),
+                source_commit: "commit".into(),
+                requested_by_thread_id: None,
+                mode: "full".into(),
+                failure_phase: "ready-timeout".into(),
+                exit_code: None,
+                signal: Some("SIGTERM".into()),
+                ready_timeout_ms: Some(30_000),
+                log_path: None,
+                transaction_path: None,
+                recovered_build_id: "recovered".into(),
+                prompt: "inspect".into(),
+                evidence_path: "/tmp/evidence".into(),
+                recorded_at_ms: 42,
+            },
+        ))
+        .expect("project recovery");
+
+        assert_eq!(
+            projected,
+            ProjectedEventItem::Completed {
+                turn_id: "turn-recovery".into(),
+                item: ThreadItem::ClientRecovery {
+                    id: "recovery-1".into(),
+                    recovery_identity: Some(
+                        "11111111-1111-4111-8111-111111111111".into(),
+                    ),
+                    launcher_claim_id: Some(
+                        "22222222-2222-4222-8222-222222222222".into(),
+                    ),
+                    launcher_evidence_version: Some(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            .into(),
+                    ),
+                    transaction_id: "tx-1".into(),
+                    request_id: "req-1".into(),
+                    failed_build_id: "failed".into(),
+                    failed_build_hash: "hash".into(),
+                    source_commit: "commit".into(),
+                    requested_by_thread_id: None,
+                    mode: "full".into(),
+                    failure_phase: "ready-timeout".into(),
+                    exit_code: None,
+                    signal: Some("SIGTERM".into()),
+                    ready_timeout_ms: Some(30_000),
+                    log_path: None,
+                    transaction_path: None,
+                    recovered_build_id: "recovered".into(),
+                    prompt: "inspect".into(),
+                    evidence_path: "/tmp/evidence".into(),
+                    recorded_at_ms: 42,
+                },
+                completed_at_ms: 42,
+            }
+        );
+    }
+
+    #[test]
+    fn projects_legacy_client_recovery_without_launcher_claim_metadata() {
+        let event: ClientRecoveryRecordedEvent = serde_json::from_value(
+            serde_json::json!({
+                "id": "legacy-recovery",
+                "turnId": "legacy-turn",
+                "transactionId": "legacy-tx",
+                "requestId": "legacy-request",
+                "failedBuildId": "failed",
+                "failedBuildHash": "hash",
+                "sourceCommit": "commit",
+                "requestedByThreadId": null,
+                "mode": "full",
+                "failurePhase": "launch",
+                "exitCode": null,
+                "signal": null,
+                "readyTimeoutMs": null,
+                "logPath": null,
+                "transactionPath": null,
+                "recoveredBuildId": "recovered",
+                "prompt": "inspect legacy recovery",
+                "evidencePath": "/tmp/legacy-evidence",
+                "recordedAtMs": 40
+            }),
+        )
+        .expect("deserialize legacy recovery event");
+
+        let projected = project_event_msg_item(&EventMsg::ClientRecoveryRecorded(event))
+            .expect("project legacy recovery");
+
+        assert_eq!(
+            projected,
+            ProjectedEventItem::Completed {
+                turn_id: "legacy-turn".into(),
+                item: ThreadItem::ClientRecovery {
+                    id: "legacy-recovery".into(),
+                    recovery_identity: None,
+                    launcher_claim_id: None,
+                    launcher_evidence_version: None,
+                    transaction_id: "legacy-tx".into(),
+                    request_id: "legacy-request".into(),
+                    failed_build_id: "failed".into(),
+                    failed_build_hash: "hash".into(),
+                    source_commit: "commit".into(),
+                    requested_by_thread_id: None,
+                    mode: "full".into(),
+                    failure_phase: "launch".into(),
+                    exit_code: None,
+                    signal: None,
+                    ready_timeout_ms: None,
+                    log_path: None,
+                    transaction_path: None,
+                    recovered_build_id: "recovered".into(),
+                    prompt: "inspect legacy recovery".into(),
+                    evidence_path: "/tmp/legacy-evidence".into(),
+                    recorded_at_ms: 40,
+                },
+                completed_at_ms: 40,
+            }
+        );
+    }
 
     #[test]
     fn command_wait_completed_projects_without_response_item() {

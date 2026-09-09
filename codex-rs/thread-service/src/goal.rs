@@ -721,8 +721,12 @@ impl Session {
         }
         self.mark_thread_goal_continuation_turn_started(turn_context.sub_id.clone())
             .await;
-        self.start_task_without_external_pending_input(turn_context, Vec::new(), RegularTask::new())
-            .await;
+        self.start_task_without_external_pending_input(
+            turn_context,
+            Vec::new(),
+            RegularTask::new(),
+        )
+        .await;
     }
 
     pub(crate) async fn goal_continuation_still_active_after_reservation(
@@ -766,7 +770,11 @@ impl Session {
 
     #[cfg(test)]
     async fn goal_continuation_before_launch_hook(&self) {
-        let hook = self.goal_continuation_before_launch_hook.lock().await.clone();
+        let hook = self
+            .goal_continuation_before_launch_hook
+            .lock()
+            .await
+            .clone();
         let Some(hook) = hook else {
             return;
         };
