@@ -11,6 +11,22 @@
 Implement a minimal stable Launcher for Morpheus self-update: the model builds and repairs source artifacts, while Launcher owns installation, Electron supervision, startup-ready rollback, bounded crash-loop fallback, and targeted recovery handoff to `/self`.
 
 ## Active Work
+- id: model-stream-missing-completion-stuck-turn
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/model-stream-missing-completion
+  task_type: bugfix/runtime-lifecycle
+  depends_on: main baseline `ab62b10483`; reproduced native child thread `01a08422-f264-7912-b133-cf373b8c9de3`
+  files: model-service response stream completion/idle handling; thread-service sampling/turn finalization only if the transport boundary is insufficient; focused model-stream and parent-notification tests
+  base_commit: ab62b104832a8fc5190a3de5d19cd2e8f46b3158
+  pending_sync_from_main: none; dev-2 fast-forwarded to current main before dispatch
+  status: in_progress
+  objective: Prevent a native agent turn from remaining active forever when a provider emits assistant output but never emits `response.completed` or closes the response stream. Convert the stalled response into the existing typed stream-error/retry/terminal path so the turn reaches a durable terminal lifecycle and the parent receives the normal child status notification.
+  last_update: 2026-09-09 CST reproduced on launcher_core: task started at 12:00:12, assistant output persisted at 12:02:25, then no `task_complete`, `turn_complete`, `turn_aborted`, open tool call, or further rollout growth for about 1h45m. The direct child was final. User requested closing the stuck thread; close removed it from live listing, but no abort event was appended to its rollout. Initial code inspection shows turn completion is emitted only after the sampling loop returns; the generic sampling loop waits on the next model event until cancellation, while provider transports own idle handling.
+  next_action: fixed dev-2 owner verifies the exact transport failure mode, implements provider-neutral bounded stream completion handling without assistant-message or role special cases, obtains fixed-reviewer approval, validates terminal and parent-notification behavior, and submits a dev commit
+  blockers: none
+  validation: pending
+  commit:
 - id: remove-built-in-worker-explorer-roles
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -38,8 +54,8 @@ Implement a minimal stable Launcher for Morpheus self-update: the model builds a
   pending_sync_from_main: dev-3 is actively developing and remains on `ffb6145eb8`; sync from main commit `8b053432df` is deferred until Launcher work completes. dev-2 will be fast-forwarded after the role-removal acceptance commit; dev remains unavailable because of extensive unrelated tracked work
   status: in_progress
   objective: Make a stable OS-launched Launcher supervise the replaceable Morpheus Electron runtime. The model remains responsible for modifying, testing, and building source artifacts. Launcher imports and validates already-built artifacts, preserves only current plus previous outside active transactions, activates hot/full updates, rolls back full startup failures before ready, detects bounded Electron crash loops after ready, and hands persisted failure evidence to the restored `/self` model for diagnosis and forward repair.
-  last_update: 2026-09-09 CST current uncommitted minimal rebuild is 42 files and `+2102/-4080` relative to baseline, still substantially below the rejected 161 files and `+29311/-6191`; much of the deletion is removal of the prior broad Electron updater tests/implementation. Host/packaging and typed recovery have passed static review. Launcher core's last blocking P1 concerned a crash midway through deleting the previous snapshot during commit, which could leave partial residue and permanently fail startup reconcile. The correction adds one minimal durable commit-cleanup intent without expanding the external transaction phases: startup may idempotently finish partial previous cleanup only when that intent exists; without it, partial previous remains fail-closed. The focused sub-review reports the correction passed, but the top-level owner/core threads remain active, the fixed reviewer has not yet issued a final all-clear delivery, no unified validation has run, and no new implementation commit exists.
-  next_action: wait for top-level review closure, then owner runs the full focused validation/package/signing/fault-injection matrix and submits a clean commit; PM will independently design-check scope and behavior before merge
+  last_update: 2026-09-09 CST user requested closing the stuck launcher_core thread after it emitted an assistant message without task completion; the close removed it from live listing while preserving the shared worktree. Fixed dev-3 owner then performed a read-only inventory and confirmed the final production corrections are present: supervisor reloads the durable transaction after launch errors, preserves `commit_cleanup_requested=true`, refuses rollback/old-clone overwrite, and rejects Prepared/RollingBack plus intent. Host/packaging and typed recovery are review-passed, and Launcher production logic has no newly identified behavior blocker. Validation remains blocked because `transaction.rs` contains a duplicate `load_rejects_commit_intent_outside_launching_state` test definition that will produce Rust E0428. A low-cost end-to-end injected post-intent cleanup error test is also still recommended. Actual scope is approximately 56 files when untracked crate files are expanded, about `+7445/-4080`; runtime-launcher is 9 files/~4304 lines.
+  next_action: fixed dev-3 owner removes the duplicate test, adds the focused real post-intent cleanup error chain test if it stays narrow, reuses the fixed reviewer, then runs the full validation/package/signing/fault-injection matrix and submits a clean commit for PM design acceptance
   blockers: none
   validation: initial over-complex implementation tests passed but design acceptance failed; minimal rebuild has not yet entered review/testing
   commit: 3ab3bcdaee88e5481f4d68989c0ad83f193e8b74, fa9ba2fad8
