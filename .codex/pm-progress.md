@@ -20,13 +20,29 @@ Implement a minimal stable Launcher for Morpheus self-update: the model builds a
   files: model-service response stream completion/idle handling; thread-service sampling/turn finalization only if the transport boundary is insufficient; focused model-stream and parent-notification tests
   base_commit: ab62b104832a8fc5190a3de5d19cd2e8f46b3158
   pending_sync_from_main: none; dev-2 fast-forwarded to current main before dispatch
-  status: ready_to_merge
+  status: merged
   objective: Prevent a native agent turn from remaining active forever when a provider emits assistant output but never emits `response.completed` or closes the response stream. Convert the stalled response into the existing typed stream-error/retry/terminal path so the turn reaches a durable terminal lifecycle and the parent receives the normal child status notification.
-  last_update: 2026-09-09 CST fixed dev-2 owner confirmed the transport root cause: SSE/WebSocket idle timeout was reset by every raw message, so keepalive/rate-limit/unknown control chatter could keep a logical response alive forever after assistant output without `response.completed`. Commit `1263f79b02` changes both transports to a logical-response deadline reset only by real `ResponseEvent` progress, reserves terminal-error channel capacity under backpressure, and releases a failed WebSocket connection before publishing the terminal error. Fixed reviewer passed after the terminal-error backpressure issue was corrected. PM design inspection confirms the fix stays at the response transport boundary, preserves the existing typed stream-error/retry/terminal path, and does not infer completion from assistant content or modify thread-service lifecycle state.
-  next_action: PM merges `1263f79b02` to main, records merged validation, then fast-forwards the now-idle dev-2 checkout before assigning new work
+  last_update: 2026-09-09 CST fixed dev-2 owner confirmed the transport root cause: SSE/WebSocket idle timeout was reset by every raw message, so keepalive/rate-limit/unknown control chatter could keep a logical response alive forever after assistant output without `response.completed`. Commit `1263f79b02` changes both transports to a logical-response deadline reset only by real `ResponseEvent` progress, reserves terminal-error channel capacity under backpressure, and releases a failed WebSocket connection before publishing the terminal error. Fixed reviewer passed after the terminal-error backpressure issue was corrected. PM design inspection confirmed the fix stays at the response transport boundary, preserves the existing typed stream-error/retry/terminal path, and does not infer completion from assistant content or modify thread-service lifecycle state. PM merged it to main as `6748ef5d46` and fast-forwarded dev-2 to that integration baseline.
+  next_action: none
   blockers: none
   validation: owner SSE integration 4/4, WebSocket idle-timeout 3/3, existing WebSocket fallback/retry 4/4, app-server build, task-file rustfmt and diff check passed; fixed reviewer final pass. Full model-service lib target remains blocked by pre-existing missing test-support source files.
-  commit: 1263f79b02
+  commit: 6748ef5d46, 1263f79b02
+- id: restrict-runtime-restart-to-self-thread
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/restrict-runtime-restart-to-self
+  task_type: bugfix/runtime-tool-authorization
+  depends_on: main baseline `6748ef5d46`; canonical `/self` system project thread contract
+  files: tool-service request context and host-lifecycle tool spec/dispatch authorization; thread-service tool request construction; focused visibility and forged-dispatch tests
+  base_commit: 6748ef5d46
+  pending_sync_from_main: none; dev-2 fast-forwarded to current main before dispatch
+  status: planned
+  objective: Make `request_runtime_restart` available and executable only from the exact canonical `/self` thread. `/self` descendants and every other root or child thread must not receive the model-visible tool and must be rejected if a call is forged or replayed through a lower-level dispatch path.
+  last_update: 2026-09-09 CST user explicitly restricted restart authority to the exact `/self` thread. PM identified the current tool is globally emitted by `tool-service/domains/host_lifecycle.rs`; the tool request builder in thread-service can provide the authoritative current canonical agent path without UI or cwd heuristics.
+  next_action: fixed dev-2 owner implements dual-layer visibility and dispatch authorization using authoritative canonical agent-path context, reuses its fixed reviewer, validates the root/child/forged-call matrix, and submits a dev commit
+  blockers: none
+  validation: pending
+  commit:
 - id: remove-built-in-worker-explorer-roles
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
