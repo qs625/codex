@@ -1,12 +1,16 @@
 use futures::Stream;
 pub use model_service_api::ResponseEvent;
 use protocol::config_types::Personality;
+use protocol::error::ModelInputItemKind;
+use protocol::error::ModelInputItemReference;
 use protocol::error::Result;
 use protocol::models::BaseInstructions;
 use protocol::models::FunctionCallOutputBody;
 use protocol::models::ResponseItem;
+use protocol::models::model_context_quarantine_notice;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::task::Context;
@@ -70,6 +74,12 @@ pub fn build_prompt(params: PromptBuildParams) -> Prompt {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct PreparedResponsesInput {
+    pub(crate) items: Vec<ResponseItem>,
+    pub(crate) sources: Vec<Option<ModelInputItemReference>>,
+}
+
 impl Default for Prompt {
     fn default() -> Self {
         Self {
@@ -86,11 +96,19 @@ impl Default for Prompt {
 
 impl Prompt {
     pub fn get_formatted_input(&self) -> Vec<ResponseItem> {
-        let mut input = self
+        self.get_formatted_responses_input().items
+    }
+
+    pub(crate) fn get_formatted_responses_input(&self) -> PreparedResponsesInput {
+        let transaction_kinds = unique_transaction_kinds(&self.input);
+        let mut prepared = self
             .input
             .iter()
             .cloned()
-            .filter_map(format_typed_response_item_for_provider)
+            .filter_map(|item| {
+                let source = model_input_source(&item, &transaction_kinds);
+                format_typed_response_item_for_provider(item).map(|item| (item, source))
+            })
             .collect::<Vec<_>>();
 
         // when using the *Freeform* apply_patch tool specifically, tool outputs
@@ -102,10 +120,18 @@ impl Prompt {
             _ => false,
         });
         if is_freeform_apply_patch_tool_present {
-            reserialize_shell_outputs(&mut input);
+            let mut items = prepared
+                .iter()
+                .map(|(item, _)| item.clone())
+                .collect::<Vec<_>>();
+            reserialize_shell_outputs(&mut items);
+            for ((item, _), serialized) in prepared.iter_mut().zip(items) {
+                *item = serialized;
+            }
         }
 
-        input
+        let (items, sources) = prepared.into_iter().unzip();
+        PreparedResponsesInput { items, sources }
     }
 }
 
@@ -120,7 +146,104 @@ fn format_typed_response_item_for_provider(item: ResponseItem) -> Option<Respons
         ResponseItem::InterAgentCommunication { communication, .. } => {
             Some(communication.to_response_input_item().into())
         }
+        ResponseItem::ModelContextQuarantine {
+            target,
+            reason,
+            error_code,
+            error_param,
+        } => Some(model_context_quarantine_notice(
+            &target,
+            &reason,
+            error_code.as_deref(),
+            error_param.as_deref(),
+        )),
         item => Some(item),
+    }
+}
+
+fn unique_transaction_kinds(items: &[ResponseItem]) -> HashMap<String, Option<ModelInputItemKind>> {
+    let mut kinds = HashMap::new();
+    for item in items {
+        let Some((call_id, kind)) = model_call_identity(item) else {
+            continue;
+        };
+        if call_id.is_empty() {
+            continue;
+        }
+        match kinds.entry(call_id.to_string()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Some(kind));
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                entry.insert(None);
+            }
+        }
+    }
+    kinds
+}
+
+fn model_input_source(
+    item: &ResponseItem,
+    transaction_kinds: &HashMap<String, Option<ModelInputItemKind>>,
+) -> Option<ModelInputItemReference> {
+    let (call_id, expected_kinds): (&str, &[ModelInputItemKind]) = match item {
+        ResponseItem::FunctionCall { call_id, .. } => {
+            (call_id, &[ModelInputItemKind::FunctionCall])
+        }
+        ResponseItem::ToolSearchCall {
+            call_id: Some(call_id),
+            ..
+        } => (call_id, &[ModelInputItemKind::ToolSearchCall]),
+        ResponseItem::CustomToolCall { call_id, .. } => {
+            (call_id, &[ModelInputItemKind::CustomToolCall])
+        }
+        ResponseItem::LocalShellCall {
+            call_id: Some(call_id),
+            ..
+        } => (call_id, &[ModelInputItemKind::LocalShellCall]),
+        ResponseItem::FunctionCallOutput { call_id, .. } => (
+            call_id,
+            &[
+                ModelInputItemKind::FunctionCall,
+                ModelInputItemKind::LocalShellCall,
+            ],
+        ),
+        ResponseItem::CustomToolCallOutput { call_id, .. } => {
+            (call_id, &[ModelInputItemKind::CustomToolCall])
+        }
+        ResponseItem::ToolSearchOutput {
+            call_id: Some(call_id),
+            ..
+        } => (call_id, &[ModelInputItemKind::ToolSearchCall]),
+        _ => return None,
+    };
+    let kind = transaction_kinds.get(call_id).copied().flatten()?;
+    if call_id.is_empty() || !expected_kinds.contains(&kind) {
+        return None;
+    }
+    Some(ModelInputItemReference {
+        kind,
+        call_id: call_id.to_string(),
+    })
+}
+
+fn model_call_identity(item: &ResponseItem) -> Option<(&str, ModelInputItemKind)> {
+    match item {
+        ResponseItem::FunctionCall { call_id, .. } => {
+            Some((call_id, ModelInputItemKind::FunctionCall))
+        }
+        ResponseItem::ToolSearchCall {
+            call_id: Some(call_id),
+            ..
+        } => Some((call_id, ModelInputItemKind::ToolSearchCall)),
+        ResponseItem::CustomToolCall { call_id, .. } => {
+            Some((call_id, ModelInputItemKind::CustomToolCall))
+        }
+        ResponseItem::LocalShellCall {
+            call_id: Some(call_id),
+            ..
+        } => Some((call_id, ModelInputItemKind::LocalShellCall)),
+        _ => None,
     }
 }
 

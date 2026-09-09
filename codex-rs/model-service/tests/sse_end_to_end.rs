@@ -12,8 +12,13 @@ use model_service_api::AuthProvider;
 use model_service_api::Compression;
 use model_service_api::Provider;
 use model_service_api::ResponseEvent;
+use model_service_api::ResponsesApiRequest;
+use model_service_api::ResponsesOptions;
 use model_service_api::RetryConfig;
 use pretty_assertions::assert_eq;
+use protocol::error::ModelInputItemKind;
+use protocol::error::ModelInputItemReference;
+use protocol::models::FunctionCallOutputPayload;
 use protocol::models::ResponseItem;
 use serde_json::Value;
 use transport_client::HttpTransport;
@@ -122,6 +127,91 @@ fn build_response_chunk(event: Value) -> String {
 }
 
 #[tokio::test]
+async fn property_name_error_uses_actual_sse_input_source_after_compatibility_filtering()
+-> Result<()> {
+    let body = build_responses_body(vec![serde_json::json!({
+        "type": "response.failed",
+        "response": {
+            "id": "resp-invalid",
+            "error": {
+                "message": "Expected a string with maximum length 256",
+                "type": "invalid_request_error",
+                "code": "property_name_above_max_length",
+                "param": "input[0].arguments.outer"
+            }
+        }
+    })]);
+    let client = ResponsesClient::new(
+        FixtureSseTransport::new(body),
+        provider("openai"),
+        Arc::new(NoAuth),
+    );
+    let target = ModelInputItemReference {
+        kind: ModelInputItemKind::FunctionCall,
+        call_id: "sse-poison".to_string(),
+    };
+    let request = ResponsesApiRequest {
+        model: "gpt-test".to_string(),
+        instructions: String::new(),
+        input: vec![
+            ResponseItem::Other,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "lookup".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: target.call_id.clone(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: target.call_id.clone(),
+                output: FunctionCallOutputPayload::from_text("done".to_string()),
+            },
+        ],
+        input_sources: vec![None, Some(target.clone()), Some(target.clone())],
+        tools: Vec::new(),
+        tool_choice: "auto".to_string(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        client_metadata: None,
+        chat_completions_max_tokens: None,
+    };
+    let mut stream = client
+        .stream_request(request, ResponsesOptions::default())
+        .await?;
+
+    let error = loop {
+        match stream.next().await {
+            Some(Err(error)) => break error,
+            Some(Ok(ResponseEvent::RateLimits(_))) => {}
+            Some(Ok(event)) => panic!("unexpected SSE event: {event:?}"),
+            None => panic!("expected structured SSE error"),
+        }
+    };
+    let model_service_api::ApiError::InvalidModelInput(details) = error else {
+        panic!("expected invalid model input");
+    };
+    assert_eq!(
+        details.error_type.as_deref(),
+        Some("invalid_request_error")
+    );
+    assert_eq!(
+        details.code.as_deref(),
+        Some("property_name_above_max_length")
+    );
+    assert_eq!(details.param.as_deref(), Some("input[0].arguments.outer"));
+    assert_eq!(details.input_index, Some(0));
+    assert_eq!(details.source, Some(target));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn responses_stream_parses_items_and_completed_end_to_end() -> Result<()> {
     let item1 = serde_json::json!({
         "type": "response.output_item.done",
@@ -156,6 +246,7 @@ async fn responses_stream_parses_items_and_completed_end_to_end() -> Result<()> 
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 
@@ -233,6 +324,7 @@ async fn responses_stream_control_chatter_does_not_extend_idle_timeout() -> Resu
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 
@@ -293,6 +385,7 @@ async fn responses_stream_progress_resets_idle_timeout() -> Result<()> {
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 
@@ -333,6 +426,7 @@ async fn responses_stream_backpressure_preserves_terminal_error() -> Result<()> 
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 

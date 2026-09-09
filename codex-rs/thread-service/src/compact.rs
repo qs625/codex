@@ -1,12 +1,13 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::event_mapping::injected_context_item_from_response_items;
 use crate::client_common::PromptBuildParams;
 use crate::client_common::build_prompt;
+use crate::event_mapping::injected_context_item_from_response_items;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
+use crate::session::turn::ModelContextQuarantineState;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
 use codex_analytics_api::CodexCompactionEvent;
@@ -17,8 +18,8 @@ use codex_analytics_api::CompactionStatus;
 use codex_analytics_api::CompactionStrategy;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::now_unix_seconds;
-use codex_features::Feature;
 use codex_config_types::CompactReplacementFileRole as ConfigCompactReplacementFileRole;
+use codex_features::Feature;
 use codex_turn_items::last_assistant_message_from_turn;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
@@ -29,11 +30,14 @@ use compact_service_api::CompactReplacementFile;
 use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
 use compact_service_api::SoftCompactThresholds;
+use futures::StreamExt;
 use hooks::PostCompactHookOutcome;
 use hooks::PreCompactHookOutcome;
 use hooks::run_post_compact_hooks;
 use hooks::run_pre_compact_hooks;
 use protocol::error::CodexErr;
+use protocol::error::ModelContextQuarantineReference;
+use protocol::error::ModelInputItemKind;
 use protocol::error::Result as CodexResult;
 use protocol::items::ContextCompactionItem;
 use protocol::items::ContextCompactionReplacementItem;
@@ -41,21 +45,20 @@ use protocol::items::TurnItem;
 use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
-use protocol::protocol::CompactedItem;
+use protocol::models::model_context_item_fingerprint;
 use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::CompactedItem;
 use protocol::protocol::ErrorEvent;
 use protocol::protocol::EventMsg;
 use protocol::protocol::TurnStartedEvent;
 use protocol::protocol::WarningEvent;
 use protocol::user_input::UserInput;
-use futures::StreamExt;
 use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 pub(crate) const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
-pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
-    "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
+pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str = "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -146,6 +149,7 @@ pub(crate) async fn run_inline_auto_compact_task_with_retained_suffix(
         phase,
         retained_suffix,
         emit_context_window_error,
+        None,
     )
     .await?;
     Ok(())
@@ -155,6 +159,7 @@ pub(crate) async fn run_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
+    model_context_quarantines: ModelContextQuarantineState,
 ) -> CodexResult<()> {
     let start_event = EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: turn_context.sub_id.clone(),
@@ -173,6 +178,7 @@ pub(crate) async fn run_compact_task(
         CompactionPhase::StandaloneTurn,
         Vec::new(),
         /*emit_context_window_error*/ true,
+        Some(model_context_quarantines),
     )
     .await?;
     Ok(())
@@ -188,6 +194,7 @@ async fn run_compact_task_inner(
     phase: CompactionPhase,
     retained_suffix: Vec<ResponseItem>,
     emit_context_window_error: bool,
+    model_context_quarantines: Option<ModelContextQuarantineState>,
 ) -> CodexResult<()> {
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
@@ -218,6 +225,7 @@ async fn run_compact_task_inner(
         trigger,
         retained_suffix,
         emit_context_window_error,
+        model_context_quarantines,
     )
     .await;
     let status = compaction_status_from_result(&result);
@@ -234,6 +242,7 @@ async fn run_compact_task_inner_impl(
     trigger: CompactionTrigger,
     retained_suffix: Vec<ResponseItem>,
     emit_context_window_error: bool,
+    model_context_quarantines: Option<ModelContextQuarantineState>,
 ) -> CodexResult<String> {
     let compact_service = FsCompactService::new();
     let replacement_files = compact_replacement_files(turn_context.as_ref());
@@ -245,8 +254,11 @@ async fn run_compact_task_inner_impl(
         let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
         sess.emit_turn_item_started(&turn_context, &started_compaction_item)
             .await;
-        sess.record_conversation_items(&turn_context, std::slice::from_ref(&initial_input_for_turn))
-            .await;
+        sess.record_conversation_items(
+            &turn_context,
+            std::slice::from_ref(&initial_input_for_turn),
+        )
+        .await;
     }
 
     let max_retries = turn_context.provider.info().stream_max_retries();
@@ -343,6 +355,26 @@ async fn run_compact_task_inner_impl(
                 }
                 return Err(e);
             }
+            Err(e @ CodexErr::InvalidModelInput(_)) => {
+                // Invalid structured history is deterministic for the exact
+                // outbound compact input. Let the owning turn apply the same
+                // source-mapped, bounded quarantine state machine as ordinary
+                // sampling instead of consuming transient stream retries.
+                if let CodexErr::InvalidModelInput(error) = &e
+                    && let Some(quarantines) = model_context_quarantines.as_ref()
+                    && crate::session::turn::quarantine_recoverable_model_context(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        error,
+                        quarantines,
+                    )
+                    .await
+                {
+                    client_session.reset_websocket_session();
+                    continue;
+                }
+                return Err(e);
+            }
             Err(e) => {
                 if retries >= max_retries
                     && client_session.try_switch_fallback_transport(
@@ -423,6 +455,7 @@ async fn run_compact_task_inner_impl(
     let visible_replacement_history_len = new_history.len();
     let mut persisted_replacement_history = new_history.clone();
     persisted_replacement_history.extend(retained_suffix);
+    reconcile_model_context_quarantines(history_items, &mut persisted_replacement_history);
     let replacement_history = Some(persisted_replacement_history.clone());
     let compacted_item = CompactedItem {
         message: compacted_message.clone(),
@@ -464,6 +497,126 @@ async fn run_compact_task_inner_impl(
     });
     sess.send_event(&turn_context, warning).await;
     Ok(compacted_message)
+}
+
+fn reconcile_model_context_quarantines(
+    previous_history: &[ResponseItem],
+    replacement_history: &mut Vec<ResponseItem>,
+) {
+    let replacement_snapshot = replacement_history.clone();
+    replacement_history.retain(|item| {
+        let Some(target) = quarantine_target(item) else {
+            return true;
+        };
+        replacement_snapshot
+            .iter()
+            .any(|candidate| compact_item_belongs_to_target(candidate, &target))
+    });
+
+    let quarantines = previous_history
+        .iter()
+        .filter_map(|item| quarantine_target(item).map(|target| (target, item.clone())));
+    for (target, quarantine) in quarantines {
+        let target_survives = replacement_history
+            .iter()
+            .any(|item| compact_item_belongs_to_target(item, &target));
+        let marker_survives = replacement_history.iter().any(|item| {
+            matches!(
+                item,
+                ResponseItem::ModelContextQuarantine {
+                    target: marker_target,
+                    ..
+                } if marker_target == &target
+            )
+        });
+        if target_survives && !marker_survives {
+            replacement_history.push(quarantine);
+        }
+    }
+}
+
+fn quarantine_target(item: &ResponseItem) -> Option<ModelContextQuarantineReference> {
+    let ResponseItem::ModelContextQuarantine { target, .. } = item else {
+        return None;
+    };
+    Some(target.clone())
+}
+
+fn compact_item_belongs_to_target(
+    item: &ResponseItem,
+    target: &ModelContextQuarantineReference,
+) -> bool {
+    let (kind, call_id) = match target {
+        ModelContextQuarantineReference::ToolTransaction { kind, call_id } => (*kind, call_id),
+        ModelContextQuarantineReference::ModelItem {
+            kind, fingerprint, ..
+        } => {
+            return compact_item_kind(item) == Some(*kind)
+                && model_context_item_fingerprint(item).as_deref() == Some(fingerprint.as_str());
+        }
+    };
+    match (kind, item) {
+        (
+            ModelInputItemKind::FunctionCall,
+            ResponseItem::FunctionCall {
+                call_id: item_call_id,
+                ..
+            },
+        )
+        | (
+            ModelInputItemKind::CustomToolCall,
+            ResponseItem::CustomToolCall {
+                call_id: item_call_id,
+                ..
+            },
+        )
+        | (
+            ModelInputItemKind::FunctionCall | ModelInputItemKind::LocalShellCall,
+            ResponseItem::FunctionCallOutput {
+                call_id: item_call_id,
+                ..
+            },
+        )
+        | (
+            ModelInputItemKind::CustomToolCall,
+            ResponseItem::CustomToolCallOutput {
+                call_id: item_call_id,
+                ..
+            },
+        ) => item_call_id == call_id,
+        (
+            ModelInputItemKind::ToolSearchCall,
+            ResponseItem::ToolSearchCall {
+                call_id: Some(item_call_id),
+                ..
+            },
+        ) => item_call_id == call_id,
+        (
+            ModelInputItemKind::LocalShellCall,
+            ResponseItem::LocalShellCall {
+                call_id: Some(item_call_id),
+                ..
+            },
+        ) => item_call_id == call_id,
+        (
+            ModelInputItemKind::ToolSearchCall,
+            ResponseItem::ToolSearchOutput {
+                call_id: Some(item_call_id),
+                ..
+            },
+        ) => item_call_id == call_id,
+        _ => false,
+    }
+}
+
+fn compact_item_kind(item: &ResponseItem) -> Option<ModelInputItemKind> {
+    match item {
+        ResponseItem::FunctionCall { .. } => Some(ModelInputItemKind::FunctionCall),
+        ResponseItem::ToolSearchCall { .. } => Some(ModelInputItemKind::ToolSearchCall),
+        ResponseItem::CustomToolCall { .. } => Some(ModelInputItemKind::CustomToolCall),
+        ResponseItem::LocalShellCall { .. } => Some(ModelInputItemKind::LocalShellCall),
+        _ => None,
+    }
 }
 
 pub(crate) async fn run_isolated_compact_sampling(

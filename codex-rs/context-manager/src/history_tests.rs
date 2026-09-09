@@ -1509,6 +1509,431 @@ fn normalize_adds_missing_output_for_tool_search_call() {
     );
 }
 
+#[test]
+fn quarantine_excludes_complete_tool_transaction_before_normalization() {
+    let target = ModelInputItemReference {
+        kind: ModelInputItemKind::FunctionCall,
+        call_id: "call-quarantined".to_string(),
+    };
+    let items = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "broken_tool".to_string(),
+            namespace: None,
+            arguments: "{\"bad\":true}".to_string(),
+            call_id: target.call_id.clone(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: target.call_id.clone(),
+            output: FunctionCallOutputPayload::from_text("untrusted".to_string()),
+        },
+        ResponseItem::ModelContextQuarantine {
+            target: target.clone().into(),
+            reason: "provider rejected transaction".to_string(),
+            error_code: Some("invalid_value".to_string()),
+            error_param: Some("input[0].arguments".to_string()),
+        },
+    ];
+    let history = create_history_with_items(items);
+
+    assert!(!history.has_complete_unique_model_input_transaction(&target));
+    let prompt = history.clone().for_prompt(&default_input_modalities());
+
+    assert_eq!(
+        prompt,
+        vec![ResponseItem::ModelContextQuarantine {
+            target: target.into(),
+            reason: "provider rejected transaction".to_string(),
+            error_code: Some("invalid_value".to_string()),
+            error_param: Some("input[0].arguments".to_string()),
+        }]
+    );
+    assert_eq!(history.raw_items().len(), 3);
+}
+
+#[test]
+fn quarantine_prevents_synthetic_output_for_locally_rejected_call() {
+    let items = vec![
+        ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-invalid".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: serde_json::json!({"unexpected": true}),
+        },
+        ResponseItem::ModelContextQuarantine {
+            target: ModelInputItemReference {
+                kind: ModelInputItemKind::ToolSearchCall,
+                call_id: "search-invalid".to_string(),
+            }
+            .into(),
+            reason: "local parse failed".to_string(),
+            error_code: Some("local_tool_call_parse_failed".to_string()),
+            error_param: None,
+        },
+    ];
+    let prompt = create_history_with_items(items).for_prompt(&default_input_modalities());
+
+    assert!(matches!(
+        prompt.as_slice(),
+        [ResponseItem::ModelContextQuarantine { .. }]
+    ));
+}
+
+#[test]
+fn item_quarantine_excludes_missing_id_tool_search_before_normalization() {
+    let call = ResponseItem::ToolSearchCall {
+        id: None,
+        call_id: None,
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({"unexpected": true}),
+    };
+    let fingerprint = protocol::models::model_context_item_fingerprint(&call).expect("fingerprint");
+    let marker = ResponseItem::ModelContextQuarantine {
+        target: protocol::error::ModelContextQuarantineReference::ModelItem {
+            kind: ModelInputItemKind::ToolSearchCall,
+            call_id: None,
+            item_id: None,
+            fingerprint,
+        },
+        reason: "local parse failed".to_string(),
+        error_code: Some("local_tool_call_parse_failed".to_string()),
+        error_param: None,
+    };
+
+    let prompt =
+        create_history_with_items(vec![call, marker]).for_prompt(&default_input_modalities());
+
+    assert!(matches!(
+        prompt.as_slice(),
+        [ResponseItem::ModelContextQuarantine { .. }]
+    ));
+}
+
+#[test]
+fn item_quarantine_fingerprint_survives_serde_roundtrip() {
+    let call = ResponseItem::ToolSearchCall {
+        id: Some("transient-provider-id".to_string()),
+        call_id: None,
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({"unexpected": true}),
+    };
+    let fingerprint = protocol::models::model_context_item_fingerprint(&call).expect("fingerprint");
+    let marker = ResponseItem::ModelContextQuarantine {
+        target: protocol::error::ModelContextQuarantineReference::ModelItem {
+            kind: ModelInputItemKind::ToolSearchCall,
+            call_id: None,
+            item_id: Some("transient-provider-id".to_string()),
+            fingerprint,
+        },
+        reason: "local parse failed".to_string(),
+        error_code: Some("local_tool_call_parse_failed".to_string()),
+        error_param: None,
+    };
+    let serialized = serde_json::to_string(&vec![call, marker]).expect("serialize");
+    let restored: Vec<ResponseItem> = serde_json::from_str(&serialized).expect("deserialize");
+
+    let prompt = create_history_with_items(restored).for_prompt(&default_input_modalities());
+
+    assert!(matches!(
+        prompt.as_slice(),
+        [ResponseItem::ModelContextQuarantine { .. }]
+    ));
+}
+
+#[test]
+fn quarantine_token_estimates_use_bounded_notice_instead_of_raw_transaction() {
+    let target = ModelInputItemReference {
+        kind: ModelInputItemKind::FunctionCall,
+        call_id: "call-quarantined-estimate".to_string(),
+    };
+    let reason = "invalid historical tool output ".repeat(1_000);
+    let error_param = format!("input[0].output.{}", "x".repeat(10_000));
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: target.clone().into(),
+        reason: reason.clone(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some(error_param.clone()),
+    };
+    let notice = protocol::models::model_context_quarantine_notice(
+        match &quarantine {
+            ResponseItem::ModelContextQuarantine { target, .. } => target,
+            _ => unreachable!(),
+        },
+        &reason,
+        Some("invalid_value"),
+        Some(&error_param),
+    );
+    let expected_notice_tokens = estimate_item_token_count(&notice);
+    let expected_notice_bytes = estimate_response_item_model_visible_bytes(&notice);
+    let history = create_history_with_items(vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: target.call_id.clone(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: target.call_id,
+            output: FunctionCallOutputPayload::from_text("x".repeat(100_000)),
+        },
+        quarantine,
+    ]);
+
+    assert_eq!(
+        history
+            .estimate_token_count_with_base_instructions(&BaseInstructions {
+                text: String::new(),
+            })
+            .expect("token estimate"),
+        expected_notice_tokens
+    );
+    assert_eq!(
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
+        expected_notice_tokens
+    );
+    let breakdown = history.get_total_token_usage_breakdown();
+    assert_eq!(
+        breakdown.all_history_items_model_visible_bytes,
+        expected_notice_bytes
+    );
+    assert_eq!(
+        breakdown.estimated_tokens_of_items_added_since_last_successful_api_response,
+        expected_notice_tokens
+    );
+    assert_eq!(
+        breakdown.estimated_bytes_of_items_added_since_last_successful_api_response,
+        expected_notice_bytes
+    );
+    assert!(expected_notice_bytes < 2_000);
+}
+
+#[test]
+fn recomputed_quarantine_usage_does_not_double_count_notice() {
+    let target = ModelInputItemReference {
+        kind: ModelInputItemKind::FunctionCall,
+        call_id: "call-recomputed-quarantine".to_string(),
+    };
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: target.clone().into(),
+        reason: "provider rejected transaction".to_string(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some("input[0].arguments".to_string()),
+    };
+    let notice = protocol::models::model_context_quarantine_notice(
+        match &quarantine {
+            ResponseItem::ModelContextQuarantine { target, .. } => target,
+            _ => unreachable!(),
+        },
+        "provider rejected transaction",
+        Some("invalid_value"),
+        Some("input[0].arguments"),
+    );
+    let expected_notice_tokens = estimate_item_token_count(&notice);
+    let mut history = create_history_with_items(vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: target.call_id.clone(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: target.call_id,
+            output: FunctionCallOutputPayload::from_text("rejected".to_string()),
+        },
+        quarantine,
+    ]);
+    history.set_token_info(Some(TokenUsageInfo {
+        total_token_usage: TokenUsage {
+            total_tokens: 500,
+            ..Default::default()
+        },
+        last_token_usage: TokenUsage {
+            total_tokens: 500,
+            ..Default::default()
+        },
+        model_context_window: None,
+    }));
+
+    assert_eq!(
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
+        500 + expected_notice_tokens
+    );
+
+    history.set_recomputed_token_info(TokenUsageInfo {
+        total_token_usage: TokenUsage {
+            total_tokens: 500,
+            ..Default::default()
+        },
+        last_token_usage: TokenUsage {
+            total_tokens: expected_notice_tokens,
+            ..Default::default()
+        },
+        model_context_window: None,
+    });
+
+    assert_eq!(
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
+        expected_notice_tokens
+    );
+    assert_eq!(
+        history
+            .get_total_token_usage_breakdown()
+            .estimated_tokens_of_items_added_since_last_successful_api_response,
+        0
+    );
+}
+
+#[test]
+fn recomputed_quarantine_usage_only_estimates_items_after_exact_boundary() {
+    let target = ModelInputItemReference {
+        kind: ModelInputItemKind::FunctionCall,
+        call_id: "call-quarantine-boundary".to_string(),
+    };
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: target.clone().into(),
+        reason: "provider rejected transaction".to_string(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some("input[0].arguments".to_string()),
+    };
+    let notice = protocol::models::model_context_quarantine_notice(
+        match &quarantine {
+            ResponseItem::ModelContextQuarantine { target, .. } => target,
+            _ => unreachable!(),
+        },
+        "provider rejected transaction",
+        Some("invalid_value"),
+        Some("input[0].arguments"),
+    );
+    let expected_notice_tokens = estimate_item_token_count(&notice);
+    let mut history = create_history_with_items(vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: target.call_id.clone(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: target.call_id,
+            output: FunctionCallOutputPayload::from_text("rejected".to_string()),
+        },
+        quarantine,
+    ]);
+    history.set_recomputed_token_info(TokenUsageInfo {
+        total_token_usage: TokenUsage::default(),
+        last_token_usage: TokenUsage {
+            total_tokens: expected_notice_tokens,
+            ..Default::default()
+        },
+        model_context_window: None,
+    });
+
+    let later_assistant = assistant_msg("later assistant response");
+    history.record_items([&later_assistant], TruncationPolicy::Tokens(10_000));
+
+    assert_eq!(
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
+        expected_notice_tokens + estimate_item_token_count(&later_assistant)
+    );
+    let provider_usage = TokenUsage {
+        total_tokens: 700,
+        ..Default::default()
+    };
+    history.update_token_info(&provider_usage, None);
+    assert_eq!(
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
+        provider_usage.total_tokens
+    );
+}
+
+#[test]
+fn rollback_preserves_quarantine_when_target_transaction_survives() {
+    let call_id = "call-before-rollback".to_string();
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: ModelInputItemReference {
+            kind: ModelInputItemKind::FunctionCall,
+            call_id: call_id.clone(),
+        }
+        .into(),
+        reason: "provider rejected transaction".to_string(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some("input[2].arguments".to_string()),
+    };
+    let mut history = create_history_with_items(vec![
+        user_msg("first turn"),
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: call_id.clone(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id,
+            output: FunctionCallOutputPayload::from_text("done".to_string()),
+        },
+        user_msg("turn that discovered the invalid history"),
+        quarantine.clone(),
+    ]);
+
+    history.drop_last_n_user_turns(1);
+
+    assert_eq!(history.raw_items().last(), Some(&quarantine));
+    let prompt = history.for_prompt(&default_input_modalities());
+    assert!(!prompt.iter().any(|item| {
+        matches!(
+            item,
+            ResponseItem::FunctionCall { call_id, .. }
+                | ResponseItem::FunctionCallOutput { call_id, .. }
+                if call_id == "call-before-rollback"
+        )
+    }));
+}
+
+#[test]
+fn rollback_preserves_item_quarantine_when_fingerprinted_call_survives() {
+    let call = ResponseItem::ToolSearchCall {
+        id: None,
+        call_id: None,
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({"query": {"invalid": true}}),
+    };
+    let fingerprint = protocol::models::model_context_item_fingerprint(&call).expect("fingerprint");
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: protocol::error::ModelContextQuarantineReference::ModelItem {
+            kind: ModelInputItemKind::ToolSearchCall,
+            call_id: None,
+            item_id: None,
+            fingerprint,
+        },
+        reason: "local parse failed".to_string(),
+        error_code: Some("local_tool_call_parse_failed".to_string()),
+        error_param: None,
+    };
+    let mut history = create_history_with_items(vec![
+        user_msg("first turn"),
+        call,
+        user_msg("turn that discovered the invalid item"),
+        quarantine.clone(),
+    ]);
+
+    history.drop_last_n_user_turns(1);
+
+    assert_eq!(history.raw_items().last(), Some(&quarantine));
+    let prompt = history.for_prompt(&default_input_modalities());
+    assert!(
+        !prompt
+            .iter()
+            .any(|item| matches!(item, ResponseItem::ToolSearchCall { .. }))
+    );
+}
+
 #[cfg(debug_assertions)]
 #[test]
 #[should_panic]

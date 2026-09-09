@@ -12,6 +12,7 @@ use model_service_api::ResponsesApiRequest;
 use model_service_api::ResponsesOptions;
 use model_service_api::SharedAuthProvider;
 use model_service_api::SseTelemetry;
+use protocol::error::ModelInputItemReference;
 use serde_json::Value;
 use tracing::instrument;
 use transport_client::HttpTransport;
@@ -24,6 +25,7 @@ use crate::request_headers::insert_header;
 use crate::request_headers::subagent_header;
 use crate::responses_requests::attach_item_ids;
 use crate::responses_requests::make_responses_input_items_compatible;
+use crate::responses_requests::validate_responses_input_items;
 use crate::responses_sse::spawn_response_stream;
 
 pub struct ResponsesClient<T: HttpTransport> {
@@ -70,7 +72,9 @@ impl<T: HttpTransport> ResponsesClient<T> {
             turn_state,
         } = options;
 
-        make_responses_input_items_compatible(&mut request.input);
+        make_responses_input_items_compatible(&mut request.input, &mut request.input_sources);
+        validate_responses_input_items(&request.input, &request.input_sources)?;
+        let input_sources = request.input_sources.clone();
         let mut body = serde_json::to_value(&request).map_err(|error| {
             ApiError::Stream(format!("failed to encode responses request: {error}"))
         })?;
@@ -87,7 +91,8 @@ impl<T: HttpTransport> ResponsesClient<T> {
             insert_header(&mut headers, "x-openai-subagent", &subagent);
         }
 
-        self.stream(body, headers, compression, turn_state).await
+        self.stream(body, headers, compression, turn_state, input_sources)
+            .await
     }
 
     fn path() -> &'static str {
@@ -111,13 +116,14 @@ impl<T: HttpTransport> ResponsesClient<T> {
         extra_headers: HeaderMap,
         compression: Compression,
         turn_state: Option<Arc<OnceLock<String>>>,
+        input_sources: Vec<Option<ModelInputItemReference>>,
     ) -> Result<ResponseStream, ApiError> {
         let request_compression = match compression {
             Compression::None => RequestCompression::None,
             Compression::Zstd => RequestCompression::Zstd,
         };
 
-        let stream_response = self
+        let stream_response = match self
             .session
             .stream_with(
                 Method::POST,
@@ -132,13 +138,21 @@ impl<T: HttpTransport> ResponsesClient<T> {
                     request.compression = request_compression;
                 },
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(mut error) => {
+                model_service_api::attach_model_input_source(&mut error, &input_sources);
+                return Err(error);
+            }
+        };
 
         Ok(spawn_response_stream(
             stream_response,
             self.session.provider().stream_idle_timeout,
             self.sse_telemetry.clone(),
             turn_state,
+            input_sources,
         ))
     }
 }

@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use transport_client::HttpTransport;
-use transport_client_types::RequestTelemetry;
 use http::HeaderMap;
 use http::Method;
 use model_service_api::ApiError;
@@ -18,6 +16,8 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tracing::instrument;
+use transport_client::HttpTransport;
+use transport_client_types::RequestTelemetry;
 
 use crate::endpoint_session::EndpointSession;
 use crate::responses_sse::response_stream_from_receiver;
@@ -295,6 +295,7 @@ fn chat_message_from_response_item(item: ResponseItem) -> Option<ChatMessage> {
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::Reasoning { .. }
         | ResponseItem::LocalShellCall { .. }
         | ResponseItem::ToolSearchCall { .. }

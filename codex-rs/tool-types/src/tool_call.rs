@@ -72,11 +72,18 @@ impl ToolCall {
                 payload: ToolPayload::Function { arguments },
             })),
             ResponseItem::ToolSearchCall {
-                call_id: Some(call_id),
+                call_id,
                 execution,
                 arguments,
                 ..
             } if execution == "client" => {
+                let call_id = call_id
+                    .filter(|call_id| !call_id.is_empty())
+                    .ok_or_else(|| {
+                        FunctionCallError::RespondToModel(
+                            "tool_search call is missing a non-empty call id".to_string(),
+                        )
+                    })?;
                 let arguments: SearchToolCallParams =
                     serde_json::from_value(arguments).map_err(|err| {
                         FunctionCallError::RespondToModel(format!(
@@ -175,6 +182,22 @@ mod tests {
             }),
         })
         .expect("non-client tool search should not error");
+
+        assert!(call.is_none());
+    }
+
+    #[test]
+    fn skips_server_tool_search_call_without_call_id() {
+        let call = ToolCall::from_response_item(ResponseItem::ToolSearchCall {
+            id: Some("server-search".to_string()),
+            call_id: None,
+            status: None,
+            execution: "server".to_string(),
+            arguments: serde_json::json!({
+                "query": "command tools",
+            }),
+        })
+        .expect("server tool search without call id should remain a non-client item");
 
         assert!(call.is_none());
     }

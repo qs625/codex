@@ -2141,15 +2141,22 @@ impl Session {
     }
 
     pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
-        let history = self.clone_history().await;
-        let base_instructions = self.get_base_instructions().await;
-        let Some(estimated_total_tokens) =
-            history.estimate_token_count_with_base_instructions(&base_instructions)
-        else {
+        if !self.recompute_token_usage_state(turn_context).await {
             return;
-        };
+        }
+        self.send_token_count_event(turn_context).await;
+    }
+
+    pub(crate) async fn recompute_token_usage_state(&self, turn_context: &TurnContext) -> bool {
+        let base_instructions = self.get_base_instructions().await;
         {
             let mut state = self.state.lock().await;
+            let Some(estimated_total_tokens) = state
+                .history
+                .estimate_token_count_with_base_instructions(&base_instructions)
+            else {
+                return false;
+            };
             let mut info = state.token_info().unwrap_or(TokenUsageInfo {
                 total_token_usage: TokenUsage::default(),
                 last_token_usage: TokenUsage::default(),
@@ -2168,9 +2175,9 @@ impl Session {
                 info.model_context_window = Some(model_context_window);
             }
 
-            state.set_token_info(Some(info));
+            state.set_recomputed_token_info(info);
         }
-        self.send_token_count_event(turn_context).await;
+        true
     }
 
     pub(crate) async fn update_rate_limits(

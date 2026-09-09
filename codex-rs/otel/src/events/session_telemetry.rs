@@ -996,6 +996,7 @@ impl SessionTelemetry {
             ResponseItem::EventDrivenTool { .. } => "event_driven_tool".into(),
             ResponseItem::ThreadGoalUpdate { .. } => "thread_goal_update".into(),
             ResponseItem::InterAgentCommunication { .. } => "inter_agent_communication".into(),
+            ResponseItem::ModelContextQuarantine { .. } => "model_context_quarantine".into(),
             ResponseItem::Reasoning { .. } => "reasoning".into(),
             ResponseItem::LocalShellCall { .. } => "local_shell_call".into(),
             ResponseItem::FunctionCall { .. } => "function_call".into(),

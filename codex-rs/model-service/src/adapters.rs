@@ -156,11 +156,11 @@ impl ModelClientApi for LegacyModelClientAdapter {
                     &InferenceTraceContext::disabled(),
                 )
                 .await
-                .map_err(|err| ModelRequestError::new(err.to_string()))?;
+                .map_err(ModelRequestError::from_codex_err)?;
             Ok(Box::pin(stream.map(|event| {
                 event
                     .map(map_legacy_response_event)
-                    .map_err(|err| ModelRequestError::new(err.to_string()))
+                    .map_err(ModelRequestError::from_codex_err)
             })) as ModelResponseStream)
         })
     }

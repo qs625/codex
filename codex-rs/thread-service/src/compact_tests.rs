@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use protocol::error::ModelInputItemReference;
 use protocol::models::ContentItem;
 
 async fn process_compacted_history_with_test_session(
@@ -430,9 +431,7 @@ async fn process_compacted_history_reinjects_user_instructions_into_initial_cont
     let (session, mut turn_context) = crate::session::tests::make_session_and_context().await;
     turn_context.user_instructions = Some("Loaded from instruction_files".to_string());
     session
-        .set_user_instructions_for_test(Some(
-            "Loaded from instruction_files".to_string(),
-        ))
+        .set_user_instructions_for_test(Some("Loaded from instruction_files".to_string()))
         .await;
     let compacted_history = vec![ResponseItem::Message {
         id: None,
@@ -503,4 +502,89 @@ fn prepend_initial_context_to_memory_checkpoint_history_keeps_checkpoint_block_c
         "Memory checkpoint: current work\n# Current Work\n- item",
     ));
     assert_eq!(refreshed, expected);
+}
+
+#[test]
+fn compact_preserves_quarantine_when_retained_transaction_survives() {
+    let call_id = "call-quarantined".to_string();
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: ModelInputItemReference {
+            kind: ModelInputItemKind::FunctionCall,
+            call_id: call_id.clone(),
+        }
+        .into(),
+        reason: "provider rejected transaction".to_string(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some("input[0].arguments".to_string()),
+    };
+    let previous_history = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: call_id.clone(),
+        },
+        quarantine.clone(),
+    ];
+    let mut replacement_history = vec![ResponseItem::FunctionCall {
+        id: None,
+        name: "lookup".to_string(),
+        namespace: None,
+        arguments: "{}".to_string(),
+        call_id,
+    }];
+
+    reconcile_model_context_quarantines(&previous_history, &mut replacement_history);
+
+    assert_eq!(replacement_history.last(), Some(&quarantine));
+}
+
+#[test]
+fn compact_drops_quarantine_marker_when_no_transaction_fragment_survives() {
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: protocol::error::ModelContextQuarantineReference::ModelItem {
+            kind: ModelInputItemKind::ToolSearchCall,
+            call_id: None,
+            item_id: None,
+            fingerprint: "sha256:dropped".to_string(),
+        },
+        reason: "provider rejected transaction".to_string(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some("input[0].arguments".to_string()),
+    };
+    let mut replacement_history = vec![quarantine];
+
+    reconcile_model_context_quarantines(&[], &mut replacement_history);
+
+    assert!(replacement_history.is_empty());
+}
+
+#[test]
+fn compact_preserves_item_quarantine_when_fingerprinted_call_survives() {
+    let call = ResponseItem::ToolSearchCall {
+        id: None,
+        call_id: None,
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({"query": {"invalid": true}}),
+    };
+    let fingerprint = protocol::models::model_context_item_fingerprint(&call).expect("fingerprint");
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: protocol::error::ModelContextQuarantineReference::ModelItem {
+            kind: ModelInputItemKind::ToolSearchCall,
+            call_id: None,
+            item_id: None,
+            fingerprint,
+        },
+        reason: "local parse failed".to_string(),
+        error_code: Some("local_tool_call_parse_failed".to_string()),
+        error_param: None,
+    };
+    let previous_history = vec![call.clone(), quarantine.clone()];
+    let mut replacement_history = vec![call];
+
+    reconcile_model_context_quarantines(&previous_history, &mut replacement_history);
+
+    assert_eq!(replacement_history.last(), Some(&quarantine));
 }

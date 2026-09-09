@@ -203,6 +203,7 @@ fn chat_request() -> ResponsesApiRequest {
     ResponsesApiRequest {
         model: "gpt-test".into(),
         instructions: String::new(),
+        input_sources: Vec::new(),
         input: vec![ResponseItem::Message {
             id: None,
             role: "user".into(),
@@ -349,6 +350,7 @@ async fn responses_client_uses_responses_path() -> Result<()> {
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 
@@ -444,6 +446,7 @@ async fn streaming_client_adds_auth_headers() -> Result<()> {
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 
@@ -481,6 +484,7 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
     let request = ResponsesApiRequest {
         model: "gpt-test".into(),
         instructions: "Say hi".into(),
+        input_sources: Vec::new(),
         input: Vec::new(),
         tools: Vec::new(),
         tool_choice: "auto".into(),
@@ -527,6 +531,7 @@ async fn streaming_client_retries_on_transient_auth_error() -> Result<()> {
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await?;
 
@@ -552,6 +557,7 @@ async fn streaming_client_does_not_retry_auth_build_error() -> Result<()> {
             HeaderMap::new(),
             Compression::None,
             /*turn_state*/ None,
+            Vec::new(),
         )
         .await;
     let err = match result {
@@ -578,6 +584,7 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
     let request = ResponsesApiRequest {
         model: "gpt-test".into(),
         instructions: "Say hi".into(),
+        input_sources: Vec::new(),
         input: vec![ResponseItem::Message {
             id: Some("msg_1".into()),
             role: "user".into(),
@@ -667,6 +674,7 @@ async fn responses_client_makes_internal_history_items_responses_compatible() ->
     let request = ResponsesApiRequest {
         model: "gpt-test".into(),
         instructions: "Say hi".into(),
+        input_sources: Vec::new(),
         input: vec![
             ResponseItem::Message {
                 id: Some("msg_1".into()),

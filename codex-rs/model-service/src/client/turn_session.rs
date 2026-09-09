@@ -134,6 +134,7 @@ impl ModelClientSession {
                 summary,
                 service_tier.clone(),
             )?;
+            let input_sources = request.input_sources.clone();
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.add_request_headers(&mut options.extra_headers);
             inference_trace_attempt.record_started(&request);
@@ -183,7 +184,13 @@ impl ModelClientSession {
                 Err(err) => {
                     let response_debug_context =
                         extract_response_debug_context_from_api_error(&err);
-                    let err = map_api_error(err);
+                    let mut err = map_api_error(err);
+                    if let CodexErr::InvalidModelInput(details) = &mut err {
+                        model_service_api::attach_invalid_model_input_source(
+                            details,
+                            &input_sources,
+                        );
+                    }
                     inference_trace_attempt.record_failed(
                         &err,
                         response_debug_context.request_id.as_deref(),
@@ -308,6 +315,10 @@ impl ModelClientSession {
             };
             stamp_ws_stream_request_start_ms(&mut ws_request);
             inference_trace_attempt.record_started(&ws_request);
+            let input_sources = match &ws_request {
+                ResponsesWsRequest::ResponseCreate(payload) => payload.input_sources.clone(),
+                ResponsesWsRequest::ResponseProcessed(_) => Vec::new(),
+            };
             let websocket_connection =
                 self.websocket_session.connection.as_ref().ok_or_else(|| {
                     map_api_error(ApiError::Stream(
@@ -335,7 +346,13 @@ impl ModelClientSession {
                 Err(err) => {
                     let response_debug_context =
                         extract_response_debug_context_from_api_error(&err);
-                    let err = map_api_error(err);
+                    let mut err = map_api_error(err);
+                    if let CodexErr::InvalidModelInput(details) = &mut err {
+                        model_service_api::attach_invalid_model_input_source(
+                            details,
+                            &input_sources,
+                        );
+                    }
                     inference_trace_attempt.record_failed(
                         &err,
                         response_debug_context.request_id.as_deref(),

@@ -9,6 +9,9 @@ use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::approx_tokens_from_byte_count_i64;
 use codex_utils_output_truncation::truncate_function_output_items_with_policy;
 use codex_utils_output_truncation::truncate_text;
+use protocol::error::ModelContextQuarantineReference;
+use protocol::error::ModelInputItemKind;
+use protocol::error::ModelInputItemReference;
 use protocol::models::BaseInstructions;
 use protocol::models::ContentItem;
 use protocol::models::FunctionCallOutputBody;
@@ -16,10 +19,13 @@ use protocol::models::FunctionCallOutputContentItem;
 use protocol::models::FunctionCallOutputPayload;
 use protocol::models::ImageDetail;
 use protocol::models::ResponseItem;
+use protocol::models::model_context_item_fingerprint;
+use protocol::models::model_context_quarantine_notice;
 use protocol::openai_models::InputModality;
 use protocol::protocol::TokenUsage;
 use protocol::protocol::TokenUsageInfo;
 use protocol::protocol::TurnContextItem;
+use std::borrow::Cow;
 use std::ops::Deref;
 
 /// Transcript of thread history
@@ -30,6 +36,8 @@ pub struct ContextManager {
     /// Bumped whenever history is rewritten, such as compaction or rollback.
     history_version: u64,
     token_info: Option<TokenUsageInfo>,
+    /// Raw history length covered by `last_token_usage`.
+    last_token_usage_history_len: Option<usize>,
     /// Reference context snapshot used for diffing and producing model-visible
     /// settings update items.
     ///
@@ -59,6 +67,7 @@ impl ContextManager {
             token_info: TokenUsageInfo::new_or_append(
                 &None, &None, /*model_context_window*/ None,
             ),
+            last_token_usage_history_len: None,
             reference_context_item: None,
         }
     }
@@ -68,7 +77,13 @@ impl ContextManager {
     }
 
     pub fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
+        self.last_token_usage_history_len = None;
         self.token_info = info;
+    }
+
+    pub fn set_recomputed_token_info(&mut self, info: TokenUsageInfo) {
+        self.last_token_usage_history_len = Some(self.items.len());
+        self.token_info = Some(info);
     }
 
     pub fn set_reference_context_item(&mut self, item: Option<TurnContextItem>) {
@@ -86,6 +101,7 @@ impl ContextManager {
                 self.token_info = Some(TokenUsageInfo::full_context_window(context_window));
             }
         }
+        self.last_token_usage_history_len = Some(self.items.len());
     }
 
     /// `items` is ordered from oldest to newest.
@@ -110,6 +126,11 @@ impl ContextManager {
     /// include `InputModality::Image`, images are stripped from messages and tool
     /// outputs.
     pub fn for_prompt(mut self, input_modalities: &[InputModality]) -> Vec<ResponseItem> {
+        self.items = self
+            .projected_model_context_items()
+            .into_iter()
+            .map(|(_, item)| item.clone())
+            .collect();
         self.normalize_history(input_modalities);
         self.items
     }
@@ -117,6 +138,97 @@ impl ContextManager {
     /// Returns raw items in the history.
     pub fn raw_items(&self) -> &[ResponseItem] {
         &self.items
+    }
+
+    pub fn projected_model_context_items(&self) -> Vec<(usize, &ResponseItem)> {
+        let quarantined = self
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ResponseItem::ModelContextQuarantine { target, .. } => Some(target.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                !quarantined
+                    .iter()
+                    .any(|target| response_item_belongs_to_quarantine_target(item, target))
+            })
+            .collect()
+    }
+
+    pub fn projected_model_input_items(&self) -> Vec<(usize, Cow<'_, ResponseItem>)> {
+        self.projected_model_context_items()
+            .into_iter()
+            .map(|(index, item)| {
+                let projected = match item {
+                    ResponseItem::ModelContextQuarantine {
+                        target,
+                        reason,
+                        error_code,
+                        error_param,
+                    } => Cow::Owned(model_context_quarantine_notice(
+                        target,
+                        reason,
+                        error_code.as_deref(),
+                        error_param.as_deref(),
+                    )),
+                    _ => Cow::Borrowed(item),
+                };
+                (index, projected)
+            })
+            .collect()
+    }
+
+    pub fn has_complete_unique_model_input_transaction(
+        &self,
+        target: &ModelInputItemReference,
+    ) -> bool {
+        if target.call_id.is_empty() || self.contains_model_context_quarantine(target) {
+            return false;
+        }
+        let matching_calls = self
+            .items
+            .iter()
+            .filter(|item| response_item_matches_target(item, target))
+            .count();
+        let matching_outputs = self
+            .items
+            .iter()
+            .filter(|item| response_item_is_output_for_target(item, target))
+            .count();
+        let all_calls_with_id = self
+            .items
+            .iter()
+            .filter(|item| model_call_id(item) == Some(target.call_id.as_str()))
+            .count();
+        let all_outputs_with_id = self
+            .items
+            .iter()
+            .filter(|item| model_output_call_id(item) == Some(target.call_id.as_str()))
+            .count();
+        matching_calls == 1
+            && matching_outputs == 1
+            && all_calls_with_id == 1
+            && all_outputs_with_id == 1
+    }
+
+    pub fn contains_model_context_quarantine(&self, target: &ModelInputItemReference) -> bool {
+        self.items.iter().any(|item| {
+            matches!(
+                item,
+                ResponseItem::ModelContextQuarantine {
+                    target: ModelContextQuarantineReference::ToolTransaction {
+                        kind,
+                        call_id,
+                    },
+                    ..
+                } if *kind == target.kind && call_id == &target.call_id
+            )
+        })
     }
 
     pub fn history_version(&self) -> u64 {
@@ -131,9 +243,9 @@ impl ContextManager {
             i64::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i64::MAX);
 
         let items_tokens = self
-            .items
-            .iter()
-            .map(estimate_item_token_count)
+            .projected_model_input_items()
+            .into_iter()
+            .map(|(_, item)| estimate_item_token_count(item.as_ref()))
             .fold(0i64, i64::saturating_add);
 
         Some(base_tokens.saturating_add(items_tokens))
@@ -144,6 +256,7 @@ impl ContextManager {
             // Remove the oldest item (front of the list). Items are ordered from
             // oldest → newest, so index 0 is the first entry recorded.
             let removed = self.items.remove(0);
+            self.last_token_usage_history_len = None;
             // If the removed item participates in a call/output pair, also remove
             // its corresponding counterpart to keep the invariants intact without
             // running a full normalization pass.
@@ -153,6 +266,7 @@ impl ContextManager {
 
     pub fn remove_last_item(&mut self) -> bool {
         if let Some(removed) = self.items.pop() {
+            self.last_token_usage_history_len = None;
             normalize::remove_corresponding_for(&mut self.items, &removed);
             self.history_version = self.history_version.saturating_add(1);
             true
@@ -163,6 +277,7 @@ impl ContextManager {
 
     pub fn replace(&mut self, items: Vec<ResponseItem>) {
         self.items = items;
+        self.last_token_usage_history_len = None;
         self.history_version = self.history_version.saturating_add(1);
     }
 
@@ -191,6 +306,7 @@ impl ContextManager {
                     }
                 }
                 if replaced {
+                    self.last_token_usage_history_len = None;
                     self.history_version = self.history_version.saturating_add(1);
                 }
                 replaced
@@ -246,7 +362,9 @@ impl ContextManager {
         cut_idx =
             self.trim_pre_turn_context_updates(&snapshot, first_instruction_turn_idx, cut_idx);
 
-        self.replace(snapshot[..cut_idx].to_vec());
+        let mut retained = snapshot[..cut_idx].to_vec();
+        preserve_relevant_model_context_quarantines(&snapshot, &mut retained);
+        self.replace(retained);
     }
 
     pub fn update_token_info(&mut self, usage: &TokenUsage, model_context_window: Option<i64>) {
@@ -255,6 +373,7 @@ impl ContextManager {
             &Some(usage.clone()),
             model_context_window,
         );
+        self.last_token_usage_history_len = Some(self.items.len());
     }
 
     fn get_non_last_reasoning_items_tokens(&self) -> i64 {
@@ -281,6 +400,16 @@ impl ContextManager {
 
     // These are local items added after the most recent model-emitted item.
     // They are not reflected in `last_token_usage.total_tokens`.
+    fn token_usage_history_boundary(&self) -> usize {
+        self.last_token_usage_history_len.unwrap_or_else(|| {
+            self.items
+                .iter()
+                .rposition(is_model_generated_item)
+                .map_or(self.items.len(), |index| index.saturating_add(1))
+        })
+    }
+
+    #[cfg(test)]
     fn items_after_last_model_generated_item(&self) -> &[ResponseItem] {
         let start = self
             .items
@@ -298,10 +427,12 @@ impl ContextManager {
             .as_ref()
             .map(|info| info.last_token_usage.total_tokens)
             .unwrap_or(0);
+        let start = self.token_usage_history_boundary();
         let items_after_last_model_generated_tokens = self
-            .items_after_last_model_generated_item()
-            .iter()
-            .map(estimate_item_token_count)
+            .projected_model_input_items()
+            .into_iter()
+            .filter(|(index, _)| *index >= start)
+            .map(|(_, item)| estimate_item_token_count(item.as_ref()))
             .fold(0i64, i64::saturating_add);
         if server_reasoning_included {
             last_tokens.saturating_add(items_after_last_model_generated_tokens)
@@ -318,25 +449,25 @@ impl ContextManager {
             .as_ref()
             .map(|info| info.last_token_usage.clone())
             .unwrap_or_default();
-        let items_after_last_model_generated = self.items_after_last_model_generated_item();
+        let start = self.token_usage_history_boundary();
+        let projected_items = self.projected_model_input_items();
 
         TotalTokenUsageBreakdown {
             last_api_response_total_tokens: last_usage.total_tokens,
-            all_history_items_model_visible_bytes: self
-                .items
+            all_history_items_model_visible_bytes: projected_items
                 .iter()
-                .map(estimate_response_item_model_visible_bytes)
+                .map(|(_, item)| estimate_response_item_model_visible_bytes(item.as_ref()))
                 .fold(0i64, i64::saturating_add),
-            estimated_tokens_of_items_added_since_last_successful_api_response:
-                items_after_last_model_generated
-                    .iter()
-                    .map(estimate_item_token_count)
-                    .fold(0i64, i64::saturating_add),
-            estimated_bytes_of_items_added_since_last_successful_api_response:
-                items_after_last_model_generated
-                    .iter()
-                    .map(estimate_response_item_model_visible_bytes)
-                    .fold(0i64, i64::saturating_add),
+            estimated_tokens_of_items_added_since_last_successful_api_response: projected_items
+                .iter()
+                .filter(|(index, _)| *index >= start)
+                .map(|(_, item)| estimate_item_token_count(item.as_ref()))
+                .fold(0i64, i64::saturating_add),
+            estimated_bytes_of_items_added_since_last_successful_api_response: projected_items
+                .iter()
+                .filter(|(index, _)| *index >= start)
+                .map(|(_, item)| estimate_response_item_model_visible_bytes(item.as_ref()))
+                .fold(0i64, i64::saturating_add),
         }
     }
 
@@ -385,6 +516,7 @@ impl ContextManager {
             | ResponseItem::EventDrivenTool { .. }
             | ResponseItem::ThreadGoalUpdate { .. }
             | ResponseItem::InterAgentCommunication { .. }
+            | ResponseItem::ModelContextQuarantine { .. }
             | ResponseItem::Reasoning { .. }
             | ResponseItem::LocalShellCall { .. }
             | ResponseItem::FunctionCall { .. }
@@ -479,6 +611,7 @@ fn is_api_message(message: &ResponseItem) -> bool {
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. } => true,
+        ResponseItem::ModelContextQuarantine { .. } => true,
         ResponseItem::FunctionCallOutput { .. }
         | ResponseItem::FunctionCall { .. }
         | ResponseItem::ToolSearchCall { .. }
@@ -613,6 +746,7 @@ fn is_model_generated_item(item: &ResponseItem) -> bool {
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::ToolSearchOutput { .. }
         | ResponseItem::CustomToolCallOutput { .. }
         | ResponseItem::Other => false,
@@ -625,7 +759,150 @@ pub fn is_codex_generated_item(item: &ResponseItem) -> bool {
         ResponseItem::FunctionCallOutput { .. }
             | ResponseItem::ToolSearchOutput { .. }
             | ResponseItem::CustomToolCallOutput { .. }
+            | ResponseItem::ModelContextQuarantine { .. }
     ) || matches!(item, ResponseItem::Message { role, .. } if role == "developer")
+}
+
+pub fn preserve_relevant_model_context_quarantines(
+    previous_items: &[ResponseItem],
+    retained_items: &mut Vec<ResponseItem>,
+) {
+    for item in previous_items {
+        let ResponseItem::ModelContextQuarantine { target, .. } = item else {
+            continue;
+        };
+        let target_survives = retained_items
+            .iter()
+            .any(|retained| response_item_belongs_to_quarantine_target(retained, target));
+        let marker_survives = retained_items.iter().any(|retained| {
+            matches!(
+                retained,
+                ResponseItem::ModelContextQuarantine {
+                    target: retained_target,
+                    ..
+                } if retained_target == target
+            )
+        });
+        if target_survives && !marker_survives {
+            retained_items.push(item.clone());
+        }
+    }
+}
+
+fn response_item_belongs_to_quarantine_target(
+    item: &ResponseItem,
+    target: &ModelContextQuarantineReference,
+) -> bool {
+    match target {
+        ModelContextQuarantineReference::ToolTransaction { kind, call_id } => {
+            response_item_belongs_to_target(
+                item,
+                &ModelInputItemReference {
+                    kind: *kind,
+                    call_id: call_id.clone(),
+                },
+            )
+        }
+        ModelContextQuarantineReference::ModelItem {
+            kind, fingerprint, ..
+        } => {
+            response_item_kind(item) == Some(*kind)
+                && model_context_item_fingerprint(item).as_deref() == Some(fingerprint.as_str())
+        }
+    }
+}
+
+fn response_item_kind(item: &ResponseItem) -> Option<ModelInputItemKind> {
+    match item {
+        ResponseItem::FunctionCall { .. } => Some(ModelInputItemKind::FunctionCall),
+        ResponseItem::ToolSearchCall { .. } => Some(ModelInputItemKind::ToolSearchCall),
+        ResponseItem::CustomToolCall { .. } => Some(ModelInputItemKind::CustomToolCall),
+        ResponseItem::LocalShellCall { .. } => Some(ModelInputItemKind::LocalShellCall),
+        _ => None,
+    }
+}
+
+fn response_item_matches_target(item: &ResponseItem, target: &ModelInputItemReference) -> bool {
+    match (target.kind, item) {
+        (ModelInputItemKind::FunctionCall, ResponseItem::FunctionCall { call_id, .. })
+        | (ModelInputItemKind::CustomToolCall, ResponseItem::CustomToolCall { call_id, .. }) => {
+            call_id == &target.call_id
+        }
+        (
+            ModelInputItemKind::ToolSearchCall,
+            ResponseItem::ToolSearchCall {
+                call_id: Some(call_id),
+                ..
+            },
+        )
+        | (
+            ModelInputItemKind::LocalShellCall,
+            ResponseItem::LocalShellCall {
+                call_id: Some(call_id),
+                ..
+            },
+        ) => call_id == &target.call_id,
+        _ => false,
+    }
+}
+
+fn response_item_belongs_to_target(item: &ResponseItem, target: &ModelInputItemReference) -> bool {
+    if response_item_matches_target(item, target) {
+        return true;
+    }
+    response_item_is_output_for_target(item, target)
+}
+
+fn response_item_is_output_for_target(
+    item: &ResponseItem,
+    target: &ModelInputItemReference,
+) -> bool {
+    match (target.kind, item) {
+        (
+            ModelInputItemKind::FunctionCall | ModelInputItemKind::LocalShellCall,
+            ResponseItem::FunctionCallOutput { call_id, .. },
+        )
+        | (
+            ModelInputItemKind::CustomToolCall,
+            ResponseItem::CustomToolCallOutput { call_id, .. },
+        ) => call_id == &target.call_id,
+        (
+            ModelInputItemKind::ToolSearchCall,
+            ResponseItem::ToolSearchOutput {
+                call_id: Some(call_id),
+                ..
+            },
+        ) => call_id == &target.call_id,
+        _ => false,
+    }
+}
+
+fn model_call_id(item: &ResponseItem) -> Option<&str> {
+    match item {
+        ResponseItem::FunctionCall { call_id, .. }
+        | ResponseItem::CustomToolCall { call_id, .. } => Some(call_id),
+        ResponseItem::ToolSearchCall {
+            call_id: Some(call_id),
+            ..
+        }
+        | ResponseItem::LocalShellCall {
+            call_id: Some(call_id),
+            ..
+        } => Some(call_id),
+        _ => None,
+    }
+}
+
+fn model_output_call_id(item: &ResponseItem) -> Option<&str> {
+    match item {
+        ResponseItem::FunctionCallOutput { call_id, .. }
+        | ResponseItem::CustomToolCallOutput { call_id, .. } => Some(call_id),
+        ResponseItem::ToolSearchOutput {
+            call_id: Some(call_id),
+            ..
+        } => Some(call_id),
+        _ => None,
+    }
 }
 
 pub fn is_user_turn_boundary(item: &ResponseItem) -> bool {

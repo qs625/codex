@@ -72,6 +72,7 @@ pub(crate) fn spawn_response_stream(
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     turn_state: Option<Arc<OnceLock<String>>>,
+    input_sources: Vec<Option<protocol::error::ModelInputItemReference>>,
 ) -> ResponseStream {
     let rate_limit_snapshots = parse_all_rate_limits(&stream_response.headers);
     let models_etag = stream_response
@@ -124,6 +125,7 @@ pub(crate) fn spawn_response_stream(
             terminal_error,
             idle_timeout,
             telemetry,
+            input_sources,
         )
         .await;
     });
@@ -136,6 +138,7 @@ pub(crate) fn spawn_response_stream(
 struct Error {
     r#type: Option<String>,
     code: Option<String>,
+    param: Option<String>,
     message: Option<String>,
     plan_type: Option<String>,
     resets_at: Option<i64>,
@@ -359,11 +362,18 @@ pub(crate) fn process_responses_event(
                     } else if is_cyber_policy_error(&error) {
                         let message = cyber_policy_message(error.message);
                         response_error = ApiError::CyberPolicy { message };
-                    } else if is_invalid_prompt_error(&error) {
-                        let message = error
-                            .message
-                            .unwrap_or_else(|| "Invalid request.".to_string());
-                        response_error = ApiError::InvalidRequest { message };
+                    } else if is_invalid_request_error(&error) {
+                        response_error =
+                            ApiError::InvalidModelInput(protocol::error::InvalidModelInputError {
+                                message: error
+                                    .message
+                                    .unwrap_or_else(|| "Invalid request.".to_string()),
+                                error_type: error.r#type,
+                                code: error.code,
+                                param: error.param,
+                                input_index: None,
+                                source: None,
+                            });
                     } else if is_server_overloaded_error(&error) {
                         response_error = ApiError::ServerOverloaded;
                     } else {
@@ -437,6 +447,7 @@ async fn process_sse(
     terminal_error: OwnedPermit<Result<ResponseEvent, ApiError>>,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
+    input_sources: Vec<Option<protocol::error::ModelInputItemReference>>,
 ) {
     let mut stream = stream.eventsource();
     let mut response_error: Option<ApiError> = None;
@@ -458,9 +469,10 @@ async fn process_sse(
                 return;
             }
             Ok(None) => {
-                let error = response_error.unwrap_or(ApiError::Stream(
+                let mut error = response_error.unwrap_or(ApiError::Stream(
                     "stream closed before response.completed".into(),
                 ));
+                model_service_api::attach_model_input_source(&mut error, &input_sources);
                 terminal_error.send(Err(error));
                 return;
             }
@@ -537,7 +549,9 @@ async fn process_sse(
             }
             Ok(None) => {}
             Err(error) => {
-                response_error = Some(error.into_api_error());
+                let mut error = error.into_api_error();
+                model_service_api::attach_model_input_source(&mut error, &input_sources);
+                response_error = Some(error);
             }
         }
     }
@@ -582,8 +596,8 @@ fn is_usage_not_included(error: &Error) -> bool {
     error.code.as_deref() == Some("usage_not_included")
 }
 
-fn is_invalid_prompt_error(error: &Error) -> bool {
-    error.code.as_deref() == Some("invalid_prompt")
+fn is_invalid_request_error(error: &Error) -> bool {
+    error.r#type.as_deref() == Some("invalid_request_error")
 }
 
 fn is_server_overloaded_error(error: &Error) -> bool {
@@ -601,4 +615,23 @@ fn cyber_policy_message(message: Option<String>) -> String {
     message.unwrap_or_else(|| {
         "This request has been flagged for possible cybersecurity risk.".to_string()
     })
+}
+
+#[cfg(test)]
+mod invalid_model_input_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_request_error_type_is_preserved_even_without_code() {
+        let error = Error {
+            r#type: Some("invalid_request_error".to_string()),
+            code: None,
+            param: Some("input[2].arguments".to_string()),
+            message: Some("invalid input".to_string()),
+            plan_type: None,
+            resets_at: None,
+        };
+
+        assert!(is_invalid_request_error(&error));
+    }
 }

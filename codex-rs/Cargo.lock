@@ -10542,6 +10542,7 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.27.2",
  "strum_macros 0.28.0",
  "tempfile",

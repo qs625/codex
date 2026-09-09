@@ -11,6 +11,7 @@ fn maps_responses_request_to_chat_completions_body() {
     let request = ResponsesApiRequest {
         model: "gpt-test".to_string(),
         instructions: "Be concise".to_string(),
+        input_sources: Vec::new(),
         input: vec![
             ResponseItem::Message {
                 id: None,
@@ -101,6 +102,7 @@ fn omits_tool_options_when_no_function_tools_are_sent() {
     let request = ResponsesApiRequest {
         model: "gpt-test".to_string(),
         instructions: String::new(),
+        input_sources: Vec::new(),
         input: vec![ResponseItem::Message {
             id: None,
             role: "user".to_string(),

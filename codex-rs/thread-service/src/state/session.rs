@@ -156,6 +156,10 @@ impl SessionState {
         self.history.set_token_info(info);
     }
 
+    pub(crate) fn set_recomputed_token_info(&mut self, info: TokenUsageInfo) {
+        self.history.set_recomputed_token_info(info);
+    }
+
     pub(crate) fn set_reference_context_item(&mut self, item: Option<TurnContextItem>) {
         self.history.set_reference_context_item(item);
     }

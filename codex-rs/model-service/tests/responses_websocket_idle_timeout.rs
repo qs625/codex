@@ -9,10 +9,15 @@ use http::HeaderMap;
 use model_service::ResponsesWebsocketClient;
 use model_service_api::AuthProvider;
 use model_service_api::Provider;
+use model_service_api::ResponseCreateWsRequest;
 use model_service_api::ResponseEvent;
 use model_service_api::ResponseProcessedWsRequest;
 use model_service_api::ResponsesWsRequest;
 use model_service_api::RetryConfig;
+use protocol::error::ModelInputItemKind;
+use protocol::error::ModelInputItemReference;
+use protocol::models::FunctionCallOutputPayload;
+use protocol::models::ResponseItem;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async_with_config;
 use tokio_tungstenite::tungstenite::Message;
@@ -79,6 +84,41 @@ fn request() -> ResponsesWsRequest {
     })
 }
 
+fn property_name_request(target: &ModelInputItemReference) -> ResponsesWsRequest {
+    ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
+        model: "gpt-test".to_string(),
+        instructions: String::new(),
+        previous_response_id: None,
+        input: vec![
+            ResponseItem::Other,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "lookup".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: target.call_id.clone(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: target.call_id.clone(),
+                output: FunctionCallOutputPayload::from_text("done".to_string()),
+            },
+        ],
+        input_sources: vec![None, Some(target.clone()), Some(target.clone())],
+        tools: Vec::new(),
+        tool_choice: "auto".to_string(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        generate: None,
+        client_metadata: None,
+    })
+}
+
 fn item_event(text: &str) -> Message {
     Message::Text(
         serde_json::json!({
@@ -114,6 +154,85 @@ fn text_delta_event() -> Message {
         .to_string()
         .into(),
     )
+}
+
+#[tokio::test]
+async fn property_name_error_uses_actual_websocket_source_after_compatibility_filtering() {
+    let (base_url, server) = spawn_responses_ws_server(|mut websocket| async move {
+        let request = websocket
+            .next()
+            .await
+            .expect("request message")
+            .expect("valid request message");
+        let Message::Text(request) = request else {
+            panic!("expected text request");
+        };
+        let request: serde_json::Value =
+            serde_json::from_str(&request).expect("request should be valid JSON");
+        assert_eq!(
+            request["input"][0]["type"].as_str(),
+            Some("function_call")
+        );
+        assert_eq!(
+            request["input"][0]["call_id"].as_str(),
+            Some("websocket-poison")
+        );
+        websocket
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "error",
+                    "status": 400,
+                    "error": {
+                        "message": "Expected a string with maximum length 256",
+                        "type": "invalid_request_error",
+                        "code": "property_name_above_max_length",
+                        "param": "input[0].arguments.outer"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send invalid input response");
+    })
+    .await;
+
+    let target = ModelInputItemReference {
+        kind: ModelInputItemKind::FunctionCall,
+        call_id: "websocket-poison".to_string(),
+    };
+    let client = ResponsesWebsocketClient::new(provider(base_url), Arc::new(NoAuth));
+    let connection = client
+        .connect(HeaderMap::new(), HeaderMap::new(), None, None)
+        .await
+        .expect("connect responses websocket");
+    let mut stream = connection
+        .stream_request(property_name_request(&target), false)
+        .await
+        .expect("start response stream");
+
+    let error = stream
+        .next()
+        .await
+        .expect("stream should yield an error")
+        .expect_err("provider error should remain typed");
+    let model_service_api::ApiError::InvalidModelInput(details) = error else {
+        panic!("expected invalid model input");
+    };
+    assert_eq!(
+        details.error_type.as_deref(),
+        Some("invalid_request_error")
+    );
+    assert_eq!(
+        details.code.as_deref(),
+        Some("property_name_above_max_length")
+    );
+    assert_eq!(details.param.as_deref(), Some("input[0].arguments.outer"));
+    assert_eq!(details.input_index, Some(0));
+    assert_eq!(details.source, Some(target));
+    assert!(connection.is_closed().await);
+
+    server.await.expect("websocket server task");
 }
 
 #[tokio::test]

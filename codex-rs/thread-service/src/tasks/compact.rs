@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::collections::HashSet;
 use std::future::Future;
+use std::sync::Arc;
 
 use super::SessionTask;
 use super::SessionTaskContext;
-use codex_extension_api::ExtensionData;
 use crate::session::session::Session;
-use crate::session::turn::run_turn;
+use crate::session::turn::run_turn_with_model_context_quarantine_state;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
+use codex_extension_api::ExtensionData;
 use protocol::user_input::UserInput;
 use tokio_util::sync::CancellationToken;
 
@@ -83,29 +84,40 @@ impl SessionTask for CompactTask {
             /*inc*/ 1,
             &[("type", "local")],
         );
-        if crate::compact::run_compact_task(Arc::clone(&sess), Arc::clone(&ctx), input)
-            .await
-            .is_err()
+        let model_context_quarantines = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
+        if crate::compact::run_compact_task(
+            Arc::clone(&sess),
+            Arc::clone(&ctx),
+            input,
+            Arc::clone(&model_context_quarantines),
+        )
+        .await
+        .is_err()
         {
             return None;
         }
 
+        let continuation_quarantines = Arc::clone(&model_context_quarantines);
         continue_compact_turn_after_success(
             session,
             ctx,
             cancellation_token,
-            |sess, ctx, turn_extension_data, cancellation_token| async move {
-                sess.set_server_reasoning_included(/*included*/ false).await;
-                run_turn(
-                    sess,
-                    ctx,
-                    turn_extension_data,
-                    Vec::new(),
-                    /*allow_empty_input_without_pending*/ false,
-                    /*prewarmed_client_session*/ None,
-                    cancellation_token,
-                )
-                .await
+            |sess, ctx, turn_extension_data, cancellation_token| {
+                let model_context_quarantines = Arc::clone(&continuation_quarantines);
+                async move {
+                    sess.set_server_reasoning_included(/*included*/ false).await;
+                    run_turn_with_model_context_quarantine_state(
+                        sess,
+                        ctx,
+                        turn_extension_data,
+                        Vec::new(),
+                        /*allow_empty_input_without_pending*/ false,
+                        /*prewarmed_client_session*/ None,
+                        cancellation_token,
+                        model_context_quarantines,
+                    )
+                    .await
+                }
             },
         )
         .await

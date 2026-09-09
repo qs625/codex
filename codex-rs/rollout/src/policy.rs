@@ -81,6 +81,7 @@ pub fn should_persist_response_item(item: &ResponseItem) -> bool {
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::InterAgentCommunication { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. } => true,
         ResponseItem::Other => false,
@@ -108,6 +109,7 @@ pub fn should_persist_response_item_for_memories(item: &ResponseItem) -> bool {
         | ResponseItem::WorkflowRunProgress { .. }
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::Reasoning { .. }
         | ResponseItem::ImageGenerationCall { .. }
         | ResponseItem::Compaction { .. }

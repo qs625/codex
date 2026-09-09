@@ -1,18 +1,49 @@
 use super::ApiError;
+use super::error::attach_invalid_model_input_source;
+use super::error::parse_invalid_model_input_error;
 use super::rate_limits::parse_promo_message;
 use super::rate_limits::parse_rate_limit_for_limit;
 use base64::Engine;
 use chrono::DateTime;
 use chrono::Utc;
-use transport_client_types::TransportError;
+use http::HeaderMap;
 use protocol::auth::PlanType;
 use protocol::error::CodexErr;
+use protocol::error::ModelInputItemReference;
 use protocol::error::RetryLimitReachedError;
 use protocol::error::UnexpectedResponseError;
 use protocol::error::UsageLimitReachedError;
-use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::Value;
+use transport_client_types::TransportError;
+
+pub fn attach_model_input_source(
+    error: &mut ApiError,
+    sources: &[Option<ModelInputItemReference>],
+) {
+    if let ApiError::InvalidModelInput(details) = error {
+        attach_invalid_model_input_source(details, sources);
+        return;
+    }
+
+    let parsed = match error {
+        ApiError::Transport(TransportError::Http {
+            status,
+            body: Some(body),
+            ..
+        }) if *status == http::StatusCode::BAD_REQUEST
+            && !body.contains("The image data you provided does not represent a valid image") =>
+        {
+            let parsed = parse_invalid_model_input_error(body);
+            parsed.filter(|details| details.code.as_deref() != Some(CYBER_POLICY_ERROR_CODE))
+        }
+        _ => None,
+    };
+    if let Some(mut details) = parsed {
+        attach_invalid_model_input_source(&mut details, sources);
+        *error = ApiError::InvalidModelInput(details);
+    }
+}
 
 pub fn map_api_error(err: ApiError) -> CodexErr {
     match err {
@@ -32,6 +63,7 @@ pub fn map_api_error(err: ApiError) -> CodexErr {
             identity_error_code: None,
         }),
         ApiError::InvalidRequest { message } => CodexErr::InvalidRequest(message),
+        ApiError::InvalidModelInput(error) => CodexErr::InvalidModelInput(error),
         ApiError::CyberPolicy { message } => CodexErr::CyberPolicy { message },
         ApiError::Transport(transport) => match transport {
             TransportError::Http {
@@ -72,6 +104,8 @@ pub fn map_api_error(err: ApiError) -> CodexErr {
                         .contains("The image data you provided does not represent a valid image")
                     {
                         CodexErr::InvalidImageRequest()
+                    } else if let Some(error) = parse_invalid_model_input_error(&body_text) {
+                        CodexErr::InvalidModelInput(error)
                     } else {
                         CodexErr::InvalidRequest(body_text)
                     }

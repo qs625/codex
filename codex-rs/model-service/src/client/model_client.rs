@@ -387,7 +387,7 @@ impl ModelClient {
         service_tier: Option<String>,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
-        let input = prompt.get_formatted_input();
+        let prepared_input = prompt.get_formatted_responses_input();
         let tools = create_tools_json_for_responses_api(&prompt.tools)?;
         let reasoning = Self::build_reasoning(model_info, effort, summary);
         let include = if reasoning.is_some() {
@@ -417,7 +417,8 @@ impl ModelClient {
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions: instructions.clone(),
-            input,
+            input: prepared_input.items,
+            input_sources: prepared_input.sources,
             tools,
             tool_choice: "auto".to_string(),
             parallel_tool_calls: prompt.parallel_tool_calls,
@@ -461,5 +462,4 @@ impl ModelClient {
             api_auth,
         })
     }
-
 }

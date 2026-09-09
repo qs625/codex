@@ -91,6 +91,8 @@ use model_service_api::TurnModelRequest;
 use plugin_service_api::PluginCapabilitySummary;
 use protocol::config_types::ModeKind;
 use protocol::error::CodexErr;
+use protocol::error::InvalidModelInputError;
+use protocol::error::ModelInputItemReference;
 use protocol::error::Result as CodexResult;
 use protocol::items::TurnItem;
 use protocol::items::UserMessageItem;
@@ -130,6 +132,9 @@ pub(crate) const CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE: &str = "The current
 pub(crate) const AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str = "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 const MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS: usize = 64;
 const MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES: usize = MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS + 1;
+const MAX_MODEL_CONTEXT_QUARANTINES_PER_TURN: usize = 2;
+pub(crate) type ModelContextQuarantineState =
+    Arc<tokio::sync::Mutex<HashSet<ModelInputItemReference>>>;
 
 #[cfg(test)]
 type AutoCompactTestHook = Arc<
@@ -190,6 +195,29 @@ pub(crate) async fn run_turn(
     prewarmed_client_session: Option<OwnedModelTurnClientApi>,
     cancellation_token: CancellationToken,
 ) -> Option<String> {
+    run_turn_with_model_context_quarantine_state(
+        sess,
+        turn_context,
+        turn_extension_data,
+        input,
+        allow_empty_input_without_pending,
+        prewarmed_client_session,
+        cancellation_token,
+        Arc::new(tokio::sync::Mutex::new(HashSet::new())),
+    )
+    .await
+}
+
+pub(crate) async fn run_turn_with_model_context_quarantine_state(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    turn_extension_data: Arc<codex_extension_api::ExtensionData>,
+    input: Vec<UserInput>,
+    allow_empty_input_without_pending: bool,
+    prewarmed_client_session: Option<OwnedModelTurnClientApi>,
+    cancellation_token: CancellationToken,
+    model_context_quarantines: ModelContextQuarantineState,
+) -> Option<String> {
     if input.is_empty() && !allow_empty_input_without_pending && !sess.has_pending_input().await {
         return None;
     }
@@ -230,11 +258,31 @@ pub(crate) async fn run_turn(
             reset_client_session: false,
         }
     } else {
-        match run_pre_sampling_compact(&sess, &turn_context, &mut *client_session).await {
-            Ok(pre_sampling_compact) => pre_sampling_compact,
-            Err(_) => {
-                error!("Failed to run pre-sampling compact");
-                return None;
+        loop {
+            match run_pre_sampling_compact(&sess, &turn_context, &mut *client_session).await {
+                Ok(pre_sampling_compact) => break pre_sampling_compact,
+                Err(CodexErr::InvalidModelInput(error)) => {
+                    if quarantine_recoverable_model_context(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        &error,
+                        &model_context_quarantines,
+                    )
+                    .await
+                    {
+                        client_session.reset_websocket_session();
+                        continue;
+                    }
+                    let error = CodexErr::InvalidModelInput(error);
+                    info!("Pre-sampling compact error: {error:#}");
+                    sess.send_event(&turn_context, EventMsg::Error(error.to_error_event(None)))
+                        .await;
+                    return None;
+                }
+                Err(err) => {
+                    error!("Failed to run pre-sampling compact: {err:#}");
+                    return None;
+                }
             }
         }
     };
@@ -662,18 +710,41 @@ pub(crate) async fn run_turn(
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
                 if token_limit_reached && needs_follow_up {
-                    let reset_client_session = match run_auto_compact(
-                        &sess,
-                        &turn_context,
-                        &mut *client_session,
-                        InitialContextInjection::BeforeLastUserMessage,
-                        CompactionReason::ContextLimit,
-                        CompactionPhase::MidTurn,
-                    )
-                    .await
-                    {
-                        Ok(reset_client_session) => reset_client_session,
-                        Err(_) => return None,
+                    let reset_client_session = loop {
+                        match run_auto_compact(
+                            &sess,
+                            &turn_context,
+                            &mut *client_session,
+                            InitialContextInjection::BeforeLastUserMessage,
+                            CompactionReason::ContextLimit,
+                            CompactionPhase::MidTurn,
+                        )
+                        .await
+                        {
+                            Ok(reset_client_session) => break reset_client_session,
+                            Err(CodexErr::InvalidModelInput(error)) => {
+                                if quarantine_recoverable_model_context(
+                                    sess.as_ref(),
+                                    turn_context.as_ref(),
+                                    &error,
+                                    &model_context_quarantines,
+                                )
+                                .await
+                                {
+                                    client_session.reset_websocket_session();
+                                    continue;
+                                }
+                                let error = CodexErr::InvalidModelInput(error);
+                                info!("Mid-turn compact error: {error:#}");
+                                sess.send_event(
+                                    &turn_context,
+                                    EventMsg::Error(error.to_error_event(None)),
+                                )
+                                .await;
+                                return None;
+                            }
+                            Err(_) => return None,
+                        }
                     };
                     if reset_client_session {
                         client_session.reset_websocket_session();
@@ -818,6 +889,25 @@ pub(crate) async fn run_turn(
                 // Aborted turn is reported via a different event.
                 break;
             }
+            Err(CodexErr::InvalidModelInput(error)) => {
+                if quarantine_recoverable_model_context(
+                    sess.as_ref(),
+                    turn_context.as_ref(),
+                    &error,
+                    &model_context_quarantines,
+                )
+                .await
+                {
+                    client_session.reset_websocket_session();
+                    can_drain_pending_input = false;
+                    continue;
+                }
+                let error = CodexErr::InvalidModelInput(error);
+                info!("Turn error: {error:#}");
+                sess.send_event(&turn_context, EventMsg::Error(error.to_error_event(None)))
+                    .await;
+                break;
+            }
             Err(CodexErr::ContextWindowExceeded)
                 if context_window_compact_recovery_attempts
                     < MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES =>
@@ -833,17 +923,44 @@ pub(crate) async fn run_turn(
                 {
                     let trim_suffix_items = context_window_compact_recovery_attempts;
                     context_window_compact_recovery_attempts += 1;
-                    recovery_result = run_suffix_trimmed_context_limit_compact(
-                        &sess,
-                        &turn_context,
-                        &mut *client_session,
-                        context_window_recovery_history
+                    loop {
+                        let recovery_history = context_window_recovery_history
                             .as_ref()
-                            .expect("recovery history is initialized"),
-                        context_window_recovery_protected_range,
-                        trim_suffix_items,
-                    )
-                    .await;
+                            .expect("recovery history is initialized")
+                            .clone();
+                        match run_suffix_trimmed_context_limit_compact(
+                            &sess,
+                            &turn_context,
+                            &mut *client_session,
+                            &recovery_history,
+                            context_window_recovery_protected_range,
+                            trim_suffix_items,
+                        )
+                        .await
+                        {
+                            Err(CodexErr::InvalidModelInput(error)) => {
+                                if quarantine_recoverable_model_context(
+                                    sess.as_ref(),
+                                    turn_context.as_ref(),
+                                    &error,
+                                    &model_context_quarantines,
+                                )
+                                .await
+                                {
+                                    client_session.reset_websocket_session();
+                                    context_window_recovery_history =
+                                        Some(sess.clone_in_memory_history_snapshot().await);
+                                    continue;
+                                }
+                                recovery_result = Err(CodexErr::InvalidModelInput(error));
+                                break;
+                            }
+                            result => {
+                                recovery_result = result;
+                                break;
+                            }
+                        }
+                    }
                     if !matches!(recovery_result, Err(CodexErr::ContextWindowExceeded)) {
                         break;
                     }
@@ -921,6 +1038,107 @@ pub(crate) async fn run_turn(
     }
 
     last_agent_message
+}
+
+fn recoverable_model_context_target(
+    error: &InvalidModelInputError,
+    history: &codex_context_manager::ContextManager,
+    quarantined_this_turn: &HashSet<ModelInputItemReference>,
+) -> Option<ModelInputItemReference> {
+    if error.error_type.as_deref() != Some("invalid_request_error")
+        || !is_recoverable_invalid_model_input_code(error.code.as_deref())
+    {
+        return None;
+    }
+    let index = error.input_index?;
+    let param = error.param.as_deref()?;
+    let expected_prefix = format!("input[{index}].");
+    let field = param.strip_prefix(&expected_prefix)?;
+    if !matches!(
+        field.split(['.', '[']).next(),
+        Some("arguments" | "input" | "action" | "output" | "tools")
+    ) {
+        return None;
+    }
+    let target = error.source.clone()?;
+    if quarantined_this_turn.contains(&target)
+        || !history.has_complete_unique_model_input_transaction(&target)
+    {
+        return None;
+    }
+    Some(target)
+}
+
+pub(crate) async fn quarantine_recoverable_model_context(
+    sess: &Session,
+    turn_context: &TurnContext,
+    error: &InvalidModelInputError,
+    quarantined_this_turn: &ModelContextQuarantineState,
+) -> bool {
+    let history = sess.clone_history().await;
+    let target = {
+        let quarantined = quarantined_this_turn.lock().await;
+        if quarantined.len() >= MAX_MODEL_CONTEXT_QUARANTINES_PER_TURN {
+            return false;
+        }
+        let Some(target) = recoverable_model_context_target(error, &history, &quarantined) else {
+            return false;
+        };
+        target
+    };
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: target.clone().into(),
+        reason: "historical structured tool transaction rejected by model input validation"
+            .to_string(),
+        error_code: error.code.as_deref().map(bounded_quarantine_field),
+        error_param: error.param.as_deref().map(bounded_quarantine_field),
+    };
+    sess.record_conversation_items(turn_context, &[quarantine])
+        .await;
+    sess.recompute_token_usage(turn_context).await;
+    quarantined_this_turn.lock().await.insert(target.clone());
+    sess.send_event(
+        turn_context,
+        EventMsg::Warning(WarningEvent {
+            message: "Morpheus isolated one invalid historical tool transaction and retried the model request without executing it again.".to_string(),
+        }),
+    )
+    .await;
+    true
+}
+
+fn is_recoverable_invalid_model_input_code(code: Option<&str>) -> bool {
+    matches!(
+        code,
+        None | Some(
+            "model_context_invalid_json_property_name"
+                | "invalid_prompt"
+                | "invalid_value"
+                | "string_too_long"
+                | "json_property_name_too_long"
+                | "property_name_above_max_length"
+        )
+    )
+}
+
+fn bounded_quarantine_field(value: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    if sanitized.chars().count() <= MAX_CHARS {
+        return sanitized;
+    }
+    let mut bounded = sanitized.chars().take(MAX_CHARS).collect::<String>();
+    bounded.push('…');
+    bounded
 }
 
 pub(crate) async fn model_client_api_for_turn(
@@ -1341,12 +1559,20 @@ async fn run_suffix_trimmed_context_limit_compact(
         return Err(CodexErr::ContextWindowExceeded);
     };
 
-    let prefix = original_history.items[..plan.prefix_len].to_vec();
+    let mut prefix = original_history.items[..plan.prefix_len].to_vec();
     let mut suffix = original_history.items[plan.prefix_len..plan.suffix_end].to_vec();
     suffix.extend(
         original_history.items[plan.protected_start..plan.protected_end]
             .iter()
             .cloned(),
+    );
+    codex_context_manager::preserve_relevant_model_context_quarantines(
+        &original_history.items,
+        &mut prefix,
+    );
+    codex_context_manager::preserve_relevant_model_context_quarantines(
+        &original_history.items,
+        &mut suffix,
     );
     sess.replace_in_memory_history_for_compact_prefix(prefix)
         .await;
@@ -2169,6 +2395,7 @@ async fn try_run_sampling_request(
     let mut in_flight: FuturesOrdered<InFlightFuture<'static>> = FuturesOrdered::new();
     let mut completed_tool_results = Vec::new();
     let mut needs_follow_up = false;
+    let mut model_context_rewritten = false;
     let mut last_agent_message: Option<String> = None;
     let mut active_item: Option<TurnItem> = None;
     let mut active_tool_argument_diff_consumer: Option<(
@@ -2302,6 +2529,7 @@ async fn try_run_sampling_request(
                     | ResponseItem::EventDrivenTool { .. }
                     | ResponseItem::ThreadGoalUpdate { .. }
                     | ResponseItem::InterAgentCommunication { .. }
+                    | ResponseItem::ModelContextQuarantine { .. }
                     | ResponseItem::Compaction { .. }
                     | ResponseItem::ContextCompaction { .. }
                     | ResponseItem::Other => false,
@@ -2342,6 +2570,7 @@ async fn try_run_sampling_request(
                     last_agent_message = Some(agent_message);
                 }
                 needs_follow_up |= output_result.needs_follow_up;
+                model_context_rewritten |= output_result.model_context_rewritten;
                 // todo: remove before stabilizing multi-agent v2
                 if preempt_for_mailbox_mail && sess.has_pending_mailbox_items().await {
                     break Ok(SamplingRequestResult {
@@ -2475,6 +2704,9 @@ async fn try_run_sampling_request(
                 .await;
                 sess.record_token_usage_info(&turn_context, token_usage.as_ref())
                     .await;
+                if model_context_rewritten {
+                    sess.recompute_token_usage_state(&turn_context).await;
+                }
                 should_emit_token_count = true;
                 should_emit_turn_diff = true;
                 if let Some(false) = end_turn {

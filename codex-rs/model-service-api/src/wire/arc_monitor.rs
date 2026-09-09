@@ -255,6 +255,7 @@ fn build_arc_monitor_message_item(
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
         | ResponseItem::InterAgentCommunication { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. }
         | ResponseItem::Other => None,

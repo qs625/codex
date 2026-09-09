@@ -3,10 +3,14 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::path::Path;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::ser::Serializer;
+use sha2::Digest;
+use sha2::Sha256;
 use ts_rs::TS;
 
 use crate::permissions::FileSystemAccessMode;
@@ -21,6 +25,7 @@ use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 
+use crate::error::ModelContextQuarantineReference;
 use crate::event_command::EventCommandEvent;
 use crate::event_driven_tool::EventDrivenToolTrigger;
 use crate::mcp::CallToolResult;
@@ -872,6 +877,19 @@ pub enum ResponseItem {
         #[ts(optional)]
         previous_status: Option<ThreadGoalUpdateGoalStatus>,
     },
+    /// Durable audit fact that excludes one untrusted historical model item or
+    /// tool transaction from future provider input while preserving the original
+    /// rollout items.
+    ModelContextQuarantine {
+        target: ModelContextQuarantineReference,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        error_code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        error_param: Option<String>,
+    },
     Message {
         #[serde(default, skip_serializing)]
         #[ts(skip)]
@@ -1019,6 +1037,94 @@ pub enum ResponseItem {
     },
     #[serde(other)]
     Other,
+}
+
+pub fn model_context_item_fingerprint(item: &ResponseItem) -> Option<String> {
+    let serialized = serde_json::to_vec(item).ok()?;
+    let digest = Sha256::digest(serialized);
+    Some(format!("sha256:{}", URL_SAFE_NO_PAD.encode(digest)))
+}
+
+pub fn model_context_quarantine_notice(
+    target: &ModelContextQuarantineReference,
+    reason: &str,
+    error_code: Option<&str>,
+    error_param: Option<&str>,
+) -> ResponseItem {
+    let mut details = match target {
+        ModelContextQuarantineReference::ToolTransaction { kind, call_id } => vec![
+            format!("item_type={kind:?}"),
+            format!("call_id={}", bounded_quarantine_notice_field(call_id, 128)),
+        ],
+        ModelContextQuarantineReference::ModelItem {
+            kind,
+            call_id,
+            item_id,
+            fingerprint,
+        } => {
+            let mut details = vec![
+                format!("item_type={kind:?}"),
+                format!(
+                    "item_fingerprint={}",
+                    bounded_quarantine_notice_field(fingerprint, 96)
+                ),
+            ];
+            if let Some(call_id) = call_id {
+                details.push(format!(
+                    "call_id={}",
+                    bounded_quarantine_notice_field(call_id, 128)
+                ));
+            }
+            if let Some(item_id) = item_id {
+                details.push(format!(
+                    "item_id={}",
+                    bounded_quarantine_notice_field(item_id, 128)
+                ));
+            }
+            details
+        }
+    };
+    details.push(format!(
+        "reason={}",
+        bounded_quarantine_notice_field(reason, 96)
+    ));
+    if let Some(error_code) = error_code {
+        details.push(format!(
+            "provider_code={}",
+            bounded_quarantine_notice_field(error_code, 96)
+        ));
+    }
+    if let Some(error_param) = error_param {
+        details.push(format!(
+            "provider_param={}",
+            bounded_quarantine_notice_field(error_param, 160)
+        ));
+    }
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: format!(
+                "Morpheus omitted one untrusted historical tool interaction from model context. \
+                 The tool was not trusted as executed; do not rely on any associated output. {}",
+                details.join(", ")
+            ),
+        }],
+        phase: None,
+    }
+}
+
+fn bounded_quarantine_notice_field(value: &str, max_chars: usize) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect::<String>();
+    if sanitized.chars().count() <= max_chars {
+        return sanitized;
+    }
+    let mut bounded = sanitized.chars().take(max_chars).collect::<String>();
+    bounded.push('…');
+    bounded
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
