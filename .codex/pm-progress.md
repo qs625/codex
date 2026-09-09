@@ -8,25 +8,41 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Deliver a full interactive PTY terminal experience in the Root Worker right panel, with multiple independent tabs and one provider-neutral session path shared by user-created terminals and attachable model command sessions.
+Complete the canonical checkout migration to `~/.morpheus/source_workspace`, preserve and relocate all active or dirty work into worktrees owned by that repository, then continue the Runtime Capsule follow-up and full interactive PTY Terminal Panel work from the new checkout layout.
 
 ## Active Work
+- id: canonical-source-workspace-migration
+  owner: /self
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: main
+  task_type: docs-spec/repository-operations
+  depends_on: old main `/Users/bytedance/Projects/my-codex` at `589dadfb3e`; dirty legacy dev worktrees must be preserved before deletion
+  files: `.morpheus/agents/project-pm.agent.md`; `.morpheus/instructions/user-preferences.md`; `.morpheus/instructions/project-understanding.md`; `.codex/pm-progress.md`; Git worktree metadata and local branches
+  base_commit: 589dadfb3e
+  pending_sync_from_main: none
+  status: in_progress
+  objective: Make `~/.morpheus/source_workspace` the canonical main checkout and build source, recreate the three fixed dev worktrees beside it, migrate all active/uncommitted work through Git commits rather than file copying, reassign fixed owners, verify the new layout, and only then delete the four old `~/Projects/my-codex*` directories.
+  last_update: 2026-09-10 CST current source workspace main was fast-forwarded locally from old main `ffb6145eb8..589dadfb3e` without using the remote. PM updated the fixed checkout role and stable instruction facts. dev-3 preserved the eight user-authored Capsule fixes as checkpoint `449dfef1b9`; dev-2 Terminal checkpoint is still pending. The legacy dev checkout has 188 tracked modifications and must also be checkpointed before deletion. `.playwright-cli/` remains intentionally untracked and excluded from commits.
+  next_action: commit migration progress/rules, checkpoint dev and dev-2, fetch their branches into the canonical repository, create `source_workspace-dev*`, verify worktrees and builds resolve from the new paths, then remove only the old four directories
+  blockers: dev-2 and legacy dev checkpoint commits pending
+  validation: current main fast-forward succeeded; source workspace status contains only migration docs plus excluded `.playwright-cli/`
+  commit: pending
 - id: generic-runtime-capsule-launcher-user-fix
   owner: /self/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  checkout: migrating from `/Users/bytedance/Projects/my-codex-dev-3` to `/Users/bytedance/.morpheus/source_workspace-dev-3`
   branch: feature/generic-runtime-capsule-launcher
   task_type: bugfix/runtime-packaging-lifecycle
   depends_on: merged Capsule Launcher `092747995d`; user-authored dirty worktree fixes in dev-3
   files: apps/root-worker-prototype/README.md; electron/runtimeCapsule.cjs and tests; electron/selfProjectThread.cjs and tests; runtime-launcher capsule.rs, guard.rs and process.rs
   base_commit: 092747995d
-  pending_sync_from_main: main `11795913df` only adds PM progress state; do not sync or rebase the dirty checkout before the user fixes are committed
+  pending_sync_from_main: user fixes preserved as migration checkpoint `449dfef1b9`; fetch into the canonical repository and continue from the new dev-3 worktree
   status: in_progress
   objective: Preserve, design-review, test and commit the user's follow-up fixes for problems in the previously merged generic Runtime Capsule Launcher, then merge the validated commit to main through Git.
-  last_update: 2026-09-10 CST user confirmed the eight dirty dev-3 files are intentional fixes and requested merge. PM assigned the fixed dev-3 owner to reconstruct the problem model from the diff, preserve the user changes, enforce the accepted generic launcher/process-containment invariants, reuse the fixed reviewer, run the focused Rust and Node regression matrix and commit a merge-ready result.
-  next_action: await owner design/review/test delivery, update this record, inspect against the brief, then merge the dev-3 commit to main
-  blockers: none reported
-  validation: pending owner and fixed-reviewer evidence
-  commit: pending
+  last_update: 2026-09-10 CST user confirmed the eight dirty dev-3 files are intentional fixes and requested merge. Old dev-3 saved them unchanged as WIP checkpoint `449dfef1b9c4f44c0c3dd665415fd3e99d30b6a9`; the worktree is clean and diff check passed. Initial inspection flags a remaining risk that observed PGID handoff may not receive TERM/KILL through the generic cleanup path.
+  next_action: create the canonical dev-3 worktree at the checkpoint, reassign the fixed owner, complete design review/tests and produce a non-WIP merge-ready commit
+  blockers: checkout migration in progress
+  validation: migration checkpoint and diff check passed; formal reviewer and Rust/Node tests pending
+  commit: 449dfef1b9c4f44c0c3dd665415fd3e99d30b6a9 (migration checkpoint, not merge-ready)
 - id: generic-runtime-capsule-launcher
   owner: /self/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
@@ -109,7 +125,7 @@ Deliver a full interactive PTY terminal experience in the Root Worker right pane
   commit: ac87c046fd, 6eb3ef9feb
 - id: full-terminal-panel-multi-tab
   owner: /self/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  checkout: migrating from `/Users/bytedance/Projects/my-codex-dev-2` to `/Users/bytedance/.morpheus/source_workspace-dev-2`
   branch: feature/full-terminal-panel
   task_type: feature/ui-runtime-terminal
   depends_on: `restrict-runtime-restart-to-self-thread` merged; `stable-launcher-runtime-update` merged because Launcher currently modifies overlapping Electron main, app-server protocol/runtime, Root Worker types and conversation files
@@ -118,10 +134,10 @@ Deliver a full interactive PTY terminal experience in the Root Worker right pane
   pending_sync_from_main: none; dev-2 fast-forwarded to accepted Capsule integration baseline
   status: in_progress
   objective: Provide a complete interactive terminal experience for PTY-backed commands and a multi-tab Terminal panel in the Root Worker right sidebar. ANSI/VT screen state, cursor motion, alternate screen, terminal queries, keyboard input and resize must work through a real terminal emulator instead of rendering raw escape sequences as `<pre>` text.
-  last_update: 2026-09-09 CST Capsule integration is accepted and dev-2 is synchronized. PM applied the ui-design workflow: the existing RightPanel Browser tab strip and current panel tokens are the design anchor, so no image generation is needed; owner must first extract a compact design brief and then implement Terminal as an integrated operational panel. Runtime design remains one typed terminal-session capability shared by user-created tabs and attachable `exec_command(tty=true)` sessions. Existing connection-scoped `command/exec` PTY streaming/write/resize/terminate is useful evidence but must be generalized where necessary for stable session ownership, inspection, attach and disconnect semantics rather than copied into a parallel frontend-only terminal path.
-  next_action: fixed dev-2 owner implements on `feature/full-terminal-panel`, reuses `/self/owner_dev_2/reviewer`, performs design-first review plus runtime/UI validation, and returns a committed clean delivery
-  blockers: none
-  validation: pending; must include ANSI cursor/erase/color/alternate-screen/DSR, raw keyboard input, terminal resize, multiple independent tabs, tab close/termination, model PTY attach, long output, narrow panel, disconnect/reload/restored behavior, and Playwright verification of the real Electron client
+  last_update: 2026-09-10 CST implementation reached 38 modified/new files before migration. Fixed reviewer identified five blockers to resolve after relocation: split UTF-8 chunks are decoded lossily, the 10,000-event cap can permanently stop live terminal updates, silent programs remain unusable in `starting`, snapshot/delta replay lacks a sequence watermark, and detached tombstones prevent explicit reattach. Focused Rust, React and Electron tests for these paths are also missing. Owner was instructed to create a migration checkpoint without further implementation.
+  next_action: preserve the current work as a checkpoint, create the canonical dev-2 worktree, then fix all five review findings and complete the original regression matrix with the same reviewer
+  blockers: migration checkpoint pending; five design/reliability review findings
+  validation: reviewer read-only inspection complete; tests/build not yet run
   commit:
 - id: remove-built-in-worker-explorer-roles
   owner: /self/owner_dev_2

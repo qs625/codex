@@ -1,6 +1,7 @@
 # User Preferences
 
 ## Stable Preferences
+- Morpheus 自身源码的主 checkout 固定为 `~/.morpheus/source_workspace`；普通开发 worktree 固定使用相邻的 `source_workspace-dev`、`source_workspace-dev-2`、`source_workspace-dev-3`，后续构建也从这套 checkout 执行，不再使用 `~/Projects/my-codex*`。
 - 全程使用中文进行工作和记录。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。

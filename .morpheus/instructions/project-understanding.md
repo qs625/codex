@@ -1,6 +1,7 @@
 # Project Understanding
 
 ## Stable Working Rules
+- Morpheus 自身源码的 canonical 主 checkout 是 `~/.morpheus/source_workspace`；固定普通开发 worktree 是 `~/.morpheus/source_workspace-dev`、`~/.morpheus/source_workspace-dev-2`、`~/.morpheus/source_workspace-dev-3`。PM 集成、安装包构建与后续 runtime/client/server/frontend/backend 构建均以这套 checkout 为准；旧 `~/Projects/my-codex*` 只作为迁移期间的只读/恢复来源，不再作为后续主线。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
 - 当前项目的 PM / owner / reviewer 协作规则以 `.morpheus/agents/project-pm.agent.md` 及对应 owner agent 定义为准。

@@ -27,21 +27,21 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 ## 二、固定 Checkout 与 Owner
 
-- 主 checkout：`~/Projects/my-codex`
+- 主 checkout：`~/.morpheus/source_workspace`
   用途：PM 集成、最终合并；以及全局独占的 refactor / performance / code-health 任务。
 - 普通开发 checkout：
-  - `~/Projects/my-codex-dev`
-  - `~/Projects/my-codex-dev-2`
-  - `~/Projects/my-codex-dev-3`
+  - `~/.morpheus/source_workspace-dev`
+  - `~/.morpheus/source_workspace-dev-2`
+  - `~/.morpheus/source_workspace-dev-3`
 - 普通开发任务只能在三份固定 dev checkout 中进行，不再为单个任务创建临时开发目录。
 - 三个 dev checkout 必须独立编译、独立测试，不共享 `codex-rs/target`、`node_modules` 或其他构建产物目录。
 
 固定 owner 映射：
 
-- `~/Projects/my-codex` -> `/root/project_pm/owner_main`
-- `~/Projects/my-codex-dev` -> `/root/project_pm/owner_dev`
-- `~/Projects/my-codex-dev-2` -> `/root/project_pm/owner_dev_2`
-- `~/Projects/my-codex-dev-3` -> `/root/project_pm/owner_dev_3`
+- `~/.morpheus/source_workspace` -> `/root/project_pm/owner_main`
+- `~/.morpheus/source_workspace-dev` -> `/root/project_pm/owner_dev`
+- `~/.morpheus/source_workspace-dev-2` -> `/root/project_pm/owner_dev_2`
+- `~/.morpheus/source_workspace-dev-3` -> `/root/project_pm/owner_dev_3`
 
 规则：
 
