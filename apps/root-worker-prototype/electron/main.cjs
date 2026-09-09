@@ -79,6 +79,7 @@ const {
   observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 const {
+  removeInstalledArtifactTree,
   resolveInstalledArtifactUpdatePlanInWorker,
   updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
@@ -128,7 +129,7 @@ const installedArtifactUpdateLifecycle =
       requestStop: (reason) => appServerClient.stop(reason),
     },
     cleanupPreparedArtifact: (preparedRoot) =>
-      fs.rm(preparedRoot, { force: true, recursive: true }),
+      removeInstalledArtifactTree(preparedRoot),
     resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
     runtimeLauncher,
     updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
