@@ -8,9 +8,41 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Implement a minimal stable Launcher for Morpheus self-update: the model builds and repairs source artifacts, while Launcher owns installation, Electron supervision, startup-ready rollback, bounded crash-loop fallback, and targeted recovery handoff to `/self`.
+Move Morpheus updateable Electron runtime resources outside the signed macOS App Bundle, while keeping a stable Launcher/Electron shell responsible for supervision, verified activation, startup-ready rollback, bounded crash-loop fallback, and targeted recovery handoff to `/self`.
 
 ## Active Work
+- id: external-versioned-electron-runtime
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/external-versioned-electron-runtime
+  task_type: feature/runtime-packaging-lifecycle
+  depends_on: `runtime-restart-plan-resources-path-tdz` merged; stable Launcher integration `a96bc0eb0f`
+  files: macOS package layout and Electron entrypoint; Launcher artifact/state/activation/rollback; installed artifact preparation; Electron ready/full/hot coordination; focused packaging, transaction and real installed-app tests
+  base_commit: e4745ee36f
+  pending_sync_from_main: none; dev-3 fast-forwarded to `e4745ee36f`
+  status: planned
+  objective: Keep the signed macOS App Bundle stable with only Launcher, the Electron executable/frameworks and required macOS metadata, while loading `app.asar`, app-server, default configuration and other updateable runtime resources directly from a versioned external runtime directory under `MORPHEUS_HOME`.
+  last_update: 2026-09-09 CST user selected the external-runtime architecture. The intended boundary is that Launcher atomically manages external `current`/`previous` versions and launches the stable Electron Host against the selected external `app.asar`; hot/full activation and rollback must not copy resources back into `/Applications`, mutate the App Bundle, or re-sign it. A first-install bootstrap source is still awaiting user confirmation because a strict shell-only App Bundle cannot supply the initial runtime itself.
+  next_action: confirm the first-install runtime source, then dispatch the complete runtime/state-machine brief to the fixed dev-3 owner and reviewer
+  blockers: first-install/bootstrap source decision
+  validation: pending; must cover missing/corrupt current, verified first bootstrap, current/previous atomicity, hot renderer/app-server activation, full main/preload activation, ready-before-commit rollback, post-ready crash-loop rollback, App Bundle immutability/hash stability, no activation-time codesign, and real packaged macOS launch/restart
+  commit:
+- id: runtime-restart-plan-resources-path-tdz
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-restart-plan-tdz
+  task_type: bugfix/runtime-lifecycle
+  depends_on: Launcher integration commit `a96bc0eb0f`; installed Launcher bootstrap current `a96bc0eb0f`
+  files: apps/root-worker-prototype/electron/installedArtifactUpdate.cjs and focused tests; no Launcher state-machine changes expected
+  base_commit: a96bc0eb0f8025c3ae1d713be1a2f2e4d0cab3f5
+  pending_sync_from_main: none; dev-3 fast-forwarded to current main before dispatch
+  status: merged
+  objective: Fix installed runtime restart planning so omitted `resourcesPath` uses the current packaged app resources without JavaScript temporal-dead-zone failure, then complete real installed-app hot and full restart acceptance.
+  last_update: 2026-09-09 CST PM confirmed the fix resolves `resourcesPath` before default packaged detection without changing explicit override, platform, packaged or missing-path guards; focused updater tests passed 9/9 and lifecycle tests passed 13/13. The owner commit was merged to main as `e4745ee36f`, and dev-3 was fast-forwarded to that integration baseline.
+  next_action: none; the previously planned installed hot/full smoke is superseded by `external-versioned-electron-runtime`, which must receive the real packaged acceptance
+  blockers: none
+  validation: fixed reviewer passed; owner and PM updater tests 9/9 and lifecycle tests 13/13 passed; PM diff/design inspection and `git diff --check` passed
+  commit: e4745ee36f, d6c66336d2600d8f85f86bc15e3c35126f150537
 - id: model-stream-missing-completion-stuck-turn
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -84,13 +116,13 @@ Implement a minimal stable Launcher for Morpheus self-update: the model builds a
   files: Root Worker packaging/entrypoint; stable launcher and persisted update transaction; Electron launcher IPC/ready/shutdown contract; installed artifact staging/validation/activation/rollback; hot/full lifecycle coordination; targeted `/self` recovery record/prompt; focused tests and package scripts
   base_commit: ffb6145eb8a42ca4e8e41040f42169aaf1ee71d3
   pending_sync_from_main: dev-3 is actively developing and remains on `ffb6145eb8`; sync from main commit `8b053432df` is deferred until Launcher work completes. dev-2 will be fast-forwarded after the role-removal acceptance commit; dev remains unavailable because of extensive unrelated tracked work
-  status: review
+  status: merged
   objective: Make a stable OS-launched Launcher supervise the replaceable Morpheus Electron runtime. The model remains responsible for modifying, testing, and building source artifacts. Launcher imports and validates already-built artifacts, preserves only current plus previous outside active transactions, activates hot/full updates, rolls back full startup failures before ready, detects bounded Electron crash loops after ready, and hands persisted failure evidence to the restored `/self` model for diagnosis and forward repair.
-  last_update: 2026-09-09 CST fixed dev-3 owner delivered clean commit `4d4aa443fb` after fixed-reviewer clearance. The final design keeps one stable Rust Launcher with current/previous/candidate only; Host prepares candidates; full startup failure and bounded post-ready crash-loop paths fall back without multi-generation journal/legacy repair. Durable commit cleanup intent is persisted before destructive previous cleanup, and the injected partial-cleanup chain converges idempotently without rollback or false failure evidence. Trusted typed `ClientRecovery` enters protocol, rollout Limited persistence, history replay and Root Worker system display. macOS package uses `MorpheusLauncher` as `CFBundleExecutable`, fixed Electron Host, manifest hashes and deep ad-hoc signing/strict verification. Final commit is 61 files, `+7476/-4081`.
-  next_action: PM performs design acceptance against the original Launcher brief, inspects merge/conflict impact against current main, reruns proportionate merged-main validation, and merges only if no forbidden complexity or semantic regression remains
+  last_update: 2026-09-09 CST PM design-accepted owner commit `4d4aa443fb`, merged it to main as `a96bc0eb0f`, reran Launcher 26/26, app-server client recovery 2/2, Root Worker focused tests 50/50, conversation 59/59, production build and macOS packaging. The package manifest source commit is `a96bc0eb0f`, all runtime executables are arm64, `CFBundleExecutable=MorpheusLauncher`, hashes match and deep strict codesign passes. PM installed the package to `/Applications`, backed up the previous app and stale dev-3 Launcher state, and verified the live process chain Launcher -> fixed Host -> app-server with authoritative current state `a96bc0eb0f`. A subsequent real hot-restart acceptance exposed the separate planning TDZ tracked as `runtime-restart-plan-resources-path-tdz`.
+  next_action: none; follow-up runtime restart planning bug is tracked separately
   blockers: none
   validation: owner Launcher 26/26; Root Worker runtime/update/lifecycle/package/self tests 50/50; conversation 59/59; protocol projection, rollout Limited persistence and thread-history replay focused tests; app-server client_recovery 2/2; app-server build; frontend build; real macOS package, arm64/hash/CFBundleExecutable checks, deep strict codesign and Launcher->Host->bundled app-server launch smoke all passed. Fixed reviewer passed all final changes. Full analytics lib-test remains blocked by unrelated existing test-only compile debt.
-  commit: 4d4aa443fb52c2294d7e680d294d04c929d8651f, 3ab3bcdaee88e5481f4d68989c0ad83f193e8b74, fa9ba2fad8
+  commit: a96bc0eb0f8025c3ae1d713be1a2f2e4d0cab3f5, 4d4aa443fb52c2294d7e680d294d04c929d8651f, 3ab3bcdaee88e5481f4d68989c0ad83f193e8b74, fa9ba2fad8
 - id: unify-project-memory-as-instructions-and-refresh-on-compact
   owner: /self/owner_main
   checkout: /Users/bytedance/Projects/my-codex
