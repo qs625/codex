@@ -11,6 +11,22 @@
 Deliver a full interactive PTY terminal experience in the Root Worker right panel, with multiple independent tabs and one provider-neutral session path shared by user-created terminals and attachable model command sessions.
 
 ## Active Work
+- id: generic-runtime-capsule-launcher-user-fix
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-packaging-lifecycle
+  depends_on: merged Capsule Launcher `092747995d`; user-authored dirty worktree fixes in dev-3
+  files: apps/root-worker-prototype/README.md; electron/runtimeCapsule.cjs and tests; electron/selfProjectThread.cjs and tests; runtime-launcher capsule.rs, guard.rs and process.rs
+  base_commit: 092747995d
+  pending_sync_from_main: main `11795913df` only adds PM progress state; do not sync or rebase the dirty checkout before the user fixes are committed
+  status: in_progress
+  objective: Preserve, design-review, test and commit the user's follow-up fixes for problems in the previously merged generic Runtime Capsule Launcher, then merge the validated commit to main through Git.
+  last_update: 2026-09-10 CST user confirmed the eight dirty dev-3 files are intentional fixes and requested merge. PM assigned the fixed dev-3 owner to reconstruct the problem model from the diff, preserve the user changes, enforce the accepted generic launcher/process-containment invariants, reuse the fixed reviewer, run the focused Rust and Node regression matrix and commit a merge-ready result.
+  next_action: await owner design/review/test delivery, update this record, inspect against the brief, then merge the dev-3 commit to main
+  blockers: none reported
+  validation: pending owner and fixed-reviewer evidence
+  commit: pending
 - id: generic-runtime-capsule-launcher
   owner: /self/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
