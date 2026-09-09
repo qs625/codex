@@ -44,6 +44,574 @@ fn assert_not_old_context_window_fatal(message: &str) {
 }
 
 #[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn pre_turn_compact_quarantines_invalid_model_input_before_retrying() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.model_info.auto_compact_token_limit = Some(1);
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let call_id = "pre-turn-poison";
+    let target = protocol::error::ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: call_id.to_string(),
+    };
+    session
+        .replace_history(
+            vec![
+                ResponseItem::FunctionCall {
+                    id: None,
+                    name: "lookup".to_string(),
+                    namespace: None,
+                    arguments: "{}".to_string(),
+                    call_id: call_id.to_string(),
+                },
+                ResponseItem::FunctionCallOutput {
+                    call_id: call_id.to_string(),
+                    output: protocol::models::FunctionCallOutputPayload::from_text(
+                        "done".to_string(),
+                    ),
+                },
+            ],
+            None,
+        )
+        .await;
+    session
+        .state
+        .lock()
+        .await
+        .set_token_info(Some(TokenUsageInfo {
+            total_token_usage: TokenUsage {
+                total_tokens: 2,
+                ..TokenUsage::default()
+            },
+            last_token_usage: TokenUsage {
+                total_tokens: 2,
+                ..TokenUsage::default()
+            },
+            model_context_window: turn_context.model_context_window(),
+        }));
+
+    let compact_attempts = Arc::new(AtomicUsize::new(0));
+    let compact_attempts_for_hook = Arc::clone(&compact_attempts);
+    let target_for_hook = target.clone();
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id
+                || !matches!(reason, CompactionReason::ContextLimit)
+                || !matches!(phase, CompactionPhase::PreTurn)
+            {
+                return Some(Ok(false));
+            }
+            let attempt = compact_attempts_for_hook.fetch_add(1, AtomicOrdering::SeqCst);
+            if attempt == 0 {
+                return Some(Err(CodexErr::InvalidModelInput(
+                    protocol::error::InvalidModelInputError {
+                        message: "invalid structured history".to_string(),
+                        error_type: Some("invalid_request_error".to_string()),
+                        code: Some("invalid_value".to_string()),
+                        param: Some("input[0].arguments.outer".to_string()),
+                        input_index: Some(0),
+                        source: Some(target_for_hook.clone()),
+                    },
+                )));
+            }
+
+            let history = session
+                .state
+                .try_lock()
+                .expect("session state should be available")
+                .clone_history();
+            let prompt = history
+                .clone()
+                .for_prompt(&turn_context.model_info.input_modalities);
+            assert!(
+                history.contains_model_context_quarantine(&target_for_hook),
+                "the retried compact snapshot should retain the durable marker"
+            );
+            let recomputed_last_tokens = history
+                .token_info()
+                .expect("quarantine recovery should recompute token usage")
+                .last_token_usage
+                .total_tokens;
+            assert_eq!(
+                history.get_total_token_usage(/*server_reasoning_included*/ true),
+                recomputed_last_tokens,
+                "the quarantine notice must already be covered by the recomputed baseline"
+            );
+            assert!(!prompt.iter().any(|item| matches!(
+                item,
+                ResponseItem::FunctionCall { call_id, .. }
+                    | ResponseItem::FunctionCallOutput { call_id, .. }
+                    if call_id == &target_for_hook.call_id
+            )));
+            session
+                .state
+                .try_lock()
+                .expect("session state should be available")
+                .replace_history(vec![test_user_message("compacted clean history")], None);
+            Some(Ok(true))
+        },
+    ));
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([ScriptedTurnResponse::Completed]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            request_base_instructions: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(compact_attempts.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 1);
+    let history = session.clone_history().await;
+    assert!(!history.raw_items().iter().any(|item| matches!(
+        item,
+        ResponseItem::FunctionCall { call_id, .. }
+            | ResponseItem::FunctionCallOutput { call_id, .. }
+            if call_id == &target.call_id
+    )));
+}
+
+#[tokio::test]
+async fn local_malformed_call_completed_usage_keeps_projected_token_baseline() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.model_info.auto_compact_token_limit = Some(10_000_000);
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let malformed = ResponseItem::ToolSearchCall {
+        id: Some("malformed-large-item".to_string()),
+        call_id: Some("malformed-large-call".to_string()),
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({
+            "query": {
+                "unexpected": "x".repeat(500_000),
+            },
+        }),
+    };
+    let provider_usage = TokenUsage {
+        input_tokens: 4_500_000,
+        cached_input_tokens: 0,
+        output_tokens: 500_000,
+        reasoning_output_tokens: 0,
+        total_tokens: 5_000_000,
+    };
+    let request_count = Arc::new(AtomicUsize::new(0));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "trigger malformed structured output".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::Events(vec![
+                    model_service_api::ModelResponseEvent::ItemDone { item: malformed },
+                    model_service_api::ModelResponseEvent::Completed {
+                        response_id: "malformed-response".to_string(),
+                        token_usage: Some(provider_usage.clone()),
+                        end_turn: Some(true),
+                    },
+                ]),
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&request_count),
+            request_inputs: None,
+            request_base_instructions: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(request_count.load(AtomicOrdering::SeqCst), 2);
+    let history = session.clone_history().await;
+    let projected_tokens = history
+        .estimate_token_count_with_base_instructions(&session.get_base_instructions().await)
+        .expect("projected token estimate");
+    let token_info = session.token_usage_info().await.expect("token usage info");
+    assert_eq!(token_info.total_token_usage, provider_usage);
+    assert_eq!(
+        token_info.last_token_usage.total_tokens, projected_tokens,
+        "provider usage for the raw malformed call must be replaced by projected usage"
+    );
+    assert_eq!(
+        history.get_total_token_usage(/*server_reasoning_included*/ true),
+        projected_tokens
+    );
+    assert!(projected_tokens < 100_000);
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn invalid_model_input_quarantine_cap_is_shared_across_compact_and_sampling() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.model_info.auto_compact_token_limit = Some(1);
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let targets = ["compact-poison", "sampling-poison-1", "sampling-poison-2"].map(|call_id| {
+        protocol::error::ModelInputItemReference {
+            kind: protocol::error::ModelInputItemKind::FunctionCall,
+            call_id: call_id.to_string(),
+        }
+    });
+    session
+        .replace_history(
+            targets
+                .iter()
+                .flat_map(|target| {
+                    [
+                        ResponseItem::FunctionCall {
+                            id: None,
+                            name: "lookup".to_string(),
+                            namespace: None,
+                            arguments: "{}".to_string(),
+                            call_id: target.call_id.clone(),
+                        },
+                        ResponseItem::FunctionCallOutput {
+                            call_id: target.call_id.clone(),
+                            output: protocol::models::FunctionCallOutputPayload::from_text(
+                                "done".to_string(),
+                            ),
+                        },
+                    ]
+                })
+                .collect(),
+            None,
+        )
+        .await;
+    session
+        .state
+        .lock()
+        .await
+        .set_token_info(Some(TokenUsageInfo {
+            total_token_usage: TokenUsage {
+                total_tokens: 2,
+                ..TokenUsage::default()
+            },
+            last_token_usage: TokenUsage {
+                total_tokens: 2,
+                ..TokenUsage::default()
+            },
+            model_context_window: turn_context.model_context_window(),
+        }));
+
+    let compact_attempts = Arc::new(AtomicUsize::new(0));
+    let compact_attempts_for_hook = Arc::clone(&compact_attempts);
+    let compact_target = targets[0].clone();
+    let retained_targets = [targets[1].clone(), targets[2].clone()];
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id
+                || !matches!(reason, CompactionReason::ContextLimit)
+                || !matches!(phase, CompactionPhase::PreTurn)
+            {
+                return Some(Ok(false));
+            }
+            let attempt = compact_attempts_for_hook.fetch_add(1, AtomicOrdering::SeqCst);
+            if attempt == 0 {
+                return Some(Err(CodexErr::InvalidModelInput(
+                    protocol::error::InvalidModelInputError {
+                        message: "invalid compact history".to_string(),
+                        error_type: Some("invalid_request_error".to_string()),
+                        code: Some("invalid_value".to_string()),
+                        param: Some("input[0].arguments".to_string()),
+                        input_index: Some(0),
+                        source: Some(compact_target.clone()),
+                    },
+                )));
+            }
+            let retained = retained_targets
+                .iter()
+                .flat_map(|target| {
+                    [
+                        ResponseItem::FunctionCall {
+                            id: None,
+                            name: "lookup".to_string(),
+                            namespace: None,
+                            arguments: "{}".to_string(),
+                            call_id: target.call_id.clone(),
+                        },
+                        ResponseItem::FunctionCallOutput {
+                            call_id: target.call_id.clone(),
+                            output: protocol::models::FunctionCallOutputPayload::from_text(
+                                "done".to_string(),
+                            ),
+                        },
+                    ]
+                })
+                .collect();
+            session
+                .state
+                .try_lock()
+                .expect("session state should be available")
+                .replace_history(retained, None);
+            Some(Ok(true))
+        },
+    ));
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::InvalidModelInput(protocol::error::InvalidModelInputError {
+                    message: "invalid sampled history".to_string(),
+                    error_type: Some("invalid_request_error".to_string()),
+                    code: Some("invalid_value".to_string()),
+                    param: Some("input[0].arguments".to_string()),
+                    input_index: Some(0),
+                    source: Some(targets[1].clone()),
+                }),
+                ScriptedTurnResponse::InvalidModelInput(protocol::error::InvalidModelInputError {
+                    message: "third invalid transaction".to_string(),
+                    error_type: Some("invalid_request_error".to_string()),
+                    code: Some("invalid_value".to_string()),
+                    param: Some("input[0].arguments".to_string()),
+                    input_index: Some(0),
+                    source: Some(targets[2].clone()),
+                }),
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            request_base_instructions: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(compact_attempts.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    let history = session.clone_history().await;
+    assert!(history.contains_model_context_quarantine(&targets[1]));
+    assert!(!history.contains_model_context_quarantine(&targets[2]));
+}
+
+#[tokio::test]
+async fn regular_continuation_respects_existing_quarantine_cap() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let target = protocol::error::ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: "continuation-poison".to_string(),
+    };
+    session
+        .replace_history(
+            vec![
+                ResponseItem::FunctionCall {
+                    id: None,
+                    name: "lookup".to_string(),
+                    namespace: None,
+                    arguments: "{}".to_string(),
+                    call_id: target.call_id.clone(),
+                },
+                ResponseItem::FunctionCallOutput {
+                    call_id: target.call_id.clone(),
+                    output: protocol::models::FunctionCallOutputPayload::from_text(
+                        "done".to_string(),
+                    ),
+                },
+            ],
+            None,
+        )
+        .await;
+    let model_context_quarantines = Arc::new(tokio::sync::Mutex::new(HashSet::from([
+        protocol::error::ModelInputItemReference {
+            kind: protocol::error::ModelInputItemKind::FunctionCall,
+            call_id: "already-quarantined-1".to_string(),
+        },
+        protocol::error::ModelInputItemReference {
+            kind: protocol::error::ModelInputItemKind::FunctionCall,
+            call_id: "already-quarantined-2".to_string(),
+        },
+    ])));
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+
+    crate::session::turn::run_turn_with_model_context_quarantine_state(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "continue after compact".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([ScriptedTurnResponse::InvalidModelInput(
+                protocol::error::InvalidModelInputError {
+                    message: "continuation invalid input".to_string(),
+                    error_type: Some("invalid_request_error".to_string()),
+                    code: Some("invalid_value".to_string()),
+                    param: Some("input[0].arguments".to_string()),
+                    input_index: Some(0),
+                    source: Some(target.clone()),
+                },
+            )]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            request_base_instructions: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+        model_context_quarantines,
+    )
+    .await;
+
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 1);
+    assert!(
+        !session
+            .clone_history()
+            .await
+            .contains_model_context_quarantine(&target)
+    );
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn suffix_compact_quarantines_invalid_model_input_and_retries_same_plan() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let target = protocol::error::ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: "suffix-poison".to_string(),
+    };
+    session
+        .replace_history(
+            vec![
+                ResponseItem::FunctionCall {
+                    id: None,
+                    name: "lookup".to_string(),
+                    namespace: None,
+                    arguments: "{}".to_string(),
+                    call_id: target.call_id.clone(),
+                },
+                ResponseItem::FunctionCallOutput {
+                    call_id: target.call_id.clone(),
+                    output: protocol::models::FunctionCallOutputPayload::from_text(
+                        "done".to_string(),
+                    ),
+                },
+                test_user_message("tail before current"),
+            ],
+            None,
+        )
+        .await;
+
+    let compact_attempts = Arc::new(AtomicUsize::new(0));
+    let compact_attempts_for_hook = Arc::clone(&compact_attempts);
+    let target_for_hook = target.clone();
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id
+                || !matches!(reason, CompactionReason::ContextLimit)
+                || !matches!(phase, CompactionPhase::MidTurn)
+            {
+                return Some(Ok(false));
+            }
+            let attempt = compact_attempts_for_hook.fetch_add(1, AtomicOrdering::SeqCst);
+            if attempt == 0 {
+                return Some(Err(CodexErr::InvalidModelInput(
+                    protocol::error::InvalidModelInputError {
+                        message: "invalid suffix compact input".to_string(),
+                        error_type: Some("invalid_request_error".to_string()),
+                        code: Some("invalid_value".to_string()),
+                        param: Some("input[0].arguments".to_string()),
+                        input_index: Some(0),
+                        source: Some(target_for_hook.clone()),
+                    },
+                )));
+            }
+
+            let prompt = session
+                .state
+                .try_lock()
+                .expect("session state should be available")
+                .clone_history()
+                .for_prompt(&turn_context.model_info.input_modalities);
+            assert!(
+                session
+                    .state
+                    .try_lock()
+                    .expect("session state should be available")
+                    .clone_history()
+                    .contains_model_context_quarantine(&target_for_hook),
+                "the refreshed suffix compact snapshot should retain the durable marker"
+            );
+            assert!(!prompt.iter().any(|item| matches!(
+                item,
+                ResponseItem::FunctionCall { call_id, .. }
+                    | ResponseItem::FunctionCallOutput { call_id, .. }
+                    if call_id == &target_for_hook.call_id
+            )));
+            session
+                .state
+                .try_lock()
+                .expect("session state should be available")
+                .replace_history(vec![test_user_message("compacted clean prefix")], None);
+            Some(Ok(true))
+        },
+    ));
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            request_base_instructions: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(compact_attempts.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn regular_turn_emits_turn_started_without_waiting_for_startup_prewarm() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let model_client_api = Arc::clone(&sess.services.model_client_api);
@@ -1324,7 +1892,9 @@ struct ContextWindowExceededTurnClient {
 
 enum ScriptedTurnResponse {
     ContextWindowExceeded,
+    InvalidModelInput(protocol::error::InvalidModelInputError),
     Completed,
+    Events(Vec<model_service_api::ModelResponseEvent>),
 }
 
 struct ScriptedTurnClient {
@@ -1392,6 +1962,11 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
                 ScriptedTurnResponse::ContextWindowExceeded => {
                     Err(model_service_api::ModelRequestError::context_window_exceeded())
                 }
+                ScriptedTurnResponse::InvalidModelInput(error) => {
+                    Err(model_service_api::ModelRequestError::from_codex_err(
+                        CodexErr::InvalidModelInput(error),
+                    ))
+                }
                 ScriptedTurnResponse::Completed => Ok(Box::pin(futures::stream::iter(vec![Ok(
                     model_service_api::ModelResponseEvent::Completed {
                         response_id: "response-id".to_string(),
@@ -1400,6 +1975,10 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
                     },
                 )]))
                     as model_service_api::ModelResponseStream),
+                ScriptedTurnResponse::Events(events) => {
+                    Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok)))
+                        as model_service_api::ModelResponseStream)
+                }
             }
         })
     }
@@ -2138,11 +2717,7 @@ async fn get_base_instructions_no_user_content() {
                 .text
                 .contains(concat!("MORPHEUS", "_ARTIFACT"))
         );
-        assert!(
-            base_instructions
-                .text
-                .contains("Artifact Publishing")
-        );
+        assert!(base_instructions.text.contains("Artifact Publishing"));
     }
 }
 

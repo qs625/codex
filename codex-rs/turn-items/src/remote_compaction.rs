@@ -81,6 +81,7 @@ pub fn should_keep_remote_compacted_history_item(item: &ResponseItem) -> bool {
         | ResponseItem::EventCommandEvent { .. }
         | ResponseItem::EventDrivenTool { .. }
         | ResponseItem::ThreadGoalUpdate { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::Other => false,
     }
 }

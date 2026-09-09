@@ -541,10 +541,11 @@ pub struct ModelRequestError {
 }
 
 /// Machine-readable request error category preserved across model-service adapters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRequestErrorKind {
     ContextWindowExceeded,
+    InvalidModelInput(protocol::error::InvalidModelInputError),
 }
 
 impl ModelRequestError {
@@ -563,16 +564,22 @@ impl ModelRequestError {
     }
 
     pub fn from_codex_err(err: CodexErr) -> Self {
-        if matches!(err, CodexErr::ContextWindowExceeded) {
-            Self::context_window_exceeded()
-        } else {
-            Self::new(err.to_string())
+        match err {
+            CodexErr::ContextWindowExceeded => Self::context_window_exceeded(),
+            CodexErr::InvalidModelInput(error) => Self {
+                message: error.message.clone(),
+                kind: Some(ModelRequestErrorKind::InvalidModelInput(error)),
+            },
+            err => Self::new(err.to_string()),
         }
     }
 
     pub fn into_codex_err(self) -> CodexErr {
         match self.kind {
             Some(ModelRequestErrorKind::ContextWindowExceeded) => CodexErr::ContextWindowExceeded,
+            Some(ModelRequestErrorKind::InvalidModelInput(error)) => {
+                CodexErr::InvalidModelInput(error)
+            }
             None => CodexErr::Stream(self.message, None),
         }
     }

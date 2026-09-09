@@ -56,6 +56,7 @@ use tungstenite::protocol::WebSocketConfig;
 use url::Url;
 
 use crate::responses_requests::make_responses_ws_input_items_compatible;
+use crate::responses_requests::validate_responses_input_items;
 use crate::responses_sse::ResponsesStreamEvent;
 use crate::responses_sse::process_responses_event;
 use crate::responses_sse::response_event_channel;
@@ -294,6 +295,13 @@ impl ResponsesWebsocketConnection {
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
         make_responses_ws_input_items_compatible(&mut request);
+        let input_sources = match &request {
+            ResponsesWsRequest::ResponseCreate(payload) => {
+                validate_responses_input_items(&payload.input, &payload.input_sources)?;
+                payload.input_sources.clone()
+            }
+            ResponsesWsRequest::ResponseProcessed(_) => Vec::new(),
+        };
         let request_body = serde_json::to_value(&request).map_err(|err| {
             ApiError::Stream(format!("failed to encode websocket request: {err}"))
         })?;
@@ -341,6 +349,7 @@ impl ResponsesWebsocketConnection {
                                 tx_event.clone(),
                                 idle_timeout,
                                 telemetry,
+                                input_sources,
                             )
                             .await
                         }
@@ -717,6 +726,7 @@ async fn read_websocket_response_stream(
     tx_event: mpsc::Sender<std::result::Result<ResponseEvent, ApiError>>,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
+    input_sources: Vec<Option<protocol::error::ModelInputItemReference>>,
 ) -> Result<(), ApiError> {
     let mut last_server_model: Option<String> = None;
     let mut response_deadline = Instant::now() + idle_timeout;
@@ -751,6 +761,8 @@ async fn read_websocket_response_stream(
                     && let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
                 {
+                    let mut error = error;
+                    model_service_api::attach_model_input_source(&mut error, &input_sources);
                     return Err(error);
                 }
 
@@ -816,7 +828,9 @@ async fn read_websocket_response_stream(
                     }
                     Ok(None) => {}
                     Err(error) => {
-                        return Err(error.into_api_error());
+                        let mut error = error.into_api_error();
+                        model_service_api::attach_model_input_source(&mut error, &input_sources);
+                        return Err(error);
                     }
                 }
             }

@@ -233,6 +233,166 @@ async fn handle_output_item_done_keeps_marker_looking_assistant_text_as_message(
     assert_eq!(output.last_agent_message.as_deref(), Some(text));
 }
 
+async fn assert_malformed_tool_search_is_quarantined(call_id: Option<&str>, item_id: Option<&str>) {
+    let (session, turn_context) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let item = ResponseItem::ToolSearchCall {
+        id: item_id.map(str::to_string),
+        call_id: call_id.map(str::to_string),
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({"query": {"not": "a string"}}),
+    };
+    let expected_fingerprint =
+        protocol::models::model_context_item_fingerprint(&item).expect("fingerprint");
+    let mut ctx = HandleOutputCtx {
+        sess: Arc::clone(&session),
+        turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::new(ExtensionData::new(turn_context.sub_id.clone())),
+        tool_inputs: test_tool_inputs(Arc::clone(&session), Arc::clone(&turn_context)),
+        turn_diff_tracker: tracker,
+        cancellation_token: CancellationToken::new(),
+    };
+
+    let output = handle_output_item_done(&mut ctx, item, None)
+        .await
+        .expect("malformed tool call should be recoverable");
+
+    assert!(output.needs_follow_up);
+    assert!(output.model_context_rewritten);
+    assert!(output.tool_future.is_none());
+    let history = session.clone_history().await;
+    assert!(history.raw_items().iter().any(|item| matches!(
+        item,
+        ResponseItem::ModelContextQuarantine {
+            target:
+                protocol::error::ModelContextQuarantineReference::ModelItem {
+                    kind: protocol::error::ModelInputItemKind::ToolSearchCall,
+                    call_id: quarantined_call_id,
+                    item_id: quarantined_item_id,
+                    fingerprint,
+                },
+            ..
+        } if quarantined_call_id.as_deref() == call_id.filter(|call_id| !call_id.is_empty())
+            && quarantined_item_id.as_deref() == item_id
+            && fingerprint == &expected_fingerprint
+    )));
+    assert!(!history.raw_items().iter().any(|item| matches!(
+        item,
+        ResponseItem::FunctionCallOutput { call_id, .. } if call_id.is_empty()
+    ) || matches!(
+        item,
+        ResponseItem::ToolSearchOutput { call_id, .. }
+            if call_id.as_deref().is_none_or(str::is_empty)
+    )));
+    let prompt = history.for_prompt(&turn_context.model_info.input_modalities);
+    assert!(matches!(
+        prompt.as_slice(),
+        [ResponseItem::ModelContextQuarantine { .. }]
+    ));
+    assert!(!prompt.iter().any(|item| matches!(
+        item,
+        ResponseItem::ToolSearchCall { .. } | ResponseItem::ToolSearchOutput { .. }
+    )));
+}
+
+#[tokio::test]
+async fn malformed_tool_search_is_quarantined_without_empty_call_output() {
+    assert_malformed_tool_search_is_quarantined(Some("search-invalid"), None).await;
+}
+
+#[tokio::test]
+async fn malformed_tool_search_with_empty_call_id_is_excluded_from_prompt() {
+    assert_malformed_tool_search_is_quarantined(Some(""), Some("tool-search-item")).await;
+}
+
+#[tokio::test]
+async fn malformed_tool_search_without_call_id_is_excluded_from_prompt() {
+    assert_malformed_tool_search_is_quarantined(None, None).await;
+}
+
+#[tokio::test]
+async fn malformed_tool_search_with_duplicate_call_id_only_excludes_current_item() {
+    let (session, turn_context) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    session
+        .replace_history(
+            vec![
+                ResponseItem::ToolSearchCall {
+                    id: None,
+                    call_id: Some("search-duplicate".to_string()),
+                    status: Some("completed".to_string()),
+                    execution: "client".to_string(),
+                    arguments: serde_json::json!({"query": "valid historical search"}),
+                },
+                ResponseItem::ToolSearchOutput {
+                    call_id: Some("search-duplicate".to_string()),
+                    status: "completed".to_string(),
+                    execution: "client".to_string(),
+                    tools: Vec::new(),
+                },
+            ],
+            None,
+        )
+        .await;
+    let malformed = ResponseItem::ToolSearchCall {
+        id: Some("malformed-current".to_string()),
+        call_id: Some("search-duplicate".to_string()),
+        status: Some("completed".to_string()),
+        execution: "client".to_string(),
+        arguments: serde_json::json!({"query": {"not": "a string"}}),
+    };
+    let malformed_fingerprint =
+        protocol::models::model_context_item_fingerprint(&malformed).expect("fingerprint");
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let mut ctx = HandleOutputCtx {
+        sess: Arc::clone(&session),
+        turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::new(ExtensionData::new(turn_context.sub_id.clone())),
+        tool_inputs: test_tool_inputs(Arc::clone(&session), Arc::clone(&turn_context)),
+        turn_diff_tracker: tracker,
+        cancellation_token: CancellationToken::new(),
+    };
+
+    handle_output_item_done(&mut ctx, malformed, None)
+        .await
+        .expect("the current malformed item should be isolated precisely");
+
+    let prompt = session
+        .clone_history()
+        .await
+        .for_prompt(&turn_context.model_info.input_modalities);
+    assert_eq!(
+        prompt
+            .iter()
+            .filter(|item| matches!(item, ResponseItem::ToolSearchCall { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        prompt
+            .iter()
+            .filter(|item| matches!(item, ResponseItem::ToolSearchOutput { .. }))
+            .count(),
+        1
+    );
+    assert!(prompt.iter().any(|item| matches!(
+        item,
+        ResponseItem::ModelContextQuarantine {
+            target:
+                protocol::error::ModelContextQuarantineReference::ModelItem {
+                    call_id: Some(call_id),
+                    fingerprint,
+                    ..
+                },
+            ..
+        } if call_id == "search-duplicate" && fingerprint == &malformed_fingerprint
+    )));
+}
+
 #[tokio::test]
 async fn finalized_turn_item_defers_mailbox_for_contributed_visible_text() {
     let (mut session, turn_context) = make_session_and_context().await;

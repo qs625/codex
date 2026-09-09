@@ -26,6 +26,7 @@ pub use history::estimate_response_item_model_visible_bytes;
 pub use history::is_codex_generated_item;
 pub use history::is_real_user_message_boundary;
 pub use history::is_user_turn_boundary;
+pub use history::preserve_relevant_model_context_quarantines;
 pub use history::truncate_function_output_payload;
 pub use instructions::ApprovedCommandPrefixSaved;
 pub use instructions::AppsInstructions;

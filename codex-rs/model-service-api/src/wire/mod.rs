@@ -37,6 +37,7 @@ mod error;
 pub mod rate_limits;
 mod response_debug_context;
 
+pub use api_bridge::attach_model_input_source;
 pub use api_bridge::map_api_error;
 pub use arc_monitor::ArcMonitorChatMessage;
 pub use arc_monitor::ArcMonitorEvidence;
@@ -48,7 +49,9 @@ pub use arc_monitor::ArcMonitorResultOutcome;
 pub use arc_monitor::ArcMonitorRiskLevel;
 pub use arc_monitor::build_arc_monitor_request;
 pub use error::ApiError;
+pub use error::attach_invalid_model_input_source;
 pub use error::extract_response_debug_context_from_api_error;
+pub use error::parse_invalid_model_input_error;
 pub use error::telemetry_api_error_message;
 pub use rate_limits::RateLimitError;
 pub use rate_limits::parse_all_rate_limits;
@@ -800,6 +803,10 @@ pub struct ResponsesApiRequest {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub instructions: String,
     pub input: Vec<ResponseItem>,
+    /// Runtime-only mapping from each actual outbound input item to its durable
+    /// historical tool transaction. This must stay aligned with `input`.
+    #[serde(skip)]
+    pub input_sources: Vec<Option<protocol::error::ModelInputItemReference>>,
     pub tools: Vec<serde_json::Value>,
     pub tool_choice: String,
     pub parallel_tool_calls: bool,
@@ -828,6 +835,7 @@ impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
             instructions: request.instructions.clone(),
             previous_response_id: None,
             input: request.input.clone(),
+            input_sources: request.input_sources.clone(),
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.clone(),
             parallel_tool_calls: request.parallel_tool_calls,
@@ -852,6 +860,9 @@ pub struct ResponseCreateWsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
     pub input: Vec<ResponseItem>,
+    /// Runtime-only mapping aligned with the actual websocket `input`.
+    #[serde(skip)]
+    pub input_sources: Vec<Option<protocol::error::ModelInputItemReference>>,
     pub tools: Vec<Value>,
     pub tool_choice: String,
     pub parallel_tool_calls: bool,

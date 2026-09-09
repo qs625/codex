@@ -31,7 +31,7 @@ fn map_api_error_maps_cyber_policy_from_400_body() {
     let body = serde_json::json!({
         "error": {
             "message": "This request has been flagged for potentially high-risk cyber activity.",
-            "type": "invalid_request",
+            "type": "invalid_request_error",
             "param": null,
             "code": "cyber_policy"
         }
@@ -122,6 +122,90 @@ fn map_api_error_keeps_unknown_400_errors_generic() {
         panic!("expected CodexErr::InvalidRequest, got {err:?}");
     };
     assert_eq!(message, body);
+}
+
+#[test]
+fn map_api_error_preserves_structured_invalid_model_input() {
+    let body = serde_json::json!({
+        "error": {
+            "message": "Invalid historical tool arguments.",
+            "type": "invalid_request_error",
+            "param": "input[4].arguments",
+            "code": "invalid_value"
+        }
+    })
+    .to_string();
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::BAD_REQUEST,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    }));
+
+    let CodexErr::InvalidModelInput(details) = err else {
+        panic!("expected CodexErr::InvalidModelInput, got {err:?}");
+    };
+    assert_eq!(details.param.as_deref(), Some("input[4].arguments"));
+    assert_eq!(details.code.as_deref(), Some("invalid_value"));
+    assert_eq!(details.source, None);
+}
+
+#[test]
+fn attach_model_input_source_promotes_http_400_using_actual_outbound_mapping() {
+    let body = serde_json::json!({
+        "error": {
+            "message": "Invalid historical tool arguments.",
+            "type": "invalid_request_error",
+            "param": "input[0].arguments",
+            "code": "invalid_value"
+        }
+    })
+    .to_string();
+    let mut error = ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::BAD_REQUEST,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    });
+    let target = ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: "actual-call".to_string(),
+    };
+
+    attach_model_input_source(&mut error, &[Some(target.clone())]);
+
+    let ApiError::InvalidModelInput(details) = error else {
+        panic!("expected promoted invalid model input");
+    };
+    assert_eq!(details.input_index, Some(0));
+    assert_eq!(details.source, Some(target));
+}
+
+#[test]
+fn attach_model_input_source_preserves_http_cyber_policy_classification() {
+    let body = serde_json::json!({
+        "error": {
+            "message": "This request was flagged.",
+            "type": "invalid_request_error",
+            "param": "input[0].arguments",
+            "code": "cyber_policy"
+        }
+    })
+    .to_string();
+    let mut error = ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::BAD_REQUEST,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    });
+    let target = ModelInputItemReference {
+        kind: protocol::error::ModelInputItemKind::FunctionCall,
+        call_id: "call-1".to_string(),
+    };
+
+    attach_model_input_source(&mut error, &[Some(target)]);
+
+    assert!(matches!(error, ApiError::Transport(_)));
 }
 
 #[test]

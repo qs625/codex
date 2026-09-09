@@ -16,15 +16,80 @@ use chrono::Utc;
 use codex_utils_string::truncate_middle_chars;
 use codex_utils_string::truncate_middle_with_token_budget;
 use http::StatusCode;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json;
 use std::io;
 use std::time::Duration;
 use thiserror::Error;
+use ts_rs::TS;
 
 pub type Result<T> = std::result::Result<T, CodexErr>;
 
 /// Limit UI error messages to a reasonable size while keeping useful context.
 const ERROR_MESSAGE_UI_MAX_BYTES: usize = 2 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ModelInputItemKind {
+    FunctionCall,
+    ToolSearchCall,
+    CustomToolCall,
+    LocalShellCall,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModelInputItemReference {
+    pub kind: ModelInputItemKind,
+    pub call_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "reference_type", rename_all = "snake_case")]
+#[ts(tag = "reference_type", rename_all = "snake_case")]
+pub enum ModelContextQuarantineReference {
+    ToolTransaction {
+        kind: ModelInputItemKind,
+        call_id: String,
+    },
+    ModelItem {
+        kind: ModelInputItemKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        call_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        item_id: Option<String>,
+        fingerprint: String,
+    },
+}
+
+impl From<ModelInputItemReference> for ModelContextQuarantineReference {
+    fn from(reference: ModelInputItemReference) -> Self {
+        Self::ToolTransaction {
+            kind: reference.kind,
+            call_id: reference.call_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidModelInputError {
+    pub message: String,
+    pub error_type: Option<String>,
+    pub code: Option<String>,
+    pub param: Option<String>,
+    pub input_index: Option<usize>,
+    pub source: Option<ModelInputItemReference>,
+}
+
+impl std::fmt::Display for InvalidModelInputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum SandboxErr {
@@ -101,6 +166,9 @@ pub enum CodexErr {
     /// Invalid request.
     #[error("{0}")]
     InvalidRequest(String),
+    /// Provider rejected one exact model input item before sampling.
+    #[error("{0}")]
+    InvalidModelInput(InvalidModelInputError),
     /// Invalid image.
     #[error("Image poisoning")]
     InvalidImageRequest(),
@@ -169,6 +237,7 @@ impl CodexErr {
             | CodexErr::QuotaExceeded
             | CodexErr::InvalidImageRequest()
             | CodexErr::InvalidRequest(_)
+            | CodexErr::InvalidModelInput(_)
             | CodexErr::RefreshTokenFailed(_)
             | CodexErr::UnsupportedOperation(_)
             | CodexErr::Sandbox(_)

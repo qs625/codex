@@ -7,7 +7,6 @@ use codex_turn_items::completed_item_defers_mailbox_delivery_to_next_turn;
 use codex_turn_items::finalize_agent_message_content;
 use codex_turn_items::finalized_turn_item_facts;
 use codex_turn_items::raw_assistant_output_text_from_item;
-use codex_turn_items::response_input_to_response_item;
 use codex_turn_items::response_item_may_include_external_context;
 use codex_utils_stream_parser::strip_citations;
 use protocol::config_types::ModeKind;
@@ -27,12 +26,14 @@ use futures::Future;
 use memory_service_api::citations::parse_memory_citation;
 use memory_service_api::citations::thread_ids_from_memory_citation;
 use protocol::error::CodexErr;
+use protocol::error::ModelContextQuarantineReference;
+use protocol::error::ModelInputItemKind;
 use protocol::error::Result;
 use protocol::memory_citation::MemoryCitation;
-use protocol::models::FunctionCallOutputBody;
-use protocol::models::FunctionCallOutputPayload;
-use protocol::models::ResponseInputItem;
 use protocol::models::ResponseItem;
+use protocol::models::model_context_item_fingerprint;
+use protocol::protocol::EventMsg;
+use protocol::protocol::WarningEvent;
 use tool_service_api::FunctionCallError;
 use tool_service_api::ToolCall;
 use tracing::debug;
@@ -207,6 +208,7 @@ pub(crate) type InFlightFuture<'f> =
 pub(crate) struct OutputItemResult {
     pub last_agent_message: Option<String>,
     pub needs_follow_up: bool,
+    pub model_context_rewritten: bool,
     pub tool_future: Option<InFlightFuture<'static>>,
     pub tool_is_terminal_control: bool,
 }
@@ -398,24 +400,38 @@ pub(crate) async fn handle_output_item_done(
             output.last_agent_message = finalized_facts.and_then(|facts| facts.last_agent_message);
         }
         // The tool request should be answered directly (or was denied); push that response into the transcript.
-        Err(FunctionCallError::RespondToModel(message)) => {
-            let response = ResponseInputItem::FunctionCallOutput {
-                call_id: String::new(),
-                output: FunctionCallOutputPayload {
-                    body: FunctionCallOutputBody::Text(message),
-                    ..Default::default()
-                },
-            };
+        Err(FunctionCallError::RespondToModel(_message)) => {
             record_completed_response_item(ctx.sess.as_ref(), ctx.turn_context.as_ref(), &item)
                 .await;
-            if let Some(response_item) = response_input_to_response_item(&response) {
-                ctx.sess
-                    .record_conversation_items(
-                        &ctx.turn_context,
-                        std::slice::from_ref(&response_item),
-                    )
-                    .await;
-            }
+            let Some(target) =
+                local_model_context_quarantine_reference(ctx.sess.as_ref(), &item).await
+            else {
+                return Err(CodexErr::InvalidRequest(
+                    "Morpheus could not uniquely isolate a malformed structured tool call"
+                        .to_string(),
+                ));
+            };
+            let quarantine = ResponseItem::ModelContextQuarantine {
+                target,
+                reason: "model-emitted structured tool call could not be parsed locally"
+                    .to_string(),
+                error_code: Some("local_tool_call_parse_failed".to_string()),
+                error_param: None,
+            };
+            ctx.sess
+                .record_conversation_items(&ctx.turn_context, std::slice::from_ref(&quarantine))
+                .await;
+            ctx.sess.recompute_token_usage(&ctx.turn_context).await;
+            output.model_context_rewritten = true;
+            ctx.sess
+                .send_event(
+                    &ctx.turn_context,
+                    EventMsg::Warning(WarningEvent {
+                        message: "A structured tool call was not executed because its arguments were invalid."
+                            .to_string(),
+                    }),
+                )
+                .await;
 
             output.needs_follow_up = true;
         }
@@ -426,6 +442,71 @@ pub(crate) async fn handle_output_item_done(
     }
 
     Ok(output)
+}
+
+async fn local_model_context_quarantine_reference(
+    sess: &Session,
+    item: &ResponseItem,
+) -> Option<ModelContextQuarantineReference> {
+    let (kind, call_id) = match item {
+        ResponseItem::FunctionCall { call_id, .. } => {
+            (ModelInputItemKind::FunctionCall, Some(call_id.as_str()))
+        }
+        ResponseItem::ToolSearchCall { call_id, .. } => {
+            (ModelInputItemKind::ToolSearchCall, call_id.as_deref())
+        }
+        ResponseItem::CustomToolCall { call_id, .. } => {
+            (ModelInputItemKind::CustomToolCall, Some(call_id.as_str()))
+        }
+        ResponseItem::LocalShellCall {
+            call_id: Some(call_id),
+            ..
+        } => (ModelInputItemKind::LocalShellCall, Some(call_id.as_str())),
+        _ => return None,
+    };
+    let fingerprint = model_context_item_fingerprint(item)?;
+    let history = sess.clone_history().await;
+    let matching_fingerprints = history
+        .raw_items()
+        .iter()
+        .filter(|candidate| {
+            model_context_item_fingerprint(candidate).as_deref() == Some(fingerprint.as_str())
+        })
+        .count();
+    if matching_fingerprints != 1 {
+        return None;
+    }
+    let item_id = match item {
+        ResponseItem::ToolSearchCall { id, .. } => id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .filter(|item_id| {
+                history
+                    .raw_items()
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(
+                            candidate,
+                            ResponseItem::ToolSearchCall {
+                                id: Some(candidate_id),
+                                ..
+                            } if candidate_id.as_str() == *item_id
+                        )
+                    })
+                    .count()
+                    == 1
+            })
+            .map(str::to_string),
+        _ => None,
+    };
+    Some(ModelContextQuarantineReference::ModelItem {
+        kind,
+        call_id: call_id
+            .filter(|call_id| !call_id.is_empty())
+            .map(str::to_string),
+        item_id,
+        fingerprint,
+    })
 }
 
 fn same_turn_item_display_slot(active: &TurnItem, completed: &TurnItem) -> bool {

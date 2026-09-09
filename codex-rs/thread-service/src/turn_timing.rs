@@ -194,6 +194,7 @@ fn response_item_records_turn_ttft(item: &ResponseItem) -> bool {
         ResponseItem::FunctionCallOutput { .. }
         | ResponseItem::CustomToolCallOutput { .. }
         | ResponseItem::ToolSearchOutput { .. }
+        | ResponseItem::ModelContextQuarantine { .. }
         | ResponseItem::Other => false,
     }
 }

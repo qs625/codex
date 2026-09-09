@@ -15,6 +15,8 @@
   - persisted event/history：供 reload、history replay、UI 恢复使用的持久化事实
   - model-visible context：提供给模型推理的 history / response items / compact context
 - 许多问题都来自把这 3 层混在一起；排查时先判断故障发生在 live path、persisted replay，还是 model context。
+- 历史 structured tool transaction 被 provider 的结构化 model-input 校验拒绝时，恢复事实应记录为 typed durable quarantine：原始 call/output 继续留在 rollout/display 作为审计证据，`ContextManager` 在 normalization 前从后续 model-visible prompt 原子排除对应 call+output，并由 typed marker 投影有界脱敏说明；不能改写真实历史、生成伪 tool output 或依赖 UI/raw marker 修补。
+- provider `input[N]` 的 quarantine source 必须来自本次真实 outbound input：source sidecar 要与 prompt formatting、Responses compatibility filter/transform 同步变化，并在 WebSocket `previous_response_id` incremental suffix 时同步裁切。无法唯一映射到完整且无歧义的历史工具事务时不得自动 quarantine，也不得用完整 history index、最近消息或 `pop()` 猜测。
 - workflow 不应被理解成固定线性脚本；它应是有限状态机，允许根据 PM/agent 的结构化输出动态路由到不同 owner、reviewer 或等待态。workflow 的核心价值是把流程门禁、状态转移、输出校验和恢复语义 runtime 化：例如 PM 接到新 feature 后，必须基于 progress 状态确认 owner 空闲，再把 feature 从 pending 转为 deving 并输出明确 owner 派发事实；后续状态转移也应由 progress/state file 与校验规则共同约束，而不是只依赖模型自觉遵循 instruction。
 - workflow 也不能被当作绝对可靠性来源：它仍依赖模型正确报告事实、选择状态和调用状态更新工具。workflow 的收益来自把自由文本协作压缩到有限状态、typed schema、runtime 可校验门禁和 durable state，而不是消除模型错误。设计 workflow 时应避免状态机过度膨胀；只把高价值、可验证、会影响下游安全性的状态转移固化，其他判断仍留给 agent instruction 和 PM 审核。
 - workflow 中的 PM agent 不应被设计成一次性输出 owner brief 后就承担隐含持续监督；PM 模型线程结束后不会自动轮询 owner。owner 等待、超时、心跳、状态检查、完成通知消费、输出 schema 校验和异常分支应由 workflow runtime/script 持有；需要新的 PM 判断时，runtime 再显式唤起 PM/coordination step，并带上当前 durable state、owner 活动和异常证据。

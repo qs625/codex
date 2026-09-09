@@ -213,9 +213,10 @@ fn build_thread_context_usage_inner(
     let mut tool_breakdown = ToolBreakdownAccumulator::default();
     skills.seed(thread_skills);
 
-    for (index, item) in history.raw_items().iter().enumerate() {
+    for (index, item) in history.projected_model_input_items() {
         let counts_current_loaded_skills =
             compact_replacement_history_len.is_none_or(|len| index >= len);
+        let item = item.as_ref();
         match item {
             ResponseItem::Message { role, content, .. } => {
                 let item_bytes = estimate_response_item_model_visible_bytes(item);
@@ -433,6 +434,7 @@ fn build_thread_context_usage_inner(
                 categories.llm_messages = categories.llm_messages.saturating_add(item_bytes);
                 tool_breakdown.add_output(ToolBreakdownBucketId::InterAgent, item_bytes);
             }
+            ResponseItem::ModelContextQuarantine { .. } => {}
             ResponseItem::Other => {}
         }
     }
@@ -842,6 +844,8 @@ mod tests {
     use codex_context_manager::ContextManager;
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
+    use protocol::error::ModelInputItemKind;
+    use protocol::error::ModelInputItemReference;
     use protocol::models::ContentItem;
     use protocol::models::FunctionCallOutputPayload;
     use protocol::models::LocalShellAction;
@@ -910,6 +914,54 @@ mod tests {
         assert!(usage.tool_breakdown.apply_patch.input > 0);
         assert_eq!(usage.tool_breakdown.apply_patch.output, 7);
         assert_eq!(usage.tool_breakdown.commands.input, 0);
+    }
+
+    #[test]
+    fn quarantined_tool_transaction_is_replaced_by_bounded_notice_in_usage() {
+        let target = ModelInputItemReference {
+            kind: ModelInputItemKind::FunctionCall,
+            call_id: "call-quarantined".to_string(),
+        };
+        let reason = "invalid historical tool output ".repeat(1_000);
+        let error_param = format!("input[0].output.{}", "x".repeat(10_000));
+        let quarantine = ResponseItem::ModelContextQuarantine {
+            target: target.clone().into(),
+            reason: reason.clone(),
+            error_code: Some("invalid_value".to_string()),
+            error_param: Some(error_param.clone()),
+        };
+        let notice = protocol::models::model_context_quarantine_notice(
+            match &quarantine {
+                ResponseItem::ModelContextQuarantine { target, .. } => target,
+                _ => unreachable!(),
+            },
+            &reason,
+            Some("invalid_value"),
+            Some(&error_param),
+        );
+        let expected_notice_bytes =
+            codex_context_manager::estimate_response_item_model_visible_bytes(&notice);
+        let usage = usage_for_items(vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "lookup".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: target.call_id.clone(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: target.call_id,
+                output: FunctionCallOutputPayload::from_text("x".repeat(100_000)),
+            },
+            quarantine,
+        ]);
+
+        assert_eq!(usage.categories.tool_calls, 0);
+        assert_eq!(usage.tool_breakdown.other_tools.input, 0);
+        assert_eq!(usage.tool_breakdown.other_tools.output, 0);
+        assert_eq!(usage.categories.user_messages, expected_notice_bytes);
+        assert_eq!(usage.total_bytes, expected_notice_bytes);
+        assert!(usage.total_bytes < 2_000);
     }
 
     #[test]

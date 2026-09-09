@@ -59,12 +59,17 @@ impl ModelClientSession {
         request: &ResponsesApiRequest,
         last_response: Option<&LastResponse>,
         allow_empty_delta: bool,
-    ) -> Option<Vec<ResponseItem>> {
+    ) -> Option<(
+        Vec<ResponseItem>,
+        Vec<Option<protocol::error::ModelInputItemReference>>,
+    )> {
         let previous_request = self.websocket_session.last_request.as_ref()?;
         let mut previous_without_input = previous_request.clone();
         previous_without_input.input.clear();
+        previous_without_input.input_sources.clear();
         let mut request_without_input = request.clone();
         request_without_input.input.clear();
+        request_without_input.input_sources.clear();
         if previous_without_input != request_without_input {
             trace!(
                 "incremental request failed, properties didn't match {previous_without_input:?} != {request_without_input:?}"
@@ -76,16 +81,11 @@ impl ModelClientSession {
         if let Some(last_response) = last_response {
             baseline.extend(last_response.items_added.clone());
         }
-
-        let baseline_len = baseline.len();
-        if request.input.starts_with(&baseline)
-            && (allow_empty_delta || baseline_len < request.input.len())
-        {
-            Some(request.input[baseline_len..].to_vec())
-        } else {
+        let incremental = incremental_input_and_sources(request, &baseline, allow_empty_delta);
+        if incremental.is_none() {
             trace!("incremental request failed, items didn't match");
-            None
         }
+        incremental
     }
 
     fn get_last_response(&mut self) -> Option<LastResponse> {
@@ -106,7 +106,7 @@ impl ModelClientSession {
         let Some(last_response) = self.get_last_response() else {
             return ResponsesWsRequest::ResponseCreate(payload);
         };
-        let Some(incremental_items) = self.get_incremental_items(
+        let Some((incremental_items, incremental_sources)) = self.get_incremental_items(
             request,
             Some(&last_response),
             /*allow_empty_delta*/ true,
@@ -122,6 +122,7 @@ impl ModelClientSession {
         ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
             previous_response_id: Some(last_response.response_id),
             input: incremental_items,
+            input_sources: incremental_sources,
             ..payload
         })
     }
@@ -198,5 +199,81 @@ impl ModelClientSession {
             .ok_or(ApiError::Stream(
                 "websocket connection is unavailable".to_string(),
             ))
+    }
+}
+
+fn incremental_input_and_sources(
+    request: &ResponsesApiRequest,
+    baseline: &[ResponseItem],
+    allow_empty_delta: bool,
+) -> Option<(
+    Vec<ResponseItem>,
+    Vec<Option<protocol::error::ModelInputItemReference>>,
+)> {
+    let baseline_len = baseline.len();
+    if request.input_sources.len() != request.input.len()
+        || !request.input.starts_with(baseline)
+        || (!allow_empty_delta && baseline_len == request.input.len())
+    {
+        return None;
+    }
+    Some((
+        request.input[baseline_len..].to_vec(),
+        request.input_sources[baseline_len..].to_vec(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::error::ModelInputItemKind;
+    use protocol::error::ModelInputItemReference;
+    use protocol::models::ContentItem;
+
+    #[test]
+    fn websocket_incremental_suffix_slices_sources_with_actual_sent_items() {
+        let baseline = vec![ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "before".to_string(),
+            }],
+            phase: None,
+        }];
+        let call = ResponseItem::FunctionCall {
+            id: None,
+            name: "lookup".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+        };
+        let target = ModelInputItemReference {
+            kind: ModelInputItemKind::FunctionCall,
+            call_id: "call-1".to_string(),
+        };
+        let request = ResponsesApiRequest {
+            model: "gpt-test".to_string(),
+            instructions: String::new(),
+            input: vec![baseline[0].clone(), call.clone()],
+            input_sources: vec![None, Some(target.clone())],
+            tools: Vec::new(),
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: false,
+            reasoning: None,
+            store: false,
+            stream: true,
+            include: Vec::new(),
+            service_tier: None,
+            prompt_cache_key: None,
+            text: None,
+            client_metadata: None,
+            chat_completions_max_tokens: None,
+        };
+
+        let (items, sources) =
+            incremental_input_and_sources(&request, &baseline, true).expect("valid suffix");
+
+        assert_eq!(items, vec![call]);
+        assert_eq!(sources, vec![Some(target)]);
     }
 }
