@@ -169,6 +169,8 @@ use app_server_protocol::ThreadIncrementElicitationParams;
 use app_server_protocol::ThreadIncrementElicitationResponse;
 use app_server_protocol::ThreadInjectItemsParams;
 use app_server_protocol::ThreadInjectItemsResponse;
+use app_server_protocol::ThreadClientRecoveryRecordParams;
+use app_server_protocol::ThreadClientRecoveryRecordResponse;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListCwdFilter;

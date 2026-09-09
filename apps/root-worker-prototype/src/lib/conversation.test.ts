@@ -174,6 +174,39 @@ test("builds a conversation event for typed goal updates", () => {
   ]);
 });
 
+test("builds a conversation event for typed client recovery", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "clientRecovery",
+        id: "recovery-1",
+        transactionId: "transaction-1",
+        mode: "rollback",
+        buildId: "build-2",
+        previousBuildId: "build-1",
+        reason: "health check failed",
+        occurredAt: "2026-09-09T08:30:00.000Z",
+      },
+    ]),
+  );
+
+  assert.deepEqual(entries, [
+    {
+      id: "recovery-1",
+      kind: "event",
+      author: "root",
+      role: "system",
+      text:
+        "Client recovery (rollback): health check failed\nBuild: build-2\nPrevious build: build-1\nTransaction: transaction-1",
+      timestamp: formatClockTime(
+        Date.parse("2026-09-09T08:30:00.000Z") / 1000,
+      ),
+      attachments: [],
+      turnId: "turn-1",
+    },
+  ]);
+});
+
 test("builds a workflow progress tool entry from typed thread items", () => {
   const entries = buildConversationEntries(
     makeThread([

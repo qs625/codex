@@ -1463,6 +1463,19 @@ pub fn segment_manifest_path_for_rollout(path: &Path) -> PathBuf {
     layout::segment_manifest_path_for_rollout_path(path)
 }
 
+pub fn segment_paths_for_rollout(path: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let Some(manifest) = load_segment_manifest_for_path(path)? else {
+        return Ok(vec![path.to_path_buf()]);
+    };
+    let manifest_path = segment_manifest_path_for_rollout(path);
+    let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    Ok(manifest
+        .segments
+        .into_iter()
+        .map(|segment| base_dir.join(segment))
+        .collect())
+}
+
 pub fn segmented_compaction_count_for_rollout_path(path: &Path) -> Option<u32> {
     let manifest = load_segment_manifest_for_path(path).ok().flatten()?;
     Some(manifest.segments.len().saturating_sub(1) as u32)

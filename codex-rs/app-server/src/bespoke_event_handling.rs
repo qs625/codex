@@ -615,6 +615,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::EventDrivenToolCompleted(_)
         | EventMsg::InterAgentCommunicationCompleted(_)
         | EventMsg::ThreadGoalUpdateCompleted(_)
+        | EventMsg::ClientRecovery(_)
         | EventMsg::PatchApplyUpdated(_)
         | EventMsg::TerminalInteraction(_)) => {
             if let Some(notification) =

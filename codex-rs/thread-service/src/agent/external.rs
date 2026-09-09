@@ -2230,6 +2230,7 @@ fn codex_thread_item_type_name(item: &app_server_protocol::ThreadItem) -> &'stat
         app_server_protocol::ThreadItem::EventCommandEvent { .. } => "eventCommandEvent",
         app_server_protocol::ThreadItem::ThreadGoalUpdate { .. } => "threadGoalUpdate",
         app_server_protocol::ThreadItem::ContextCompaction { .. } => "contextCompaction",
+        app_server_protocol::ThreadItem::ClientRecovery { .. } => "clientRecovery",
         app_server_protocol::ThreadItem::WorkflowRunProgress { .. } => "workflowRunProgress",
         app_server_protocol::ThreadItem::ConversationArtifact { .. } => "conversationArtifact",
         app_server_protocol::ThreadItem::EnteredReviewMode { .. } => "enteredReviewMode",

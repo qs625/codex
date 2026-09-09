@@ -1,0 +1,28 @@
+[package]
+name = "runtime-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "runtime_launcher"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "MorpheusLauncher"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+libc = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

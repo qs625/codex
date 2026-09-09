@@ -553,6 +553,11 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadInjectItemsResponse,
     },
+    ThreadClientRecoveryRecord => "thread/clientRecovery/record" {
+        params: v2::ThreadClientRecoveryRecordParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadClientRecoveryRecordResponse,
+    },
     SkillsList => "skills/list" {
         params: v2::SkillsListParams,
         serialization: global_shared_read("config"),

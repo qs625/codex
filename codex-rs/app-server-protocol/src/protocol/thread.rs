@@ -1073,6 +1073,31 @@ pub struct ThreadInjectItemsResponse {}
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadClientRecoveryRecordParams {
+    pub thread_id: String,
+    pub recovery_id: String,
+    pub transaction_id: String,
+    pub mode: String,
+    pub build_id: String,
+    pub reason: String,
+    pub occurred_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub previous_build_id: Option<String>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadClientRecoveryRecordResponse {
+    pub recorded: bool,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ThreadTurnsListParams {
     pub thread_id: String,
     /// Opaque cursor to pass to the next call to continue after the last turn.

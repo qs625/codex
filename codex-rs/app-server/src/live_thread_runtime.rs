@@ -23,6 +23,7 @@ use thread_service_api::CodexThreadTurnContextOverrides;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
 use thread_service_api::LiveThreadConversationInjectionRuntime;
+use thread_service_api::LiveThreadClientRecoveryRuntime;
 use thread_service_api::LiveThreadElicitationRuntime;
 use thread_service_api::LiveThreadFeedbackRuntime;
 use thread_service_api::LiveThreadGoalRuntime;
@@ -489,6 +490,31 @@ pub(crate) trait AppServerLiveThreadConversationInjectionRuntime: Send + Sync {
         thread_id: ThreadId,
         items: Vec<ResponseItem>,
     ) -> BoxFuture<'_, CodexResult<()>>;
+}
+
+pub(crate) trait AppServerLiveThreadClientRecoveryRuntime: Send + Sync {
+    fn record_live_thread_client_recovery(
+        &self,
+        thread_id: ThreadId,
+        event: protocol::protocol::ClientRecoveryEvent,
+    ) -> BoxFuture<'_, CodexResult<bool>>;
+}
+
+impl<T> AppServerLiveThreadClientRecoveryRuntime for T
+where
+    T: LiveThreadClientRecoveryRuntime + Send + Sync,
+{
+    fn record_live_thread_client_recovery(
+        &self,
+        thread_id: ThreadId,
+        event: protocol::protocol::ClientRecoveryEvent,
+    ) -> BoxFuture<'_, CodexResult<bool>> {
+        Box::pin(
+            LiveThreadClientRecoveryRuntime::record_live_thread_client_recovery(
+                self, thread_id, event,
+            ),
+        )
+    }
 }
 
 impl<T> AppServerLiveThreadConversationInjectionRuntime for T

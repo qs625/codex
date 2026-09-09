@@ -1,3 +1,5 @@
+const FULL_ACTIVATION_EXIT_CODE = 75;
+
 function createAppRelaunchAdapter({
   app,
   beforeExit,
@@ -370,11 +372,13 @@ async function observeClientRelaunchResult(
 }
 
 function createInstalledArtifactUpdateLifecycleAdapter({
+  appExit,
   appServerRestart,
   appServerStop,
-  fullRelaunch,
+  cleanupPreparedArtifact,
   reloadWindows,
   resolvePlan,
+  runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
   logger = console,
@@ -419,10 +423,12 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 
       inFlightMode = normalizedMode;
       inFlight = resolveAndRunInstalledArtifactUpdate({
+        appExit,
         appServerRestart,
         appServerStop,
-        fullRelaunch,
+        cleanupPreparedArtifact,
         reloadWindows,
+        runtimeLauncher,
         updateArtifacts,
         broadcastStatus,
         logger,
@@ -440,10 +446,12 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 }
 
 async function resolveAndRunInstalledArtifactUpdate({
+  appExit,
   appServerRestart,
   appServerStop,
-  fullRelaunch,
+  cleanupPreparedArtifact,
   reloadWindows,
+  runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
   logger,
@@ -487,10 +495,12 @@ async function resolveAndRunInstalledArtifactUpdate({
     return { ok: false, unsupported: true };
   }
   return runInstalledArtifactUpdate({
+    appExit,
     appServerRestart,
     appServerStop,
-    fullRelaunch,
+    cleanupPreparedArtifact,
     reloadWindows,
+    runtimeLauncher,
     updateArtifacts,
     broadcastStatus,
     logger,
@@ -502,10 +512,12 @@ async function resolveAndRunInstalledArtifactUpdate({
 }
 
 async function runInstalledArtifactUpdate({
+  appExit,
   appServerRestart,
   appServerStop,
-  fullRelaunch,
+  cleanupPreparedArtifact,
   reloadWindows,
+  runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
   logger,
@@ -529,7 +541,7 @@ async function runInstalledArtifactUpdate({
   broadcastStatus?.({
     lifecycle: {
       type: "installedArtifactUpdate",
-      phase: "building",
+      phase: "preparing",
       mode,
       ...requestIdFields(requestId),
       reason,
@@ -546,70 +558,128 @@ async function runInstalledArtifactUpdate({
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
-        phase: "updated",
+        phase: "prepared",
         mode,
         ...requestIdFields(requestId),
         reason,
       },
     });
+    const activationRequest = buildActivationRequest({
+      update,
+      reason,
+    });
     if (mode === "full") {
-      return await relaunchUpdatedApp({
+      return await activateFullUpdate({
+        activationRequest,
+        appExit,
         appServerStop,
         broadcastStatus,
-        fullRelaunch,
+        cleanupPreparedArtifact,
+        logger,
         mode,
         reason,
         requestId,
+        runtimeLauncher,
         update,
       });
     }
-    const backendRestart = await restartUpdatedAppServer(appServerRestart, reason);
-    if (!backendRestart.ok) {
-      throw partialInstalledUpdateError(
-        backendRestart.reason ?? "App-server restart failed after update",
-        { backendRestart, updated: Boolean(update.updated) },
+    if (
+      plan.requiresFullRelaunch ||
+      update.changes?.main === true ||
+      update.changes?.preload === true
+    ) {
+      await cleanupPreparedCandidate(
+        cleanupPreparedArtifact,
+        update.preparedRoot,
+        logger,
+      );
+      throw new Error(
+        "Hot activation rejected because Electron main or preload changed",
       );
     }
-    const reload = await reloadUpdatedRenderer(reloadWindows, {
-      broadcastStatus,
-      mode,
-      reason,
-      requestId,
-    });
-    if (!reload.ok) {
-      throw partialInstalledUpdateError(
-        reload.reason ?? "Renderer reload failed after update",
-        {
-          backendRestart,
-          reload,
-          updated: Boolean(update.updated),
+    if (!runtimeLauncher?.supported) {
+      await cleanupPreparedCandidate(
+        cleanupPreparedArtifact,
+        update.preparedRoot,
+        logger,
+      );
+      throw new Error("Stable runtime launcher is unavailable");
+    }
+    let activation = null;
+    let backendRestart = null;
+    let reload = null;
+    let activationAttempted = false;
+    try {
+      activationAttempted = true;
+      activation = await runtimeLauncher.activateHot(activationRequest);
+      backendRestart = await restartUpdatedAppServer(appServerRestart, reason);
+      if (!backendRestart.ok) {
+        throw new Error(
+          backendRestart.reason ?? "App-server restart failed after update",
+        );
+      }
+      reload = await reloadUpdatedRenderer(reloadWindows, {
+        broadcastStatus,
+        mode,
+        reason,
+        requestId,
+      });
+      if (!reload.ok) {
+        throw new Error(
+          reload.reason ?? "Renderer reload failed after update",
+        );
+      }
+      const committed = await runtimeLauncher.commitHot(update.transactionId);
+      broadcastStatus?.({
+        lifecycle: {
+          type: "installedArtifactUpdate",
+          phase: "reloaded",
+          mode,
+          ...requestIdFields(requestId),
+          reason,
         },
-      );
-    }
-    broadcastStatus?.({
-      lifecycle: {
-        type: "installedArtifactUpdate",
-        phase: "reloaded",
+        reload,
+      });
+      return {
+        ok: true,
+        inPlace: true,
+        relaunching: false,
+        reloaded: true,
+        updated: true,
+        activation,
+        backendRestart,
+        committed,
         mode,
         ...requestIdFields(requestId),
+        mainProcessUpdate: "unchanged",
+        preloadUpdate: "unchanged",
         reason,
-      },
-      reload,
-    });
-    return {
-      ok: true,
-      inPlace: true,
-      relaunching: false,
-      reloaded: true,
-      updated: Boolean(update.updated),
-      backendRestart,
-      mode,
-      ...requestIdFields(requestId),
-      mainProcessUpdate: "pendingAppRelaunch",
-      preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
-      reason,
-      reload,
-    };
+        reload,
+      };
+    } catch (error) {
+      if (!activationAttempted) {
+        throw error;
+      }
+      throw await rollbackHotUpdate(
+        error instanceof Error ? error.message : String(error),
+        runtimeLauncher,
+        update.transactionId,
+        {
+          activation,
+          appServerRestart,
+          backendRestart,
+          reload,
+          reloadWindows,
+          reason,
+        },
+      );
+    } finally {
+      await cleanupPreparedCandidate(
+        cleanupPreparedArtifact,
+        update.preparedRoot,
+        logger,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger?.error?.(
@@ -644,17 +714,27 @@ async function runInstalledArtifactUpdate({
     if (error?.relaunch) {
       failure.relaunch = error.relaunch;
     }
+    if (error?.abort) {
+      failure.abort = error.abort;
+    }
+    if (error?.rollback) {
+      failure.rollback = error.rollback;
+    }
     return failure;
   }
 }
 
-async function relaunchUpdatedApp({
+async function activateFullUpdate({
+  activationRequest,
+  appExit,
   appServerStop,
   broadcastStatus,
-  fullRelaunch,
+  cleanupPreparedArtifact,
+  logger,
   mode,
   reason,
   requestId,
+  runtimeLauncher,
   update,
 }) {
   broadcastStatus?.({
@@ -666,27 +746,43 @@ async function relaunchUpdatedApp({
       reason,
     },
   });
+  let prepared;
+  try {
+    if (!runtimeLauncher?.supported) {
+      throw new Error("Stable runtime launcher is unavailable");
+    }
+    prepared = await runtimeLauncher.prepareFull(activationRequest);
+  } finally {
+    await cleanupPreparedCandidate(
+      cleanupPreparedArtifact,
+      update.preparedRoot,
+      logger,
+    );
+  }
   const backendStop = await stopUpdatedAppServer(appServerStop, reason);
   if (!backendStop.ok) {
-    throw partialInstalledUpdateError(
+    throw await abortFullUpdate(
       backendStop.reason ?? "App-server stop failed before app relaunch",
-      { backendStop, updated: Boolean(update.updated) },
+      runtimeLauncher,
+      update.transactionId,
+      { backendStop },
     );
   }
-  const relaunch =
-    fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
-      ? await fullRelaunch.requestRelaunch(reason)
-      : {
-          ok: false,
-          relaunching: false,
-          reason: "Application relaunch adapter is unavailable after shell update.",
-        };
-  if (!relaunch.ok) {
-    throw partialInstalledUpdateError(
-      relaunch.reason ?? "Application relaunch failed after shell update",
-      { backendStop, relaunch, updated: Boolean(update.updated) },
+  if (typeof appExit !== "function") {
+    throw await abortFullUpdate(
+      "Application exit is unavailable after full activation preparation",
+      runtimeLauncher,
+      update.transactionId,
+      { backendStop },
     );
   }
+  appExit(FULL_ACTIVATION_EXIT_CODE);
+  const relaunch = {
+    ok: true,
+    relaunching: true,
+    supervised: true,
+    exitCode: FULL_ACTIVATION_EXIT_CODE,
+  };
   broadcastStatus?.({
     lifecycle: {
       type: "installedArtifactUpdate",
@@ -702,7 +798,7 @@ async function relaunchUpdatedApp({
     inPlace: false,
     relaunching: Boolean(relaunch.relaunching),
     reloaded: false,
-    updated: Boolean(update.updated),
+    updated: true,
     backendStop,
     mode,
     ...requestIdFields(requestId),
@@ -710,7 +806,104 @@ async function relaunchUpdatedApp({
     preloadUpdate: "requiresAppRelaunch",
     reason,
     relaunch,
+    prepared,
   };
+}
+
+async function abortFullUpdate(
+  message,
+  runtimeLauncher,
+  transactionId,
+  details,
+) {
+  let abort;
+  try {
+    abort = await runtimeLauncher.abortFull(transactionId);
+  } catch (error) {
+    abort = {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  return partialInstalledUpdateError(
+    abort?.ok === false
+      ? `${message}; abort-full also failed: ${abort.reason ?? "unknown failure"}`
+      : message,
+    { ...details, abort, updated: false },
+  );
+}
+
+function buildActivationRequest({ update, reason }) {
+  return {
+    schemaVersion: 1,
+    transactionId: update.transactionId,
+    buildId: update.buildId,
+    sourceCommit: update.sourceCommit,
+    preparedRoot: update.preparedRoot,
+    appBundlePath: update.appBundlePath,
+    reason:
+      typeof reason === "string" && reason.trim()
+        ? reason.trim()
+        : "Runtime update requested",
+    changes: {
+      main: update.changes?.main === true,
+      preload: update.changes?.preload === true,
+    },
+  };
+}
+
+async function rollbackHotUpdate(
+  message,
+  runtimeLauncher,
+  transactionId,
+  details,
+) {
+  let rollback;
+  try {
+    rollback = await runtimeLauncher.rollbackHot(transactionId);
+  } catch (error) {
+    rollback = {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (rollback?.ok === true) {
+    await restartUpdatedAppServer(
+      details.appServerRestart,
+      `rollback: ${details.reason ?? message}`,
+    );
+    await reloadUpdatedRenderer(details.reloadWindows, {
+      mode: "hot",
+      reason: `rollback: ${details.reason ?? message}`,
+      requestId: null,
+    });
+  }
+  return partialInstalledUpdateError(
+    rollback?.ok === false
+      ? `${message}; rollback also failed: ${rollback.reason ?? "unknown failure"}`
+      : message,
+    {
+      ...details,
+      rollback,
+      updated: false,
+    },
+  );
+}
+
+async function cleanupPreparedCandidate(cleanup, preparedRoot, logger) {
+  if (!preparedRoot || typeof cleanup !== "function") {
+    return;
+  }
+  try {
+    await cleanup(preparedRoot);
+  } catch (error) {
+    logger?.warn?.(
+      "[prototype] prepared runtime candidate cleanup failed",
+      JSON.stringify({
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 }
 
 async function stopUpdatedAppServer(appServerStop, reason) {

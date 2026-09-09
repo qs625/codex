@@ -221,7 +221,8 @@ impl ThreadHistoryBuilder {
             | EventMsg::EventCommandEventCompleted(_)
             | EventMsg::EventDrivenToolCompleted(_)
             | EventMsg::InterAgentCommunicationCompleted(_)
-            | EventMsg::ThreadGoalUpdateCompleted(_) => {
+            | EventMsg::ThreadGoalUpdateCompleted(_)
+            | EventMsg::ClientRecovery(_) => {
                 self.handle_projected_event_item(event);
             }
             EventMsg::RawResponseItem(_) => {}

@@ -503,6 +503,27 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "clientRecovery") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: [
+          `Client recovery (${item.mode}): ${item.reason}`,
+          `Build: ${item.buildId}`,
+          item.previousBuildId ? `Previous build: ${item.previousBuildId}` : null,
+          `Transaction: ${item.transactionId}`,
+        ]
+          .filter((line): line is string => line !== null)
+          .join("\n"),
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
   if (item.type === "webSearch") {
     return [
       {
@@ -707,6 +728,13 @@ function formatItemTimestamp(item: ThreadItem) {
 
   if (item.type === "eventCommandEvent" && Number.isFinite(item.createdAt)) {
     return formatClockTime(item.createdAt);
+  }
+
+  if (item.type === "clientRecovery") {
+    const occurredAtMs = Date.parse(item.occurredAt);
+    if (Number.isFinite(occurredAtMs)) {
+      return formatClockTime(occurredAtMs / 1000);
+    }
   }
 
   const timestampMs = item.completedAtMs ?? item.startedAtMs;

@@ -65,6 +65,7 @@ pub use recorder::RolloutRecorderParams;
 pub use recorder::append_rollout_item_to_path;
 pub use recorder::resolve_current_segment_path;
 pub use recorder::segment_manifest_path_for_rollout;
+pub use recorder::segment_paths_for_rollout;
 pub use recorder::segmented_compaction_count_for_rollout_path;
 pub use session_index::append_thread_name;
 pub use session_index::find_thread_meta_by_name_str;

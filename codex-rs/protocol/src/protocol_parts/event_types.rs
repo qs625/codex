@@ -194,6 +194,7 @@ pub enum EventMsg {
     EventDrivenToolCompleted(EventDrivenToolDisplayEvent),
     InterAgentCommunicationCompleted(InterAgentCommunicationDisplayEvent),
     ThreadGoalUpdateCompleted(ThreadGoalUpdateDisplayEvent),
+    ClientRecovery(ClientRecoveryEvent),
     HookStarted(HookStartedEvent),
     HookCompleted(HookCompletedEvent),
 

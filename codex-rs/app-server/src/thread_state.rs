@@ -250,6 +250,7 @@ struct ThreadStateManagerInner {
     live_connections: HashMap<ConnectionId, ConnectionCapabilities>,
     threads: HashMap<ThreadId, ThreadEntry>,
     thread_ids_by_connection: HashMap<ConnectionId, HashSet<ThreadId>>,
+    system_self_thread: Option<(ConnectionId, ThreadId)>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -359,6 +360,28 @@ impl ThreadStateManager {
                 capabilities.host_lifecycle.then_some(*connection_id)
             })
             .min_by_key(|connection_id| connection_id.0)
+    }
+
+    pub(crate) async fn bind_system_self_thread(
+        &self,
+        connection_id: ConnectionId,
+        thread_id: ThreadId,
+    ) -> bool {
+        let mut state = self.state.lock().await;
+        if !state
+            .live_connections
+            .get(&connection_id)
+            .is_some_and(|capabilities| capabilities.host_lifecycle)
+        {
+            return false;
+        }
+        match state.system_self_thread {
+            Some(existing) => existing == (connection_id, thread_id),
+            None => {
+                state.system_self_thread = Some((connection_id, thread_id));
+                true
+            }
+        }
     }
 
     pub(crate) async fn subscribed_connection_ids(&self, thread_id: ThreadId) -> Vec<ConnectionId> {
@@ -515,6 +538,12 @@ impl ThreadStateManager {
         {
             let mut state = self.state.lock().await;
             state.live_connections.remove(&connection_id);
+            if state
+                .system_self_thread
+                .is_some_and(|(owner, _)| owner == connection_id)
+            {
+                state.system_self_thread = None;
+            }
             let thread_ids = state
                 .thread_ids_by_connection
                 .remove(&connection_id)

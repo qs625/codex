@@ -75,6 +75,44 @@ test("ensureSelfProjectThread reuses an existing self root", async () => {
   assert.deepEqual(requests, []);
 });
 
+test("ensureSelfProjectThread ignores an earlier /self root from another workspace", async () => {
+  const requests = [];
+  const otherWorkspaceSelfRoot = {
+    id: "other-self-root",
+    name: "/self",
+    path: "/self",
+    cwd: "/Users/example/other-workspace",
+    agentPath: null,
+  };
+  const currentWorkspaceSelfRoot = {
+    id: "current-self-root",
+    name: "/self",
+    path: null,
+    cwd: "/Users/example/.morpheus/source_workspace",
+    agentPath: null,
+  };
+
+  const result = await ensureSelfProjectThread(
+    {
+      async request(method, params) {
+        requests.push({ method, params });
+        throw new Error("unexpected app-server request");
+      },
+    },
+    (thread) => thread,
+    selfProject,
+    [otherWorkspaceSelfRoot, currentWorkspaceSelfRoot],
+  );
+
+  assert.equal(result.created, false);
+  assert.equal(result.thread, currentWorkspaceSelfRoot);
+  assert.deepEqual(result.threads, [
+    otherWorkspaceSelfRoot,
+    currentWorkspaceSelfRoot,
+  ]);
+  assert.deepEqual(requests, []);
+});
+
 test("ensureSelfProjectThread creates and names a real self root when missing", async () => {
   const requests = [];
   const workspaceRoot = {

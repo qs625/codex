@@ -18,6 +18,7 @@ use protocol::models::ContentItem;
 use protocol::models::ResponseInputItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
 use protocol::protocol::Op;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionConfiguredEvent;
@@ -68,6 +69,7 @@ pub struct CodexThread {
     session_configured: SessionConfiguredEvent,
     rollout_path: Option<PathBuf>,
     out_of_band_elicitation_count: Mutex<u64>,
+    client_recovery_lock: Mutex<()>,
 }
 
 /// Conduit for the bidirectional stream of messages that compose a thread
@@ -85,6 +87,7 @@ impl CodexThread {
             session_configured,
             rollout_path,
             out_of_band_elicitation_count: Mutex::new(0),
+            client_recovery_lock: Mutex::new(()),
         }
     }
 
@@ -403,6 +406,58 @@ impl CodexThread {
             .await;
         self.codex.session.flush_rollout().await?;
         Ok(())
+    }
+
+    pub async fn record_client_recovery(
+        &self,
+        event: protocol::protocol::ClientRecoveryEvent,
+    ) -> CodexResult<bool> {
+        let _guard = self.client_recovery_lock.lock().await;
+        let live_thread = self
+            .codex
+            .session
+            .live_thread_for_persistence("record client recovery")
+            .map_err(|err| CodexErr::Fatal(err.to_string()))?;
+        let rollout_path = live_thread
+            .local_rollout_path()
+            .await
+            .map_err(|err| CodexErr::Fatal(err.to_string()))?
+            .ok_or_else(|| CodexErr::InvalidRequest("thread has no durable rollout".into()))?;
+        for segment_path in rollout::segment_paths_for_rollout(&rollout_path)? {
+            let (items, _, _) = rollout::RolloutRecorder::load_rollout_items(&segment_path).await?;
+            for item in items {
+                if let protocol::protocol::RolloutItem::EventMsg(
+                    EventMsg::ClientRecovery(existing),
+                ) = item
+                    && existing.recovery_id == event.recovery_id
+                {
+                    if existing == event {
+                        return Ok(false);
+                    }
+                    return Err(CodexErr::InvalidRequest(format!(
+                        "recoveryId {} already exists with a different payload",
+                        event.recovery_id
+                    )));
+                }
+            }
+        }
+
+        let event_msg = EventMsg::ClientRecovery(event.clone());
+        live_thread
+            .append_items(&[protocol::protocol::RolloutItem::EventMsg(
+                event_msg.clone(),
+            )])
+            .await
+            .map_err(|err| CodexErr::Fatal(err.to_string()))?;
+        self.codex.session.flush_rollout().await?;
+        self.codex
+            .session
+            .deliver_event_raw(Event {
+                id: event.transaction_id,
+                msg: event_msg,
+            })
+            .await;
+        Ok(true)
     }
 
     pub fn rollout_path(&self) -> Option<PathBuf> {

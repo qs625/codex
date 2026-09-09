@@ -14,6 +14,7 @@ use anyhow::Context;
 use app_server_protocol::AppsListParams;
 use app_server_protocol::CancelLoginAccountParams;
 use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientLifecycleRegisterParams;
 use app_server_protocol::ClientNotification;
 use app_server_protocol::CollaborationModeListParams;
 use app_server_protocol::CommandExecParams;
@@ -74,6 +75,7 @@ use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadForkParams;
 use app_server_protocol::ThreadInjectItemsParams;
+use app_server_protocol::ThreadClientRecoveryRecordParams;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadLoadedListParams;
 use app_server_protocol::ThreadMemoryModeSetParams;
@@ -758,6 +760,28 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("thread/inject_items", params).await
+    }
+
+    pub async fn send_client_lifecycle_register_request(
+        &mut self,
+        params: ClientLifecycleRegisterParams,
+    ) -> anyhow::Result<i64> {
+        self.send_request(
+            "client/lifecycle/register",
+            Some(serde_json::to_value(params)?),
+        )
+        .await
+    }
+
+    pub async fn send_thread_client_recovery_record_request(
+        &mut self,
+        params: ThreadClientRecoveryRecordParams,
+    ) -> anyhow::Result<i64> {
+        self.send_request(
+            "thread/clientRecovery/record",
+            Some(serde_json::to_value(params)?),
+        )
+        .await
     }
 
     /// Send a `command/exec` JSON-RPC request.

@@ -92,12 +92,19 @@ const {
   createRuntimeRestartIntentStore,
   expectedRuntimeRestartPrompt,
 } = require("./runtimeRestartIntent.cjs");
+const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
+const {
+  createRuntimeLaunchReadiness,
+  recordLauncherRecoveryIfPresent,
+} = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
+const runtimeLauncher = createRuntimeLauncher();
+const runtimeLaunchReadiness = createRuntimeLaunchReadiness({ fs });
 const appRelaunch = createAppRelaunchAdapter({
   app,
   beforeExit: (reason) =>
@@ -115,15 +122,18 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
 });
 const installedArtifactUpdateLifecycle =
   createInstalledArtifactUpdateLifecycleAdapter({
+    appExit: (code) => app.exit(code),
     appServerRestart: {
       requestRestart: (reason) => appServerClient.restart(reason),
     },
     appServerStop: {
       requestStop: (reason) => appServerClient.stop(reason),
     },
-    fullRelaunch: appRelaunch,
+    cleanupPreparedArtifact: (preparedRoot) =>
+      fs.rm(preparedRoot, { force: true, recursive: true }),
     reloadWindows: reloadRendererWindows,
     resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
+    runtimeLauncher,
     updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
     broadcastStatus: (status) =>
       broadcast("codex:status", {
@@ -188,14 +198,15 @@ async function createWindow() {
   });
 
   if (isDev) {
-    void window.loadURL(devServerUrl);
+    await window.loadURL(devServerUrl);
     if (process.env.ROOT_WORKER_OPEN_DEVTOOLS !== "0") {
       window.webContents.openDevTools({ mode: "detach" });
     }
   } else {
     await ensureBuiltRenderer();
-    void window.loadFile(builtRendererPath);
+    await window.loadFile(builtRendererPath);
   }
+  await runtimeLaunchReadiness.markRendererReady();
 
   return window;
 }
@@ -766,6 +777,16 @@ app.whenReady().then(() => {
   );
   void ensureDefaultWorkspace()
     .then(async () => {
+      await appServerClient.ready();
+      await runtimeLaunchReadiness.markAppServerReady();
+      await recordLauncherRecoveryIfPresent({
+        appServerClient,
+        evidencePath: process.env.MORPHEUS_LAUNCHER_FAILURE_EVIDENCE,
+        fs,
+        listThreads: () => listThreads(defaultWorkspace),
+        runtimeLauncher,
+        subscribeThread,
+      });
       await primeMicrophoneAccessPrompt();
       return createWindow();
     })
@@ -1367,7 +1388,11 @@ async function listThreads(cwd) {
   const threads = await listAllThreads(appServerClient, normalizeThread);
   const project = await ensureSelfProjectForCurrentApp();
   if (!project) {
-    return { materializedSelfThreadId: null, threads };
+    return {
+      materializedSelfThreadId: null,
+      selfProjectThreadId: null,
+      threads,
+    };
   }
   const result = await ensureSelfProjectThread(
     appServerClient,
@@ -1380,6 +1405,7 @@ async function listThreads(cwd) {
   }
   return {
     materializedSelfThreadId: result.created ? result.thread.id : null,
+    selfProjectThreadId: result.thread.id,
     threads: result.threads,
   };
 }

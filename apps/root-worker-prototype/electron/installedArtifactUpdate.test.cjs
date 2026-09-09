@@ -1,1409 +1,343 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const {
-  buildDirectArtifactSources,
   listElectronShellSourceRelativePaths,
-  materializeInstalledArtifactWorkerBundle,
-  prepareDirectArtifacts,
+  prepareInstalledArtifacts,
   resolveElectronShellUpdate,
-  resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
-  resolveInstalledArtifactUpdatePlanInWorker,
-  replaceInstalledArtifactsSync,
-  updateInstalledArtifacts,
-  updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 
-test("resolves installed update plan from current app resources path", () => {
-  const workspace = "/Users/example/.morpheus/source_workspace";
-  const plan = resolveInstalledArtifactUpdatePlan({
-    env: { MORPHEUS_HOME: "/Users/example/.morpheus" },
-    platform: "darwin",
-    resourcesPath:
-      "/Applications/Root Worker Prototype.app/Contents/Resources",
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn({
-      target_directory: path.join(workspace, "target"),
-    }),
-  });
+function temporaryDirectory() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "installed-update-test-"));
+}
 
-  assert.equal(
-    plan.appBundlePath,
-    "/Applications/Root Worker Prototype.app",
-  );
-  assert.equal(
-    plan.workspace,
-    "/Users/example/.morpheus/source_workspace",
-  );
-  assert.equal(
-    plan.sourceAppDir,
-    "/Users/example/.morpheus/source_workspace/apps/root-worker-prototype",
-  );
-  assert.equal(
-    plan.frontendDistPath,
-    "/Users/example/.morpheus/source_workspace/apps/root-worker-prototype/dist",
-  );
-  assert.equal(
-    plan.appServerBinaryPath,
-    "/Users/example/.morpheus/source_workspace/target/release/app-server",
-  );
-  assert.equal(
-    plan.defaultCompactPromptSourcePath,
-    "/Users/example/.morpheus/source_workspace/codex-rs/thread-service/templates/compact/prompt.md",
-  );
-});
+function write(filePath, contents) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, contents);
+}
 
-test("resolves installed update plan from explicit workspace", () => {
-  const workspace = "/Volumes/Work/Morpheus Source";
-  const plan = resolveInstalledArtifactUpdatePlan({
-    env: {
-      MORPHEUS_HOME: "/Users/example/.morpheus",
-      ROOT_WORKER_WORKSPACE: workspace,
-    },
-    platform: "darwin",
-    resourcesPath:
-      "/Volumes/Apps/Root Worker Prototype.app/Contents/Resources",
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn({
-      target_directory: path.join(workspace, ".shared-target"),
-    }),
-  });
+function sha256(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
 
-  assert.equal(plan.workspace, "/Volumes/Work/Morpheus Source");
-  assert.equal(plan.appBundlePath, "/Volumes/Apps/Root Worker Prototype.app");
-  assert.equal(
-    plan.appServerBinaryPath,
-    "/Volumes/Work/Morpheus Source/.shared-target/release/app-server",
+function packRealAsar(sourcePath, archivePath) {
+  const result = spawnSync(
+    "pnpm",
+    ["dlx", "@electron/asar", "pack", sourcePath, archivePath],
+    { encoding: "utf8", stdio: "pipe" },
   );
-});
-
-test("resolves release app-server from cargo metadata target directory", () => {
-  const workspace = "/repo/source";
-  const calls = [];
-  const commandEnv = {
-    CARGO_TARGET_DIR: "/repo/target",
-    PATH: "/test/bin",
-  };
-  const plan = resolveInstalledArtifactUpdatePlan({
-    commandEnv,
-    env: { ROOT_WORKER_WORKSPACE: workspace },
-    platform: "darwin",
-    resourcesPath: "/Applications/Root Worker Prototype.app/Contents/Resources",
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn(
-      { target_directory: "/repo/target" },
-      calls,
-    ),
-  });
-
-  assert.equal(plan.appServerBinaryPath, "/repo/target/release/app-server");
-  assert.deepEqual(calls, [
-    {
-      command: "cargo",
-      args: [
-        "metadata",
-        "--format-version=1",
-        "--no-deps",
-        "--manifest-path",
-        "/repo/source/codex-rs/Cargo.toml",
-      ],
-      cwd: "/repo/source/codex-rs",
-      env: commandEnv,
-    },
-  ]);
-  assert.equal(plan.commandEnv, commandEnv);
-});
-
-test("cargo target directory parsing rejects missing metadata field", () => {
-  assert.throws(
-    () =>
-      resolveCargoTargetDirectory({
-        codexRsCargoManifestPath: "/repo/source/codex-rs/Cargo.toml",
-        codexRsDir: "/repo/source/codex-rs",
-        spawnSync: fakeCargoMetadataSpawn({}),
-      }),
-    /Cargo metadata did not include target_directory/,
-  );
-});
-
-test("cargo metadata failure reports the direct command and workspace", () => {
-  assert.throws(
-    () =>
-      resolveCargoTargetDirectory({
-        codexRsCargoManifestPath: "/repo/source/codex-rs/Cargo.toml",
-        codexRsDir: "/repo/source/codex-rs",
-        spawnSync: () => ({
-          status: 1,
-          stderr: "metadata failed",
-        }),
-      }),
-    /cargo metadata.*cwd=\/repo\/source\/codex-rs.*metadata failed/,
-  );
-});
-
-test("does not plan installed artifact update outside packaged mac app", () => {
-  assert.equal(
-    resolveInstalledArtifactUpdatePlan({
-      platform: "darwin",
-      resourcesPath: "/repo/apps/root-worker-prototype",
-      isPackaged: false,
-    }),
-    null,
-  );
-  assert.equal(
-    resolveInstalledArtifactUpdatePlan({
-      platform: "linux",
-      resourcesPath: "/app/Contents/Resources",
-      isPackaged: true,
-    }),
-    null,
-  );
-});
-
-test("electron shell update metadata tracks shell runtime digests", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-shell-digest-"));
-  const resourcesPath = path.join(root, "app/Contents/Resources");
-  const sourceAppDir = path.join(root, "source/apps/root-worker-prototype");
-  const relativePaths = ["electron/main.cjs", "electron/preload.cjs"];
-  for (const relativePath of relativePaths) {
-    write(path.join(sourceAppDir, relativePath), `${relativePath}:same`);
-    write(
-      path.join(resourcesPath, "app.asar", relativePath),
-      `${relativePath}:same`,
-    );
+  if (result.error) {
+    throw result.error;
   }
+  assert.equal(result.status, 0, result.stderr);
+}
 
-  assert.deepEqual(
-    resolveElectronShellUpdate({
-      resourcesPath,
-      sourceAppDir,
-      relativePaths,
-    }),
-    {
-      category: "electronShell",
-      changed: false,
-      changedPaths: [],
-      missingInstalledPaths: [],
-      missingSourcePaths: [],
-    },
-  );
-
-  write(path.join(sourceAppDir, "electron/preload.cjs"), "new preload");
-
-  assert.deepEqual(
-    resolveElectronShellUpdate({
-      resourcesPath,
-      sourceAppDir,
-      relativePaths,
-    }),
-    {
-      category: "electronShell",
-      changed: true,
-      changedPaths: ["electron/preload.cjs"],
-      missingInstalledPaths: [],
-      missingSourcePaths: [],
-    },
-  );
-});
-
-test("installed update plan marks full relaunch when shell runtime changes", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-plan-shell-"));
-  const workspace = path.join(root, "source");
-  const resourcesPath = path.join(
+function preparedPlan(root, electronShell = { changed: false, changedPaths: [] }) {
+  const sourceAppDir = path.join(root, "workspace/apps/root-worker-prototype");
+  const frontendDistPath = path.join(sourceAppDir, "dist");
+  const appServerBinaryPath = path.join(root, "workspace/codex-rs/target/release/app-server");
+  const defaultCompactPromptSourcePath = path.join(
     root,
-    "Root Worker Prototype.app/Contents/Resources",
+    "workspace/codex-rs/thread-service/templates/compact/prompt.md",
   );
-  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
-  const relativePaths = ["electron/main.cjs", "electron/preload.cjs"];
-  for (const relativePath of relativePaths) {
-    write(path.join(sourceAppDir, relativePath), `${relativePath}:old`);
-    write(
-      path.join(resourcesPath, "app.asar", relativePath),
-      `${relativePath}:old`,
-    );
-  }
-  write(path.join(sourceAppDir, "electron/preload.cjs"), "new preload");
-
-  const plan = resolveInstalledArtifactUpdatePlan({
-    env: { ROOT_WORKER_WORKSPACE: workspace },
-    platform: "darwin",
-    resourcesPath,
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn({
-      target_directory: path.join(workspace, "target"),
-    }),
-  });
-
-  assert.equal(plan.requiresFullRelaunch, true);
-  assert.deepEqual(plan.runtimeUpdate.electronShell.changedPaths, [
-    "electron/preload.cjs",
-  ]);
-});
-
-test("installed update plan keeps hot reload when shell runtime is unchanged", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-plan-renderer-"));
-  const workspace = path.join(root, "source");
-  const resourcesPath = path.join(
-    root,
-    "Root Worker Prototype.app/Contents/Resources",
-  );
-  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
-  for (const relativePath of ["electron/main.cjs", "electron/preload.cjs"]) {
-    write(path.join(sourceAppDir, relativePath), `${relativePath}:same`);
-    write(
-      path.join(resourcesPath, "app.asar", relativePath),
-      `${relativePath}:same`,
-    );
-  }
-
-  const plan = resolveInstalledArtifactUpdatePlan({
-    env: { ROOT_WORKER_WORKSPACE: workspace },
-    platform: "darwin",
-    resourcesPath,
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn({
-      target_directory: path.join(workspace, "target"),
-    }),
-  });
-
-  assert.equal(plan.requiresFullRelaunch, false);
-  assert.deepEqual(plan.runtimeUpdate.electronShell.changedPaths, []);
-});
-
-test("installed update plan full relaunches when source deletes shell runtime", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-plan-delete-"));
-  const workspace = path.join(root, "source");
-  const resourcesPath = path.join(
-    root,
-    "Root Worker Prototype.app/Contents/Resources",
-  );
-  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
-  write(path.join(sourceAppDir, "electron/main.cjs"), "main");
-  write(path.join(resourcesPath, "app.asar/electron/main.cjs"), "main");
-  write(path.join(resourcesPath, "app.asar/electron/preload.cjs"), "old preload");
-
-  const plan = resolveInstalledArtifactUpdatePlan({
-    env: { ROOT_WORKER_WORKSPACE: workspace },
-    platform: "darwin",
-    resourcesPath,
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn({
-      target_directory: path.join(workspace, "target"),
-    }),
-  });
-
-  assert.equal(plan.requiresFullRelaunch, true);
-  assert.deepEqual(plan.runtimeUpdate.electronShell.changedPaths, [
-    "electron/preload.cjs",
-  ]);
-  assert.deepEqual(plan.runtimeUpdate.electronShell.missingSourcePaths, [
-    "electron/preload.cjs",
-  ]);
-});
-
-test("electron shell source manifest includes runtime cjs files and excludes tests", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-shell-list-"));
-  const sourceAppDir = path.join(root, "apps/root-worker-prototype");
+  write(path.join(sourceAppDir, "package.json"), '{"name":"test"}');
   write(path.join(sourceAppDir, "electron/main.cjs"), "main");
   write(path.join(sourceAppDir, "electron/preload.cjs"), "preload");
-  write(path.join(sourceAppDir, "electron/main.test.cjs"), "test");
-  write(path.join(sourceAppDir, "electron/Info.plist"), "plist");
-  write(path.join(sourceAppDir, "electron/lsp/client.cjs"), "client");
-  write(path.join(sourceAppDir, "electron/lsp/client.test.cjs"), "test");
+  write(path.join(frontendDistPath, "index.html"), "<main>ready</main>");
+  write(appServerBinaryPath, "app-server");
+  write(defaultCompactPromptSourcePath, "compact prompt");
+  return {
+    appBundlePath: "/Applications/Root Worker Prototype.app",
+    appServerBinaryPath,
+    commandEnv: { PATH: "/test/bin" },
+    defaultCompactPromptSourcePath,
+    frontendDistPath,
+    runtimeUpdate: { electronShell },
+    sourceAppDir,
+    workspace: path.join(root, "workspace"),
+  };
+}
 
-  assert.deepEqual(listElectronShellSourceRelativePaths(sourceAppDir), [
-    "electron/lsp/client.cjs",
-    "electron/main.cjs",
-    "electron/preload.cjs",
-  ]);
-});
-
-test("builds current workspace frontend and release app-server before preparing artifacts", () => {
-  const fixture = createUpdateFixture();
-  const calls = [];
-  const invocationEnv = { PATH: "/override/bin" };
-
-  buildDirectArtifactSources(fixture.plan, {
-    env: invocationEnv,
-    spawnSync: (command, args, options = {}) => {
-      calls.push({ command, args, cwd: options.cwd, env: options.env });
-      return { status: 0 };
-    },
-  });
-
-  assert.deepEqual(calls, [
-    {
-      command: "pnpm",
-      args: ["--filter", "@my-codex/root-worker-prototype", "build"],
-      cwd: fixture.plan.workspace,
-      env: fixture.plan.commandEnv,
-    },
-    {
-      command: "cargo",
-      args: [
-        "build",
-        "--release",
-        "--package",
-        "app-server",
-        "--bin",
-        "app-server",
-        "--manifest-path",
-        fixture.plan.codexRsCargoManifestPath,
-      ],
-      cwd: path.dirname(fixture.plan.codexRsCargoManifestPath),
-      env: fixture.plan.commandEnv,
-    },
-  ]);
-});
-
-test("frontend build failure leaves installed artifacts unchanged", () => {
-  const fixture = createUpdateFixture();
-  const calls = [];
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        spawnSync: (command, args, options = {}) => {
-          calls.push({ command, args, cwd: options.cwd });
-          return { status: 1, stderr: "frontend build failed" };
-        },
-        replaceArtifacts: failUnexpectedReplacement,
-        codesign: failUnexpectedCodesign,
-      }),
-    /pnpm --filter.*frontend build failed/,
-  );
-
-  assert.deepEqual(calls, [
-    {
-      command: "pnpm",
-      args: ["--filter", "@my-codex/root-worker-prototype", "build"],
-      cwd: fixture.plan.workspace,
-    },
-  ]);
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
-});
-
-test("missing frontend build output fails before cargo build or replacement", () => {
-  const fixture = createUpdateFixture();
-  fs.rmSync(fixture.sourceDist, { force: true, recursive: true });
-  const calls = [];
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        spawnSync: (command, args, options = {}) => {
-          calls.push({ command, args, cwd: options.cwd });
-          return { status: 0 };
-        },
-        replaceArtifacts: failUnexpectedReplacement,
-        codesign: failUnexpectedCodesign,
-      }),
-    /Missing frontend dist/,
-  );
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, "pnpm");
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
-});
-
-test("release app-server build failure leaves installed artifacts unchanged", () => {
-  const fixture = createUpdateFixture();
-  const calls = [];
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        spawnSync: (command, args, options = {}) => {
-          calls.push({ command, args, cwd: options.cwd });
-          if (command === "cargo") {
-            return { status: 1, stderr: "app-server build failed" };
-          }
-          return { status: 0 };
-        },
-        replaceArtifacts: failUnexpectedReplacement,
-        codesign: failUnexpectedCodesign,
-      }),
-    /cargo build --release.*app-server build failed/,
-  );
-
-  assert.deepEqual(
-    calls.map(({ command }) => command),
-    ["pnpm", "cargo"],
-  );
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
-});
-
-test("missing release app-server build output fails before packing or replacement", () => {
-  const fixture = createUpdateFixture();
-  fs.rmSync(fixture.plan.appServerBinaryPath, { force: true });
-  const calls = [];
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        spawnSync: (command, args, options = {}) => {
-          calls.push({ command, args, cwd: options.cwd });
-          return { status: 0 };
-        },
-        replaceArtifacts: failUnexpectedReplacement,
-        codesign: failUnexpectedCodesign,
-      }),
-    /Missing release app-server binary/,
-  );
-
-  assert.deepEqual(
-    calls.map(({ command }) => command),
-    ["pnpm", "cargo"],
-  );
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
-});
-
-test("asar pack failure leaves installed artifacts unchanged and includes output", () => {
-  const fixture = createUpdateFixture();
-  const calls = [];
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        spawnSync: (command, args, options = {}) => {
-          calls.push({ command, args, cwd: options.cwd });
-          if (!args.includes("@electron/asar")) {
-            return { status: 0 };
-          }
-          return { status: 1, stdout: "packing stdout", stderr: "pack failed" };
-        },
-        replaceArtifacts: failUnexpectedReplacement,
-        codesign: failUnexpectedCodesign,
-      }),
-    /@electron\/asar pack.*stdout=packing stdout.*stderr=pack failed/,
-  );
-
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.deepEqual(
-    calls.map(({ command }) => command),
-    ["pnpm", "cargo", "pnpm"],
-  );
-});
-
-test("successful update replaces runnable artifacts and codesigns installed app", () => {
-  const fixture = createUpdateFixture();
-  const calls = [];
-  write(path.join(fixture.sourceDist, "index.html"), "stale renderer");
-  write(fixture.plan.appServerBinaryPath, "stale server");
-
-  const result = updateInstalledArtifacts(fixture.plan, {
-    directStagingRoot: fixture.directStagingRoot,
-    updateId: "unit",
-    env: { PATH: "/override/bin" },
-    spawnSync: (command, args, options = {}) => {
-      calls.push({
-        command,
-        args,
-        cwd: options.cwd,
-        env: options.env,
-      });
-      if (command === "pnpm" && args[0] === "--filter") {
-        write(path.join(fixture.sourceDist, "index.html"), "fresh renderer");
-      }
-      if (command === "cargo" && args[0] === "build") {
-        write(fixture.plan.appServerBinaryPath, "fresh server");
-      }
-      if (args.includes("@electron/asar")) {
-        assert.equal(
-          read(
-            path.join(
-              fixture.directStagingRoot,
-              "app-source/dist/index.html",
-            ),
-          ),
-          "fresh renderer",
-        );
-        write(args.at(-1), "new asar");
-      }
-      if (command === "codesign") {
-        assertNoBundleUpdateTemporaryDirs(fixture);
-      }
-      return { status: 0 };
-    },
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.updated, true);
-  assert.equal(read(fixture.targetAppAsar), "new asar");
-  assert.equal(read(fixture.targetAppServer), "fresh server");
-  assert.equal(read(fixture.targetCompact), "new compact");
-  assert.equal(
-    calls.some(({ args }) => args.includes("package:mac:app")),
-    false,
-  );
-  assert.deepEqual(calls, [
-    {
-      command: "pnpm",
-      args: ["--filter", "@my-codex/root-worker-prototype", "build"],
-      cwd: fixture.plan.workspace,
-      env: fixture.plan.commandEnv,
-    },
-    {
-      command: "cargo",
-      args: [
-        "build",
-        "--release",
-        "--package",
-        "app-server",
-        "--bin",
-        "app-server",
-        "--manifest-path",
-        fixture.plan.codexRsCargoManifestPath,
-      ],
-      cwd: path.dirname(fixture.plan.codexRsCargoManifestPath),
-      env: fixture.plan.commandEnv,
-    },
-    {
-      command: "pnpm",
-      args: [
+test("installed update plan exists only for a packaged macOS app", () => {
+  const workspace = "/Users/example/.morpheus/source_workspace";
+  const plan = resolveInstalledArtifactUpdatePlan({
+    commandEnv: { CARGO_TARGET_DIR: "/shared/target" },
+    env: { ROOT_WORKER_WORKSPACE: workspace },
+    isPackaged: true,
+    platform: "darwin",
+    resourcesPath: "/Applications/Root Worker Prototype.app/Contents/Resources",
+    spawnSync(command, args) {
+      assert.equal(command, "pnpm");
+      assert.deepEqual(args.slice(0, 3), [
         "dlx",
         "@electron/asar",
-        "pack",
-        path.join(fixture.directStagingRoot, "app-source"),
-        path.join(fixture.directStagingRoot, "resources/app.asar"),
-      ],
-      cwd: fixture.plan.workspace,
-      env: fixture.plan.commandEnv,
+        "extract",
+      ]);
+      fs.mkdirSync(args[4], { recursive: true });
+      return { status: 0, stdout: "", stderr: "" };
     },
-    {
-      command: "codesign",
-      args: [
-        "--force",
-        "--deep",
-        "--sign",
-        "-",
-        fixture.plan.appBundlePath,
-      ],
-      cwd: fixture.plan.workspace,
-      env: fixture.plan.commandEnv,
-    },
-  ]);
-});
-
-test("installed artifact worker keeps the Electron event loop responsive", async () => {
-  const fixture = createUpdateFixture();
-  const fakeBin = path.join(path.dirname(fixture.plan.workspace), "fake-bin");
-  writeExecutable(
-    path.join(fakeBin, "pnpm"),
-    `#!/bin/sh
-if [ "$1" = "--filter" ]; then
-  sleep 0.2
-fi
-if [ "$1" = "dlx" ]; then
-  for last_arg do :; done
-  mkdir -p "$(dirname "$last_arg")"
-  printf 'new asar' > "$last_arg"
-fi
-`,
-  );
-  writeExecutable(path.join(fakeBin, "cargo"), "#!/bin/sh\nexit 0\n");
-  writeExecutable(path.join(fakeBin, "codesign"), "#!/bin/sh\nexit 0\n");
-  fixture.plan.commandEnv = {
-    ...process.env,
-    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-  };
-
-  let updateSettled = false;
-  const update = updateInstalledArtifactsInWorker(fixture.plan).finally(() => {
-    updateSettled = true;
-  });
-  let timerFired = false;
-  await new Promise((resolve) => {
-    setTimeout(() => {
-      timerFired = true;
-      resolve();
-    }, 25);
   });
 
-  assert.equal(timerFired, true);
-  assert.equal(updateSettled, false);
-  assert.equal((await update).ok, true);
-  assert.equal(read(fixture.targetAppAsar), "new asar");
-});
-
-test("installed artifact worker bundle contains every dependency and starts", async () => {
-  const bundlePath = materializeInstalledArtifactWorkerBundle();
-  assert.deepEqual(
-    fs.readdirSync(bundlePath).sort(),
-    [
-      "environment.cjs",
-      "installedArtifactUpdate.cjs",
-      "installedArtifactUpdateWorker.cjs",
-      "workspace.cjs",
-    ],
-  );
-
+  assert.equal(plan.workspace, workspace);
+  assert.equal(plan.appBundlePath, "/Applications/Root Worker Prototype.app");
+  assert.equal(plan.appServerBinaryPath, "/shared/target/release/app-server");
   assert.equal(
-    await resolveInstalledArtifactUpdatePlanInWorker({
+    resolveInstalledArtifactUpdatePlan({
       isPackaged: false,
+      platform: "darwin",
+    }),
+    null,
+  );
+  assert.equal(
+    resolveInstalledArtifactUpdatePlan({
+      isPackaged: true,
       platform: "linux",
     }),
     null,
   );
 });
 
-test("installed app.asar operations bypass Electron archive-root fs semantics", () => {
-  const fixture = createUpdateFixture();
-  const rawCalls = [];
-  const patchedFileSystem = createElectronArchiveRootRejectingFileSystem();
-  const rawArchiveFileSystem = createRecordingFileSystem(rawCalls);
+test("electron shell comparison reads a real app.asar and detects file hashes and presence", () => {
+  const root = temporaryDirectory();
+  try {
+    const sourceAppDir = path.join(root, "source");
+    const resourcesPath = path.join(root, "installed");
+    const installedAppDir = path.join(root, "installed-app");
+    write(path.join(sourceAppDir, "electron/main.cjs"), "new main");
+    write(path.join(sourceAppDir, "electron/preload.cjs"), "same preload");
+    write(path.join(sourceAppDir, "electron/new.cjs"), "new file");
+    write(path.join(sourceAppDir, "electron/main.test.cjs"), "ignored");
+    write(path.join(installedAppDir, "electron/main.cjs"), "old main");
+    write(path.join(installedAppDir, "electron/preload.cjs"), "same preload");
+    write(path.join(installedAppDir, "electron/deleted.cjs"), "old file");
+    fs.mkdirSync(resourcesPath, { recursive: true });
+    packRealAsar(installedAppDir, path.join(resourcesPath, "app.asar"));
 
-  assert.throws(
-    () => patchedFileSystem.accessSync(fixture.targetAppAsar, fs.constants.W_OK),
-    /ENOENT,  not found in .*app\.asar/,
-  );
-
-  const result = updateInstalledArtifacts(fixture.plan, {
-    ...patchedFileSystem,
-    directStagingRoot: fixture.directStagingRoot,
-    rawArchiveFileSystem,
-    spawnSync: (_command, args) => {
-      if (args.includes("@electron/asar")) {
-        write(args.at(-1), "new asar");
-      }
-      return { status: 0 };
-    },
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(read(fixture.targetAppAsar), "new asar");
-  const exactArchiveCalls = rawCalls.filter(({ args }) =>
-    args
-      .filter((value) => typeof value === "string")
-      .some((value) => path.basename(value) === "app.asar"),
-  );
-  assert.deepEqual(
-    exactArchiveCalls.map(({ methodName }) => methodName),
-    [
-      "accessSync",
-      "statSync",
-      "cpSync",
-      "renameSync",
-      "renameSync",
-      "readFileSync",
-      "readFileSync",
-    ],
-  );
-  const containerCleanupCalls = rawCalls.filter(
-    (call) => !exactArchiveCalls.includes(call),
-  );
-  assert.equal(containerCleanupCalls.length > 0, true);
-  assert.equal(
-    containerCleanupCalls.every(
-      ({ args, methodName }) =>
-        methodName === "rmSync" &&
-        (args[0] === fixture.directStagingRoot ||
-          pathStartsWith(args[0], fixture.directStagingRoot)),
-    ),
-    true,
-  );
-});
-
-test("raw app.asar filesystem failures leave installed artifacts unchanged", () => {
-  const cases = [
-    {
-      expected:
-        /Failed to load Electron original-fs accessSync for raw app\.asar preflight writable check.*loader failed/,
-      loadOriginalFileSystem() {
-        throw new Error("loader failed");
+    assert.deepEqual(listElectronShellSourceRelativePaths(sourceAppDir), [
+      "electron/main.cjs",
+      "electron/new.cjs",
+      "electron/preload.cjs",
+    ]);
+    assert.deepEqual(
+      resolveElectronShellUpdate({ resourcesPath, sourceAppDir }),
+      {
+        category: "electronShell",
+        changed: true,
+        changedPaths: [
+          "electron/deleted.cjs",
+          "electron/main.cjs",
+          "electron/new.cjs",
+        ],
       },
-    },
-    {
-      expected:
-        /Electron original-fs does not provide accessSync for raw app\.asar preflight writable check/,
-      loadOriginalFileSystem() {
-        return {};
-      },
-    },
-  ];
-
-  for (const testCase of cases) {
-    const fixture = createUpdateFixture();
-    assert.throws(
-      () =>
-        updateInstalledArtifacts(fixture.plan, {
-          directStagingRoot: fixture.directStagingRoot,
-          isElectron: true,
-          loadOriginalFileSystem: testCase.loadOriginalFileSystem,
-          spawnSync: (_command, args) => {
-            if (args.includes("@electron/asar")) {
-              write(args.at(-1), "new asar");
-            }
-            return { status: 0 };
-          },
-        }),
-      testCase.expected,
     );
-    assertInstalledArtifactsUnchanged(fixture);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
   }
 });
 
-test("raw app.asar rollback uses the archive filesystem boundary", () => {
-  const fixture = createUpdateFixture();
-  const rawCalls = [];
-  const patchedFileSystem = createElectronArchiveRootRejectingFileSystem();
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        ...patchedFileSystem,
-        codesign() {
-          throw new Error("signature failed");
-        },
-        directStagingRoot: fixture.directStagingRoot,
-        rawArchiveFileSystem: createRecordingFileSystem(rawCalls),
-        spawnSync: (_command, args) => {
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-      }),
-    /signature failed/,
-  );
-
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.equal(
-    rawCalls.some(
-      ({ args, methodName }) =>
-        methodName === "rmSync" &&
-        args.some(
-          (value) =>
-            typeof value === "string" &&
-            value === fixture.targetAppAsar,
-        ),
-    ),
-    true,
-  );
-  assert.equal(
-    rawCalls.filter(({ methodName }) => methodName === "renameSync").length,
-    3,
-  );
-});
-
-test("successful update is not misreported when owned cleanup fails", () => {
-  const fixture = createUpdateFixture();
-  const warnings = [];
-  const rawCalls = [];
-  const rawArchiveFileSystem = createRecordingFileSystem(rawCalls);
-  const recordedRmSync = rawArchiveFileSystem.rmSync;
-  rawArchiveFileSystem.rmSync = (...args) => {
-    if (
-      args[0] === fixture.directStagingRoot &&
-      fs.existsSync(path.join(fixture.directStagingRoot, "resources/app.asar"))
-    ) {
-      rawCalls.push({ args, methodName: "rmSync" });
-      throw new Error("owned cleanup blocked");
+test("electron shell comparison keeps hot mode eligible for an unchanged real app.asar", () => {
+  const root = temporaryDirectory();
+  try {
+    const sourceAppDir = path.join(root, "source");
+    const resourcesPath = path.join(root, "installed");
+    const installedAppDir = path.join(root, "installed-app");
+    for (const [relativePath, contents] of [
+      ["electron/main.cjs", "same main"],
+      ["electron/preload.cjs", "same preload"],
+    ]) {
+      write(path.join(sourceAppDir, relativePath), contents);
+      write(path.join(installedAppDir, relativePath), contents);
     }
-    return recordedRmSync(...args);
-  };
+    fs.mkdirSync(resourcesPath, { recursive: true });
+    packRealAsar(installedAppDir, path.join(resourcesPath, "app.asar"));
 
-  const result = updateInstalledArtifacts(fixture.plan, {
-    directStagingRoot: fixture.directStagingRoot,
-    logger: {
-      warn(message) {
-        warnings.push(message);
+    assert.deepEqual(
+      resolveElectronShellUpdate({ resourcesPath, sourceAppDir }),
+      {
+        category: "electronShell",
+        changed: false,
+        changedPaths: [],
       },
-    },
-    rawArchiveFileSystem,
-    spawnSync: (_command, args) => {
-      if (args.includes("@electron/asar")) {
-        write(args.at(-1), "new asar");
-      }
-      return { status: 0 };
-    },
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(read(fixture.targetAppAsar), "new asar");
-  assert.equal(fs.existsSync(fixture.directStagingRoot), true);
-  assert.equal(
-    warnings.some((warning) =>
-      warning.includes("prepared artifact cleanup failed: owned cleanup blocked"),
-    ),
-    true,
-  );
-  fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
-});
-
-test("owned cleanup failure does not replace the primary update error", () => {
-  const fixture = createUpdateFixture();
-  const warnings = [];
-  const rawArchiveFileSystem = createRecordingFileSystem([]);
-  const recordedRmSync = rawArchiveFileSystem.rmSync;
-  rawArchiveFileSystem.rmSync = (...args) => {
-    if (
-      args[0] === fixture.directStagingRoot &&
-      fs.existsSync(path.join(fixture.directStagingRoot, "resources/app.asar"))
-    ) {
-      throw new Error("owned cleanup blocked");
-    }
-    return recordedRmSync(...args);
-  };
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        codesign() {
-          throw new Error("primary signature failure");
-        },
-        directStagingRoot: fixture.directStagingRoot,
-        logger: {
-          warn(message) {
-            warnings.push(message);
-          },
-        },
-        rawArchiveFileSystem,
-        spawnSync: (_command, args) => {
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-      }),
-    /primary signature failure/,
-  );
-
-  assertInstalledArtifactsUnchanged(fixture);
-  assert.equal(
-    warnings.some((warning) =>
-      warning.includes("prepared artifact cleanup failed: owned cleanup blocked"),
-    ),
-    true,
-  );
-  fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
-});
-
-test("rollback continues and preserves backups when raw app.asar cleanup fails", () => {
-  const fixture = createUpdateFixture();
-  const warnings = [];
-  const rawArchiveFileSystem = createRecordingFileSystem([]);
-  const recordedRmSync = rawArchiveFileSystem.rmSync;
-  rawArchiveFileSystem.rmSync = (...args) => {
-    if (args[0] === fixture.targetAppAsar) {
-      throw new Error("rollback target cleanup blocked");
-    }
-    return recordedRmSync(...args);
-  };
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        codesign() {
-          throw new Error("primary signature failure");
-        },
-        directStagingRoot: fixture.directStagingRoot,
-        logger: {
-          warn(message) {
-            warnings.push(message);
-          },
-        },
-        rawArchiveFileSystem,
-        spawnSync: (_command, args) => {
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-      }),
-    /primary signature failure; installed artifact rollback also failed: rollback target cleanup blocked/,
-  );
-
-  assert.equal(read(fixture.targetAppAsar), "new asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-  const backupDir = fs
-    .readdirSync(fixture.directStagingRoot)
-    .find((entry) => entry.startsWith(".morpheus-update-backup-"));
-  assert.equal(typeof backupDir, "string");
-  assert.equal(
-    read(path.join(fixture.directStagingRoot, backupDir, "app.asar")),
-    "old asar",
-  );
-  assert.equal(
-    warnings.some((warning) =>
-      warning.includes("preserving prepared artifacts after rollback failure"),
-    ),
-    true,
-  );
-  fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
-});
-
-test("signature rollback failures preserve the primary error and backup", () => {
-  const cases = [
-    {
-      expectedSecondary: "signature target cleanup blocked",
-      expectedTarget: "new signature",
-      kind: "rm",
-    },
-    {
-      expectedSecondary: "signature backup restore blocked",
-      expectedTarget: null,
-      kind: "rename",
-    },
-  ];
-
-  for (const testCase of cases) {
-    const fixture = createUpdateFixture();
-    const warnings = [];
-    const realRenameSync = fs.renameSync;
-    const realRmSync = fs.rmSync;
-    const signaturePath = path.dirname(fixture.targetSignature);
-
-    assert.throws(
-      () =>
-        updateInstalledArtifacts(fixture.plan, {
-          codesign() {
-            write(fixture.targetSignature, "new signature");
-            throw new Error("primary signing failure");
-          },
-          directStagingRoot: fixture.directStagingRoot,
-          logger: {
-            warn(message) {
-              warnings.push(message);
-            },
-          },
-          renameSync: (from, to) => {
-            if (
-              testCase.kind === "rename" &&
-              path.basename(from).startsWith(
-                ".morpheus-signature-backup-",
-              ) &&
-              to === signaturePath
-            ) {
-              throw new Error(testCase.expectedSecondary);
-            }
-            return realRenameSync(from, to);
-          },
-          rmSync: (targetPath, options) => {
-            if (
-              testCase.kind === "rm" &&
-              targetPath === signaturePath
-            ) {
-              throw new Error(testCase.expectedSecondary);
-            }
-            return realRmSync(targetPath, options);
-          },
-          spawnSync: (_command, args) => {
-            if (args.includes("@electron/asar")) {
-              write(args.at(-1), "new asar");
-            }
-            return { status: 0 };
-          },
-        }),
-      new RegExp(
-        `primary signing failure; signature rollback also failed: ${testCase.expectedSecondary}`,
-      ),
     );
-
-    assertInstalledArtifactsUnchanged(fixture);
-    if (testCase.expectedTarget == null) {
-      assert.equal(fs.existsSync(fixture.targetSignature), false);
-    } else {
-      assert.equal(read(fixture.targetSignature), testCase.expectedTarget);
-    }
-    const signatureBackup = fs
-      .readdirSync(fixture.directStagingRoot)
-      .find((entry) => entry.startsWith(".morpheus-signature-backup-"));
-    assert.equal(typeof signatureBackup, "string");
-    assert.equal(
-      read(
-        path.join(
-          fixture.directStagingRoot,
-          signatureBackup,
-          "CodeResources",
-        ),
-      ),
-      "old signature",
-    );
-    assert.equal(
-      warnings.some((warning) =>
-        warning.includes("preserving signature backup after rollback failure"),
-      ),
-      true,
-    );
-    assert.equal(
-      warnings.some((warning) =>
-        warning.includes("preserving prepared artifacts after rollback failure"),
-      ),
-      true,
-    );
-    fs.rmSync(fixture.directStagingRoot, { force: true, recursive: true });
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
   }
 });
 
-test("codesign failure restores old installed artifacts", () => {
-  const fixture = createUpdateFixture();
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        updateId: "codesign-failure",
-        spawnSync: (command, args) => {
-          if (command === "codesign") {
-            assertNoBundleUpdateTemporaryDirs(fixture);
-            return { status: 1, stderr: "signature failed" };
-          }
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-      }),
-    /codesign.*signature failed/,
-  );
-
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-  assert.equal(read(fixture.targetSignature), "old signature");
-  assertNoBundleUpdateTemporaryDirs(fixture);
-});
-
-test("backup rename failure restores already moved artifacts", () => {
-  const fixture = createUpdateFixture();
-  let renameCount = 0;
-  const realRenameSync = fs.renameSync;
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        updateId: "backup-failure",
-        spawnSync: (_command, args) => {
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-        renameSync: (from, to) => {
-          renameCount += 1;
-          if (renameCount === 2 && to.includes("backup-failure")) {
-            assert.equal(pathStartsWith(from, fixture.appContentsPath), true);
-            assert.equal(pathStartsWith(to, fixture.appContentsPath), false);
-            throw new Error("backup rename failed");
-          }
-          realRenameSync(from, to);
-        },
-      }),
-    /backup rename failed/,
-  );
-
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-});
-
-test("install rename failure restores old installed artifacts", () => {
-  const fixture = createUpdateFixture();
-  let installRenameCount = 0;
-  const realRenameSync = fs.renameSync;
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        updateId: "install-failure",
-        spawnSync: (_command, args) => {
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-        renameSync: (from, to) => {
-          if (from.includes(".morpheus-update-staging-install-failure")) {
-            assert.equal(pathStartsWith(from, fixture.appContentsPath), false);
-            assert.equal(pathStartsWith(to, fixture.appContentsPath), true);
-            installRenameCount += 1;
-            if (installRenameCount === 2) {
-              throw new Error("install rename failed");
-            }
-          }
-          realRenameSync(from, to);
-        },
-      }),
-    /install rename failed/,
-  );
-
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-});
-
-test("postcondition failure restores old installed artifacts", () => {
-  const fixture = createUpdateFixture();
-
-  assert.throws(
-    () =>
-      updateInstalledArtifacts(fixture.plan, {
-        directStagingRoot: fixture.directStagingRoot,
-        updateId: "postcondition-failure",
-        spawnSync: (_command, args) => {
-          if (args.includes("@electron/asar")) {
-            write(args.at(-1), "new asar");
-          }
-          return { status: 0 };
-        },
-        replaceArtifacts(plan, options) {
-          const replacement = replaceInstalledArtifactsSync(plan, options);
-          fs.writeFileSync(fixture.targetAppAsar, "corrupted asar");
-          return replacement;
-        },
-      }),
-    /Installed artifact does not match staged artifact/,
-  );
-
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-});
-
-test("prepareDirectArtifacts copies built outputs without full app packaging", () => {
-  const fixture = createUpdateFixture();
+test("candidate contains only controlled resources plus a matching manifest", () => {
+  const root = temporaryDirectory();
+  const candidateParent = path.join(root, "candidates");
+  fs.mkdirSync(candidateParent);
   const calls = [];
+  try {
+    const plan = preparedPlan(root, {
+      changed: true,
+      changedPaths: ["electron/preload.cjs"],
+    });
+    const result = prepareInstalledArtifacts(plan, {
+      buildId: "build-1",
+      candidateParent,
+      sourceCommit: "abc123",
+      transactionId: "tx-1",
+      spawnSync(command, args, options) {
+        calls.push({ command, args, cwd: options.cwd });
+        if (command === "pnpm") {
+          assert.deepEqual(args.slice(0, 3), ["dlx", "@electron/asar", "pack"]);
+          write(args[4], "packed app");
+        } else {
+          assert.equal(command, "codesign");
+          assert.deepEqual(args.slice(0, 3), ["--force", "--sign", "-"]);
+          fs.appendFileSync(args[3], "-signed");
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
 
-  const prepared = prepareDirectArtifacts(fixture.plan, {
-    directStagingRoot: fixture.directStagingRoot,
-    spawnSync: (command, args, options = {}) => {
-      calls.push({ command, args, cwd: options.cwd });
-      if (args.includes("@electron/asar")) {
-        write(args.at(-1), "new asar");
-      }
-      return { status: 0 };
-    },
-  });
-
-  assert.equal(
-    read(path.join(prepared.stagedResourcesPath, "app.asar")),
-    "new asar",
-  );
-  assert.equal(
-    read(path.join(prepared.stagedResourcesPath, "bin/app-server")),
-    "new server",
-  );
-  assert.equal(
-    read(
-      path.join(
-        prepared.stagedResourcesPath,
-        "default-config/compact/COMPACT.md",
-      ),
-    ),
-    "new compact",
-  );
-  assert.deepEqual(
-    calls.map(({ command }) => command),
-    ["pnpm", "cargo", "pnpm"],
-  );
-  assert.equal(
-    calls.some(({ args }) => args.includes("package:mac:app")),
-    false,
-  );
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.changes, { main: false, preload: true });
+    assert.deepEqual(calls.map(({ command }) => command), [
+      "pnpm",
+      "codesign",
+    ]);
+    const resources = path.join(result.preparedRoot, "resources");
+    const files = [
+      "app.asar",
+      path.join("bin", "app-server"),
+      path.join("default-config", "compact", "COMPACT.md"),
+    ];
+    assert.deepEqual(
+      result.manifest.artifacts.map(({ relativePath }) => relativePath),
+      files,
+    );
+    assert.equal(result.manifest.entrypoint, "app.asar");
+    for (const artifact of result.manifest.artifacts) {
+      assert.equal(
+        artifact.sha256,
+        sha256(path.join(resources, artifact.relativePath)),
+      );
+    }
+    assert.equal(
+      fs.readFileSync(path.join(resources, "bin/app-server"), "utf8"),
+      "app-server-signed",
+    );
+    assert.equal(fs.existsSync(path.join(result.preparedRoot, "app-source")), false);
+    assert.equal(
+      fs.existsSync(path.join(resources, "MorpheusLauncher")),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(resources, "Root Worker Runtime")),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
 });
 
-function createUpdateFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-update-"));
-  const workspace = path.join(root, "source workspace");
-  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
-  const sourceDist = path.join(sourceAppDir, "dist");
-  const installedResources = path.join(
-    root,
-    "Moved Root Worker Prototype.app/Contents/Resources",
-  );
-  const appContentsPath = path.join(
-    root,
-    "Moved Root Worker Prototype.app/Contents",
-  );
-  const directStagingRoot = path.join(root, "direct-staging");
-  const commandEnv = {
-    CARGO_TARGET_DIR: path.join(workspace, "target"),
-    PATH: "/test/bin",
-  };
-  const plan = resolveInstalledArtifactUpdatePlan({
-    commandEnv,
-    env: { ROOT_WORKER_WORKSPACE: workspace },
-    platform: "darwin",
-    resourcesPath: installedResources,
-    isPackaged: true,
-    spawnSync: fakeCargoMetadataSpawn({
-      target_directory: path.join(workspace, "target"),
-    }),
-  });
-
-  write(path.join(installedResources, "app.asar"), "old asar");
-  write(path.join(installedResources, "bin/app-server"), "old server");
-  write(
-    path.join(installedResources, "default-config/compact/COMPACT.md"),
-    "old compact",
-  );
-  write(
-    path.join(
-      root,
-      "Moved Root Worker Prototype.app/Contents/_CodeSignature/CodeResources",
-    ),
-    "old signature",
-  );
-  write(path.join(sourceDist, "index.html"), "<main>new renderer</main>");
-  write(path.join(workspace, "target/release/app-server"), "new server");
-  write(
-    path.join(
-      workspace,
-      "codex-rs/thread-service/templates/compact/prompt.md",
-    ),
-    "new compact",
-  );
-  fs.mkdirSync(sourceAppDir, { recursive: true });
-
-  return {
-    directStagingRoot,
-    appContentsPath,
-    plan,
-    resourcesPath: installedResources,
-    sourceDist,
-    targetAppAsar: path.join(installedResources, "app.asar"),
-    targetAppServer: path.join(installedResources, "bin/app-server"),
-    targetCompact: path.join(
-      installedResources,
-      "default-config/compact/COMPACT.md",
-    ),
-    targetSignature: path.join(
-      root,
-      "Moved Root Worker Prototype.app/Contents/_CodeSignature/CodeResources",
-    ),
-  };
-}
-
-function failUnexpectedReplacement() {
-  throw new Error("replacement should not run");
-}
-
-function failUnexpectedCodesign() {
-  throw new Error("codesign should not run");
-}
-
-function assertInstalledArtifactsUnchanged(fixture) {
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-}
-
-function createElectronArchiveRootRejectingFileSystem() {
-  return Object.fromEntries(
-    [
-      "accessSync",
-      "cpSync",
-      "readFileSync",
-      "renameSync",
-      "rmSync",
-      "statSync",
-    ].map((methodName) => [
-      methodName,
-      (...args) => {
-        const archivePath = args.find(
-          (value) =>
-            typeof value === "string" && path.basename(value) === "app.asar",
-        );
-        if (archivePath) {
-          const error = new Error(`ENOENT,  not found in ${archivePath}`);
-          error.code = "ENOENT";
-          throw error;
-        }
-        return fs[methodName](...args);
-      },
-    ]),
-  );
-}
-
-function createRecordingFileSystem(calls) {
-  return Object.fromEntries(
-    [
-      "accessSync",
-      "cpSync",
-      "readFileSync",
-      "renameSync",
-      "rmSync",
-      "statSync",
-    ].map((methodName) => [
-      methodName,
-      (...args) => {
-        calls.push({ args, methodName });
-        return fs[methodName](...args);
-      },
-    ]),
-  );
-}
-
-function fakeCargoMetadataSpawn(metadata, calls = []) {
-  return (command, args, options = {}) => {
-    calls.push({ command, args, cwd: options.cwd, env: options.env });
-    return {
-      status: 0,
-      stdout: JSON.stringify(metadata),
-    };
-  };
-}
-
-function hasBundleSignatureBackup(appContentsPath) {
-  if (!fs.existsSync(appContentsPath)) {
-    return false;
-  }
-  return fs
-    .readdirSync(appContentsPath)
-    .some((entry) => entry.startsWith(".morpheus-signature-backup-"));
-}
-
-function assertNoBundleUpdateTemporaryDirs(fixture) {
-  assert.equal(hasBundleSignatureBackup(fixture.appContentsPath), false);
-  assert.equal(hasUpdaterTemporaryDir(fixture.appContentsPath), false);
-  assert.equal(hasUpdaterTemporaryDir(fixture.resourcesPath), false);
-}
-
-function hasUpdaterTemporaryDir(directoryPath) {
-  if (!fs.existsSync(directoryPath)) {
-    return false;
-  }
-  return fs.readdirSync(directoryPath).some((entry) => {
-    return (
-      entry.startsWith(".morpheus-update-staging-") ||
-      entry.startsWith(".morpheus-update-backup-") ||
-      entry.startsWith(".morpheus-signature-backup-")
+test("candidate preparation failure removes the producer-owned directory", () => {
+  const root = temporaryDirectory();
+  const candidateParent = path.join(root, "candidates");
+  fs.mkdirSync(candidateParent);
+  try {
+    const plan = preparedPlan(root);
+    assert.throws(
+      () =>
+        prepareInstalledArtifacts(plan, {
+          candidateParent,
+          sourceCommit: "abc123",
+          spawnSync: () => ({
+            status: 1,
+            stdout: "",
+            stderr: "asar failed",
+          }),
+        }),
+      /asar failed/,
     );
-  });
-}
+    assert.deepEqual(fs.readdirSync(candidateParent), []);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
 
-function pathStartsWith(targetPath, parentPath) {
-  const relative = path.relative(parentPath, targetPath);
-  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
-}
+test("candidate codesign failure removes the producer-owned directory", () => {
+  const root = temporaryDirectory();
+  const candidateParent = path.join(root, "candidates");
+  fs.mkdirSync(candidateParent);
+  try {
+    const plan = preparedPlan(root);
+    assert.throws(
+      () =>
+        prepareInstalledArtifacts(plan, {
+          candidateParent,
+          sourceCommit: "abc123",
+          spawnSync(command, args) {
+            if (command === "pnpm") {
+              write(args[4], "packed app");
+              return { status: 0, stdout: "", stderr: "" };
+            }
+            return { status: 1, stdout: "", stderr: "sign failed" };
+          },
+        }),
+      /sign failed/,
+    );
+    assert.deepEqual(fs.readdirSync(candidateParent), []);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
 
-function write(filePath, content) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content);
-}
+test("identical signed candidate inputs produce a stable build hash", () => {
+  const root = temporaryDirectory();
+  const candidateParent = path.join(root, "candidates");
+  fs.mkdirSync(candidateParent);
+  try {
+    const plan = preparedPlan(root);
+    const prepare = () =>
+      prepareInstalledArtifacts(plan, {
+        candidateParent,
+        sourceCommit: "abc123",
+        spawnSync(command, args) {
+          if (command === "pnpm") {
+            write(args[4], "packed app");
+          } else {
+            fs.appendFileSync(args[3], "-signed");
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+    const first = prepare();
+    const second = prepare();
+    assert.equal(first.buildId, second.buildId);
+    assert.deepEqual(first.manifest.artifacts, second.manifest.artifacts);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
 
-function writeExecutable(filePath, content) {
-  write(filePath, content);
-  fs.chmodSync(filePath, 0o755);
-}
-
-function read(filePath) {
-  return fs.readFileSync(filePath, "utf8");
-}
+test("missing existing build outputs fail before invoking packaging commands", () => {
+  const root = temporaryDirectory();
+  try {
+    const plan = preparedPlan(root);
+    fs.rmSync(plan.appServerBinaryPath);
+    let invoked = false;
+    assert.throws(
+      () =>
+        prepareInstalledArtifacts(plan, {
+          spawnSync: () => {
+            invoked = true;
+            return { status: 0 };
+          },
+        }),
+      /Missing release app-server/,
+    );
+    assert.equal(invoked, false);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});

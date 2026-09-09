@@ -154,6 +154,16 @@ export type ThreadItem = ThreadItemTimestamps &
       truncated?: boolean;
     }
   | {
+      type: "clientRecovery";
+      id: string;
+      transactionId: string;
+      mode: string;
+      buildId: string;
+      reason: string;
+      occurredAt: string;
+      previousBuildId?: string | null;
+    }
+  | {
       type: "collabAgentStatusUpdate";
       id: string;
       senderThreadId: string | null;
