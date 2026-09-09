@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use protocol::AgentPath;
 use protocol::protocol::BuiltinToolCallDisplayEvent;
 use protocol::protocol::BuiltinToolCallStatus;
 use protocol::protocol::EventMsg;
@@ -27,10 +28,11 @@ use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
 
 pub(crate) const REQUEST_RUNTIME_RESTART_TOOL_NAME: &str = "request_runtime_restart";
+const AUTHORIZED_AGENT_PATH: &str = "/self";
 const RESUME_STRATEGY: &str = "expected_restart_intent";
 
-pub(crate) fn specs(_request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
-    vec![create_request_runtime_restart_tool()]
+pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
+    specs_for_agent_path(request.current_agent_path.as_ref())
 }
 
 pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &ToolName) -> bool {
@@ -49,11 +51,13 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
+    current_agent_path: Option<AgentPath>,
     session: Arc<dyn ThreadSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     runtime: Option<Arc<dyn HostLifecycleToolRuntime>>,
     call: ToolCall,
 ) -> Result<ToolCallOutcome, FunctionCallError> {
+    ensure_runtime_restart_authorized(current_agent_path.as_ref())?;
     let args: RequestRuntimeRestartArgs = parse_arguments(&call)?;
     let reason = normalize_reason(args.reason);
     let mode = args.mode;
@@ -120,6 +124,28 @@ pub(crate) async fn dispatch(
         result: Box::new(tool_output),
         post_tool_use_payload: None,
     }))
+}
+
+fn specs_for_agent_path(current_agent_path: Option<&AgentPath>) -> Vec<ToolSpec> {
+    is_runtime_restart_authorized(current_agent_path)
+        .then(create_request_runtime_restart_tool)
+        .into_iter()
+        .collect()
+}
+
+fn ensure_runtime_restart_authorized(
+    current_agent_path: Option<&AgentPath>,
+) -> Result<(), FunctionCallError> {
+    if is_runtime_restart_authorized(current_agent_path) {
+        return Ok(());
+    }
+    Err(FunctionCallError::RespondToModel(format!(
+        "{REQUEST_RUNTIME_RESTART_TOOL_NAME} is only authorized for the exact canonical agent path {AUTHORIZED_AGENT_PATH}"
+    )))
+}
+
+fn is_runtime_restart_authorized(current_agent_path: Option<&AgentPath>) -> bool {
+    current_agent_path.is_some_and(|path| path.as_str() == AUTHORIZED_AGENT_PATH)
 }
 
 fn create_request_runtime_restart_tool() -> ToolSpec {

@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use protocol::AgentPath;
 use serde_json::json;
 use thread_service::test_support;
 use tool_service_api::FunctionCallError;
@@ -61,12 +62,17 @@ fn tool_output_json(result: &AnyToolResult) -> serde_json::Value {
     serde_json::from_str(&text).expect("json response")
 }
 
+fn agent_path(path: &str) -> AgentPath {
+    AgentPath::try_from(path).expect("valid test agent path")
+}
+
 #[tokio::test]
 async fn accepted_restart_is_terminal_and_has_no_function_call_output() {
     let (session, turn) = test_support::make_session_and_context().await;
     let runtime = Arc::new(FakeHostLifecycleRuntime::default());
 
     let result = dispatch(
+        Some(agent_path(AUTHORIZED_AGENT_PATH)),
         session.clone(),
         turn,
         Some(runtime.clone()),
@@ -94,9 +100,15 @@ async fn accepted_restart_is_terminal_and_has_no_function_call_output() {
 async fn unsupported_restart_remains_a_model_visible_error_result() {
     let (session, turn) = test_support::make_session_and_context().await;
 
-    let result = dispatch(session, turn, None, tool_call(json!({ "mode": "hot" })))
-        .await
-        .expect("unsupported is model-visible");
+    let result = dispatch(
+        Some(agent_path(AUTHORIZED_AGENT_PATH)),
+        session,
+        turn,
+        None,
+        tool_call(json!({ "mode": "hot" })),
+    )
+    .await
+    .expect("unsupported is model-visible");
     let ToolCallOutcome::ReturnToModel(result) = result else {
         panic!("unsupported restart must return an error result to the model");
     };
@@ -115,6 +127,7 @@ async fn invalid_mode_is_rejected_before_host_dispatch() {
     let runtime = Arc::new(FakeHostLifecycleRuntime::default());
 
     let error = match dispatch(
+        Some(agent_path(AUTHORIZED_AGENT_PATH)),
         session,
         turn,
         Some(runtime.clone()),
@@ -133,6 +146,93 @@ async fn invalid_mode_is_rejected_before_host_dispatch() {
         other => panic!("expected model-visible parse error, got {other:?}"),
     }
     assert!(runtime.requests.lock().expect("requests mutex").is_empty());
+}
+
+#[tokio::test]
+async fn unauthorized_paths_reject_forged_restart_before_host_dispatch() {
+    for path in [
+        None,
+        Some("/self/child"),
+        Some("/project"),
+        Some("/project/child"),
+        Some("/root"),
+    ] {
+        let (session, turn) = test_support::make_session_and_context().await;
+        let runtime = Arc::new(FakeHostLifecycleRuntime::default());
+        let current_agent_path = path.map(agent_path);
+
+        let error = match dispatch(
+            current_agent_path,
+            session,
+            turn,
+            Some(runtime.clone()),
+            tool_call(json!({ "mode": "hot" })),
+        )
+        .await
+        {
+            Ok(_) => panic!("unauthorized restart should fail closed"),
+            Err(error) => error,
+        };
+
+        match error {
+            FunctionCallError::RespondToModel(message) => {
+                assert_eq!(
+                    message,
+                    "request_runtime_restart is only authorized for the exact canonical agent path /self"
+                );
+            }
+            other => panic!("expected typed authorization error, got {other:?}"),
+        }
+        assert!(
+            runtime.requests.lock().expect("requests mutex").is_empty(),
+            "unauthorized path {path:?} must not reach the host runtime"
+        );
+    }
+}
+
+#[test]
+fn restart_tool_visibility_requires_exact_self_path() {
+    let authorized_specs = specs_for_agent_path(Some(&agent_path(AUTHORIZED_AGENT_PATH)));
+    assert_eq!(authorized_specs.len(), 1);
+    assert!(matches!(
+        &authorized_specs[0],
+        ToolSpec::Function(tool) if tool.name == REQUEST_RUNTIME_RESTART_TOOL_NAME
+    ));
+    let authorized_nested_names =
+        crate::planning::collect_code_mode_tool_definitions(&authorized_specs)
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+    assert!(
+        authorized_nested_names
+            .iter()
+            .any(|name| name == REQUEST_RUNTIME_RESTART_TOOL_NAME)
+    );
+
+    for path in [
+        None,
+        Some("/self/child"),
+        Some("/project"),
+        Some("/project/child"),
+        Some("/root"),
+    ] {
+        let current_agent_path = path.map(agent_path);
+        let specs = specs_for_agent_path(current_agent_path.as_ref());
+        assert!(
+            specs.is_empty(),
+            "unauthorized path {path:?} must not receive the restart spec"
+        );
+        let nested_names = crate::planning::collect_code_mode_tool_definitions(&specs)
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+        assert!(
+            !nested_names
+                .iter()
+                .any(|name| name == REQUEST_RUNTIME_RESTART_TOOL_NAME),
+            "unauthorized path {path:?} must not receive the restart tool in code mode"
+        );
+    }
 }
 
 #[test]
