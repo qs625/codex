@@ -43,6 +43,22 @@ Implement a minimal stable Launcher for Morpheus self-update: the model builds a
   blockers: none
   validation: pending
   commit:
+- id: full-terminal-panel-multi-tab
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/full-terminal-panel
+  task_type: feature/ui-runtime-terminal
+  depends_on: `restrict-runtime-restart-to-self-thread` merged; `stable-launcher-runtime-update` merged because Launcher currently modifies overlapping Electron main, app-server protocol/runtime, Root Worker types and conversation files
+  files: provider-neutral/live terminal session ownership and typed app-server RPC/events; unified exec PTY attach/write/resize/terminate path; Root Worker app-server client/preload bridge; RightPanel Terminal surface with xterm-compatible renderer and multi-tab state; focused runtime/UI/reload tests
+  base_commit: pending latest main after dependencies merge
+  pending_sync_from_main: dev-2 must be fast-forwarded after both dependencies merge; dev-3 remains active and cannot be synchronized
+  status: planned
+  objective: Provide a complete interactive terminal experience for PTY-backed commands and a multi-tab Terminal panel in the Root Worker right sidebar. ANSI/VT screen state, cursor motion, alternate screen, terminal queries, keyboard input and resize must work through a real terminal emulator instead of rendering raw escape sequences as `<pre>` text.
+  last_update: 2026-09-09 CST user requested full PTY terminal support plus a multi-tab right-side Terminal panel after a Fly CLI prompt exposed raw ANSI cursor/erase/hide-cursor/DSR bytes. PM confirmed the current conversation UI concatenates raw command deltas and renders them as plain `<pre>`, while app-server already has connection-scoped `command/exec` PTY streaming/write/resize/terminate RPCs. The existing RightPanel Browser multi-tab strip is the UI design anchor, so ui-design does not require a new image-generation mockup. Product direction is one typed terminal-session capability shared by user-created terminal tabs and attachable `exec_command(tty=true)` sessions, not separate fake terminal and command transcript implementations.
+  next_action: wait for dev-2 restart authorization and dev-3 Launcher to merge; then fast-forward dev-2, prepare the full runtime/UI brief, and dispatch to the fixed dev-2 owner with its fixed reviewer
+  blockers: no clean conflict-safe dev checkout is currently available: dev has extensive unrelated dirty work, dev-2 is active, and dev-3 owns overlapping Electron/app-server/protocol/client files
+  validation: pending; must include ANSI cursor/erase/color/alternate-screen/DSR, raw keyboard input, terminal resize, multiple independent tabs, tab close/termination, model PTY attach, long output, narrow panel, disconnect/reload/restored behavior, and Playwright verification of the real Electron client
+  commit:
 - id: remove-built-in-worker-explorer-roles
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
