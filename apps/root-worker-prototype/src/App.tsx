@@ -3111,12 +3111,37 @@ function App() {
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}
           previewRootId={selectedTreeRootId}
-          onSelectCommandMonitor={(commandItemId) =>
-            setFocusedConversationItem((current) => ({
-              itemId: commandItemId,
-              token: (current?.token ?? 0) + 1,
-            }))
-          }
+          onSelectCommandMonitor={(commandItemId) => {
+            if (!selectedThread) {
+              return;
+            }
+            void window.codexDesktop
+              .getTerminalState(selectedThread.id)
+              .then((terminalState) => {
+                const terminalTab = terminalState.tabs.find(
+                  (tab) => tab.commandItemId === commandItemId,
+                );
+                if (terminalTab) {
+                  return window.codexDesktop
+                    .selectTerminalTab(terminalTab.id)
+                    .then(() => {
+                      setRightPanelView("terminal");
+                      setIsRightPanelCollapsed(false);
+                    });
+                }
+                setFocusedConversationItem((current) => ({
+                  itemId: commandItemId,
+                  token: (current?.token ?? 0) + 1,
+                }));
+                return undefined;
+              })
+              .catch(() => {
+                setFocusedConversationItem((current) => ({
+                  itemId: commandItemId,
+                  token: (current?.token ?? 0) + 1,
+                }));
+              });
+          }}
           onSetActiveView={setRightPanelView}
           onSetCollapsed={setIsRightPanelCollapsed}
           onSetFilePanelView={handleSetFilePanelView}

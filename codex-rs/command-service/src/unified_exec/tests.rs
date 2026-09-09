@@ -24,6 +24,16 @@ fn keeps_prefix_and_suffix_when_over_budget() {
 }
 
 #[test]
+fn terminal_replay_uses_only_contiguous_tail_after_omission() {
+    let mut buf = HeadTailBuffer::new(/*max_bytes*/ 10);
+    buf.push_chunk(b"0123456789".to_vec());
+    buf.push_chunk(b"abcdef".to_vec());
+
+    assert!(buf.omitted_bytes() > 0);
+    assert_eq!(buf.terminal_replay_bytes(), b"bcdef".to_vec());
+}
+
+#[test]
 fn max_bytes_zero_drops_everything() {
     let mut buf = HeadTailBuffer::new(/*max_bytes*/ 0);
     buf.push_chunk(b"abc".to_vec());

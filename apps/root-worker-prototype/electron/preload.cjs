@@ -75,6 +75,20 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   browserGoForward: () => ipcRenderer.invoke("codex:browser:goForward"),
   reloadBrowserView: () => ipcRenderer.invoke("codex:browser:reload"),
   stopBrowserView: () => ipcRenderer.invoke("codex:browser:stop"),
+  getTerminalState: (threadId) =>
+    ipcRenderer.invoke("codex:terminal:getState", threadId),
+  createTerminal: (payload) =>
+    ipcRenderer.invoke("codex:terminal:create", payload),
+  selectTerminalTab: (tabId) =>
+    ipcRenderer.invoke("codex:terminal:select", tabId),
+  closeTerminalTab: (tabId) =>
+    ipcRenderer.invoke("codex:terminal:close", tabId),
+  writeTerminal: (payload) =>
+    ipcRenderer.invoke("codex:terminal:write", payload),
+  resizeTerminal: (payload) =>
+    ipcRenderer.invoke("codex:terminal:resize", payload),
+  terminateTerminal: (tabId) =>
+    ipcRenderer.invoke("codex:terminal:terminate", tabId),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
   interruptTurn: (payload) =>
     ipcRenderer.invoke("codex:interruptTurn", payload),
@@ -117,6 +131,17 @@ contextBridge.exposeInMainWorld("codexDesktop", {
 
     return () => {
       ipcRenderer.removeListener("codex:browser:state", onBrowserState);
+    };
+  },
+  subscribeTerminalState(listener) {
+    const onTerminalState = (_event, state) => {
+      listener(state);
+    };
+
+    ipcRenderer.on("codex:terminal:state", onTerminalState);
+
+    return () => {
+      ipcRenderer.removeListener("codex:terminal:state", onTerminalState);
     };
   },
 });

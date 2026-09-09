@@ -65,7 +65,6 @@ impl HeadTailBuffer {
     }
 
     /// Total bytes that were dropped from the middle due to the size cap.
-    #[allow(dead_code)]
     pub fn omitted_bytes(&self) -> usize {
         self.omitted_bytes
     }
@@ -122,6 +121,22 @@ impl HeadTailBuffer {
             out.extend_from_slice(chunk);
         }
         for chunk in self.tail.iter() {
+            out.extend_from_slice(chunk);
+        }
+        out
+    }
+
+    /// Return a terminal-safe replay snapshot.
+    ///
+    /// Once the middle has been omitted, replay only the retained suffix
+    /// rather than concatenating a non-contiguous head and tail into one VT
+    /// stream.
+    pub fn terminal_replay_bytes(&self) -> Vec<u8> {
+        if self.omitted_bytes == 0 {
+            return self.to_bytes();
+        }
+        let mut out = Vec::with_capacity(self.tail_bytes);
+        for chunk in &self.tail {
             out.extend_from_slice(chunk);
         }
         out

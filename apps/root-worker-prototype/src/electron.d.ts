@@ -15,6 +15,43 @@ type BrowserPanelState = Omit<BrowserPanelTabState, "id"> & {
   tabs: BrowserPanelTabState[];
 };
 
+type TerminalPanelTabState = {
+  id: string;
+  sessionId: string;
+  generation: string;
+  origin: "user" | "model";
+  threadId: string | null;
+  commandItemId: string | null;
+  processId: string;
+  title: string;
+  cwd: string;
+  status: "starting" | "running" | "exited" | "lost";
+  replayBase64: string;
+  replayTruncated: boolean;
+  hasSequenceGap: boolean;
+  backgroundActivity: boolean;
+  canResize: boolean;
+  canWrite: boolean;
+  canTerminate: boolean;
+  exitCode: number | null;
+  error?: string | null;
+};
+
+type TerminalPanelState = {
+  activeTabId: string | null;
+  tabs: TerminalPanelTabState[];
+  error: string | null;
+};
+
+type TerminalPanelEvent =
+  | { type: "snapshot"; state: TerminalPanelState }
+  | {
+      type: "delta";
+      tabId: string;
+      deltaBase64: string;
+      tab: Omit<TerminalPanelTabState, "replayBase64">;
+    };
+
 declare global {
   interface Window {
     codexDesktop: {
@@ -359,8 +396,27 @@ declare global {
       browserGoForward: () => Promise<BrowserPanelState>;
       reloadBrowserView: () => Promise<BrowserPanelState>;
       stopBrowserView: () => Promise<BrowserPanelState>;
+      getTerminalState: (threadId?: string | null) => Promise<TerminalPanelState>;
+      createTerminal: (payload: {
+        cwd?: string | null;
+        size?: { rows: number; cols: number };
+      }) => Promise<TerminalPanelState>;
+      selectTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
+      closeTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
+      writeTerminal: (payload: {
+        tabId: string;
+        deltaBase64: string;
+      }) => Promise<{ ok: true }>;
+      resizeTerminal: (payload: {
+        tabId: string;
+        size: { rows: number; cols: number };
+      }) => Promise<{ ok: true }>;
+      terminateTerminal: (tabId: string) => Promise<{ ok: true }>;
       subscribeBrowserState: (
         listener: (state: BrowserPanelState) => void,
+      ) => () => void;
+      subscribeTerminalState: (
+        listener: (event: TerminalPanelEvent) => void,
       ) => () => void;
       sendMessage: (payload: {
         threadId: string;

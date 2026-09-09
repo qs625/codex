@@ -19,6 +19,7 @@ use codex_sandboxing_api::SandboxType;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::SpawnedPty;
+use codex_utils_pty::TerminalSize;
 use command_service_api::is_likely_sandbox_denied;
 
 use super::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS;
@@ -121,6 +122,21 @@ impl UnifiedExecProcess {
                 }
             }
         }
+    }
+
+    pub fn resize(&self, size: TerminalSize) -> Result<(), UnifiedExecError> {
+        match &self.process_handle {
+            ProcessHandle::Local(process_handle) => process_handle
+                .resize(size)
+                .map_err(|err| UnifiedExecError::process_failed(err.to_string())),
+            ProcessHandle::ExecServer(_) => Err(UnifiedExecError::process_failed(
+                "terminal resize is not supported by this execution environment".to_string(),
+            )),
+        }
+    }
+
+    pub fn supports_resize(&self) -> bool {
+        matches!(&self.process_handle, ProcessHandle::Local(_))
     }
 
     pub fn output_handles(&self) -> OutputHandles {

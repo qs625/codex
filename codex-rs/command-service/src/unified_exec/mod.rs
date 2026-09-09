@@ -284,6 +284,13 @@ struct ProcessEntry {
 
 impl ProcessEntry {
     async fn as_running_snapshot(&self) -> RunningCommandSnapshot {
+        let (latest_output_bytes, replay_truncated) = {
+            let guard = self.transcript.lock().await;
+            (
+                guard.terminal_replay_bytes(),
+                guard.omitted_bytes() > 0,
+            )
+        };
         RunningCommandSnapshot {
             process_id: self.process_id,
             call_id: self.call_id.clone(),
@@ -291,7 +298,10 @@ impl ProcessEntry {
             cwd: self.cwd.clone(),
             tty: self.tty,
             notify_on: self.notify_on,
-            latest_output_tail: latest_output_tail(&self.transcript).await,
+            latest_output_tail: latest_output_tail_from_bytes(&latest_output_bytes),
+            latest_output_bytes,
+            replay_truncated,
+            can_resize: self.process.supports_resize(),
         }
     }
 }
@@ -303,10 +313,14 @@ async fn latest_output_tail(transcript: &Arc<Mutex<HeadTailBuffer>>) -> Option<S
         let guard = transcript.lock().await;
         guard.to_bytes()
     };
+    latest_output_tail_from_bytes(&output)
+}
+
+fn latest_output_tail_from_bytes(output: &[u8]) -> Option<String> {
     if output.is_empty() {
         return None;
     }
-    let output = String::from_utf8_lossy(&output);
+    let output = String::from_utf8_lossy(output);
     Some(take_last_chars(
         output.as_ref(),
         RUNNING_COMMAND_CONTEXT_OUTPUT_TAIL_CHARS,

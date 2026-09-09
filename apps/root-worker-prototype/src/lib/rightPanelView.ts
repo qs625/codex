@@ -8,6 +8,7 @@ const RIGHT_PANEL_VIEWS = new Set<RightPanelView>([
   "skills",
   "git",
   "browser",
+  "terminal",
   "workflow",
 ]);
 

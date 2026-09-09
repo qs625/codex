@@ -44,11 +44,11 @@ pub(crate) const OUTPUT_NOTIFICATION_FLUSH_INTERVAL: Duration = Duration::from_m
 pub(crate) const MAX_OUTPUT_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 /// Spawn a background task that continuously reads from the PTY, appends to the
-/// shared transcript, and emits ExecCommandOutputDelta events on UTF‑8
-/// boundaries.
+/// shared transcript, and emits byte-preserving ExecCommandOutputDelta events.
 pub(crate) fn start_streaming_output(
     process: &UnifiedExecProcess,
     context: &UnifiedExecContext,
+    process_id: i32,
     transcript: Arc<Mutex<HeadTailBuffer>>,
     exit_notification_output: Arc<Mutex<HeadTailBuffer>>,
     notify_on: CommandNotificationFilter,
@@ -134,6 +134,7 @@ pub(crate) fn start_streaming_output(
                         &transcript,
                         &exit_notification_output,
                         &call_id,
+                        process_id,
                         &session_ref,
                         &turn_ref,
                         &mut emitted_deltas,
@@ -372,6 +373,7 @@ async fn process_chunk(
     transcript: &Arc<Mutex<HeadTailBuffer>>,
     exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
+    process_id: i32,
     session_ref: &Arc<dyn ThreadSessionCapability>,
     turn_ref: &Arc<dyn ThreadRuntimeCapability>,
     emitted_deltas: &mut usize,
@@ -381,38 +383,44 @@ async fn process_chunk(
     output_notification_flush_sleep: &mut Option<Pin<Box<Sleep>>>,
     chunk: Vec<u8>,
 ) {
-    pending.extend_from_slice(&chunk);
-    while let Some(prefix) = split_valid_utf8_prefix(pending) {
-        let background_session_active = notification_state.is_background_session_active();
-        {
-            let mut guard = transcript.lock().await;
-            guard.push_chunk(prefix.to_vec());
-        }
-        if matches!(notify_on, CommandNotificationFilter::Output) && background_session_active {
-            let mut guard = exit_notification_output.lock().await;
-            guard.push_chunk(prefix.to_vec());
-        }
-
-        if *emitted_deltas >= MAX_EXEC_OUTPUT_DELTAS_PER_CALL {
-            continue;
-        }
-
-        let generates_notification =
-            matches!(notify_on, CommandNotificationFilter::Output) && background_session_active;
+    {
+        let mut guard = transcript.lock().await;
+        guard.push_chunk(chunk.clone());
+    }
+    let background_session_active = notification_state.is_background_session_active();
+    let generates_notification =
+        matches!(notify_on, CommandNotificationFilter::Output) && background_session_active;
+    let sequence = if *emitted_deltas < MAX_EXEC_OUTPUT_DELTAS_PER_CALL {
         let sequence = *emitted_deltas as u64 + 1;
         let event = ExecCommandOutputDeltaEvent {
             call_id: call_id.to_string(),
+            process_id: Some(process_id.to_string()),
             sequence: Some(sequence),
             generates_notification,
             created_at_ms: now_unix_timestamp_ms(),
             stream: ExecOutputStream::Stdout,
-            chunk: prefix.clone(),
+            chunk: chunk.clone(),
         };
         session_ref
             .emit_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
-        if generates_notification {
+        Some(sequence)
+    } else {
+        None
+    };
+
+    if !generates_notification {
+        return;
+    }
+
+    {
+        let mut guard = exit_notification_output.lock().await;
+        guard.push_chunk(chunk.clone());
+    }
+    pending.extend_from_slice(&chunk);
+    while let Some(prefix) = split_valid_utf8_prefix(pending) {
+        if let Some(sequence) = sequence {
             let output = String::from_utf8_lossy(&prefix).to_string();
             output_notification_aggregator.push(sequence, output);
             if output_notification_aggregator.should_flush_for_size() {

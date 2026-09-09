@@ -149,7 +149,12 @@ pub struct CommandExecutionOutputDeltaNotification {
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub process_id: Option<String>,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub sequence: Option<u64>,
     pub delta: String,
+    pub delta_base64: String,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

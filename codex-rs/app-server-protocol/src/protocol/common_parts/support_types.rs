@@ -254,6 +254,8 @@ server_notification_definitions! {
     PlanDelta => "item/plan/delta" (v2::PlanDeltaNotification),
     /// Stream base64-encoded stdout/stderr chunks for a running `command/exec` session.
     CommandExecOutputDelta => "command/exec/outputDelta" (v2::CommandExecOutputDeltaNotification),
+    /// Final lifecycle update for a client-owned `command/exec` terminal.
+    CommandExecExited => "command/exec/exited" (v2::CommandExecExitedNotification),
     /// Stream base64-encoded stdout/stderr chunks for a running `process/spawn` session.
     #[experimental("process/outputDelta")]
     ProcessOutputDelta => "process/outputDelta" (v2::ProcessOutputDeltaNotification),

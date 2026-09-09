@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use app_server_protocol::CommandExecOutputDeltaNotification;
 use app_server_protocol::CommandExecOutputStream;
+use app_server_protocol::CommandExecExitedNotification;
 use app_server_protocol::CommandExecResizeParams;
 use app_server_protocol::CommandExecResizeResponse;
 use app_server_protocol::CommandExecResponse;
@@ -70,8 +71,18 @@ struct ConnectionProcessId {
 enum CommandExecSession {
     Active {
         control_tx: mpsc::Sender<CommandControlRequest>,
+        info: UserTerminalSessionInfo,
     },
     UnsupportedWindowsSandbox,
+}
+
+#[derive(Clone)]
+pub(crate) struct UserTerminalSessionInfo {
+    pub(crate) process_id: String,
+    pub(crate) generation: String,
+    pub(crate) command: Vec<String>,
+    pub(crate) cwd: std::path::PathBuf,
+    pub(crate) tty: bool,
 }
 
 enum CommandControl {
@@ -250,6 +261,13 @@ impl CommandExecManager {
             InternalProcessId::Generated(_) => None,
             InternalProcessId::Client(process_id) => Some(process_id.clone()),
         };
+        let session_info = UserTerminalSessionInfo {
+            process_id: notification_process_id.clone().unwrap_or_default(),
+            generation: notification_process_id.clone().unwrap_or_default(),
+            command: command.clone(),
+            cwd: cwd.as_path().to_path_buf(),
+            tty,
+        };
 
         let sessions = Arc::clone(&self.sessions);
         let (program, args) = command
@@ -265,7 +283,10 @@ impl CommandExecManager {
             }
             sessions.insert(
                 process_key.clone(),
-                CommandExecSession::Active { control_tx },
+                CommandExecSession::Active {
+                    control_tx,
+                    info: session_info,
+                },
             );
         }
         let spawned = if tty {
@@ -334,6 +355,7 @@ impl CommandExecManager {
         };
         self.send_control(
             target_process_id,
+            None,
             CommandControl::Write {
                 delta,
                 close_stdin: params.close_stdin,
@@ -353,7 +375,11 @@ impl CommandExecManager {
             connection_id: request_id.connection_id,
             process_id: InternalProcessId::Client(params.process_id),
         };
-        self.send_control(target_process_id, CommandControl::Terminate)
+        self.send_control(
+            target_process_id,
+            None,
+            CommandControl::Terminate,
+        )
             .await?;
         Ok(CommandExecTerminateResponse {})
     }
@@ -369,6 +395,7 @@ impl CommandExecManager {
         };
         self.send_control(
             target_process_id,
+            None,
             CommandControl::Resize {
                 size: terminal_size_from_protocol(params.size)?,
             },
@@ -395,7 +422,7 @@ impl CommandExecManager {
         };
 
         for control in controls {
-            if let CommandExecSession::Active { control_tx } = control {
+            if let CommandExecSession::Active { control_tx, .. } = control {
                 let _ = control_tx
                     .send(CommandControlRequest {
                         control: CommandControl::Terminate,
@@ -409,6 +436,7 @@ impl CommandExecManager {
     async fn send_control(
         &self,
         process_id: ConnectionProcessId,
+        expected_generation: Option<&str>,
         control: CommandControl,
     ) -> Result<(), JSONRPCErrorError> {
         let session = {
@@ -424,11 +452,19 @@ impl CommandExecManager {
                     ))
                 })?
         };
-        let CommandExecSession::Active { control_tx } = session else {
+        let CommandExecSession::Active { control_tx, info } = session else {
             return Err(invalid_request(
                 "command/exec/write, command/exec/terminate, and command/exec/resize are not supported for windows sandbox processes",
             ));
         };
+        if let Some(expected_generation) = expected_generation
+            && info.generation != expected_generation
+        {
+            return Err(invalid_request(format!(
+                "stale command/exec generation for process id {}",
+                process_id.process_id.error_repr(),
+            )));
+        }
         let (response_tx, response_rx) = oneshot::channel();
         let request = CommandControlRequest {
             control,
@@ -441,6 +477,84 @@ impl CommandExecManager {
         response_rx
             .await
             .map_err(|_| command_no_longer_running_error(&process_id.process_id))?
+    }
+
+    pub(crate) async fn list(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Vec<UserTerminalSessionInfo> {
+        let sessions = self.sessions.lock().await;
+        let mut data = sessions
+            .iter()
+            .filter_map(|(key, session)| {
+                if key.connection_id != connection_id {
+                    return None;
+                }
+                match session {
+                    CommandExecSession::Active { info, .. } if info.tty => Some(info.clone()),
+                    CommandExecSession::Active { .. }
+                    | CommandExecSession::UnsupportedWindowsSandbox => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        data.sort_by(|left, right| left.process_id.cmp(&right.process_id));
+        data
+    }
+
+    pub(crate) async fn write_terminal(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+        delta: Vec<u8>,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.send_control(
+            ConnectionProcessId {
+                connection_id,
+                process_id: InternalProcessId::Client(process_id),
+            },
+            Some(generation),
+            CommandControl::Write {
+                delta,
+                close_stdin: false,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn resize_terminal(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+        size: TerminalSize,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.send_control(
+            ConnectionProcessId {
+                connection_id,
+                process_id: InternalProcessId::Client(process_id),
+            },
+            Some(generation),
+            CommandControl::Resize { size },
+        )
+        .await
+    }
+
+    pub(crate) async fn terminate_terminal(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.send_control(
+            ConnectionProcessId {
+                connection_id,
+                process_id: InternalProcessId::Client(process_id),
+            },
+            Some(generation),
+            CommandControl::Terminate,
+        )
+        .await
     }
 }
 
@@ -545,6 +659,18 @@ async fn run_command(params: RunCommandParams) {
     let stdout = stdout_handle.await.unwrap_or_default();
     let stderr = stderr_handle.await.unwrap_or_default();
     timeout_handle.abort();
+
+    if let Some(process_id) = process_id.as_ref() {
+        outgoing
+            .send_server_notification_to_connection_and_wait(
+                request_id.connection_id,
+                ServerNotification::CommandExecExited(CommandExecExitedNotification {
+                    process_id: process_id.clone(),
+                    exit_code,
+                }),
+            )
+            .await;
+    }
 
     outgoing
         .send_response(
@@ -1036,7 +1162,16 @@ mod tests {
                 connection_id: request_id.connection_id,
                 process_id: process_id.clone(),
             },
-            CommandExecSession::Active { control_tx },
+            CommandExecSession::Active {
+                control_tx,
+                info: UserTerminalSessionInfo {
+                    process_id: "proc-13".to_string(),
+                    generation: "proc-13".to_string(),
+                    command: vec!["sh".to_string()],
+                    cwd: std::path::PathBuf::from("/tmp"),
+                    tty: true,
+                },
+            },
         );
 
         tokio::spawn(async move {

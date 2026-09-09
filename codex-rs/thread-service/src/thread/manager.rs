@@ -826,6 +826,55 @@ impl ThreadService {
         self.state.get_thread(thread_id).await
     }
 
+    pub async fn live_terminal_commands(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<Vec<command_service_api::RunningCommandSnapshot>> {
+        Ok(self.get_thread(thread_id).await?.running_terminal_commands().await)
+    }
+
+    pub async fn write_live_terminal(
+        &self,
+        thread_id: ThreadId,
+        process_id: i32,
+        expected_call_id: &str,
+        input: Vec<u8>,
+    ) -> CodexResult<()> {
+        self.get_thread(thread_id)
+            .await?
+            .write_terminal_bytes(process_id, expected_call_id, input)
+            .await
+            .map_err(|err| CodexErr::InvalidRequest(err.to_string()))
+    }
+
+    pub async fn resize_live_terminal(
+        &self,
+        thread_id: ThreadId,
+        process_id: i32,
+        expected_call_id: &str,
+        rows: u16,
+        cols: u16,
+    ) -> CodexResult<()> {
+        self.get_thread(thread_id)
+            .await?
+            .resize_terminal(process_id, expected_call_id, rows, cols)
+            .await
+            .map_err(|err| CodexErr::InvalidRequest(err.to_string()))
+    }
+
+    pub async fn terminate_live_terminal(
+        &self,
+        thread_id: ThreadId,
+        process_id: i32,
+        expected_call_id: &str,
+    ) -> CodexResult<()> {
+        self.get_thread(thread_id)
+            .await?
+            .terminate_terminal(process_id, expected_call_id)
+            .await
+            .map_err(|err| CodexErr::InvalidRequest(err.to_string()))
+    }
+
     pub async fn live_thread_config(&self, thread_id: ThreadId) -> CodexResult<Arc<Config>> {
         let thread = self.state.get_thread(thread_id).await?;
         Ok(thread.config().await)

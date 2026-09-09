@@ -19,8 +19,10 @@ import {
   SaveIcon,
   SearchIcon,
   StopIcon,
+  TerminalIcon,
   XIcon,
 } from "./icons";
+import { TerminalPanel } from "./TerminalPanel";
 import { LocalImagePreview } from "./Conversation";
 import { isChatCompatCwd } from "../lib/chatCompat";
 import { normalizeBrowserUrl } from "../lib/browserUrl";
@@ -301,6 +303,8 @@ export function RightPanel({
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
               />
+            ) : activeView === "terminal" ? (
+              <TerminalPanel thread={thread} />
             ) : activeView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
             ) : (
@@ -362,6 +366,18 @@ export function RightPanel({
                 label: "Browser",
                 icon: <BrowserIcon />,
                 badge: "",
+              },
+              {
+                view: "terminal",
+                label: "Terminal",
+                icon: <TerminalIcon />,
+                badge: String(
+                  (thread?.activeCommandItems ?? []).filter(
+                    (item) =>
+                      item.type === "commandExecution" &&
+                      Boolean(item.processId),
+                  ).length || "",
+                ),
               },
               {
                 view: "workflow",

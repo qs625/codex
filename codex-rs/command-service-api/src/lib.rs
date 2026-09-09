@@ -88,6 +88,9 @@ pub struct RunningCommandSnapshot {
     pub tty: bool,
     pub notify_on: CommandNotificationFilter,
     pub latest_output_tail: Option<String>,
+    pub latest_output_bytes: Vec<u8>,
+    pub replay_truncated: bool,
+    pub can_resize: bool,
 }
 
 /// Session-owned command interaction capability consumed by command-wait tools.
@@ -101,6 +104,27 @@ pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
         &'a self,
         request: WriteStdinRequest<'a>,
     ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>>;
+
+    fn write_terminal_bytes<'a>(
+        &'a self,
+        process_id: i32,
+        expected_call_id: &'a str,
+        input: Vec<u8>,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>>;
+
+    fn resize_terminal<'a>(
+        &'a self,
+        process_id: i32,
+        expected_call_id: &'a str,
+        rows: u16,
+        cols: u16,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>>;
+
+    fn terminate_terminal<'a>(
+        &'a self,
+        process_id: i32,
+        expected_call_id: &'a str,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>>;
 }
 
 /// Per-session command runtime state owned by command-service.

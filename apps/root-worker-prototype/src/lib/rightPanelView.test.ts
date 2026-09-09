@@ -23,6 +23,7 @@ test("readStoredRightPanelView restores a valid stored view", () => {
   assert.equal(readStoredRightPanelView(makeStorage("skills")), "skills");
   assert.equal(readStoredRightPanelView(makeStorage("git")), "git");
   assert.equal(readStoredRightPanelView(makeStorage("browser")), "browser");
+  assert.equal(readStoredRightPanelView(makeStorage("terminal")), "terminal");
   assert.equal(readStoredRightPanelView(makeStorage("workflow")), "workflow");
 });
 

@@ -501,6 +501,7 @@ fn spawn_output_delta_forwarder(stdout_stream: StdoutStream) -> OutputDeltaForwa
         while let Some(chunk) = rx.recv().await {
             let msg = EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
                 call_id: stdout_stream.call_id.clone(),
+                process_id: None,
                 sequence: None,
                 generates_notification: false,
                 created_at_ms: 0,
