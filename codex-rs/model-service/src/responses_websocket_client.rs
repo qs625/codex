@@ -32,6 +32,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
+use tokio::time::timeout_at;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::connect_async_tls_with_config;
@@ -57,6 +58,7 @@ use url::Url;
 use crate::responses_requests::make_responses_ws_input_items_compatible;
 use crate::responses_sse::ResponsesStreamEvent;
 use crate::responses_sse::process_responses_event;
+use crate::responses_sse::response_event_channel;
 use crate::responses_sse::response_stream_from_receiver;
 use crate::transport_telemetry::summarize_websocket_poll;
 
@@ -284,8 +286,7 @@ impl ResponsesWebsocketConnection {
         mut request: ResponsesWsRequest,
         connection_reused: bool,
     ) -> Result<ResponseStream, ApiError> {
-        let (tx_event, rx_event) =
-            mpsc::channel::<std::result::Result<ResponseEvent, ApiError>>(1600);
+        let (tx_event, rx_event, terminal_error) = response_event_channel();
         let stream = Arc::clone(&self.stream);
         let idle_timeout = self.idle_timeout;
         let server_reasoning_included = self.server_reasoning_included;
@@ -333,29 +334,27 @@ impl ResponsesWebsocketConnection {
                         .await;
                 }
                 let result = {
-                    let Some(ws_stream) = guard.as_mut() else {
-                        let _ = tx_event
-                            .send(Err(ApiError::Stream(
-                                "websocket connection is closed".to_string(),
-                            )))
-                            .await;
-                        return;
-                    };
-
-                    read_websocket_response_stream(
-                        ws_stream,
-                        tx_event.clone(),
-                        idle_timeout,
-                        telemetry,
-                    )
-                    .await
+                    match guard.as_mut() {
+                        Some(ws_stream) => {
+                            read_websocket_response_stream(
+                                ws_stream,
+                                tx_event.clone(),
+                                idle_timeout,
+                                telemetry,
+                            )
+                            .await
+                        }
+                        None => Err(ApiError::Stream(
+                            "websocket connection is closed".to_string(),
+                        )),
+                    }
                 };
 
                 if let Err(err) = result {
                     let failed_stream = guard.take();
                     drop(guard);
                     drop(failed_stream);
-                    let _ = tx_event.send(Err(err)).await;
+                    terminal_error.send(Err(err));
                 }
             }
             .instrument(current_span),
@@ -720,9 +719,10 @@ async fn read_websocket_response_stream(
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
 ) -> Result<(), ApiError> {
     let mut last_server_model: Option<String> = None;
+    let mut response_deadline = Instant::now() + idle_timeout;
     loop {
         let poll_start = Instant::now();
-        let response = tokio::time::timeout(idle_timeout, ws_stream.next())
+        let response = timeout_at(response_deadline, ws_stream.next())
             .await
             .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()));
         if let Some(t) = telemetry.as_ref() {
@@ -764,32 +764,52 @@ async fn read_websocket_response_stream(
                 let model_verifications = event.model_verifications();
                 if event.kind == "codex.rate_limits" {
                     if let Some(snapshot) = parse_rate_limit_event(&text) {
-                        let _ = tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))).await;
+                        timeout_at(
+                            response_deadline,
+                            tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))),
+                        )
+                        .await
+                        .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()))?
+                        .map_err(|_| {
+                            ApiError::Stream("response event consumer dropped".to_string())
+                        })?;
                     }
                     continue;
                 }
                 if let Some(model) = event.response_model()
                     && last_server_model.as_deref() != Some(model.as_str())
                 {
-                    let _ = tx_event
-                        .send(Ok(ResponseEvent::ServerModel(model.clone())))
-                        .await;
+                    timeout_at(
+                        response_deadline,
+                        tx_event.send(Ok(ResponseEvent::ServerModel(model.clone()))),
+                    )
+                    .await
+                    .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()))?
+                    .map_err(|_| ApiError::Stream("response event consumer dropped".to_string()))?;
                     last_server_model = Some(model);
                 }
-                if let Some(verifications) = model_verifications
-                    && tx_event
-                        .send(Ok(ResponseEvent::ModelVerifications(verifications)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
+                if let Some(verifications) = model_verifications {
+                    timeout_at(
+                        response_deadline,
+                        tx_event.send(Ok(ResponseEvent::ModelVerifications(verifications))),
+                    )
+                    .await
+                    .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()))?
+                    .map_err(|_| ApiError::Stream("response event consumer dropped".to_string()))?;
                 }
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
-                        let _ = tx_event.send(Ok(event)).await;
+                        let next_deadline = Instant::now() + idle_timeout;
+                        timeout_at(next_deadline, tx_event.send(Ok(event)))
+                            .await
+                            .map_err(|_| {
+                                ApiError::Stream("idle timeout waiting for websocket".into())
+                            })?
+                            .map_err(|_| {
+                                ApiError::Stream("response event consumer dropped".to_string())
+                            })?;
+                        response_deadline = next_deadline;
                         if is_completed {
                             break;
                         }
