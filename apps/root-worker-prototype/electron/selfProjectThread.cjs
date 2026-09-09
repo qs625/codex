@@ -3,10 +3,6 @@ const { buildSelfCommandThreadStartParams } = require("./threadConfig.cjs");
 const SELF_PROJECT_THREAD_NAME = "/self";
 
 function isSelfProjectThread(thread, project) {
-  const workspace = normalizePath(project?.workspace);
-  if (!workspace || normalizePath(thread?.cwd) !== workspace) {
-    return false;
-  }
   return (
     normalizeProjectPath(thread?.agentPath) === SELF_PROJECT_THREAD_NAME ||
     normalizeProjectPath(thread?.path) === SELF_PROJECT_THREAD_NAME ||

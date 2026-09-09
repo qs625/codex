@@ -14,7 +14,6 @@ const PROHIBITED_PROCESS_BEHAVIORS = Object.freeze([
   "daemonize",
   "double-fork",
   "setsid",
-  "process-group-escape",
 ]);
 const MIN_READINESS_TIMEOUT_MS = 1_000;
 const MAX_READINESS_TIMEOUT_MS = 120_000;

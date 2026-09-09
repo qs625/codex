@@ -32,8 +32,11 @@ const RELEASE_ID_PREFIX: &str = "sha256:";
 const RELEASE_PREIMAGE_DOMAIN: &[u8] = b"runtime-capsule-v1\0";
 const READINESS_PROTOCOL: &str = "launcher-ready-v1";
 const PROCESS_SUPERVISION_CONTRACT: &str = "cooperative-observed-v1";
-const PROHIBITED_PROCESS_BEHAVIORS: [&str; 4] =
-    ["daemonize", "double-fork", "setsid", "process-group-escape"];
+// A macOS app bundle can hand its main process to Electron, which moves that
+// already-observed descendant into a new process group. The guard continues
+// to supervise such descendants by stable process identity, so a process-group
+// handoff is not itself a contract violation.
+const PROHIBITED_PROCESS_BEHAVIORS: [&str; 3] = ["daemonize", "double-fork", "setsid"];
 const MIN_READINESS_TIMEOUT_MS: u64 = 1_000;
 const MAX_READINESS_TIMEOUT_MS: u64 = 120_000;
 const MAX_ACTIVATION_ID_BYTES: usize = 96;
@@ -578,12 +581,21 @@ fn validate_manifest_structure<'a>(
              {MAX_READINESS_TIMEOUT_MS} milliseconds"
         )));
     }
+    let prohibited_behaviors = &manifest.process_supervision.prohibited_behaviors;
+    let supports_observed_handoff = prohibited_behaviors
+        == &PROHIBITED_PROCESS_BEHAVIORS.map(str::to_string);
+    let legacy_process_group_escape_contract = prohibited_behaviors
+        == &[
+            "daemonize".to_string(),
+            "double-fork".to_string(),
+            "setsid".to_string(),
+            "process-group-escape".to_string(),
+        ];
     if manifest.process_supervision.contract != PROCESS_SUPERVISION_CONTRACT
-        || manifest.process_supervision.prohibited_behaviors
-            != PROHIBITED_PROCESS_BEHAVIORS.map(str::to_string)
+        || !(supports_observed_handoff || legacy_process_group_escape_contract)
     {
         return Err(LauncherError::InvalidArtifact(
-            "Capsule must declare cooperative observed supervision and prohibit daemonize, double-fork, setsid, and process-group escape"
+            "Capsule must declare cooperative observed supervision and prohibit daemonize, double-fork, and setsid (legacy process-group-escape manifests are accepted)"
                 .to_string(),
         ));
     }
@@ -2177,11 +2189,10 @@ mod tests {
                 "001272656164696e6573732e70726f746f636f6c00000000000000116c61756e636865722d72656164792d7631",
                 "001472656164696e6573732e74696d656f75745f6d7300000000000000080000000000001388",
                 "001c70726f636573735f7375706572766973696f6e2e636f6e74726163740000000000000017636f6f70657261746976652d6f627365727665642d7631",
-                "002470726f636573735f7375706572766973696f6e2e70726f686962697465642e636f756e7400000000000000080000000000000004",
+                "002470726f636573735f7375706572766973696f6e2e70726f686962697465642e636f756e7400000000000000080000000000000003",
                 "001e70726f636573735f7375706572766973696f6e2e70726f6869626974656400000000000000096461656d6f6e697a65",
                 "001e70726f636573735f7375706572766973696f6e2e70726f68696269746564000000000000000b646f75626c652d666f726b",
                 "001e70726f636573735f7375706572766973696f6e2e70726f686962697465640000000000000006736574736964",
-                "001e70726f636573735f7375706572766973696f6e2e70726f68696269746564000000000000001470726f636573732d67726f75702d657363617065",
                 "000d656e74726965732e636f756e7400000000000000080000000000000004",
                 "000c656e7472792e302e70617468000000000000000362696e",
                 "000c656e7472792e302e7479706500000000000000096469726563746f7279",
