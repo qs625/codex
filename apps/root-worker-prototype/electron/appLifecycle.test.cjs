@@ -167,6 +167,7 @@ test("terminal failed prepare does not stop backend or exit", async () => {
 
 test("prepare identity mismatch does not stop backend or exit", async () => {
   const calls = [];
+  const warnings = [];
   const adapter = createInstalledArtifactUpdateLifecycleAdapter({
     appExit() {
       calls.push("exit");
@@ -192,16 +193,27 @@ test("prepare identity mismatch does not stop backend or exit", async () => {
     updateArtifacts: async () => ({
       ok: true,
       activationId: "activation-mismatch",
+      incomingRoot: "/tmp/incoming-mismatch",
       releaseId: `sha256:${"e".repeat(64)}`,
       manifest: { target: { os: "darwin", arch: "arm64" } },
     }),
-    logger: { error() {}, warn() {} },
+    cleanupPreparedArtifact: async () => {
+      throw new Error("secondary ENOTDIR cleanup failure");
+    },
+    logger: {
+      error() {},
+      warn(...args) {
+        warnings.push(args);
+      },
+    },
   });
 
   const result = await adapter.requestUpdateAndRelaunch("update");
   assert.equal(result.ok, false);
   assert.match(result.reason, /does not match the produced candidate/);
   assert.deepEqual(calls, []);
+  assert.equal(warnings.length, 1);
+  assert.match(JSON.stringify(warnings[0]), /secondary ENOTDIR cleanup failure/);
 });
 
 test("already committed prepare reports success without another exit", async () => {

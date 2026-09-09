@@ -37,6 +37,35 @@ const WORKER_FILES = [
 ];
 let workerBundlePath = null;
 
+function resolveInstalledArtifactFileSystem(options = {}) {
+  if (options.fsOps != null) {
+    return options.fsOps;
+  }
+  const defaultFsOps = options.defaultFsOps ?? fs;
+  const isElectron =
+    options.isElectron ?? typeof process.versions?.electron === "string";
+  if (!isElectron) {
+    return defaultFsOps;
+  }
+  const loadOriginalFileSystem =
+    options.loadOriginalFileSystem ?? (() => require("original-fs"));
+  let originalFileSystem;
+  try {
+    originalFileSystem = loadOriginalFileSystem();
+  } catch (error) {
+    throw new Error(
+      `Failed to load Electron original-fs for Runtime Capsule filesystem operations: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (!originalFileSystem || typeof originalFileSystem !== "object") {
+    throw new Error(
+      "Electron original-fs did not provide a Runtime Capsule filesystem implementation",
+    );
+  }
+  return originalFileSystem;
+}
+
 function resolveInstalledArtifactUpdatePlan(options = {}) {
   const {
     commandEnv,
@@ -128,7 +157,8 @@ function resolveCargoTargetDirectory({
 }
 
 function updateInstalledArtifacts(plan, options = {}) {
-  assertPlan(plan);
+  const fsOps = resolveInstalledArtifactFileSystem(options);
+  assertPlan(plan, fsOps);
   const activationId =
     normalizeString(options.activationId) ?? crypto.randomUUID();
   validateActivationId(activationId);
@@ -140,7 +170,6 @@ function updateInstalledArtifacts(plan, options = {}) {
     incomingRoot,
     ...PAYLOAD_RELATIVE_PATH.split(path.sep),
   );
-  const fsOps = options.fsOps ?? fs;
   const runCommand =
     options.runCommand ??
     ((command, args, commandOptions) =>
@@ -226,8 +255,13 @@ function updateInstalledArtifacts(plan, options = {}) {
       manifest,
     };
   } catch (error) {
-    fsOps.rmSync(incomingRoot, { force: true, recursive: true });
-    throw error;
+    let failure = error;
+    try {
+      fsOps.rmSync(incomingRoot, { force: true, recursive: true });
+    } catch (cleanupError) {
+      failure = attachCleanupFailure(error, cleanupError);
+    }
+    throw failure;
   }
 }
 
@@ -249,7 +283,11 @@ function buildRuntimeSources(plan, { runCommand }) {
   );
 }
 
-function stagePayloadResources(plan, resourceRoot, fsOps = fs) {
+function stagePayloadResources(
+  plan,
+  resourceRoot,
+  fsOps = resolveInstalledArtifactFileSystem(),
+) {
   const appServerTarget = path.join(resourceRoot, "bin", "app-server");
   const compactTarget = path.join(
     resourceRoot,
@@ -271,7 +309,10 @@ function stagePayloadResources(plan, resourceRoot, fsOps = fs) {
   fsOps.chmodSync(compactTarget, 0o644);
 }
 
-function normalizeRuntimeCapsuleTree(root, fsOps = fs) {
+function normalizeRuntimeCapsuleTree(
+  root,
+  fsOps = resolveInstalledArtifactFileSystem(),
+) {
   const metadata = fsOps.lstatSync(root);
   if (!metadata.isDirectory()) {
     throw new Error(`Runtime Capsule root is not a directory: ${root}`);
@@ -301,7 +342,7 @@ function clearExtendedAttributes(root, { runCommand }) {
   runCommand("xattr", ["-cr", root], { cwd: path.dirname(root) });
 }
 
-function assertPlan(plan, fsOps = fs) {
+function assertPlan(plan, fsOps = resolveInstalledArtifactFileSystem()) {
   for (const [label, targetPath, type] of [
     ["source app", plan?.sourceAppDir, "directory"],
     ["codex-rs", plan?.codexRsDir, "directory"],
@@ -411,30 +452,72 @@ function materializeInstalledArtifactWorkerBundle(options = {}) {
   if (workerBundlePath) {
     return workerBundlePath;
   }
-  const bundlePath = (options.mkdtempSync ?? fs.mkdtempSync)(
+  const fsOps = resolveInstalledArtifactFileSystem(options);
+  const bundlePath = (options.mkdtempSync ?? fsOps.mkdtempSync)(
     path.join(os.tmpdir(), "morpheus-artifact-worker-"),
   );
   try {
     for (const fileName of WORKER_FILES) {
-      (options.copyFileSync ?? fs.copyFileSync)(
+      (options.copyFileSync ?? fsOps.copyFileSync)(
         path.join(__dirname, fileName),
         path.join(bundlePath, fileName),
       );
     }
   } catch (error) {
-    (options.rmSync ?? fs.rmSync)(bundlePath, {
-      force: true,
-      recursive: true,
-    });
-    throw error;
+    let failure = error;
+    try {
+      (options.rmSync ?? fsOps.rmSync)(bundlePath, {
+        force: true,
+        recursive: true,
+      });
+    } catch (cleanupError) {
+      failure = attachCleanupFailure(error, cleanupError);
+    }
+    throw failure;
   }
   workerBundlePath = bundlePath;
   process.once("exit", () => {
     try {
-      fs.rmSync(bundlePath, { force: true, recursive: true });
+      fsOps.rmSync(bundlePath, { force: true, recursive: true });
     } catch {}
   });
   return bundlePath;
+}
+
+async function removeInstalledArtifactTree(targetPath, options = {}) {
+  const fsOps = resolveInstalledArtifactFileSystem(options);
+  const removeOptions = { force: true, recursive: true };
+  if (typeof fsOps.promises?.rm === "function") {
+    await fsOps.promises.rm(targetPath, removeOptions);
+    return;
+  }
+  if (typeof fsOps.rm === "function") {
+    await new Promise((resolve, reject) => {
+      fsOps.rm(targetPath, removeOptions, (error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+    return;
+  }
+  fsOps.rmSync(targetPath, removeOptions);
+}
+
+function attachCleanupFailure(error, cleanupError) {
+  const primaryError =
+    error instanceof Error ? error : new Error(String(error));
+  const cleanupMessage =
+    cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  primaryError.message = `${primaryError.message}; Runtime Capsule cleanup also failed: ${cleanupMessage}`;
+  Object.defineProperty(primaryError, "cleanupError", {
+    configurable: true,
+    enumerable: false,
+    value: cleanupError,
+  });
+  return primaryError;
 }
 
 function run(command, args, options = {}) {
@@ -494,7 +577,9 @@ module.exports = {
   clearExtendedAttributes,
   materializeInstalledArtifactWorkerBundle,
   normalizeRuntimeCapsuleTree,
+  removeInstalledArtifactTree,
   resolveCargoTargetDirectory,
+  resolveInstalledArtifactFileSystem,
   resolveInstalledArtifactUpdatePlan,
   resolveInstalledArtifactUpdatePlanInWorker,
   resolveRuntimeLauncherStateRoot,
