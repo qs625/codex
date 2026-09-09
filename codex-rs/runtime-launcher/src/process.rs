@@ -404,22 +404,12 @@ fn require_cooperative_group(
             )));
         }
     }
-    for identity in tracked {
-        if Some(*identity) == target.guard {
-            continue;
-        }
-        if let Some(record) = records.get(identity)
-            && record.pgid != target.process_group.pgid
-        {
-            return Err(ProcessCleanupError::Blocked(format!(
-                "tracked process {}/{} escaped registered pgid {} into pgid {}; daemonize, double-fork, setsid, and process-group escape are unsupported",
-                identity.pid,
-                identity.start_identity,
-                target.process_group.pgid,
-                record.pgid
-            )));
-        }
-    }
+    // macOS Electron can hand off the app's main process into a separate
+    // process group. Every such process is already in `tracked`, keyed by a
+    // PID plus start identity, and cleanup signals tracked identities directly
+    // after terminating the original group. An untracked group member still
+    // blocks cleanup above, because its ownership is ambiguous.
+    let _ = records;
     Ok(())
 }
 
@@ -769,7 +759,7 @@ mod tests {
     }
 
     #[test]
-    fn cooperative_cleanup_rejects_an_observed_process_group_escape() {
+    fn cooperative_cleanup_allows_an_observed_process_group_handoff() {
         let root = ProcessIdentity {
             pid: 10,
             start_identity: 100,
@@ -800,12 +790,11 @@ mod tests {
             },
         ];
 
-        let error = require_cooperative_group(
+        require_cooperative_group(
             &target,
             &BTreeSet::from([root, escaped]),
             &processes,
         )
-        .expect_err("observed escape must block");
-        assert!(error.to_string().contains("escaped registered pgid"));
+        .expect("an observed handoff remains safely trackable by identity");
     }
 }

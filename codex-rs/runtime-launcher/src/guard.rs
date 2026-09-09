@@ -932,23 +932,20 @@ pub fn run_hidden_guard(request_path: &Path) -> Result<(), GuardError> {
 
     let mut parent_liveness_lost = false;
     let mut known_descendants = BTreeSet::new();
+    let mut payload_exit_status = None;
     let raw_wait_status = loop {
         let snapshot = crate::process::snapshot_processes()
             .map_err(|error| GuardError::Blocked(error.to_string()))?;
-        known_descendants.extend(crate::process::descendants_of(payload, &snapshot));
-        let observed_escape = snapshot.iter().find(|process| {
-            known_descendants.contains(&process.identity)
-                && process.pgid != process_group.pgid
-        });
+        extend_observed_descendants(&mut known_descendants, payload, &snapshot);
         let ambiguous_group_member = snapshot.iter().find(|process| {
             process.pgid == process_group.pgid
-                && process.identity != payload
-                && !known_descendants.contains(&process.identity)
+            && process.identity != payload
+            && !known_descendants.contains(&process.identity)
         });
-        if let Some(process) = observed_escape.or(ambiguous_group_member) {
+        if let Some(process) = ambiguous_group_member {
             known_descendants.insert(process.identity);
             let message = format!(
-                "cooperative process contract violated by process {}/{} in pgid {}; daemonize, double-fork, setsid, and process-group escape are prohibited",
+                "cooperative process contract violated by untracked process {}/{} in guarded pgid {}",
                 process.identity.pid,
                 process.identity.start_identity,
                 process.pgid
@@ -973,22 +970,23 @@ pub fn run_hidden_guard(request_path: &Path) -> Result<(), GuardError> {
             )?;
             return Err(GuardError::Blocked(message));
         }
-        let mut status = 0_i32;
-        let waited = unsafe { libc::waitpid(payload.pid, &mut status, libc::WNOHANG) };
-        if waited == payload.pid {
-            cleanup_guarded_payload(
-                payload,
-                process_group,
-                guard_identity,
-                known_descendants.clone(),
-            )?;
-            break status;
+        if payload_exit_status.is_none() {
+            let mut status = 0_i32;
+            let waited = unsafe { libc::waitpid(payload.pid, &mut status, libc::WNOHANG) };
+            if waited == payload.pid {
+                payload_exit_status = Some(status);
+            }
+            if waited < 0 {
+                return Err(GuardError::io(
+                    "wait for guarded payload",
+                    io::Error::last_os_error(),
+                ));
+            }
         }
-        if waited < 0 {
-            return Err(GuardError::io(
-                "wait for guarded payload",
-                io::Error::last_os_error(),
-            ));
+        if let Some(status) = payload_exit_status
+            && observed_identities_are_gone(&known_descendants)?
+        {
+            break status;
         }
         if !parent_monitor.parent_is_alive()? {
             parent_liveness_lost = true;
@@ -998,12 +996,13 @@ pub fn run_hidden_guard(request_path: &Path) -> Result<(), GuardError> {
                 guard_identity,
                 known_descendants.clone(),
             )?;
-            let waited = unsafe { libc::waitpid(payload.pid, &mut status, 0) };
+            let mut final_status = payload_exit_status.unwrap_or_default();
+            let waited = unsafe { libc::waitpid(payload.pid, &mut final_status, 0) };
             if waited == payload.pid {
-                break status;
+                break final_status;
             }
             if waited < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD) {
-                break status;
+                break final_status;
             }
             return Err(GuardError::io(
                 "reap guarded payload after parent loss",
@@ -1024,6 +1023,33 @@ pub fn run_hidden_guard(request_path: &Path) -> Result<(), GuardError> {
             cleanup_evidence: CleanupEvidence::CooperativeObservedEmpty,
         },
     )
+}
+
+fn extend_observed_descendants(
+    known_descendants: &mut BTreeSet<ProcessIdentity>,
+    payload: ProcessIdentity,
+    snapshot: &[crate::process::ProcessRecord],
+) {
+    let roots = std::iter::once(payload)
+        .chain(known_descendants.iter().copied())
+        .collect::<Vec<_>>();
+    for root in roots {
+        known_descendants.extend(crate::process::descendants_of(root, snapshot));
+    }
+}
+
+fn observed_identities_are_gone(
+    identities: &BTreeSet<ProcessIdentity>,
+) -> Result<bool, GuardError> {
+    for identity in identities {
+        if identity
+            .is_alive()
+            .map_err(|error| GuardError::io("observe handed-off payload descendant", error))?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub fn write_protocol_file<T: Serialize>(path: &Path, value: &T) -> Result<(), GuardError> {
@@ -1598,5 +1624,48 @@ mod tests {
             .expect("entrypoint")
         );
         assert!(!called);
+    }
+
+    #[test]
+    fn tracks_descendants_after_the_payload_hands_off_its_process_group() {
+        let payload = ProcessIdentity {
+            pid: 10,
+            start_identity: 100,
+        };
+        let handed_off = ProcessIdentity {
+            pid: 11,
+            start_identity: 110,
+        };
+        let child = ProcessIdentity {
+            pid: 12,
+            start_identity: 120,
+        };
+        let mut known = BTreeSet::new();
+        extend_observed_descendants(
+            &mut known,
+            payload,
+            &[crate::process::ProcessRecord {
+                identity: handed_off,
+                parent_pid: payload.pid,
+                pgid: handed_off.pid,
+            }],
+        );
+        extend_observed_descendants(
+            &mut known,
+            payload,
+            &[
+                crate::process::ProcessRecord {
+                    identity: handed_off,
+                    parent_pid: 1,
+                    pgid: handed_off.pid,
+                },
+                crate::process::ProcessRecord {
+                    identity: child,
+                    parent_pid: handed_off.pid,
+                    pgid: handed_off.pid,
+                },
+            ],
+        );
+        assert_eq!(known, BTreeSet::from([handed_off, child]));
     }
 }
