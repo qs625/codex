@@ -51,6 +51,7 @@ mod strict_config;
 mod thread_archive;
 mod thread_fork;
 mod thread_inject_items;
+mod thread_client_recovery;
 mod thread_list;
 mod thread_loaded_list;
 mod thread_memory_mode_set;

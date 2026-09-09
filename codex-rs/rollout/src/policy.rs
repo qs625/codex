@@ -196,6 +196,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::EventDrivenToolCompleted(_)
         | EventMsg::InterAgentCommunicationCompleted(_)
         | EventMsg::ThreadGoalUpdateCompleted(_)
+        | EventMsg::ClientRecovery(_)
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)
         | EventMsg::McpToolCallEnd(_)
@@ -792,5 +793,23 @@ mod tests {
             should_persist_event_msg(&EventMsg::ShutdownComplete, EventPersistenceMode::Limited),
             false
         );
+    }
+
+    #[test]
+    fn limited_mode_persists_client_recovery() {
+        let event = EventMsg::ClientRecovery(protocol::protocol::ClientRecoveryEvent {
+            recovery_id: "recovery-1".into(),
+            transaction_id: "transaction-1".into(),
+            mode: "rollback".into(),
+            build_id: "build-2".into(),
+            reason: "health check failed".into(),
+            occurred_at: "2026-09-09T08:30:00.000Z".into(),
+            previous_build_id: Some("build-1".into()),
+        });
+
+        assert!(should_persist_event_msg(
+            &event,
+            EventPersistenceMode::Limited
+        ));
     }
 }

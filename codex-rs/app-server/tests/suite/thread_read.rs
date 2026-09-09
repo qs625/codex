@@ -3852,6 +3852,10 @@ fn thread_visible_texts(thread: &app_server_protocol::Thread) -> Vec<String> {
                         text,
                         ..
                     } => vec![text.clone()],
+                    app_server_protocol::ContextCompactionReplacementItem::ConversationArtifact {
+                        content,
+                        ..
+                    } => vec![content.clone()],
                 })
                 .collect(),
             _ => Vec::new(),

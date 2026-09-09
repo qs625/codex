@@ -95,6 +95,7 @@ permissions-service = { workspace = true }
 session-telemetry-api = { workspace = true }
 protocol = { workspace = true }
 codex-realtime = { workspace = true }
+rollout = { workspace = true }
 rollout-trace-api = { workspace = true }
 rollout-api = { workspace = true }
 codex-sandboxing = { workspace = true }
@@ -168,7 +169,6 @@ codex-openai-files = { workspace = true }
 codex-otel = { workspace = true }
 plugin-service = { workspace = true }
 plugin-service-api = { workspace = true }
-rollout = { workspace = true }
 rollout-trace = { workspace = true }
 codex-sandboxing = { workspace = true }
 state = { workspace = true }

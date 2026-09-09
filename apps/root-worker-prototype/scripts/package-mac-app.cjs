@@ -1,9 +1,12 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const APP_NAME = "Root Worker Prototype";
 const APP_PLATFORM_DIR = "Root Worker Prototype-darwin-arm64";
+const HOST_EXECUTABLE_NAME = "Root Worker Runtime";
+const LAUNCHER_EXECUTABLE_NAME = "MorpheusLauncher";
 const DIST_DIR_NAME = "dist-app";
 const RESOURCE_STAGING_DIR_NAME = "dist-package-resources";
 
@@ -22,13 +25,17 @@ function buildMacAppPackagePlan({
     defaultConfigResourceDir,
     "compact",
   );
+  const appBundlePath = path.join(
+    cwd,
+    distDirName,
+    APP_PLATFORM_DIR,
+    `${appName}.app`,
+  );
+  const macOsDir = path.join(appBundlePath, "Contents", "MacOS");
   return {
-    appBundlePath: path.join(
-      cwd,
-      distDirName,
-      APP_PLATFORM_DIR,
-      `${appName}.app`,
-    ),
+    appBundlePath,
+    appBundleInfoPlistPath: path.join(appBundlePath, "Contents", "Info.plist"),
+    appBundlePackagerExecutablePath: path.join(macOsDir, appName),
     appServerBinaryPath: path.join(
       codexRsDir,
       "target",
@@ -50,8 +57,22 @@ function buildMacAppPackagePlan({
     ),
     defaultConfigResourceDir,
     distDir: path.join(cwd, distDirName),
+    hostExecutablePath: path.join(macOsDir, HOST_EXECUTABLE_NAME),
+    launcherBinaryPath: path.join(
+      codexRsDir,
+      "target",
+      "release",
+      LAUNCHER_EXECUTABLE_NAME,
+    ),
+    launcherExecutablePath: path.join(macOsDir, LAUNCHER_EXECUTABLE_NAME),
     repoRoot,
     resourceStagingDir,
+    runtimeManifestPath: path.join(
+      appBundlePath,
+      "Contents",
+      "Resources",
+      ".morpheus-runtime-manifest.json",
+    ),
   };
 }
 
@@ -72,6 +93,7 @@ function buildElectronPackagerArgs({
     "--app-bundle-id=com.openai.root-worker-prototype.dev",
     "--app-category-type=public.app-category.developer-tools",
     "--extend-info=electron/Info.plist",
+    "--asar",
     "--ignore=^/dist-app($|/)",
     "--ignore=^/dist-package-resources($|/)",
     "--no-prune",
@@ -96,17 +118,143 @@ function prepareMacAppResources(plan) {
   );
 }
 
+function installMacRuntimeExecutables(plan, fsOps = fs) {
+  fsOps.renameSync(
+    plan.appBundlePackagerExecutablePath,
+    plan.hostExecutablePath,
+  );
+  fsOps.copyFileSync(plan.launcherBinaryPath, plan.launcherExecutablePath);
+  fsOps.chmodSync(plan.hostExecutablePath, 0o755);
+  fsOps.chmodSync(plan.launcherExecutablePath, 0o755);
+}
+
+function writeInstalledRuntimeManifest(
+  plan,
+  { sourceCommit, fsOps = fs } = {},
+) {
+  if (typeof sourceCommit !== "string" || !sourceCommit.trim()) {
+    throw new Error("Packaged runtime manifest requires a source commit");
+  }
+  const resourcesRoot = path.join(plan.appBundlePath, "Contents", "Resources");
+  const relativePaths = [
+    "app.asar",
+    path.join("bin", "app-server"),
+    path.join("default-config", "compact", "COMPACT.md"),
+  ];
+  const artifacts = relativePaths.map((relativePath) => ({
+    relativePath,
+    sha256: crypto
+      .createHash("sha256")
+      .update(fsOps.readFileSync(path.join(resourcesRoot, relativePath)))
+      .digest("hex"),
+  }));
+  const buildId = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ sourceCommit, artifacts }))
+    .digest("hex")
+    .slice(0, 24);
+  const manifest = {
+    schemaVersion: 1,
+    buildId,
+    sourceCommit,
+    entrypoint: "app.asar",
+    artifacts,
+  };
+  fsOps.writeFileSync(
+    plan.runtimeManifestPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return manifest;
+}
+
+function assertMacRuntimeLayout(plan, fsOps = fs) {
+  for (const targetPath of [
+    plan.hostExecutablePath,
+    plan.launcherExecutablePath,
+    plan.runtimeManifestPath,
+    path.join(plan.appBundlePath, "Contents", "Resources", "app.asar"),
+    path.join(
+      plan.appBundlePath,
+      "Contents",
+      "Resources",
+      "bin",
+      "app-server",
+    ),
+    path.join(
+      plan.appBundlePath,
+      "Contents",
+      "Resources",
+      "default-config",
+      "compact",
+      "COMPACT.md",
+    ),
+  ]) {
+    if (!fsOps.statSync(targetPath).isFile()) {
+      throw new Error(`Required packaged runtime artifact is missing: ${targetPath}`);
+    }
+  }
+  if (fsOps.existsSync(plan.appBundlePackagerExecutablePath)) {
+    throw new Error(
+      `Packager executable was not renamed: ${plan.appBundlePackagerExecutablePath}`,
+    );
+  }
+}
+
+function finalizeMacRuntimeBundle(
+  plan,
+  { fsOps = fs, runCommand = run, sourceCommit } = {},
+) {
+  const cwd = path.dirname(plan.distDir);
+  const appServerPath = path.join(
+    plan.appBundlePath,
+    "Contents",
+    "Resources",
+    "bin",
+    "app-server",
+  );
+  runCommand(
+    "codesign",
+    ["--force", "--sign", "-", appServerPath],
+    { cwd },
+  );
+  const manifest = writeInstalledRuntimeManifest(plan, {
+    fsOps,
+    sourceCommit,
+  });
+  runCommand(
+    "/usr/libexec/PlistBuddy",
+    [
+      "-c",
+      `Set :CFBundleExecutable ${LAUNCHER_EXECUTABLE_NAME}`,
+      plan.appBundleInfoPlistPath,
+    ],
+    { cwd },
+  );
+  assertMacRuntimeLayout(plan, fsOps);
+  runCommand(
+    "codesign",
+    ["--force", "--deep", "--sign", "-", plan.appBundlePath],
+    { cwd },
+  );
+  runCommand(
+    "codesign",
+    ["--verify", "--deep", "--strict", plan.appBundlePath],
+    { cwd },
+  );
+  return manifest;
+}
+
 function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}) {
   if (platform !== "darwin") {
     throw new Error("macOS app packaging requires codesign and must run on macOS.");
   }
   const plan = buildMacAppPackagePlan({ cwd });
   fs.rmSync(plan.distDir, { force: true, recursive: true });
-  run("rtk", ["pnpm", "build"], { cwd });
+  run("pnpm", ["build"], { cwd });
   run(
-    "rtk",
+    "cargo",
     [
-      "cargo",
       "build",
       "--manifest-path",
       path.relative(cwd, plan.codexRsCargoManifestPath),
@@ -114,15 +262,18 @@ function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}
       "app-server",
       "--bin",
       "app-server",
+      "-p",
+      "runtime-launcher",
+      "--bin",
+      LAUNCHER_EXECUTABLE_NAME,
       "--release",
     ],
     { cwd },
   );
   prepareMacAppResources(plan);
   run(
-    "rtk",
+    "pnpm",
     [
-      "pnpm",
       "dlx",
       "@electron/packager",
       ...buildElectronPackagerArgs({
@@ -133,11 +284,24 @@ function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}
     ],
     { cwd },
   );
-  run(
-    "rtk",
-    ["codesign", "--force", "--deep", "--sign", "-", plan.appBundlePath],
-    { cwd },
-  );
+  installMacRuntimeExecutables(plan);
+  const sourceCommit = capture("git", ["rev-parse", "HEAD"], { cwd }).trim();
+  finalizeMacRuntimeBundle(plan, { sourceCommit });
+}
+
+function capture(command, args, options) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} exited with ${result.status}`);
+  }
+  return result.stdout;
 }
 
 function run(command, args, options) {
@@ -158,8 +322,12 @@ if (require.main === module) {
 }
 
 module.exports = {
+  assertMacRuntimeLayout,
   buildElectronPackagerArgs,
   buildMacAppPackagePlan,
+  finalizeMacRuntimeBundle,
+  installMacRuntimeExecutables,
   packageMacApp,
   prepareMacAppResources,
+  writeInstalledRuntimeManifest,
 };

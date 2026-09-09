@@ -1,79 +1,68 @@
-const fs = require("node:fs");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { Worker } = require("node:worker_threads");
+const { buildDesktopEnvironment } = require("./environment.cjs");
 const {
   isPackagedApp,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
-const { buildDesktopEnvironment } = require("./environment.cjs");
 
-const APP_NAME = "Root Worker Prototype";
-const APP_PLATFORM_DIR = "Root Worker Prototype-darwin-arm64";
-const SOURCE_APP_RELATIVE_PATH = path.join("apps", "root-worker-prototype");
 const APP_ASAR_RELATIVE_PATH = "app.asar";
 const APP_SERVER_RELATIVE_PATH = path.join("bin", "app-server");
-const APP_SERVER_BINARY_NAME = "app-server";
-const DEFAULT_CONFIG_RELATIVE_PATH = "default-config";
-const SIGNATURE_RELATIVE_PATH = path.join("Contents", "_CodeSignature");
-const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
+const DEFAULT_COMPACT_RELATIVE_PATH = path.join(
+  "default-config",
+  "compact",
+  "COMPACT.md",
+);
+const SOURCE_APP_RELATIVE_PATH = path.join("apps", "root-worker-prototype");
+const CANDIDATE_PREFIX = "morpheus-runtime-candidate-";
 const ELECTRON_SHELL_RELATIVE_DIR = "electron";
-const INSTALLED_ARTIFACT_WORKER_FILES = [
+const WORKER_FILES = [
   "environment.cjs",
   "installedArtifactUpdate.cjs",
   "installedArtifactUpdateWorker.cjs",
   "workspace.cjs",
 ];
-let installedArtifactWorkerBundlePath = null;
+let workerBundlePath = null;
 
 function resolveInstalledArtifactUpdatePlan({
   commandEnv,
   env = process.env,
+  isPackaged = isPackagedApp({ resourcesPath }),
   platform = process.platform,
   resourcesPath = currentResourcesPath(),
-  workspace,
-  appName = APP_NAME,
-  appPlatformDir = APP_PLATFORM_DIR,
-  isPackaged = isPackagedApp({ resourcesPath }),
   spawnSync: spawn = spawnSync,
+  workspace,
 } = {}) {
   if (platform !== "darwin" || !isPackaged || !resourcesPath) {
     return null;
   }
-
   const resolvedWorkspace =
     workspace ?? resolveDefaultWorkspace(env, { isPackagedApp: true });
   if (!resolvedWorkspace) {
     return null;
   }
-
-  const appBundlePath = path.dirname(path.dirname(resourcesPath));
-  const sourceAppDir = path.join(resolvedWorkspace, SOURCE_APP_RELATIVE_PATH);
-  const codexRsDir = path.join(resolvedWorkspace, "codex-rs");
-  const codexRsCargoManifestPath = path.join(codexRsDir, "Cargo.toml");
   const resolvedCommandEnv = commandEnv ?? buildDesktopEnvironment(env);
+  const codexRsDir = path.join(resolvedWorkspace, "codex-rs");
   const cargoTargetDir = resolveCargoTargetDirectory({
-    codexRsCargoManifestPath,
     codexRsDir,
     env: resolvedCommandEnv,
     spawnSync: spawn,
   });
-
-  const shellUpdate = resolveElectronShellUpdate({
+  const sourceAppDir = path.join(resolvedWorkspace, SOURCE_APP_RELATIVE_PATH);
+  const electronShell = resolveElectronShellUpdate({
+    commandEnv: resolvedCommandEnv,
     resourcesPath,
     sourceAppDir,
+    spawnSync: spawn,
+    workspace: resolvedWorkspace,
   });
-
   return {
-    appBundlePath,
-    appServerBinaryPath: path.join(
-      cargoTargetDir,
-      "release",
-      APP_SERVER_BINARY_NAME,
-    ),
-    codexRsCargoManifestPath,
+    appBundlePath: path.dirname(path.dirname(resourcesPath)),
+    appServerBinaryPath: path.join(cargoTargetDir, "release", "app-server"),
     commandEnv: resolvedCommandEnv,
     defaultCompactPromptSourcePath: path.join(
       codexRsDir,
@@ -83,150 +72,26 @@ function resolveInstalledArtifactUpdatePlan({
       "prompt.md",
     ),
     frontendDistPath: path.join(sourceAppDir, "dist"),
+    requiresFullRelaunch: electronShell.changed,
     resourcesPath,
-    requiresFullRelaunch: shellUpdate.changed,
-    runtimeUpdate: {
-      electronShell: shellUpdate,
-    },
+    runtimeUpdate: { electronShell },
     sourceAppDir,
     workspace: resolvedWorkspace,
-    artifacts: [
-      { kind: "file", relativePath: APP_ASAR_RELATIVE_PATH },
-      { kind: "file", relativePath: APP_SERVER_RELATIVE_PATH },
-      { kind: "directory", relativePath: DEFAULT_CONFIG_RELATIVE_PATH },
-    ],
   };
-}
-
-function resolveElectronShellUpdate({
-  resourcesPath,
-  sourceAppDir,
-  relativePaths,
-  readFileSync = fs.readFileSync,
-  readdirSync = fs.readdirSync,
-} = {}) {
-  const shellRelativePaths = relativePaths ?? [
-    ...new Set([
-      ...listElectronShellSourceRelativePaths(sourceAppDir, { readdirSync }),
-      ...listInstalledElectronShellRelativePaths(resourcesPath, { readdirSync }),
-    ]),
-  ].sort();
-  const changedPaths = [];
-  const missingInstalledPaths = [];
-  const missingSourcePaths = [];
-  for (const relativePath of shellRelativePaths) {
-    const sourcePath = path.join(sourceAppDir, relativePath);
-    const installedPath = path.join(
-      resourcesPath,
-      APP_ASAR_RELATIVE_PATH,
-      relativePath,
-    );
-    let sourceDigest;
-    let installedDigest;
-    try {
-      sourceDigest = bufferDigest(readFileSync(sourcePath));
-    } catch {
-      missingSourcePaths.push(relativePath);
-      changedPaths.push(relativePath);
-      continue;
-    }
-    try {
-      installedDigest = bufferDigest(readFileSync(installedPath));
-    } catch {
-      missingInstalledPaths.push(relativePath);
-      changedPaths.push(relativePath);
-      continue;
-    }
-    if (sourceDigest !== installedDigest) {
-      changedPaths.push(relativePath);
-    }
-  }
-  return {
-    category: "electronShell",
-    changed: changedPaths.length > 0,
-    changedPaths,
-    missingInstalledPaths,
-    missingSourcePaths,
-  };
-}
-
-function listElectronShellSourceRelativePaths(sourceAppDir, options = {}) {
-  return listElectronShellRelativePaths(sourceAppDir, options);
-}
-
-function listInstalledElectronShellRelativePaths(resourcesPath, options = {}) {
-  return listElectronShellRelativePaths(
-    path.join(resourcesPath, APP_ASAR_RELATIVE_PATH),
-    options,
-  );
-}
-
-function listElectronShellRelativePaths(appRoot, options = {}) {
-  const readdirSync = options.readdirSync ?? fs.readdirSync;
-  const electronRoot = path.join(appRoot, ELECTRON_SHELL_RELATIVE_DIR);
-  const relativePaths = [];
-  try {
-    collectElectronShellSourceFiles({
-      currentPath: electronRoot,
-      electronRoot,
-      relativePaths,
-      readdirSync,
-    });
-  } catch (error) {
-    if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") {
-      throw error;
-    }
-  }
-  return relativePaths.sort();
-}
-
-function collectElectronShellSourceFiles({
-  currentPath,
-  electronRoot,
-  relativePaths,
-  readdirSync,
-}) {
-  for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
-    const entryPath = path.join(currentPath, entry.name);
-    if (entry.isDirectory()) {
-      collectElectronShellSourceFiles({
-        currentPath: entryPath,
-        electronRoot,
-        relativePaths,
-        readdirSync,
-      });
-      continue;
-    }
-    if (!entry.isFile() || !entry.name.endsWith(".cjs")) {
-      continue;
-    }
-    if (entry.name.endsWith(".test.cjs")) {
-      continue;
-    }
-    relativePaths.push(
-      path.join(
-        ELECTRON_SHELL_RELATIVE_DIR,
-        path.relative(electronRoot, entryPath),
-      ),
-    );
-  }
 }
 
 function resolveCargoTargetDirectory({
-  codexRsCargoManifestPath,
   codexRsDir,
   env = buildDesktopEnvironment(),
   spawnSync: spawn = spawnSync,
 } = {}) {
+  const configured = normalizeString(env.CARGO_TARGET_DIR);
+  if (configured) {
+    return path.resolve(codexRsDir, configured);
+  }
   const result = spawn(
     "cargo",
-    [
-      "metadata",
-      "--format-version=1",
-      "--no-deps",
-      "--manifest-path",
-      codexRsCargoManifestPath,
-    ],
+    ["metadata", "--format-version=1", "--no-deps"],
     {
       cwd: codexRsDir,
       encoding: "utf8",
@@ -234,171 +99,337 @@ function resolveCargoTargetDirectory({
       stdio: "pipe",
     },
   );
-  assertSuccessfulSpawn(
-    result,
-    "cargo metadata --format-version=1 --no-deps --manifest-path <Cargo.toml>",
-    { cwd: codexRsDir },
-  );
-
+  assertSuccessfulSpawn(result, "cargo metadata");
   let metadata;
   try {
     metadata = JSON.parse(result.stdout);
   } catch (error) {
-    throw new Error(
-      `Failed to parse cargo metadata for app-server target directory${formatCause(error)}`,
-    );
+    throw new Error(`Failed to parse cargo metadata: ${error.message}`);
   }
-  if (
-    !metadata ||
-    typeof metadata.target_directory !== "string" ||
-    metadata.target_directory.length === 0
-  ) {
-    throw new Error("Cargo metadata did not include target_directory.");
+  if (!normalizeString(metadata?.target_directory)) {
+    throw new Error("Cargo metadata did not include target_directory");
   }
   return metadata.target_directory;
 }
 
-function updateInstalledArtifacts(plan, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const logger = options.logger ?? console;
-  const prepareArtifacts = options.prepareArtifacts ?? prepareDirectArtifacts;
-  const replaceArtifacts =
-    options.replaceArtifacts ?? replaceInstalledArtifactsSync;
-  const codesign = options.codesign ?? codesignInstalledApp;
-
-  assertSourceWorkspace(plan, options);
-  assertInstalledTargetsWritable(plan, options);
-
-  const prepared = prepareArtifacts(plan, {
-    ...options,
-    spawnSync: spawn,
-    logger,
-  });
-  const stagedPlan = {
-    ...plan,
-    stagedResourcesPath: prepared.stagedResourcesPath,
-  };
-  let replacement = null;
-  let preservePreparedArtifacts = false;
-  let preserveReplacementBackup = false;
-  let preserveSignatureBackup = false;
-  let signatureBackup = null;
+function resolveElectronShellUpdate({
+  commandEnv = buildDesktopEnvironment(),
+  mkdtempSync = fs.mkdtempSync,
+  readFileSync = fs.readFileSync,
+  readdirSync = fs.readdirSync,
+  rmSync = fs.rmSync,
+  resourcesPath,
+  sourceAppDir,
+  spawnSync: spawn = spawnSync,
+  workspace = sourceAppDir,
+} = {}) {
+  const extractedRoot = mkdtempSync(
+    path.join(os.tmpdir(), "morpheus-installed-asar-"),
+  );
   try {
-    assertStagedArtifacts(stagedPlan, options);
-    replacement = replaceArtifacts(stagedPlan, {
-      ...options,
-      keepBackup: true,
-      replacementWorkRoot: prepared.stagingRoot,
-    });
-    assertInstalledArtifactsMatchStaged(stagedPlan, options);
-    signatureBackup = backupSignatureMetadataSync(stagedPlan, {
-      ...options,
-      fsOps: replacement.fsOps,
-      signatureBackupRoot: prepared.stagingRoot,
-      updateId: replacement.updateId,
-    });
-    codesign(stagedPlan, {
-      env: resolveCommandEnvironment(stagedPlan, options),
-      logger,
-      spawnSync: spawn,
-      stdio: options.stdio,
-    });
-  } catch (error) {
-    preservePreparedArtifacts = error?.preserveArtifactBackup === true;
-    let failure = error;
-    if (replacement) {
-      const rollbackErrors = restoreBackups(
-        stagedPlan,
-        replacement.backupDir,
-        replacement.fsOps,
-        stagedPlan.artifacts,
-        options,
+    extractInstalledAppAsar(
+      path.join(resourcesPath, APP_ASAR_RELATIVE_PATH),
+      extractedRoot,
+      { commandEnv, spawnSync: spawn, workspace },
+    );
+    const relativePaths = [
+      ...new Set([
+        ...listElectronShellSourceRelativePaths(sourceAppDir, { readdirSync }),
+        ...listElectronShellRelativePaths(extractedRoot, { readdirSync }),
+      ]),
+    ].sort();
+    const changedPaths = relativePaths.filter((relativePath) => {
+      const source = readDigest(
+        path.join(sourceAppDir, relativePath),
+        readFileSync,
       );
-      preserveReplacementBackup = rollbackErrors.length > 0;
-      failure = appendSecondaryFailures(
-        failure,
-        "installed artifact rollback",
-        rollbackErrors,
+      const installed = readDigest(
+        path.join(extractedRoot, relativePath),
+        readFileSync,
       );
-    }
-    if (signatureBackup) {
-      try {
-        restoreSignatureMetadataSync(signatureBackup);
-      } catch (restoreError) {
-        preservePreparedArtifacts = true;
-        preserveSignatureBackup = true;
-        failure = appendSecondaryFailures(
-          failure,
-          "signature rollback",
-          [restoreError],
-        );
-      }
-    }
-    throw failure;
+      return source !== installed;
+    });
+    return {
+      category: "electronShell",
+      changed: changedPaths.length > 0,
+      changedPaths,
+    };
   } finally {
-    if (signatureBackup && !preserveSignatureBackup) {
-      try {
-        cleanupSignatureBackupSync(signatureBackup);
-      } catch (error) {
-        logger?.warn?.(
-          `[prototype] signature backup cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } else if (signatureBackup) {
-      logger?.warn?.(
-        `[prototype] preserving signature backup after rollback failure: ${signatureBackup.backupPath}`,
-      );
+    rmSync(extractedRoot, { force: true, recursive: true });
+  }
+}
+
+function listElectronShellSourceRelativePaths(sourceAppDir, options = {}) {
+  return listElectronShellRelativePaths(sourceAppDir, options);
+}
+
+function listElectronShellRelativePaths(appRoot, options = {}) {
+  const electronRoot = path.join(appRoot, ELECTRON_SHELL_RELATIVE_DIR);
+  const result = [];
+  collectElectronShellFiles(electronRoot, electronRoot, result, {
+    readdirSync: options.readdirSync ?? fs.readdirSync,
+  });
+  return result.sort();
+}
+
+function collectElectronShellFiles(current, electronRoot, result, options) {
+  let entries;
+  try {
+    entries = options.readdirSync(current, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return;
     }
-    if (replacement && !preserveReplacementBackup) {
-      cleanupRawArchiveContainerBestEffort(
-        replacement.backupDir,
-        replacement.fsOps,
-        options,
-        logger,
-        "replacement backup cleanup",
-      );
-    } else if (replacement) {
-      logger?.warn?.(
-        `[prototype] preserving replacement backup after rollback failure: ${replacement.backupDir}`,
-      );
-    }
-    if (!preservePreparedArtifacts && !preserveReplacementBackup) {
-      cleanupRawArchiveContainerBestEffort(
-        prepared.stagingRoot,
-        prepared.fsOps,
-        options,
-        logger,
-        "prepared artifact cleanup",
-      );
-    } else {
-      logger?.warn?.(
-        `[prototype] preserving prepared artifacts after rollback failure: ${prepared.stagingRoot}`,
+    throw error;
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(current, entry.name);
+    if (entry.isDirectory()) {
+      collectElectronShellFiles(entryPath, electronRoot, result, options);
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith(".cjs") &&
+      !entry.name.endsWith(".test.cjs")
+    ) {
+      result.push(
+        path.join(
+          ELECTRON_SHELL_RELATIVE_DIR,
+          path.relative(electronRoot, entryPath),
+        ),
       );
     }
   }
+}
 
+function extractInstalledAppAsar(
+  archivePath,
+  destinationPath,
+  {
+    commandEnv = buildDesktopEnvironment(),
+    spawnSync: spawn = spawnSync,
+    workspace = path.dirname(archivePath),
+  } = {},
+) {
+  const result = spawn(
+    "pnpm",
+    ["dlx", "@electron/asar", "extract", archivePath, destinationPath],
+    {
+      cwd: workspace,
+      encoding: "utf8",
+      env: commandEnv,
+      stdio: "pipe",
+    },
+  );
+  assertSuccessfulSpawn(result, "pnpm dlx @electron/asar extract");
+}
+
+function updateInstalledArtifacts(plan, options = {}) {
+  return prepareInstalledArtifacts(plan, options);
+}
+
+function prepareInstalledArtifacts(plan, options = {}) {
+  assertPreparedSources(plan, options);
+  const fsOps = {
+    cpSync: options.cpSync ?? fs.cpSync,
+    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
+    mkdtempSync: options.mkdtempSync ?? fs.mkdtempSync,
+    readFileSync: options.readFileSync ?? fs.readFileSync,
+    rmSync: options.rmSync ?? fs.rmSync,
+    statSync: options.statSync ?? fs.statSync,
+    writeFileSync: options.writeFileSync ?? fs.writeFileSync,
+  };
+  const preparedRoot = fsOps.mkdtempSync(
+    path.join(options.candidateParent ?? os.tmpdir(), CANDIDATE_PREFIX),
+  );
+  const resourcesRoot = path.join(preparedRoot, "resources");
+  const appSourceRoot = path.join(preparedRoot, "app-source");
+  const appAsarPath = path.join(resourcesRoot, APP_ASAR_RELATIVE_PATH);
+  const appServerPath = path.join(resourcesRoot, APP_SERVER_RELATIVE_PATH);
+  const compactPath = path.join(resourcesRoot, DEFAULT_COMPACT_RELATIVE_PATH);
+  try {
+    fsOps.mkdirSync(path.dirname(appAsarPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(appServerPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(compactPath), { recursive: true });
+    fsOps.cpSync(plan.sourceAppDir, appSourceRoot, {
+      recursive: true,
+      filter: candidateSourceFilter,
+    });
+    packAppAsar(plan, appSourceRoot, appAsarPath, options);
+    fsOps.rmSync(appSourceRoot, { force: true, recursive: true });
+    fsOps.cpSync(plan.appServerBinaryPath, appServerPath);
+    signCandidateAppServer(plan, appServerPath, options);
+    fsOps.cpSync(plan.defaultCompactPromptSourcePath, compactPath);
+
+    const sourceCommit =
+      normalizeString(options.sourceCommit) ??
+      resolveSourceCommit(plan.workspace, {
+        env: plan.commandEnv,
+        spawnSync: options.spawnSync,
+      });
+    const artifacts = [
+      artifactDescriptor(resourcesRoot, APP_ASAR_RELATIVE_PATH, fsOps),
+      artifactDescriptor(resourcesRoot, APP_SERVER_RELATIVE_PATH, fsOps),
+      artifactDescriptor(resourcesRoot, DEFAULT_COMPACT_RELATIVE_PATH, fsOps),
+    ];
+    const buildId =
+      normalizeString(options.buildId) ??
+      sha256(
+        Buffer.from(
+          JSON.stringify({
+            sourceCommit,
+            artifacts: artifacts.map(({ relativePath, sha256 }) => ({
+              relativePath,
+              sha256,
+            })),
+          }),
+        ),
+      ).slice(0, 24);
+    const manifest = {
+      schemaVersion: 1,
+      buildId,
+      sourceCommit,
+      entrypoint: APP_ASAR_RELATIVE_PATH,
+      artifacts,
+    };
+    fsOps.writeFileSync(
+      path.join(preparedRoot, "manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    return {
+      ok: true,
+      updated: false,
+      appBundlePath: plan.appBundlePath,
+      buildId,
+      changes: {
+        main:
+          plan.runtimeUpdate?.electronShell?.changedPaths?.some(
+            (relativePath) => relativePath !== "electron/preload.cjs",
+          ) === true,
+        preload:
+          plan.runtimeUpdate?.electronShell?.changedPaths?.includes(
+            "electron/preload.cjs",
+          ) === true,
+      },
+      manifest,
+      preparedRoot,
+      sourceCommit,
+      transactionId: options.transactionId ?? crypto.randomUUID(),
+    };
+  } catch (error) {
+    fsOps.rmSync(preparedRoot, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+function signCandidateAppServer(plan, appServerPath, options = {}) {
+  const result = (options.spawnSync ?? spawnSync)(
+    "codesign",
+    ["--force", "--sign", "-", appServerPath],
+    {
+      cwd: plan.workspace,
+      encoding: "utf8",
+      env: plan.commandEnv,
+      stdio: options.stdio ?? "pipe",
+    },
+  );
+  assertSuccessfulSpawn(result, "codesign candidate app-server");
+}
+
+function packAppAsar(plan, sourceRoot, targetPath, options = {}) {
+  const result = (options.spawnSync ?? spawnSync)(
+    "pnpm",
+    ["dlx", "@electron/asar", "pack", sourceRoot, targetPath],
+    {
+      cwd: plan.workspace,
+      encoding: "utf8",
+      env: plan.commandEnv,
+      stdio: options.stdio ?? "pipe",
+    },
+  );
+  assertSuccessfulSpawn(result, "pnpm dlx @electron/asar pack");
+}
+
+function resolveSourceCommit(workspace, options = {}) {
+  const result = (options.spawnSync ?? spawnSync)(
+    "git",
+    ["rev-parse", "HEAD"],
+    {
+      cwd: workspace,
+      encoding: "utf8",
+      env: options.env,
+      stdio: "pipe",
+    },
+  );
+  assertSuccessfulSpawn(result, "git rev-parse HEAD");
+  const commit = normalizeString(result.stdout);
+  if (!commit) {
+    throw new Error("git rev-parse HEAD returned an empty commit");
+  }
+  return commit;
+}
+
+function artifactDescriptor(resourcesRoot, relativePath, fsOps) {
+  const artifactPath = path.join(resourcesRoot, relativePath);
+  if (!fsOps.statSync(artifactPath).isFile()) {
+    throw new Error(`Prepared artifact is not a file: ${artifactPath}`);
+  }
   return {
-    ok: true,
-    updated: true,
-    workspace: plan.workspace,
-    appBundlePath: plan.appBundlePath,
+    relativePath,
+    sha256: sha256(fsOps.readFileSync(artifactPath)),
   };
 }
 
-function resolveInstalledArtifactUpdatePlanInWorker(options = {}) {
-  const workerOptions = {
-    commandEnv: options.commandEnv,
-    env: options.env ?? { ...process.env },
-    platform: options.platform ?? process.platform,
-    resourcesPath: options.resourcesPath ?? currentResourcesPath(),
-    workspace: options.workspace,
-  };
-  if (Object.hasOwn(options, "isPackaged")) {
-    workerOptions.isPackaged = options.isPackaged;
+function assertPreparedSources(plan, options = {}) {
+  const statSync = options.statSync ?? fs.statSync;
+  for (const [label, targetPath, type] of [
+    ["source app", plan.sourceAppDir, "directory"],
+    ["frontend dist", plan.frontendDistPath, "directory"],
+    ["release app-server", plan.appServerBinaryPath, "file"],
+    ["default compact prompt", plan.defaultCompactPromptSourcePath, "file"],
+  ]) {
+    let stat;
+    try {
+      stat = statSync(targetPath);
+    } catch (error) {
+      throw new Error(`Missing ${label}: ${targetPath}`, { cause: error });
+    }
+    if (
+      (type === "file" && !stat.isFile()) ||
+      (type === "directory" && !stat.isDirectory())
+    ) {
+      throw new Error(`Expected ${label} to be a ${type}: ${targetPath}`);
+    }
   }
+}
+
+function candidateSourceFilter(source) {
+  const name = path.basename(source);
+  return (
+    name !== "dist-app" &&
+    name !== "dist-package-resources" &&
+    !name.startsWith(CANDIDATE_PREFIX)
+  );
+}
+
+function resolveInstalledArtifactUpdatePlanInWorker(options = {}) {
+  const env = options.env ?? { ...process.env };
+  const commandEnv = {
+    ...(options.commandEnv ??
+      buildDesktopEnvironment(env, options.desktopEnvironmentOptions)),
+  };
   return runInstalledArtifactWorker(
     "resolvePlan",
-    workerOptions,
+    {
+      commandEnv,
+      env,
+      platform: options.platform ?? process.platform,
+      resourcesPath: options.resourcesPath ?? currentResourcesPath(),
+      workspace: options.workspace,
+      ...(Object.hasOwn(options, "isPackaged")
+        ? { isPackaged: options.isPackaged }
+        : {}),
+    },
     options.workerOptions,
   );
 }
@@ -425,812 +456,88 @@ function runInstalledArtifactWorker(operation, payload, options = {}) {
     });
     let settled = false;
     const settle = (callback, value) => {
-      if (settled) {
-        return;
+      if (!settled) {
+        settled = true;
+        callback(value);
       }
-      settled = true;
-      callback(value);
     };
     worker.once("message", (message) => {
       if (message?.ok) {
         settle(resolve, message.result);
-        return;
+      } else {
+        settle(
+          reject,
+          new Error(message?.error?.message ?? "Artifact worker failed"),
+        );
       }
-      const error = new Error(
-        message?.error?.message ?? "Installed artifact worker failed",
-      );
-      if (message?.error?.name) {
-        error.name = message.error.name;
-      }
-      if (message?.error?.stack) {
-        error.stack = message.error.stack;
-      }
-      settle(reject, error);
     });
     worker.once("error", (error) => settle(reject, error));
     worker.once("exit", (code) => {
       if (code !== 0) {
-        settle(
-          reject,
-          new Error(`Installed artifact worker exited with code ${code}`),
-        );
+        settle(reject, new Error(`Artifact worker exited with code ${code}`));
       } else if (!settled) {
-        settle(
-          reject,
-          new Error("Installed artifact worker exited without a result"),
-        );
+        settle(reject, new Error("Artifact worker exited without a result"));
       }
     });
   });
 }
 
 function materializeInstalledArtifactWorkerBundle(options = {}) {
-  if (installedArtifactWorkerBundlePath) {
-    return installedArtifactWorkerBundlePath;
+  if (workerBundlePath) {
+    return workerBundlePath;
   }
-  const mkdtempSync = options.mkdtempSync ?? fs.mkdtempSync;
-  const copyFileSync = options.copyFileSync ?? fs.copyFileSync;
-  const rmSync = options.rmSync ?? fs.rmSync;
-  const bundlePath = mkdtempSync(
-    path.join(os.tmpdir(), "morpheus-installed-artifact-worker-"),
+  const bundlePath = (options.mkdtempSync ?? fs.mkdtempSync)(
+    path.join(os.tmpdir(), "morpheus-artifact-worker-"),
   );
   try {
-    for (const fileName of INSTALLED_ARTIFACT_WORKER_FILES) {
-      copyFileSync(path.join(__dirname, fileName), path.join(bundlePath, fileName));
+    for (const fileName of WORKER_FILES) {
+      (options.copyFileSync ?? fs.copyFileSync)(
+        path.join(__dirname, fileName),
+        path.join(bundlePath, fileName),
+      );
     }
   } catch (error) {
-    rmSync(bundlePath, { force: true, recursive: true });
+    (options.rmSync ?? fs.rmSync)(bundlePath, {
+      force: true,
+      recursive: true,
+    });
     throw error;
   }
-  installedArtifactWorkerBundlePath = bundlePath;
+  workerBundlePath = bundlePath;
   process.once("exit", () => {
     try {
-      rmSync(bundlePath, { force: true, recursive: true });
-    } catch {
-      // Best-effort cleanup only; a stale temp bundle is safe to remove later.
-    }
+      fs.rmSync(bundlePath, { force: true, recursive: true });
+    } catch {}
   });
   return bundlePath;
 }
 
-function prepareDirectArtifacts(plan, options = {}) {
-  const fsOps = {
-    cpSync: options.cpSync ?? fs.cpSync,
-    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
-    rmSync: options.rmSync ?? fs.rmSync,
-  };
-  buildDirectArtifactSources(plan, options);
-  assertDirectArtifactSources(plan, options);
-  const stagingRoot =
-    options.directStagingRoot ??
-    fs.mkdtempSync(path.join(os.tmpdir(), DIRECT_REFRESH_STAGING_PREFIX));
-  const stagedResourcesPath = path.join(stagingRoot, "resources");
-  const appSourceStagingPath = path.join(stagingRoot, "app-source");
-  const stagedAppAsarPath = path.join(
-    stagedResourcesPath,
-    APP_ASAR_RELATIVE_PATH,
-  );
-  const stagedAppServerPath = path.join(
-    stagedResourcesPath,
-    APP_SERVER_RELATIVE_PATH,
-  );
-  const stagedDefaultCompactPath = path.join(
-    stagedResourcesPath,
-    DEFAULT_CONFIG_RELATIVE_PATH,
-    "compact",
-    "COMPACT.md",
-  );
-
-  cleanupRawArchiveContainer(stagingRoot, fsOps, options);
-  try {
-    fsOps.mkdirSync(path.dirname(stagedAppAsarPath), { recursive: true });
-    fsOps.mkdirSync(path.dirname(stagedAppServerPath), { recursive: true });
-    fsOps.mkdirSync(path.dirname(stagedDefaultCompactPath), { recursive: true });
-    fsOps.cpSync(plan.sourceAppDir, appSourceStagingPath, {
-      recursive: true,
-      filter: directAppSourceFilter,
-    });
-    packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options);
-    fsOps.cpSync(plan.appServerBinaryPath, stagedAppServerPath);
-    fsOps.cpSync(plan.defaultCompactPromptSourcePath, stagedDefaultCompactPath);
-  } catch (error) {
-    cleanupRawArchiveContainerBestEffort(
-      stagingRoot,
-      fsOps,
-      options,
-      options.logger ?? console,
-      "failed artifact preparation cleanup",
-    );
-    throw error;
-  }
-
-  return {
-    fsOps,
-    stagedResourcesPath,
-    stagingRoot,
-  };
-}
-
-function buildDirectArtifactSources(plan, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const env = resolveCommandEnvironment(plan, options);
-  const stdio = options.stdio ?? "pipe";
-  const frontendBuild = spawn(
-    "pnpm",
-    ["--filter", "@my-codex/root-worker-prototype", "build"],
-    {
-      cwd: plan.workspace,
-      encoding: "utf8",
-      env,
-      stdio,
-    },
-  );
-  assertSuccessfulSpawn(
-    frontendBuild,
-    "pnpm --filter @my-codex/root-worker-prototype build",
-    { cwd: plan.workspace },
-  );
-  assertPathType(
-    options.statSync ?? fs.statSync,
-    plan.frontendDistPath,
-    "directory",
-    "frontend dist",
-  );
-
-  const codexRsDir = path.dirname(plan.codexRsCargoManifestPath);
-  const appServerBuild = spawn(
-    "cargo",
-    [
-      "build",
-      "--release",
-      "--package",
-      "app-server",
-      "--bin",
-      APP_SERVER_BINARY_NAME,
-      "--manifest-path",
-      plan.codexRsCargoManifestPath,
-    ],
-    {
-      cwd: codexRsDir,
-      encoding: "utf8",
-      env,
-      stdio,
-    },
-  );
-  assertSuccessfulSpawn(
-    appServerBuild,
-    "cargo build --release --package app-server --bin app-server --manifest-path <Cargo.toml>",
-    { cwd: codexRsDir },
-  );
-  assertPathType(
-    options.statSync ?? fs.statSync,
-    plan.appServerBinaryPath,
-    "file",
-    "release app-server binary",
-  );
-}
-
-function packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const env = resolveCommandEnvironment(plan, options);
-  const result = spawn(
-    "pnpm",
-    [
-      "dlx",
-      "@electron/asar",
-      "pack",
-      appSourceStagingPath,
-      stagedAppAsarPath,
-    ],
-    {
-      cwd: plan.workspace,
-      encoding: "utf8",
-      env,
-      stdio: options.stdio ?? "pipe",
-    },
-  );
-  assertSuccessfulSpawn(
-    result,
-    "pnpm dlx @electron/asar pack <source> <app.asar>",
-    { cwd: plan.workspace },
-  );
-}
-
-function codesignInstalledApp(plan, options = {}) {
-  const spawn = options.spawnSync ?? spawnSync;
-  const env = resolveCommandEnvironment(plan, options);
-  const result = spawn(
-    "codesign",
-    ["--force", "--deep", "--sign", "-", plan.appBundlePath],
-    {
-      cwd: plan.workspace,
-      encoding: "utf8",
-      env,
-      stdio: options.stdio ?? "pipe",
-    },
-  );
-  assertSuccessfulSpawn(result, "codesign --force --deep --sign - <app>", {
-    cwd: plan.workspace,
-  });
-}
-
-function resolveCommandEnvironment(plan, options = {}) {
-  return plan.commandEnv ?? options.env ?? buildDesktopEnvironment();
-}
-
-function assertSuccessfulSpawn(result, label, context = {}) {
-  if (result.error) {
+function assertSuccessfulSpawn(result, label) {
+  if (result?.error) {
     throw result.error;
   }
-  if (result.status !== 0) {
-    const stdout = result.stdout ? String(result.stdout).trim() : "";
-    const stderr = result.stderr ? String(result.stderr).trim() : "";
-    const details = [
-      `exited with ${result.status}`,
-      context.cwd ? `cwd=${context.cwd}` : null,
-      stdout ? `stdout=${truncateOutput(stdout)}` : null,
-      stderr ? `stderr=${truncateOutput(stderr)}` : null,
-    ]
-      .filter(Boolean)
-      .join("; ");
-    throw new Error(`${label} ${details}`);
+  if (result?.status !== 0) {
+    const stderr = normalizeString(result?.stderr);
+    throw new Error(
+      `${label} exited with ${String(result?.status)}${stderr ? `: ${stderr}` : ""}`,
+    );
   }
 }
 
-function truncateOutput(value, maxLength = 4000) {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength)}...<truncated>`;
-}
-
-function assertDirectArtifactSources(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  assertPathType(statSync, plan.frontendDistPath, "directory", "frontend dist");
-  assertPathType(
-    statSync,
-    plan.appServerBinaryPath,
-    "file",
-    "release app-server binary",
-  );
-  assertPathType(
-    statSync,
-    plan.defaultCompactPromptSourcePath,
-    "file",
-    "default compact prompt",
-  );
-}
-
-function assertPathType(statSync, targetPath, expectedType, label) {
-  let stat;
+function readDigest(filePath, readFileSync) {
   try {
-    stat = statSync(targetPath);
-  } catch (error) {
-    throw new Error(`Missing ${label}: ${targetPath}${formatCause(error)}`);
-  }
-  const matches =
-    expectedType === "directory" ? stat.isDirectory() : stat.isFile();
-  if (!matches) {
-    throw new Error(`Expected ${label} to be a ${expectedType}: ${targetPath}`);
+    return sha256(readFileSync(filePath));
+  } catch {
+    return null;
   }
 }
 
-function directAppSourceFilter(source) {
-  const name = path.basename(source);
-  return (
-    name !== "dist-app" &&
-    name !== "dist-package-resources" &&
-    !name.startsWith(DIRECT_REFRESH_STAGING_PREFIX)
-  );
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-function assertSourceWorkspace(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  if (!statSync(plan.sourceAppDir).isDirectory()) {
-    throw new Error(
-      `Morpheus source app directory is missing: ${plan.sourceAppDir}`,
-    );
-  }
-}
-
-function assertInstalledTargetsWritable(plan, options = {}) {
-  const accessSync = options.accessSync ?? fs.accessSync;
-  const constants = options.constants ?? fs.constants;
-  accessSync(plan.resourcesPath, constants.W_OK);
-  accessSync(plan.appBundlePath, constants.W_OK);
-  for (const artifact of plan.artifacts) {
-    const artifactAccessSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: accessSync,
-      methodName: "accessSync",
-      operation: "preflight writable check",
-      options,
-    });
-    artifactAccessSync(
-      path.join(plan.resourcesPath, artifact.relativePath),
-      constants.W_OK,
-    );
-  }
-}
-
-function assertStagedArtifacts(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  for (const artifact of plan.artifacts) {
-    const artifactPath = path.join(
-      plan.stagedResourcesPath,
-      artifact.relativePath,
-    );
-    const artifactStatSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: statSync,
-      methodName: "statSync",
-      operation: "staged artifact type check",
-      options,
-    });
-    const stat = artifactStatSync(artifactPath);
-    if (artifact.kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
-      throw new Error(
-        `Prepared refresh artifact has unexpected type: ${artifactPath}`,
-      );
-    }
-  }
-}
-
-function assertInstalledArtifactsMatchStaged(plan, options = {}) {
-  const statSync = options.statSync ?? fs.statSync;
-  for (const artifact of plan.artifacts) {
-    const stagedPath = path.join(plan.stagedResourcesPath, artifact.relativePath);
-    const installedPath = path.join(plan.resourcesPath, artifact.relativePath);
-    if (artifact.kind === "directory") {
-      assertDirectoryDigestsEqual(statSync, stagedPath, installedPath);
-      continue;
-    }
-    const fileOptions =
-      isRawAppAsarArtifact(artifact)
-        ? {
-            ...options,
-            readFileSync: resolveRawAppAsarFileSystemMethod({
-              defaultMethod: options.readFileSync ?? fs.readFileSync,
-              methodName: "readFileSync",
-              operation: "postcondition digest",
-              options,
-            }),
-          }
-        : options;
-    assertFileDigestsEqual(stagedPath, installedPath, fileOptions);
-  }
-}
-
-function isRawAppAsarArtifact(artifact) {
-  return (
-    artifact?.kind === "file" &&
-    artifact.relativePath === APP_ASAR_RELATIVE_PATH
-  );
-}
-
-function resolveRawAppAsarFileSystemMethod({
-  defaultMethod,
-  methodName,
-  operation,
-  options = {},
-}) {
-  const injectedMethodName =
-    methodName === "readFileSync" ? "rawReadFileSync" : null;
-  if (
-    injectedMethodName &&
-    typeof options[injectedMethodName] === "function"
-  ) {
-    return options[injectedMethodName];
-  }
-  if (options.rawArchiveFileSystem != null) {
-    return requireRawAppAsarMethod(
-      options.rawArchiveFileSystem,
-      methodName,
-      operation,
-    );
-  }
-  const isElectron =
-    options.isElectron ?? typeof process.versions?.electron === "string";
-  if (isElectron) {
-    const loadOriginalFileSystem =
-      options.loadOriginalFileSystem ?? (() => require("original-fs"));
-    let originalFileSystem;
-    try {
-      originalFileSystem = loadOriginalFileSystem();
-    } catch (error) {
-      throw new Error(
-        `Failed to load Electron original-fs ${methodName} for raw app.asar ${operation}${formatCause(error)}`,
-        { cause: error },
-      );
-    }
-    return requireRawAppAsarMethod(
-      originalFileSystem,
-      methodName,
-      operation,
-    );
-  }
-  return defaultMethod;
-}
-
-function requireRawAppAsarMethod(fileSystem, methodName, operation) {
-  const method = fileSystem?.[methodName];
-  if (typeof method !== "function") {
-    throw new Error(
-      `Electron original-fs does not provide ${methodName} for raw app.asar ${operation}`,
-    );
-  }
-  return method;
-}
-
-function resolveArtifactFileSystemMethod({
-  artifact,
-  defaultMethod,
-  methodName,
-  operation,
-  options,
-}) {
-  if (!isRawAppAsarArtifact(artifact)) {
-    return defaultMethod;
-  }
-  return resolveRawAppAsarFileSystemMethod({
-    defaultMethod,
-    methodName,
-    operation,
-    options,
-  });
-}
-
-function assertDirectoryDigestsEqual(statSync, stagedPath, installedPath) {
-  const stagedFiles = listDirectoryFiles(stagedPath);
-  const installedFiles = listDirectoryFiles(installedPath);
-  if (JSON.stringify(installedFiles) !== JSON.stringify(stagedFiles)) {
-    throw new Error(
-      `Installed directory files differ from staged artifact: ${installedPath}`,
-    );
-  }
-  for (const relativePath of stagedFiles) {
-    const stagedFile = path.join(stagedPath, relativePath);
-    const installedFile = path.join(installedPath, relativePath);
-    assertPathType(statSync, installedFile, "file", "installed artifact file");
-    assertFileDigestsEqual(stagedFile, installedFile);
-  }
-}
-
-function assertFileDigestsEqual(stagedPath, installedPath, options = {}) {
-  const stagedHash = fileDigest(stagedPath, options);
-  const installedHash = fileDigest(installedPath, options);
-  if (stagedHash !== installedHash) {
-    throw new Error(
-      `Installed artifact does not match staged artifact: ${installedPath}`,
-    );
-  }
-}
-
-function fileDigest(filePath, options = {}) {
-  const readFileSync = options.readFileSync ?? fs.readFileSync;
-  return bufferDigest(readFileSync(filePath));
-}
-
-function bufferDigest(buffer) {
-  return crypto.createHash("sha256").update(buffer).digest("hex");
-}
-
-function listDirectoryFiles(rootPath) {
-  const files = [];
-  collectDirectoryFiles(rootPath, rootPath, files);
-  return files.sort();
-}
-
-function collectDirectoryFiles(rootPath, currentPath, files) {
-  for (const entry of fs.readdirSync(currentPath, { withFileTypes: true })) {
-    const entryPath = path.join(currentPath, entry.name);
-    if (entry.isDirectory()) {
-      collectDirectoryFiles(rootPath, entryPath, files);
-      continue;
-    }
-    if (entry.isFile()) {
-      files.push(path.relative(rootPath, entryPath));
-    }
-  }
-}
-
-function formatCause(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message ? ` (${message})` : "";
-}
-
-function replaceInstalledArtifactsSync(plan, options = {}) {
-  const fsOps = {
-    cpSync: options.cpSync ?? fs.cpSync,
-    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
-    renameSync: options.renameSync ?? fs.renameSync,
-    rmSync: options.rmSync ?? fs.rmSync,
-  };
-  const updateId =
-    options.updateId ??
-    `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  const workRoot = options.replacementWorkRoot ?? os.tmpdir();
-  const stagingDir = path.join(
-    workRoot,
-    `.morpheus-update-staging-${updateId}`,
-  );
-  const backupDir = path.join(
-    workRoot,
-    `.morpheus-update-backup-${updateId}`,
-  );
-
-  cleanupRawArchiveContainer(stagingDir, fsOps, options);
-  cleanupRawArchiveContainer(backupDir, fsOps, options);
-  fsOps.mkdirSync(stagingDir, { recursive: true });
-  fsOps.mkdirSync(backupDir, { recursive: true });
-
-  let completed = false;
-  let operationError = null;
-  let preserveBackup = false;
-  const backedUpArtifacts = [];
-  try {
-    for (const artifact of plan.artifacts) {
-      const artifactCpSync = resolveArtifactFileSystemMethod({
-        artifact,
-        defaultMethod: fsOps.cpSync,
-        methodName: "cpSync",
-        operation: "replacement staging copy",
-        options,
-      });
-      artifactCpSync(
-        path.join(plan.stagedResourcesPath, artifact.relativePath),
-        path.join(stagingDir, artifact.relativePath),
-        { recursive: artifact.kind === "directory" },
-      );
-    }
-
-    for (const artifact of plan.artifacts) {
-      const artifactRenameSync = resolveArtifactFileSystemMethod({
-        artifact,
-        defaultMethod: fsOps.renameSync,
-        methodName: "renameSync",
-        operation: "installed artifact backup",
-        options,
-      });
-      fsOps.mkdirSync(path.dirname(path.join(backupDir, artifact.relativePath)), {
-        recursive: true,
-      });
-      try {
-        artifactRenameSync(
-          path.join(plan.resourcesPath, artifact.relativePath),
-          path.join(backupDir, artifact.relativePath),
-        );
-        backedUpArtifacts.push(artifact);
-      } catch (error) {
-        const rollbackErrors = restoreBackups(
-          plan,
-          backupDir,
-          fsOps,
-          backedUpArtifacts,
-          options,
-        );
-        preserveBackup = rollbackErrors.length > 0;
-        const failure = appendSecondaryFailures(
-          error,
-          "partial backup rollback",
-          rollbackErrors,
-        );
-        if (preserveBackup) {
-          markPreservedArtifactBackup(failure, backupDir);
-        }
-        throw failure;
-      }
-    }
-
-    try {
-      for (const artifact of plan.artifacts) {
-        const artifactRenameSync = resolveArtifactFileSystemMethod({
-          artifact,
-          defaultMethod: fsOps.renameSync,
-          methodName: "renameSync",
-          operation: "installed artifact replacement",
-          options,
-        });
-        fsOps.mkdirSync(
-          path.dirname(path.join(plan.resourcesPath, artifact.relativePath)),
-          {
-            recursive: true,
-          },
-        );
-        artifactRenameSync(
-          path.join(stagingDir, artifact.relativePath),
-          path.join(plan.resourcesPath, artifact.relativePath),
-        );
-      }
-    } catch (error) {
-      const rollbackErrors = restoreBackups(
-        plan,
-        backupDir,
-        fsOps,
-        backedUpArtifacts,
-        options,
-      );
-      preserveBackup = rollbackErrors.length > 0;
-      const failure = appendSecondaryFailures(
-        error,
-        "partial replacement rollback",
-        rollbackErrors,
-      );
-      if (preserveBackup) {
-        markPreservedArtifactBackup(failure, backupDir);
-      }
-      throw failure;
-    }
-    completed = true;
-  } catch (error) {
-    operationError = error;
-    throw error;
-  } finally {
-    const logger = options.logger ?? console;
-    cleanupRawArchiveContainerBestEffort(
-      stagingDir,
-      fsOps,
-      options,
-      logger,
-      operationError
-        ? "failed replacement staging cleanup"
-        : "replacement staging cleanup",
-    );
-    if ((!options.keepBackup || !completed) && !preserveBackup) {
-      cleanupRawArchiveContainerBestEffort(
-        backupDir,
-        fsOps,
-        options,
-        logger,
-        operationError
-          ? "failed replacement backup cleanup"
-          : "replacement backup cleanup",
-      );
-    } else if (preserveBackup) {
-      logger?.warn?.(
-        `[prototype] preserving replacement backup after rollback failure: ${backupDir}`,
-      );
-    }
-  }
-
-  return { backupDir, fsOps, stagingDir, updateId };
-}
-
-function restoreBackups(
-  plan,
-  backupDir,
-  fsOps,
-  artifacts = plan.artifacts,
-  options = {},
-) {
-  const errors = [];
-  for (const artifact of artifacts) {
-    const target = path.join(plan.resourcesPath, artifact.relativePath);
-    const backup = path.join(backupDir, artifact.relativePath);
-    const artifactRmSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: fsOps.rmSync,
-      methodName: "rmSync",
-      operation: "rollback target cleanup",
-      options,
-    });
-    const artifactRenameSync = resolveArtifactFileSystemMethod({
-      artifact,
-      defaultMethod: fsOps.renameSync,
-      methodName: "renameSync",
-      operation: "rollback backup restore",
-      options,
-    });
-    try {
-      artifactRmSync(target, { recursive: true, force: true });
-    } catch (error) {
-      errors.push(error);
-      continue;
-    }
-    try {
-      artifactRenameSync(backup, target);
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  return errors;
-}
-
-function backupSignatureMetadataSync(plan, options = {}) {
-  const fsOps = options.fsOps ?? {
-    cpSync: options.cpSync ?? fs.cpSync,
-    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
-    renameSync: options.renameSync ?? fs.renameSync,
-    rmSync: options.rmSync ?? fs.rmSync,
-  };
-  const existsSync = options.existsSync ?? fs.existsSync;
-  const signaturePath = path.join(plan.appBundlePath, SIGNATURE_RELATIVE_PATH);
-  const backupRoot =
-    options.signatureBackupRoot ??
-    path.join(
-      os.tmpdir(),
-      `${DIRECT_REFRESH_STAGING_PREFIX}signature-${options.updateId ?? "current"}`,
-    );
-  const backupPath = path.join(
-    backupRoot,
-    `.morpheus-signature-backup-${options.updateId ?? "current"}`,
-  );
-  cleanupPath(backupPath, fsOps);
-  if (!existsSync(signaturePath)) {
-    return { backupPath, existed: false, fsOps, signaturePath };
-  }
-  fsOps.mkdirSync(path.dirname(backupPath), { recursive: true });
-  fsOps.cpSync(signaturePath, backupPath, { recursive: true });
-  return { backupPath, existed: true, fsOps, signaturePath };
-}
-
-function restoreSignatureMetadataSync(signatureBackup) {
-  cleanupPath(signatureBackup.signaturePath, signatureBackup.fsOps);
-  if (signatureBackup.existed) {
-    signatureBackup.fsOps.renameSync(
-      signatureBackup.backupPath,
-      signatureBackup.signaturePath,
-    );
-  }
-}
-
-function cleanupSignatureBackupSync(signatureBackup) {
-  cleanupPath(signatureBackup.backupPath, signatureBackup.fsOps);
-}
-
-function cleanupPath(targetPath, fsOps) {
-  fsOps.rmSync(targetPath, { recursive: true, force: true });
-}
-
-function cleanupRawArchiveContainer(targetPath, fsOps, options = {}) {
-  const rmSync = resolveRawAppAsarFileSystemMethod({
-    defaultMethod: fsOps.rmSync,
-    methodName: "rmSync",
-    operation: "updater temporary container cleanup",
-    options,
-  });
-  rmSync(targetPath, { recursive: true, force: true });
-}
-
-function cleanupRawArchiveContainerBestEffort(
-  targetPath,
-  fsOps,
-  options,
-  logger,
-  operation,
-) {
-  try {
-    cleanupRawArchiveContainer(targetPath, fsOps, options);
-  } catch (error) {
-    logger?.warn?.(
-      `[prototype] ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-function appendSecondaryFailures(error, operation, secondaryErrors) {
-  if (!Array.isArray(secondaryErrors) || secondaryErrors.length === 0) {
-    return error;
-  }
-  const primaryMessage = error instanceof Error ? error.message : String(error);
-  const details = secondaryErrors
-    .map((secondaryError) =>
-      secondaryError instanceof Error
-        ? secondaryError.message
-        : String(secondaryError),
-    )
-    .join("; ");
-  return new Error(`${primaryMessage}; ${operation} also failed: ${details}`, {
-    cause: error,
-  });
-}
-
-function markPreservedArtifactBackup(error, backupDir) {
-  if (!error || typeof error !== "object") {
-    return;
-  }
-  error.preserveArtifactBackup = true;
-  error.artifactBackupDir = backupDir;
+function normalizeString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function currentResourcesPath() {
@@ -1242,22 +549,18 @@ function currentResourcesPath() {
 module.exports = {
   APP_ASAR_RELATIVE_PATH,
   APP_SERVER_RELATIVE_PATH,
-  DEFAULT_CONFIG_RELATIVE_PATH,
-  SIGNATURE_RELATIVE_PATH,
-  backupSignatureMetadataSync,
-  buildDirectArtifactSources,
-  packAppAsar,
-  prepareDirectArtifacts,
-  listInstalledElectronShellRelativePaths,
+  DEFAULT_COMPACT_RELATIVE_PATH,
+  extractInstalledAppAsar,
   listElectronShellSourceRelativePaths,
-  resolveElectronShellUpdate,
+  materializeInstalledArtifactWorkerBundle,
+  packAppAsar,
+  prepareInstalledArtifacts,
   resolveCargoTargetDirectory,
+  resolveElectronShellUpdate,
   resolveInstalledArtifactUpdatePlan,
   resolveInstalledArtifactUpdatePlanInWorker,
-  materializeInstalledArtifactWorkerBundle,
   runInstalledArtifactWorker,
+  signCandidateAppServer,
   updateInstalledArtifacts,
   updateInstalledArtifactsInWorker,
-  replaceInstalledArtifactsSync,
-  restoreSignatureMetadataSync,
 };

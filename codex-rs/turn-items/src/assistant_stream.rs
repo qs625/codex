@@ -107,6 +107,7 @@ pub fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::ModelReroute(_)
         | EventMsg::ModelVerification(_)
         | EventMsg::ContextCompacted(_)
+        | EventMsg::ClientRecovery(_)
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::TurnStarted(_)
         | EventMsg::TurnComplete(_)

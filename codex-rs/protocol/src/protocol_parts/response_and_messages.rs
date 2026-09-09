@@ -239,6 +239,20 @@ pub struct ThreadGoalUpdateDisplayEvent {
     pub completed_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, TS, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientRecoveryEvent {
+    pub recovery_id: String,
+    pub transaction_id: String,
+    pub mode: String,
+    pub build_id: String,
+    pub reason: String,
+    pub occurred_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub previous_build_id: Option<String>,
+}
+
 pub trait HasLegacyEvent {
     fn as_legacy_events(&self, show_raw_agent_reasoning: bool) -> Vec<EventMsg>;
 }

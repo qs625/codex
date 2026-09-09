@@ -45,10 +45,14 @@ pnpm --filter @my-codex/root-worker-prototype package:win
 pnpm --filter @my-codex/root-worker-prototype package:linux
 ```
 
-The macOS app packaging builds release `app-server`, bundles it into the app
-resources at `Contents/Resources/bin/app-server`, and bundles the default
-compact prompt seed at `Contents/Resources/default-config/compact/COMPACT.md`.
-It does not bundle a repository source snapshot into the `.app` or `.dmg`.
+The macOS app packaging builds release `app-server` and the stable Rust
+`MorpheusLauncher`. The real macOS entrypoint is
+`Contents/MacOS/MorpheusLauncher`; Electron remains a fixed
+`Contents/MacOS/Root Worker Runtime` Host. Initial runtime resources include
+`Contents/Resources/app.asar`, `bin/app-server`,
+`default-config/compact/COMPACT.md`, and a hash manifest consumed by the
+Launcher. Packaging does not bundle a repository source snapshot into the
+`.app` or `.dmg`.
 When launched from Finder or Dock, the app prepares `MORPHEUS_HOME`, preserves
 the desktop process environment with an enhanced `PATH`, and creates
 `~/.morpheus/compact/COMPACT.md` only if that file is missing.
@@ -66,14 +70,21 @@ The packaged app maintains
 source workspace path and the reminder to run relevant tests before calling
 `request_runtime_restart` with an explicit `mode` of `"hot"` or `"full"`. In a
 packaged macOS app, that restart request uses the source workspace's existing
-frontend and backend build outputs to refresh the installed `app.asar`, bundled
-`app-server`, and default config resources, then re-signs the current app before
-applying the requested mode. Hot mode restarts the app-server and reloads
-renderer windows; full mode stops the app-server and performs a full app
-relaunch. Missing build outputs or update failures leave the currently
-installed artifacts in place instead of reloading stale code. That generated
-file is updated only while it still carries the Morpheus managed marker;
-user-managed replacement content is left intact.
+frontend and backend build outputs to prepare a candidate containing only
+`app.asar`, `app-server`, the compact prompt, and their manifest. The Host does
+not build, replace installed files in place, or sign the app bundle. It
+ad-hoc-signs only the fixed candidate `resources/bin/app-server` before hashing
+the candidate manifest. The Launcher owns activation and rollback of
+`Contents/Resources` without replacing either executable. Hot mode rejects
+Electron main/preload changes, activates the candidate, restarts app-server,
+reloads renderer windows, and commits; failures roll back to the previous
+resources. Full mode transfers the candidate to the Launcher, stops app-server,
+and exits with the coordinated restart code so the Launcher can activate and
+supervise the next Host. Launcher recovery evidence is recorded on the durable
+`/self` thread before it is acknowledged. Missing build outputs or preparation
+failures leave the installed runtime unchanged.
+That generated instruction file is updated only while it still carries the
+Morpheus managed marker; user-managed replacement content is left intact.
 It also maintains `~/.morpheus/self-project.json` as a system `/self` project
 record whose workspace is the same Morpheus source workspace. The Electron IPC
 contract exposes `getSelfProject` and `startSelfCommand` for a dedicated self

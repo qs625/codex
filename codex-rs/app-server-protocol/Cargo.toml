@@ -30,6 +30,7 @@ required-features = ["cli", "schema-export"]
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true, features = ["derive"], optional = true }
 codex-auth-types = { workspace = true }
 codex-config-types = { workspace = true }

@@ -112,6 +112,7 @@ members = [
     "rollout-trace-api",
     "rollout-trace",
     "rmcp-client",
+    "runtime-launcher",
     "responses-api-proxy",
     "sandboxing-api",
     "sandboxing",

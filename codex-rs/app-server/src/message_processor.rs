@@ -1480,6 +1480,11 @@ impl MessageProcessor {
             ClientRequest::ThreadInjectItems { params, .. } => {
                 self.turn_processor.thread_inject_items(params).await
             }
+            ClientRequest::ThreadClientRecoveryRecord { params, .. } => {
+                self.turn_processor
+                    .thread_client_recovery_record(&request_id, params)
+                    .await
+            }
             ClientRequest::TurnSteer { params, .. } => {
                 self.turn_processor.turn_steer(&request_id, params).await
             }

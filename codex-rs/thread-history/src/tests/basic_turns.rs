@@ -1,5 +1,36 @@
 use super::*;
 
+#[test]
+fn replays_client_recovery_from_limited_rollout() {
+    let items = vec![RolloutItem::EventMsg(EventMsg::ClientRecovery(
+        protocol::protocol::ClientRecoveryEvent {
+            recovery_id: "recovery-1".into(),
+            transaction_id: "transaction-1".into(),
+            mode: "rollback".into(),
+            build_id: "build-2".into(),
+            reason: "health check failed".into(),
+            occurred_at: "2026-09-09T08:30:00.000Z".into(),
+            previous_build_id: Some("build-1".into()),
+        },
+    ))];
+
+    let turns = build_turns_from_rollout_items(&items);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].id, "transaction-1");
+    assert_eq!(
+        turns[0].items,
+        vec![ThreadItem::ClientRecovery {
+            id: "recovery-1".into(),
+            transaction_id: "transaction-1".into(),
+            mode: "rollback".into(),
+            build_id: "build-2".into(),
+            reason: "health check failed".into(),
+            occurred_at: "2026-09-09T08:30:00.000Z".into(),
+            previous_build_id: Some("build-1".into()),
+        }]
+    );
+}
+
     #[test]
     fn builds_multiple_turns_with_reasoning_items() {
         let events = vec![

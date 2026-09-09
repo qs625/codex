@@ -409,6 +409,17 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    ClientRecovery {
+        id: String,
+        transaction_id: String,
+        mode: String,
+        build_id: String,
+        reason: String,
+        occurred_at: String,
+        previous_build_id: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
     CollabAgentMessage {
         id: String,
         operation: CollabAgentOperation,
@@ -616,6 +627,7 @@ impl ThreadItem {
             | ThreadItem::EventCommandEvent { id, .. }
             | ThreadItem::WorkflowRunProgress { id, .. }
             | ThreadItem::ThreadGoalUpdate { id, .. }
+            | ThreadItem::ClientRecovery { id, .. }
             | ThreadItem::CollabAgentMessage { id, .. }
             | ThreadItem::ConversationArtifact { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }

@@ -2574,6 +2574,20 @@ impl thread_service_api::LiveThreadConversationInjectionRuntime for ThreadServic
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadClientRecoveryRuntime for ThreadServiceState {
+    fn record_live_thread_client_recovery(
+        &self,
+        thread_id: ThreadId,
+        event: protocol::protocol::ClientRecoveryEvent,
+    ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.record_client_recovery(event).await
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadHistoryRuntime for ThreadServiceState {
     fn live_thread_history(
         &self,
@@ -3039,6 +3053,21 @@ impl thread_service_api::LiveThreadConversationInjectionRuntime for ThreadServic
             self.state.as_ref(),
             thread_id,
             items,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadClientRecoveryRuntime for ThreadService {
+    fn record_live_thread_client_recovery(
+        &self,
+        thread_id: ThreadId,
+        event: protocol::protocol::ClientRecoveryEvent,
+    ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_ {
+        thread_service_api::LiveThreadClientRecoveryRuntime::record_live_thread_client_recovery(
+            self.state.as_ref(),
+            thread_id,
+            event,
         )
     }
 }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadClientRecoveryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
@@ -31,6 +32,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_thread_injection: Arc<dyn AppServerLiveThreadConversationInjectionRuntime>,
+    live_thread_client_recovery: Arc<dyn AppServerLiveThreadClientRecoveryRuntime>,
     live_thread_steer: Arc<dyn AppServerLiveThreadSteerRuntime>,
     live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
     live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
@@ -96,6 +98,7 @@ impl TurnRequestProcessor {
             thread_lifecycle_runtime: thread_service.clone(),
             live_thread_command: thread_service.clone(),
             live_thread_injection: thread_service.clone(),
+            live_thread_client_recovery: thread_service.clone(),
             live_thread_steer: thread_service.clone(),
             live_thread_turn: thread_service.clone(),
             live_thread_skill_watch: thread_service.clone(),
@@ -141,6 +144,16 @@ impl TurnRequestProcessor {
         params: ThreadInjectItemsParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         self.thread_inject_items_response_inner(params)
+            .await
+            .map(|response| Some(response.into()))
+    }
+
+    pub(crate) async fn thread_client_recovery_record(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadClientRecoveryRecordParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.thread_client_recovery_record_response_inner(request_id, params)
             .await
             .map(|response| Some(response.into()))
     }
@@ -927,6 +940,88 @@ impl TurnRequestProcessor {
                 err => internal_error(format!("failed to inject response items: {err}")),
             })?;
         Ok(ThreadInjectItemsResponse {})
+    }
+
+    async fn thread_client_recovery_record_response_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadClientRecoveryRecordParams,
+    ) -> Result<ThreadClientRecoveryRecordResponse, JSONRPCErrorError> {
+        for (name, value) in [
+            ("recoveryId", params.recovery_id.as_str()),
+            ("transactionId", params.transaction_id.as_str()),
+            ("mode", params.mode.as_str()),
+            ("buildId", params.build_id.as_str()),
+            ("reason", params.reason.as_str()),
+            ("occurredAt", params.occurred_at.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(invalid_request(format!("{name} must not be empty")));
+            }
+        }
+        chrono::DateTime::parse_from_rfc3339(&params.occurred_at)
+            .map_err(|err| invalid_request(format!("occurredAt must be RFC 3339: {err}")))?;
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        if self.thread_state_manager.host_lifecycle_connection().await
+            != Some(request_id.connection_id)
+        {
+            return Err(invalid_request(
+                "thread/clientRecovery/record requires the registered host lifecycle connection",
+            ));
+        }
+        let stored_thread = self
+            .live_thread_history
+            .read_live_thread(thread_id, /*include_archived*/ false, /*include_history*/ false)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect recovery thread: {err}")))?;
+        if stored_thread.name.as_deref() != Some("/self")
+            || stored_thread.forked_from_id.is_some()
+            || !matches!(stored_thread.source, protocol::protocol::SessionSource::VSCode)
+        {
+            return Err(invalid_request(
+                "thread/clientRecovery/record target must be the system /self root thread",
+            ));
+        }
+        if !self
+            .thread_state_manager
+            .bind_system_self_thread(request_id.connection_id, thread_id)
+            .await
+        {
+            return Err(invalid_request(
+                "thread/clientRecovery/record target does not match the registered system /self thread",
+            ));
+        }
+        self.reject_external_root_native_only_op(
+            None,
+            thread_id,
+            "thread/clientRecovery/record",
+        )
+        .await?;
+
+        let recorded = self
+            .live_thread_client_recovery
+            .record_live_thread_client_recovery(
+                thread_id,
+                protocol::protocol::ClientRecoveryEvent {
+                    recovery_id: params.recovery_id,
+                    transaction_id: params.transaction_id,
+                    mode: params.mode,
+                    build_id: params.build_id,
+                    reason: params.reason,
+                    occurred_at: params.occurred_at,
+                    previous_build_id: params.previous_build_id,
+                },
+            )
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                CodexErr::InvalidRequest(message) => invalid_request(message),
+                err => internal_error(format!("failed to record client recovery: {err}")),
+            })?;
+        Ok(ThreadClientRecoveryRecordResponse { recorded })
     }
 
     async fn set_app_server_client_info(

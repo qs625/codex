@@ -315,6 +315,17 @@ pub trait LiveThreadConversationInjectionRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
+/// Trusted host surface for recording a typed, durable client recovery fact.
+pub trait LiveThreadClientRecoveryRuntime: Send + Sync {
+    /// Persist and publish the recovery event. Returns false when recovery_id
+    /// was already present in the thread rollout.
+    fn record_live_thread_client_recovery(
+        &self,
+        thread_id: ThreadId,
+        event: protocol::protocol::ClientRecoveryEvent,
+    ) -> impl Future<Output = CodexResult<bool>> + Send + '_;
+}
+
 /// Persisted history read surface for loaded live threads without exposing handles.
 pub trait LiveThreadHistoryRuntime: Send + Sync {
     /// Return live persisted history for a specific loaded thread.

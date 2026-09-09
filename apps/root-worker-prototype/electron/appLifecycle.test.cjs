@@ -5,80 +5,85 @@ const {
   createAppRelaunchAdapter,
   createClientRelaunchNotificationHandler,
   createInstalledArtifactUpdateLifecycleAdapter,
-  createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
-  observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 
-test("app relaunch adapter schedules one full app relaunch", async () => {
-  const calls = [];
-  const timers = [];
-  const app = {
-    relaunch: () => calls.push("relaunch"),
-    exit: (code) => calls.push(["exit", code]),
+function preparedUpdate(changes = { main: false, preload: false }) {
+  return {
+    ok: true,
+    updated: false,
+    appBundlePath: "/Applications/Root Worker Prototype.app",
+    buildId: "build-1",
+    changes,
+    preparedRoot: "/tmp/candidate",
+    sourceCommit: "abc123",
+    transactionId: "tx-1",
   };
-  const adapter = createAppRelaunchAdapter({
-    app,
-    setTimeout: (callback, delay) => {
-      timers.push({ callback, delay });
+}
+
+function lifecycle(options = {}) {
+  return createInstalledArtifactUpdateLifecycleAdapter({
+    appExit: options.appExit,
+    appServerRestart: options.appServerRestart ?? {
+      requestRestart: async () => ({ ok: true, restarted: true, pid: 42 }),
     },
-    exitDelayMs: 25,
+    appServerStop: options.appServerStop ?? {
+      requestStop: async () => ({ ok: true, stopped: true }),
+    },
+    cleanupPreparedArtifact:
+      options.cleanupPreparedArtifact ?? (async () => {}),
+    reloadWindows:
+      options.reloadWindows ?? (async () => ({ windowsReloaded: 1 })),
+    resolvePlan:
+      options.resolvePlan ??
+      (async () => ({ requiresFullRelaunch: false })),
+    runtimeLauncher:
+      options.runtimeLauncher ??
+      ({
+        supported: true,
+        activateHot: async () => ({ ok: true }),
+        commitHot: async () => ({ ok: true }),
+        prepareFull: async () => ({ ok: true }),
+        rollbackHot: async () => ({ ok: true }),
+      }),
+    updateArtifacts:
+      options.updateArtifacts ?? (async () => preparedUpdate()),
+    broadcastStatus: options.broadcastStatus,
+    logger: { error() {}, warn() {} },
   });
+}
 
-  assert.deepEqual(adapter.requestRelaunch("restart tool"), {
-    ok: true,
-    relaunching: true,
-    alreadyRequested: false,
-    reason: "restart tool",
-  });
-  assert.deepEqual(calls, ["relaunch"]);
-  assert.equal(timers.length, 1);
-  assert.equal(timers[0].delay, 25);
-
-  assert.deepEqual(adapter.requestRelaunch("duplicate"), {
-    ok: true,
-    relaunching: true,
-    alreadyRequested: true,
-  });
-  assert.deepEqual(calls, ["relaunch"]);
-
-  await timers[0].callback();
-  assert.deepEqual(calls, ["relaunch", ["exit", 0]]);
-});
-
-test("app relaunch adapter stops owned app-server before exiting", async () => {
+test("app relaunch adapter schedules one legacy full relaunch", async () => {
   const calls = [];
   const timers = [];
-  const app = {
-    relaunch: () => calls.push("relaunch"),
-    exit: (code) => calls.push(["exit", code]),
-  };
   const adapter = createAppRelaunchAdapter({
-    app,
+    app: {
+      relaunch: () => calls.push("relaunch"),
+      exit: (code) => calls.push(["exit", code]),
+    },
     beforeExit: async (reason) => calls.push(["stop", reason]),
-    logger: { error: () => {} },
-    setTimeout: (callback) => {
-      timers.push(callback);
-    },
+    setTimeout: (callback) => timers.push(callback),
   });
 
-  assert.equal(adapter.requestRelaunch("shell update").ok, true);
+  assert.equal(adapter.requestRelaunch("manual").ok, true);
+  assert.equal(adapter.requestRelaunch("duplicate").alreadyRequested, true);
   await timers[0]();
-
-  assert.deepEqual(calls, ["relaunch", ["stop", "shell update"], ["exit", 0]]);
+  assert.deepEqual(calls, [
+    "relaunch",
+    ["stop", "manual"],
+    ["exit", 0],
+  ]);
 });
 
 test("app relaunch adapter reports unsupported environments", () => {
-  const adapter = createAppRelaunchAdapter({ app: {} });
-
-  assert.deepEqual(adapter.requestRelaunch(), {
+  assert.deepEqual(createAppRelaunchAdapter({ app: {} }).requestRelaunch(), {
     ok: false,
     relaunching: false,
     reason: "Application relaunch is unavailable in this environment",
   });
 });
 
-test("client relaunch notification accepts narrow lifecycle methods", () => {
+test("client relaunch notification recognizes only lifecycle restart methods", () => {
   assert.equal(
     isClientRelaunchNotification({ method: "client/relaunch/requested" }),
     true,
@@ -99,1600 +104,288 @@ test("client relaunch notification accepts narrow lifecycle methods", () => {
   );
 });
 
-test("renderer reload lifecycle adapter reloads windows without full app relaunch", async () => {
-  const statuses = [];
-  const reloads = [];
-  const fullRelaunch = {
-    requestRelaunch: () => {
-      throw new Error("full relaunch should not be used");
+test("client relaunch handler rejects missing activation mode", async () => {
+  const handler = createClientRelaunchNotificationHandler({});
+  const result = await handler({
+    method: "client/relaunch/requested",
+    params: {},
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /Invalid client relaunch mode/);
+});
+
+test("installed update reports unsupported without preparing or activating", async () => {
+  const calls = [];
+  const adapter = lifecycle({
+    resolvePlan: async () => null,
+    updateArtifacts: async () => calls.push("prepare"),
+    runtimeLauncher: {
+      supported: true,
+      activateHot: async () => calls.push("activate"),
     },
-  };
-  const adapter = createRendererReloadLifecycleAdapter({
-    fullRelaunch,
-    broadcastStatus: (status) => statuses.push(status),
-    reloadWindows: async (payload) => {
-      reloads.push(payload);
+  });
+
+  assert.deepEqual(
+    await adapter.requestUpdateAndRelaunch("unsupported", "hot"),
+    { ok: false, unsupported: true },
+  );
+  assert.deepEqual(calls, []);
+});
+
+test("planning failure is typed, retains request id, and has no side effects", async () => {
+  const calls = [];
+  const adapter = lifecycle({
+    resolvePlan: async () => {
+      throw new Error("planning failed");
+    },
+    updateArtifacts: async () => calls.push("prepare"),
+    runtimeLauncher: {
+      supported: true,
+      activateHot: async () => calls.push("activate"),
+    },
+  });
+
+  const result = await adapter.requestUpdateAndRelaunch(
+    "developer request",
+    "hot",
+    "request-1",
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.requestId, "request-1");
+  assert.equal(result.partial, false);
+  assert.match(result.reason, /planning failed/);
+  assert.deepEqual(calls, []);
+});
+
+test("hot activation copies into Launcher state, cleans producer, restarts, reloads, and commits", async () => {
+  const calls = [];
+  let request;
+  const adapter = lifecycle({
+    runtimeLauncher: {
+      supported: true,
+      activateHot: async (value) => {
+        request = value;
+        calls.push("activate");
+        return { ok: true };
+      },
+      commitHot: async (transactionId) => {
+        calls.push(["commit", transactionId]);
+        return { ok: true };
+      },
+      rollbackHot: async () => {
+        throw new Error("rollback should not run");
+      },
+    },
+    cleanupPreparedArtifact: async (preparedRoot) =>
+      calls.push(["cleanup", preparedRoot]),
+    appServerRestart: {
+      requestRestart: async () => {
+        calls.push("restart");
+        return { ok: true, restarted: true, pid: 42 };
+      },
+    },
+    reloadWindows: async () => {
+      calls.push("reload");
       return { windowsReloaded: 1 };
     },
   });
 
-  assert.deepEqual(await adapter.requestReload("restart tool"), {
-    ok: true,
-    inPlace: true,
-    relaunching: false,
-    reloaded: true,
-    alreadyRequested: false,
-    windowsReloaded: 1,
-    mode: null,
-    reason: "restart tool",
-  });
-  assert.deepEqual(reloads, [{ reason: "restart tool" }]);
-  assert.deepEqual(statuses, [
-    {
-      lifecycle: {
-        type: "rendererReload",
-        phase: "reloading",
-        mode: null,
-        reason: "restart tool",
-      },
-    },
-    {
-      lifecycle: {
-        type: "rendererReload",
-        phase: "reloaded",
-        mode: null,
-        reason: "restart tool",
-      },
-    },
-  ]);
-});
-
-test("client relaunch notification handler hot reloads renderer without app relaunch", async () => {
-  const reloads = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: async (reason) => {
-        reloads.push(reason);
-        return {
-          ok: true,
-          inPlace: true,
-          relaunching: false,
-          reloaded: true,
-          reason,
-        };
-      },
-    },
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot", reason: "restart tool" },
-    }),
-    {
-      ok: true,
-      inPlace: true,
-      relaunching: false,
-      reloaded: true,
-      reason: "restart tool",
-    },
-  );
-  assert.deepEqual(reloads, ["restart tool"]);
-});
-
-test("client relaunch notification handler coalesces the same explicit mode", async () => {
-  let resolveReload;
-  let reloadCount = 0;
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("generic reload should not run for hot mode");
-      },
-      requestHotReload: () => {
-        reloadCount += 1;
-        return new Promise((resolve) => {
-          resolveReload = resolve;
-        });
-      },
-    },
-  });
-
-  const first = handler({
-    method: "client/relaunch/requested",
-    params: { mode: "hot", reason: "first" },
-  });
-  const second = handler({
-    method: "client/relaunch/requested",
-    params: { mode: "hot", reason: "second" },
-  });
-  resolveReload({
-    ok: true,
-    inPlace: true,
-    relaunching: false,
-    reloaded: true,
-    mode: "hot",
-    reason: "first",
-  });
-
-  await first;
-  assert.deepEqual(
-    {
-      alreadyRequested: (await second).alreadyRequested,
-      requestedMode: (await second).requestedMode,
-      executingMode: (await second).executingMode,
-    },
-    {
-      alreadyRequested: true,
-      requestedMode: "hot",
-      executingMode: "hot",
-    },
-  );
-  assert.equal(reloadCount, 1);
-});
-
-for (const [executingMode, requestedMode] of [
-  ["hot", "full"],
-  ["full", "hot"],
-]) {
-  test(`client relaunch notification handler rejects ${requestedMode} while ${executingMode} is in flight`, async () => {
-    let resolveActiveRequest;
-    const calls = [];
-    const handler = createClientRelaunchNotificationHandler({
-      rendererReload: {
-        requestReload: () => {
-          throw new Error("generic reload should not run for hot mode");
-        },
-        requestHotReload: (reason) => {
-          calls.push(["hot", reason]);
-          return new Promise((resolve) => {
-            resolveActiveRequest = () =>
-              resolve({
-                ok: true,
-                inPlace: true,
-                relaunching: false,
-                reloaded: true,
-                mode: "hot",
-                reason,
-              });
-          });
-        },
-      },
-      fullRelaunch: {
-        requestRelaunch: (reason) => {
-          calls.push(["full", reason]);
-          return new Promise((resolve) => {
-            resolveActiveRequest = () =>
-              resolve({ ok: true, relaunching: true, reason });
-          });
-        },
-      },
-    });
-
-    const first = handler({
-      method: "client/relaunch/requested",
-      params: { mode: executingMode, reason: "first" },
-    });
-    assert.deepEqual(
-      await handler({
-        method: "client/relaunch/requested",
-        params: { mode: requestedMode, reason: "conflict" },
-      }),
-      {
-        ok: false,
-        busy: true,
-        conflict: true,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: false,
-        mode: null,
-        requestedMode,
-        executingMode,
-        reason: `Runtime refresh mode conflict: requested ${requestedMode} while ${executingMode} is in progress`,
-      },
-    );
-    assert.deepEqual(calls, [[executingMode, "first"]]);
-
-    resolveActiveRequest();
-    await first;
-  });
-}
-
-test("client relaunch notification handler hot reloads installed artifact updates", async () => {
-  const statuses = [];
-  const calls = [];
-  const plan = {
-    appBundlePath: "/Moved App.app",
-    requiresFullRelaunch: true,
-    runtimeUpdate: {
-      electronShell: {
-        category: "electronShell",
-        changed: true,
-        changedPaths: ["electron/preload.cjs"],
-      },
-    },
-  };
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("renderer reload should not run for installed updates");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      appServerRestart: {
-        requestRestart: async (reason) => {
-          calls.push(["backendRestart", reason]);
-          return { ok: true, restarted: true, pid: 42, reason };
-        },
-      },
-      reloadWindows: async (payload) => {
-        calls.push(["reload", payload]);
-        return { windowsReloaded: 1 };
-      },
-      resolvePlan: () => plan,
-      updateArtifacts: async (receivedPlan) => {
-        calls.push(["update", receivedPlan]);
-        return { ok: true, updated: true };
-      },
-      broadcastStatus: (status) => statuses.push(status),
-      fullRelaunch: {
-        requestRelaunch: () => {
-          throw new Error("full relaunch should not run for installed updates");
-        },
-      },
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot", reason: "restart tool" },
-    }),
-    {
-      ok: true,
-      inPlace: true,
-      relaunching: false,
-      reloaded: true,
-      updated: true,
-      backendRestart: {
-        ok: true,
-        pending: false,
-        restarted: true,
-        pid: 42,
-        reason: "restart tool",
-      },
-      mode: "hot",
-      mainProcessUpdate: "pendingAppRelaunch",
-      preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
-      reason: "restart tool",
-      reload: {
-        ok: true,
-        inPlace: true,
-        relaunching: false,
-        reloaded: true,
-        windowsReloaded: 1,
-        mode: "hot",
-        reason: "restart tool",
-      },
-    },
-  );
-  assert.deepEqual(calls, [
-    ["update", plan],
-    ["backendRestart", "restart tool"],
-    ["reload", { reason: "restart tool" }],
-  ]);
-  assert.deepEqual(statuses.map((status) => status.lifecycle.phase), [
-    "building",
-    "updated",
-    "reloading",
-    "reloaded",
-  ]);
-});
-
-test("client relaunch notification handler full relaunches installed artifact updates", async () => {
-  const statuses = [];
-  const calls = [];
-  const plan = {
-    appBundlePath: "/Moved App.app",
-    requiresFullRelaunch: false,
-    runtimeUpdate: {
-      electronShell: {
-        category: "electronShell",
-        changed: true,
-        changedPaths: ["electron/main.cjs"],
-      },
-    },
-  };
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("renderer reload should not run for shell updates");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      appServerRestart: {
-        requestRestart: () => {
-          throw new Error("backend restart should not run for shell updates");
-        },
-      },
-      appServerStop: {
-        requestStop: async (reason) => {
-          calls.push(["backendStop", reason]);
-          return { ok: true, stopped: true, reason };
-        },
-      },
-      fullRelaunch: {
-        requestRelaunch: async (reason) => {
-          calls.push(["relaunch", reason]);
-          return { ok: true, relaunching: true, reason };
-        },
-      },
-      reloadWindows: () => {
-        throw new Error("reload should not run for shell updates");
-      },
-      resolvePlan: () => plan,
-      updateArtifacts: async (receivedPlan) => {
-        calls.push(["update", receivedPlan]);
-        return { ok: true, updated: true };
-      },
-      broadcastStatus: (status) => statuses.push(status),
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "full", reason: "restart tool" },
-    }),
-    {
-      ok: true,
-      inPlace: false,
-      relaunching: true,
-      reloaded: false,
-      updated: true,
-      backendStop: {
-        ok: true,
-        stopped: true,
-        reason: "restart tool",
-      },
-      mode: "full",
-      mainProcessUpdate: "requiresAppRelaunch",
-      preloadUpdate: "requiresAppRelaunch",
-      reason: "restart tool",
-      relaunch: {
-        ok: true,
-        relaunching: true,
-        reason: "restart tool",
-      },
-    },
-  );
-  assert.deepEqual(calls, [
-    ["update", plan],
-    ["backendStop", "restart tool"],
-    ["relaunch", "restart tool"],
-  ]);
-  assert.deepEqual(statuses.map((status) => status.lifecycle.phase), [
-    "building",
-    "updated",
-    "relaunching",
-    "relaunching",
-  ]);
-});
-
-test("installed artifact update failure does not reload stale renderer", async () => {
-  const reloads = [];
-  const statuses = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        reloads.push("reload");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => {
-        throw new Error("build failed");
-      },
-      appServerRestart: {
-        requestRestart: () => {
-          throw new Error("backend restart should not run after failed update");
-        },
-      },
-      reloadWindows: () => {
-        throw new Error("renderer reload should not run after failed update");
-      },
-      logger: { error: () => {} },
-      broadcastStatus: (status) => statuses.push(status),
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      partial: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      backendRestart: undefined,
-      reload: undefined,
-      mode: "hot",
-      reason: "build failed",
-    },
-  );
-  assert.deepEqual(reloads, []);
-  assert.deepEqual(statuses.at(-1), {
-    lifecycle: {
-      type: "installedArtifactUpdate",
-      phase: "failed",
-      mode: "hot",
-      reason: "build failed",
-    },
-  });
-});
-
-test("installed artifact build failure keeps the lifecycle request id", async () => {
-  const statuses = [];
-  const handler = createClientRelaunchNotificationHandler({
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => {
-        throw new Error("build failed");
-      },
-      logger: { error: () => {} },
-      broadcastStatus: (status) => statuses.push(status),
-    }),
-  });
-
-  const result = await handler({
-    method: "client/relaunch/requested",
-    params: {
-      requestId: "restart-1",
-      mode: "hot",
-      reason: "runtime update",
-    },
-  });
-
-  assert.equal(result.requestId, "restart-1");
-  assert.deepEqual(statuses.at(-1), {
-    lifecycle: {
-      type: "installedArtifactUpdate",
-      phase: "failed",
-      mode: "hot",
-      requestId: "restart-1",
-      reason: "build failed",
-    },
-  });
-});
-
-test("full installed artifact build failure does not stop or relaunch", async () => {
-  const calls = [];
-  const statuses = [];
-  const handler = createClientRelaunchNotificationHandler({
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => {
-        calls.push("update");
-        throw new Error("cargo build failed");
-      },
-      appServerStop: {
-        requestStop: () => {
-          calls.push("stop");
-          throw new Error("app-server stop should not run");
-        },
-      },
-      fullRelaunch: {
-        requestRelaunch: () => {
-          calls.push("relaunch");
-          throw new Error("full relaunch should not run");
-        },
-      },
-      logger: { error: () => {} },
-      broadcastStatus: (status) => statuses.push(status),
-    }),
-    fullRelaunch: {
-      requestRelaunch: () => {
-        calls.push("fallback relaunch");
-        throw new Error("fallback relaunch should not run");
-      },
-    },
-  });
-
-  const result = await handler({
-    method: "client/relaunch/requested",
-    params: { mode: "full", reason: "restart tool" },
-  });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.mode, "full");
-  assert.equal(result.reason, "cargo build failed");
-  assert.deepEqual(calls, ["update"]);
-  assert.deepEqual(statuses.at(-1), {
-    lifecycle: {
-      type: "installedArtifactUpdate",
-      phase: "failed",
-      mode: "full",
-      reason: "cargo build failed",
-    },
-  });
-});
-
-test("installed artifact planning failure is typed and does not activate", async () => {
-  const calls = [];
-  const statuses = [];
-  const handler = createClientRelaunchNotificationHandler({
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => {
-        calls.push("resolve");
-        throw new Error("cargo metadata failed");
-      },
-      updateArtifacts: () => calls.push("update"),
-      appServerRestart: {
-        requestRestart: () => calls.push("restart"),
-      },
-      appServerStop: {
-        requestStop: () => calls.push("stop"),
-      },
-      reloadWindows: () => calls.push("reload"),
-      fullRelaunch: {
-        requestRelaunch: () => calls.push("relaunch"),
-      },
-      logger: { error: () => {} },
-      broadcastStatus: (status) => statuses.push(status),
-    }),
-    fullRelaunch: {
-      requestRelaunch: () => calls.push("fallback relaunch"),
-    },
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "full", reason: "restart tool" },
-    }),
-    {
-      ok: false,
-      unsupported: false,
-      inPlace: false,
-      partial: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      mode: "full",
-      reason: "cargo metadata failed",
-    },
-  );
-  assert.deepEqual(calls, ["resolve"]);
-  assert.deepEqual(statuses, [
-    {
-      lifecycle: {
-        type: "installedArtifactUpdate",
-        phase: "failed",
-        mode: "full",
-        reason: "cargo metadata failed",
-      },
-    },
-  ]);
-});
-
-test("client relaunch observer broadcasts failed result from handler", async () => {
-  const statuses = [];
-
-  const result = await observeClientRelaunchResult(
-    Promise.resolve({
-      ok: false,
-      inPlace: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      reason: "pack failed",
-    }),
-    {
-      broadcastStatus: (status) => statuses.push(status),
-      logger: { error: () => {} },
-      reason: "restart tool",
-    },
-  );
-
-  assert.equal(result.ok, false);
-  assert.deepEqual(statuses, [
-    {
-      lifecycle: {
-        type: "clientRelaunch",
-        phase: "failed",
-        mode: null,
-        reason: "pack failed",
-      },
-      relaunch: {
-        ok: false,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: false,
-        mode: null,
-        reason: "pack failed",
-      },
-    },
-  ]);
-});
-
-test("client relaunch observer catches rejected notification handlers", async () => {
-  const logs = [];
-  const statuses = [];
-
-  const result = await observeClientRelaunchResult(
-    Promise.reject(new Error("notification handler failed")),
-    {
-      broadcastStatus: (status) => statuses.push(status),
-      logger: { error: (...args) => logs.push(args) },
-      reason: "restart tool",
-    },
-  );
-
-  assert.deepEqual(result, {
-    ok: false,
-    inPlace: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    reason: "notification handler failed",
-  });
-  assert.match(logs[0][0], /client relaunch notification failed/);
-  assert.deepEqual(statuses.at(-1), {
-    lifecycle: {
-      type: "clientRelaunch",
-      phase: "failed",
-      mode: null,
-      reason: "notification handler failed",
-    },
-  });
-});
-
-test("client relaunch observer preserves completed full mode status", async () => {
-  const statuses = [];
-
-  const result = await observeClientRelaunchResult(
-    Promise.resolve({
-      ok: true,
-      inPlace: false,
-      relaunching: true,
-      reloaded: false,
-      updated: true,
-      mode: "full",
-      reason: "restart tool",
-      relaunch: {
-        ok: true,
-        relaunching: true,
-        reason: "restart tool",
-      },
-    }),
-    {
-      broadcastStatus: (status) => statuses.push(status),
-      logger: { error: () => {} },
-      reason: "restart tool",
-    },
-  );
+  const result = await adapter.requestUpdateAndRelaunch("developer request", "hot");
 
   assert.equal(result.ok, true);
-  assert.deepEqual(statuses, [
-    {
-      lifecycle: {
-        type: "clientRelaunch",
-        phase: "completed",
-        mode: "full",
-        reason: "restart tool",
-      },
-      relaunch: {
-        ok: true,
-        relaunching: true,
-        reason: "restart tool",
-        mode: "full",
-      },
-    },
+  assert.equal(result.updated, true);
+  assert.deepEqual(calls, [
+    "activate",
+    "restart",
+    "reload",
+    ["commit", "tx-1"],
+    ["cleanup", "/tmp/candidate"],
   ]);
+  assert.deepEqual(request, {
+    schemaVersion: 1,
+    transactionId: "tx-1",
+    buildId: "build-1",
+    sourceCommit: "abc123",
+    preparedRoot: "/tmp/candidate",
+    appBundlePath: "/Applications/Root Worker Prototype.app",
+    reason: "developer request",
+    changes: { main: false, preload: false },
+  });
+  assert.equal(Object.hasOwn(request, "mode"), false);
 });
 
-test("client relaunch observer preserves failed hot mode status", async () => {
-  const statuses = [];
-
-  const result = await observeClientRelaunchResult(
-    Promise.resolve({
-      ok: false,
-      inPlace: false,
-      relaunching: false,
-      reloaded: false,
-      updated: true,
-      mode: "hot",
-      reason: "reload failed",
-    }),
-    {
-      broadcastStatus: (status) => statuses.push(status),
-      logger: { error: () => {} },
-      reason: "restart tool",
+test("hot activation rejects main or preload changes before invoking Launcher", async () => {
+  const calls = [];
+  const adapter = lifecycle({
+    updateArtifacts: async () => preparedUpdate({ main: false, preload: true }),
+    runtimeLauncher: {
+      supported: true,
+      activateHot: async () => calls.push("activate"),
     },
-  );
+    cleanupPreparedArtifact: async () => calls.push("cleanup"),
+  });
+
+  const result = await adapter.requestUpdateAndRelaunch("shell changed", "hot");
 
   assert.equal(result.ok, false);
-  assert.deepEqual(statuses, [
-    {
-      lifecycle: {
-        type: "clientRelaunch",
-        phase: "failed",
-        mode: "hot",
-        reason: "reload failed",
+  assert.match(result.reason, /main or preload changed/);
+  assert.deepEqual(calls, ["cleanup"]);
+});
+
+test("hot activation failure rolls back and retains the old runtime", async () => {
+  const calls = [];
+  const adapter = lifecycle({
+    runtimeLauncher: {
+      supported: true,
+      activateHot: async () => {
+        calls.push("activate");
+        throw new Error("activation failed");
       },
-      relaunch: {
-        ok: false,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: true,
-        mode: "hot",
-        reason: "reload failed",
+      rollbackHot: async (transactionId) => {
+        calls.push(["rollback", transactionId]);
+        return { ok: true };
       },
     },
+    cleanupPreparedArtifact: async () => calls.push("cleanup"),
+    appServerRestart: {
+      requestRestart: async (reason) => {
+        calls.push(["restart", reason]);
+        return { ok: true, restarted: true };
+      },
+    },
+    reloadWindows: async ({ reason }) => {
+      calls.push(["reload", reason]);
+      return { windowsReloaded: 1 };
+    },
+  });
+
+  const result = await adapter.requestUpdateAndRelaunch("hot failure", "hot");
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /activation failed/);
+  assert.deepEqual(calls, [
+    "activate",
+    ["rollback", "tx-1"],
+    ["restart", "rollback: hot failure"],
+    ["reload", "rollback: hot failure"],
+    "cleanup",
   ]);
 });
 
-test("client relaunch observer reports mode conflicts without claiming execution", async () => {
-  const statuses = [];
-
-  const result = await observeClientRelaunchResult(
-    Promise.resolve({
-      ok: false,
-      busy: true,
-      conflict: true,
-      inPlace: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      mode: null,
-      requestedMode: "full",
-      executingMode: "hot",
-      reason:
-        "Runtime refresh mode conflict: requested full while hot is in progress",
-    }),
-    {
-      broadcastStatus: (status) => statuses.push(status),
-      logger: { error: () => {} },
-      reason: "restart tool",
-    },
-  );
-
-  assert.equal(result.conflict, true);
-  assert.deepEqual(statuses, [
-    {
-      lifecycle: {
-        type: "clientRelaunch",
-        phase: "failed",
-        mode: null,
-        reason:
-          "Runtime refresh mode conflict: requested full while hot is in progress",
+test("commit failure rolls back the activated hot runtime", async () => {
+  const calls = [];
+  const adapter = lifecycle({
+    runtimeLauncher: {
+      supported: true,
+      activateHot: async () => ({ ok: true }),
+      commitHot: async () => {
+        calls.push("commit");
+        throw new Error("commit failed");
       },
-      relaunch: {
-        ok: false,
-        busy: true,
-        conflict: true,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: false,
-        mode: null,
-        requestedMode: "full",
-        executingMode: "hot",
-        reason:
-          "Runtime refresh mode conflict: requested full while hot is in progress",
+      rollbackHot: async () => {
+        calls.push("rollback");
+        return { ok: true };
       },
     },
-  ]);
-});
-
-test("installed artifact update ok false does not relaunch", async () => {
-  const reloads = [];
-  const restarts = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("renderer reload should not run");
-      },
+    appServerRestart: {
+      requestRestart: async () => ({ ok: true, restarted: true }),
     },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => ({
-        ok: false,
-        updated: false,
-        reason: "update declined",
-      }),
-      appServerRestart: {
-        requestRestart: () => {
-          restarts.push("restart");
-        },
-      },
-      reloadWindows: () => {
-        reloads.push("reload");
-      },
-      logger: { error: () => {} },
-      broadcastStatus: () => {},
-    }),
   });
 
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      partial: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      backendRestart: undefined,
-      reload: undefined,
-      mode: "hot",
-      reason: "update declined",
-    },
-  );
-  assert.deepEqual(restarts, []);
-  assert.deepEqual(reloads, []);
+  const result = await adapter.requestUpdateAndRelaunch("commit", "hot");
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /commit failed/);
+  assert.deepEqual(calls, ["commit", "rollback"]);
 });
 
-test("installed artifact update fails partial when backend restart fails", async () => {
-  const reloads = [];
-  const relaunches = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("ordinary renderer reload should not run");
+test("full activation prepares Launcher ownership before stopping and exiting 75", async () => {
+  const calls = [];
+  let request;
+  const adapter = lifecycle({
+    runtimeLauncher: {
+      supported: true,
+      prepareFull: async (value) => {
+        request = value;
+        calls.push("prepare");
+        return { ok: true };
       },
     },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      appServerRestart: {
-        requestRestart: async () => ({
-          ok: false,
-          restarted: false,
-          reason: "backend restart failed",
-        }),
-      },
-      reloadWindows: () => {
-        reloads.push("reload");
-      },
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => ({ ok: true, updated: true }),
-      logger: { error: () => {} },
-      broadcastStatus: () => {},
-      fullRelaunch: {
-        requestRelaunch: () => {
-          relaunches.push("relaunch");
-        },
-      },
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      partial: true,
-      relaunching: false,
-      reloaded: false,
-      updated: true,
-      backendRestart: {
-        ok: false,
-        pending: false,
-        restarted: false,
-        pid: null,
-        reason: "backend restart failed",
-      },
-      reload: undefined,
-      mode: "hot",
-      reason: "backend restart failed",
-    },
-  );
-  assert.deepEqual(reloads, []);
-  assert.deepEqual(relaunches, []);
-});
-
-test("installed artifact update fails partial without backend restart adapter", async () => {
-  const reloads = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("ordinary renderer reload should not run");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      reloadWindows: () => {
-        reloads.push("reload");
-      },
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => ({ ok: true, updated: true }),
-      logger: { error: () => {} },
-      broadcastStatus: () => {},
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      partial: true,
-      relaunching: false,
-      reloaded: false,
-      updated: true,
-      backendRestart: {
-        ok: false,
-        restarted: false,
-        reason:
-          "App-server restart adapter is unavailable after installed artifact update.",
-      },
-      reload: undefined,
-      mode: "hot",
-      reason:
-        "App-server restart adapter is unavailable after installed artifact update.",
-    },
-  );
-  assert.deepEqual(reloads, []);
-});
-
-test("installed artifact update fails partial when renderer reload fails", async () => {
-  const relaunches = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("ordinary renderer reload should not run");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      appServerRestart: {
-        requestRestart: async (reason) => ({
-          ok: true,
-          restarted: true,
-          pid: 42,
-          reason,
-        }),
-      },
-      reloadWindows: async () => {
-        throw new Error("renderer reload failed");
-      },
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => ({ ok: true, updated: true }),
-      logger: { error: () => {} },
-      broadcastStatus: () => {},
-      fullRelaunch: {
-        requestRelaunch: () => {
-          relaunches.push("relaunch");
-        },
-      },
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      partial: true,
-      relaunching: false,
-      reloaded: false,
-      updated: true,
-      backendRestart: {
-        ok: true,
-        pending: false,
-        restarted: true,
-        pid: 42,
-        reason: "client/relaunch/requested",
-      },
-      reload: {
-        ok: false,
-        inPlace: true,
-        relaunching: false,
-        reloaded: false,
-        mode: "hot",
-        reason: "renderer reload failed",
-      },
-      mode: "hot",
-      reason: "renderer reload failed",
-    },
-  );
-  assert.deepEqual(relaunches, []);
-});
-
-test("client relaunch notification falls back to renderer reload when update unsupported", async () => {
-  const reloads = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: async (reason) => {
-        reloads.push(reason);
-        return { ok: true, inPlace: true, reloaded: true, reason };
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => null,
-      updateArtifacts: () => {
-        throw new Error("unsupported update should not run");
-      },
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "hot" },
-    }),
-    {
-      ok: true,
-      inPlace: true,
-      reloaded: true,
-      reason: "client/relaunch/requested",
-    },
-  );
-  assert.deepEqual(reloads, ["client/relaunch/requested"]);
-});
-
-test("installed artifact update coalesces concurrent requests with the same mode", async () => {
-  let resolveUpdate;
-  let updateCount = 0;
-  let resolveCount = 0;
-  const adapter = createInstalledArtifactUpdateLifecycleAdapter({
-    resolvePlan: () => {
-      resolveCount += 1;
-      if (resolveCount > 1) {
-        throw new Error("duplicate request should not resolve a new plan");
-      }
-      return { appBundlePath: "/Moved App.app" };
-    },
-    updateArtifacts: () => {
-      updateCount += 1;
-      return new Promise((resolve) => {
-        resolveUpdate = resolve;
-      });
-    },
-    fullRelaunch: {
-      requestRelaunch: (reason) => ({
-        ok: true,
-        relaunching: true,
-        reason,
-      }),
-    },
+    cleanupPreparedArtifact: async () => calls.push("cleanup"),
     appServerStop: {
-      requestStop: (reason) => ({ ok: true, stopped: true, reason }),
+      requestStop: async () => {
+        calls.push("stop");
+        return { ok: true, stopped: true };
+      },
     },
-    broadcastStatus: () => {},
+    appExit: (code) => calls.push(["exit", code]),
   });
 
-  const first = adapter.requestUpdateAndRelaunch("first", "full");
-  const second = adapter.requestUpdateAndRelaunch("second", "full");
-  await Promise.resolve();
-  resolveUpdate({ ok: true, updated: true });
+  const result = await adapter.requestUpdateAndRelaunch("full update", "full");
 
-  assert.equal((await first).alreadyRequested, undefined);
-  assert.deepEqual(
-    {
-      alreadyRequested: (await second).alreadyRequested,
-      requestedMode: (await second).requestedMode,
-      executingMode: (await second).executingMode,
-    },
-    {
-      alreadyRequested: true,
-      requestedMode: "full",
-      executingMode: "full",
-    },
-  );
-  assert.equal(resolveCount, 1);
-  assert.equal(updateCount, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.relaunching, true);
+  assert.equal(result.updated, true);
+  assert.deepEqual(calls, ["prepare", "cleanup", "stop", ["exit", 75]]);
+  assert.equal(Object.hasOwn(request, "mode"), false);
 });
 
-for (const [executingMode, requestedMode] of [
-  ["hot", "full"],
-  ["full", "hot"],
-]) {
-  test(`installed artifact update rejects ${requestedMode} while ${executingMode} is in flight`, async () => {
-    let resolveUpdate;
-    let updateCount = 0;
-    let resolveCount = 0;
-    const adapter = createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => {
-        resolveCount += 1;
-        return { appBundlePath: "/Moved App.app" };
+test("full activation aborts the prepared transaction when app-server cannot stop", async () => {
+  const calls = [];
+  const adapter = lifecycle({
+    runtimeLauncher: {
+      supported: true,
+      prepareFull: async () => {
+        calls.push("prepare");
+        return { ok: true };
       },
-      updateArtifacts: () => {
-        updateCount += 1;
-        return new Promise((resolve) => {
-          resolveUpdate = resolve;
-        });
+      abortFull: async (transactionId) => {
+        calls.push(["abort", transactionId]);
+        return { ok: true };
       },
-      appServerRestart: {
-        requestRestart: (reason) => ({
-          ok: true,
-          restarted: true,
-          reason,
-        }),
+    },
+    cleanupPreparedArtifact: async () => calls.push("cleanup"),
+    appServerStop: {
+      requestStop: async () => {
+        calls.push("stop");
+        return { ok: false, stopped: false, reason: "stop failed" };
       },
-      appServerStop: {
-        requestStop: (reason) => ({ ok: true, stopped: true, reason }),
-      },
-      reloadWindows: async () => ({ windowsReloaded: 1 }),
-      fullRelaunch: {
-        requestRelaunch: (reason) => ({
-          ok: true,
-          relaunching: true,
-          reason,
-        }),
-      },
-      broadcastStatus: () => {},
-    });
-
-    const first = adapter.requestUpdateAndRelaunch("first", executingMode);
-    assert.deepEqual(
-      await adapter.requestUpdateAndRelaunch("conflict", requestedMode),
-      {
-        ok: false,
-        busy: true,
-        conflict: true,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: false,
-        mode: null,
-        requestedMode,
-        executingMode,
-        reason: `Runtime refresh mode conflict: requested ${requestedMode} while ${executingMode} is in progress`,
-      },
-    );
-    assert.equal(resolveCount, 1);
-    assert.equal(updateCount, 1);
-
-    resolveUpdate({ ok: true, updated: true });
-    await first;
+    },
+    appExit: () => calls.push("exit"),
   });
-}
 
-test("client relaunch notification handler does not use app relaunch directly", async () => {
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: async () => ({
-        ok: true,
-        inPlace: true,
-        relaunching: false,
-        reloaded: true,
+  const result = await adapter.requestUpdateAndRelaunch("full update", "full");
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /stop failed/);
+  assert.equal(result.abort.ok, true);
+  assert.deepEqual(calls, [
+    "prepare",
+    "cleanup",
+    "stop",
+    ["abort", "tx-1"],
+  ]);
+});
+
+test("same-mode requests coalesce while cross-mode requests conflict", async () => {
+  let resolveUpdate;
+  const adapter = lifecycle({
+    updateArtifacts: () =>
+      new Promise((resolve) => {
+        resolveUpdate = resolve;
       }),
-    },
   });
 
-  await handler({
-    method: "client/relaunch/requested",
-    params: { mode: "hot" },
-  });
-});
+  const first = adapter.requestUpdateAndRelaunch("first", "hot");
+  const duplicate = adapter.requestUpdateAndRelaunch("second", "hot");
+  const conflict = await adapter.requestUpdateAndRelaunch("third", "full");
+  assert.equal(conflict.conflict, true);
+  assert.equal(conflict.requestedMode, "full");
+  assert.equal(conflict.executingMode, "hot");
 
-test("renderer reload lifecycle adapter coalesces duplicate requests", async () => {
-  let resolveReload;
-  let reloadCount = 0;
-  const adapter = createRendererReloadLifecycleAdapter({
-    broadcastStatus: () => {},
-    reloadWindows: () => {
-      reloadCount += 1;
-      return new Promise((resolve) => {
-        resolveReload = resolve;
-      });
-    },
-  });
-
-  const first = adapter.requestReload("restart tool");
-  const second = adapter.requestReload("duplicate");
-  resolveReload({ windowsReloaded: 1 });
-
-  assert.deepEqual(await first, {
-    ok: true,
-    inPlace: true,
-    relaunching: false,
-    reloaded: true,
-    alreadyRequested: false,
-    windowsReloaded: 1,
-    mode: null,
-    reason: "restart tool",
-  });
-  assert.deepEqual(await second, {
-    ok: true,
-    inPlace: true,
-    relaunching: false,
-    reloaded: true,
-    alreadyRequested: true,
-    windowsReloaded: 1,
-    mode: null,
-    reason: "restart tool",
-    requestedMode: null,
-    executingMode: null,
-  });
-  assert.equal(reloadCount, 1);
-});
-
-test("renderer hot reload coalesces another explicit hot request", async () => {
-  let resolveReload;
-  let reloadCount = 0;
-  const adapter = createRendererReloadLifecycleAdapter({
-    broadcastStatus: () => {},
-    reloadWindows: () => {
-      reloadCount += 1;
-      return new Promise((resolve) => {
-        resolveReload = resolve;
-      });
-    },
-  });
-
-  const first = adapter.requestHotReload("first");
-  const second = adapter.requestHotReload("second");
-  resolveReload({ windowsReloaded: 1 });
-
-  assert.equal((await first).alreadyRequested, false);
-  assert.deepEqual(
-    {
-      alreadyRequested: (await second).alreadyRequested,
-      requestedMode: (await second).requestedMode,
-      executingMode: (await second).executingMode,
-    },
-    {
-      alreadyRequested: true,
-      requestedMode: "hot",
-      executingMode: "hot",
-    },
-  );
-  assert.equal(reloadCount, 1);
-});
-
-for (const [
-  firstMethod,
-  executingMode,
-  executingModeLabel,
-  secondMethod,
-  requestedMode,
-  requestedModeLabel,
-] of [
-  ["requestReload", null, "generic reload", "requestHotReload", "hot", "hot"],
-  ["requestHotReload", "hot", "hot", "requestReload", null, "generic reload"],
-]) {
-  test(`renderer reload rejects ${requestedModeLabel} while ${executingModeLabel} is in flight`, async () => {
-    let resolveReload;
-    let reloadCount = 0;
-    const adapter = createRendererReloadLifecycleAdapter({
-      broadcastStatus: () => {},
-      reloadWindows: () => {
-        reloadCount += 1;
-        return new Promise((resolve) => {
-          resolveReload = resolve;
-        });
-      },
-    });
-
-    const first = adapter[firstMethod]("first");
-    assert.deepEqual(await adapter[secondMethod]("conflict"), {
-      ok: false,
-      busy: true,
-      conflict: true,
-      inPlace: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      mode: null,
-      requestedMode,
-      executingMode,
-      reason: `Runtime refresh mode conflict: requested ${requestedModeLabel} while ${executingModeLabel} is in progress`,
-    });
-    assert.equal(reloadCount, 1);
-
-    resolveReload({ windowsReloaded: 1 });
-    await first;
-  });
-}
-
-test("outer coalesce preserves a nested renderer mode conflict", async () => {
-  let resolveReload;
-  let reloadCount = 0;
-  const rendererReload = createRendererReloadLifecycleAdapter({
-    broadcastStatus: () => {},
-    reloadWindows: () => {
-      reloadCount += 1;
-      return new Promise((resolve) => {
-        resolveReload = resolve;
-      });
-    },
-  });
-  const genericReload = rendererReload.requestReload("generic");
-  const handler = createClientRelaunchNotificationHandler({ rendererReload });
-
-  const first = handler({
-    method: "client/relaunch/requested",
-    params: { mode: "hot", reason: "first hot" },
-  });
-  const second = handler({
-    method: "client/relaunch/requested",
-    params: { mode: "hot", reason: "second hot" },
-  });
-
-  assert.deepEqual(await first, {
-    ok: false,
-    busy: true,
-    conflict: true,
-    inPlace: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    mode: null,
-    requestedMode: "hot",
-    executingMode: null,
-    reason:
-      "Runtime refresh mode conflict: requested hot while generic reload is in progress",
-  });
-  assert.deepEqual(await second, {
-    ok: false,
-    busy: true,
-    conflict: true,
-    inPlace: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    mode: null,
-    requestedMode: "hot",
-    executingMode: null,
-    reason:
-      "Runtime refresh mode conflict: requested hot while generic reload is in progress",
-    alreadyRequested: true,
-  });
-  assert.equal(reloadCount, 1);
-
-  resolveReload({ windowsReloaded: 1 });
-  await genericReload;
-});
-
-test("renderer reload lifecycle adapter falls back to full app relaunch", async () => {
-  const statuses = [];
-  const calls = [];
-  const adapter = createRendererReloadLifecycleAdapter({
-    broadcastStatus: (status) => statuses.push(status),
-    logger: { warn: () => {} },
-    reloadWindows: async () => {
-      throw new Error("reload failed");
-    },
-    fullRelaunch: {
-      requestRelaunch: (reason) => {
-        calls.push(reason);
-        return {
-          ok: true,
-          relaunching: true,
-          alreadyRequested: false,
-          reason,
-        };
-      },
-    },
-  });
-
-  const result = await adapter.requestReload("restart tool");
-
-  assert.deepEqual(result, {
-    ok: true,
-    inPlace: false,
-    relaunching: true,
-    reloaded: false,
-    fallback: {
-      ok: true,
-      relaunching: true,
-      alreadyRequested: false,
-      reason: "restart tool",
-    },
-    mode: null,
-    reason: "restart tool",
-  });
-  assert.deepEqual(calls, ["restart tool"]);
-  assert.deepEqual(statuses.at(-1), {
-    lifecycle: {
-      type: "rendererReload",
-      phase: "fullRelaunchFallback",
-      mode: null,
-      reason: "restart tool",
-    },
-    relaunch: {
-      ok: true,
-      relaunching: true,
-      alreadyRequested: false,
-      reason: "restart tool",
-    },
-  });
-});
-
-test("client relaunch notification handler rejects missing mode without side effects", async () => {
-  const calls = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => calls.push("reload"),
-    },
-    installedArtifactUpdate: {
-      requestUpdateAndRelaunch: () => calls.push("update"),
-    },
-    fullRelaunch: {
-      requestRelaunch: () => calls.push("relaunch"),
-    },
-  });
-
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: false,
-    inPlace: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    mode: null,
-    reason: "Invalid client relaunch mode: missing",
-  });
-  assert.deepEqual(calls, []);
-});
-
-test("client relaunch notification handler rejects invalid mode without side effects", async () => {
-  const calls = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => calls.push("reload"),
-    },
-    installedArtifactUpdate: {
-      requestUpdateAndRelaunch: () => calls.push("update"),
-    },
-    fullRelaunch: {
-      requestRelaunch: () => calls.push("relaunch"),
-    },
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "auto" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      relaunching: false,
-      reloaded: false,
-      updated: false,
-      mode: null,
-      reason: "Invalid client relaunch mode: auto",
-    },
-  );
-  assert.deepEqual(calls, []);
-});
-
-test("hot renderer reload does not fall back to full relaunch", async () => {
-  const calls = [];
-  const adapter = createRendererReloadLifecycleAdapter({
-    broadcastStatus: () => {},
-    logger: { warn: () => calls.push("warn") },
-    reloadWindows: async () => {
-      throw new Error("reload failed");
-    },
-    fullRelaunch: {
-      requestRelaunch: () => calls.push("relaunch"),
-    },
-  });
-
-  assert.deepEqual(await adapter.requestHotReload("restart tool"), {
-    ok: false,
-    inPlace: true,
-    relaunching: false,
-    reloaded: false,
-    mode: "hot",
-    reason: "reload failed",
-  });
-  assert.deepEqual(calls, []);
-});
-
-test("full mode relaunches directly when installed artifact update is unsupported", async () => {
-  const calls = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("renderer reload should not run for full mode");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      resolvePlan: () => null,
-      updateArtifacts: () => {
-        throw new Error("unsupported update should not run");
-      },
-    }),
-    fullRelaunch: {
-      requestRelaunch: (reason) => {
-        calls.push(["relaunch", reason]);
-        return { ok: true, relaunching: true, reason };
-      },
-    },
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "full", reason: "restart tool" },
-    }),
-    {
-      ok: true,
-      inPlace: false,
-      relaunching: true,
-      reloaded: false,
-      updated: false,
-      mode: "full",
-      relaunch: {
-        ok: true,
-        relaunching: true,
-        reason: "restart tool",
-      },
-      reason: "restart tool",
-    },
-  );
-  assert.deepEqual(calls, [["relaunch", "restart tool"]]);
-});
-
-test("full installed artifact update stops when app-server stop fails", async () => {
-  const calls = [];
-  const handler = createClientRelaunchNotificationHandler({
-    rendererReload: {
-      requestReload: () => {
-        throw new Error("renderer reload should not run for full mode");
-      },
-    },
-    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
-      appServerStop: {
-        requestStop: async (reason) => {
-          calls.push(["backendStop", reason]);
-          return { ok: false, stopped: false, reason: "stop failed" };
-        },
-      },
-      fullRelaunch: {
-        requestRelaunch: () => calls.push("relaunch"),
-      },
-      reloadWindows: () => {
-        throw new Error("reload should not run for full mode");
-      },
-      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
-      updateArtifacts: async () => ({ ok: true, updated: true }),
-      logger: { error: () => {} },
-      broadcastStatus: () => {},
-    }),
-  });
-
-  assert.deepEqual(
-    await handler({
-      method: "client/relaunch/requested",
-      params: { mode: "full", reason: "restart tool" },
-    }),
-    {
-      ok: false,
-      inPlace: false,
-      partial: true,
-      relaunching: false,
-      reloaded: false,
-      updated: true,
-      backendRestart: undefined,
-      reload: undefined,
-      mode: "full",
-      reason: "stop failed",
-      backendStop: {
-        ok: false,
-        stopped: false,
-        reason: "stop failed",
-      },
-    },
-  );
-  assert.deepEqual(calls, [["backendStop", "restart tool"]]);
+  resolveUpdate(preparedUpdate());
+  assert.equal((await first).ok, true);
+  assert.equal((await duplicate).alreadyRequested, true);
 });
