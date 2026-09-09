@@ -943,7 +943,6 @@ pub fn run_hidden_guard(request_path: &Path) -> Result<(), GuardError> {
             && !known_descendants.contains(&process.identity)
         });
         if let Some(process) = ambiguous_group_member {
-            known_descendants.insert(process.identity);
             let message = format!(
                 "cooperative process contract violated by untracked process {}/{} in guarded pgid {}",
                 process.identity.pid,
@@ -1127,117 +1126,88 @@ fn cleanup_guarded_payload(
     mut known_descendants: BTreeSet<ProcessIdentity>,
 ) -> Result<(), GuardError> {
     let policy = crate::process::TerminationPolicy::default();
-    let initial = crate::process::snapshot_processes()
+    let mut snapshot = crate::process::snapshot_processes()
         .map_err(|error| GuardError::Blocked(error.to_string()))?;
-    known_descendants.extend(crate::process::descendants_of(payload, &initial));
-    let leader_alive = payload
-        .is_alive()
-        .map_err(|error| GuardError::io("observe guarded payload leader", error))?;
-    let group_members = initial
-        .iter()
-        .filter(|process| process.pgid == process_group.pgid)
-        .map(|process| process.identity)
-        .collect::<BTreeSet<_>>();
-    if !leader_alive
-        && group_members
-            .iter()
-            .any(|identity| !known_descendants.contains(identity))
-    {
-        return Err(GuardError::Blocked(format!(
-            "payload leader identity is gone and pgid {} contains an untracked member",
-            process_group.pgid
-        )));
-    }
+    extend_observed_descendants(&mut known_descendants, payload, &snapshot);
+    require_guarded_group_ownership(payload, process_group, &known_descendants, &snapshot)?;
     let mut status = 0_i32;
     let mut reaped = false;
-    if leader_alive {
-        let term = unsafe { libc::killpg(process_group.pgid, libc::SIGTERM) };
-        if term != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
-            return Err(GuardError::io(
-                "terminate guarded payload group",
-                io::Error::last_os_error(),
-            ));
-        }
-    } else {
-        for identity in &known_descendants {
-            signal_observed_identity(*identity, libc::SIGTERM)?;
-        }
-    }
+    signal_guarded_payload(
+        payload,
+        process_group,
+        &known_descendants,
+        &snapshot,
+        libc::SIGTERM,
+    )?;
     let term_deadline = std::time::Instant::now() + policy.term_timeout;
     while std::time::Instant::now() < term_deadline {
-        let waited = unsafe { libc::waitpid(payload.pid, &mut status, libc::WNOHANG) };
-        if waited == payload.pid || (waited < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD)) {
-            reaped = true;
-            break;
-        }
-        if waited < 0 {
-            return Err(GuardError::io(
-                "reap terminated guarded payload",
-                io::Error::last_os_error(),
-            ));
-        }
-        std::thread::sleep(policy.poll_interval);
-    }
-    if !reaped {
-        if leader_alive {
-            let killed = unsafe { libc::killpg(process_group.pgid, libc::SIGKILL) };
-            if killed != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+        if !reaped {
+            let waited = unsafe { libc::waitpid(payload.pid, &mut status, libc::WNOHANG) };
+            if waited == payload.pid
+                || (waited < 0
+                    && io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD))
+            {
+                reaped = true;
+            } else if waited < 0 {
                 return Err(GuardError::io(
-                    "kill guarded payload group",
+                    "reap terminated guarded payload",
                     io::Error::last_os_error(),
                 ));
             }
-        } else {
-            for identity in &known_descendants {
-                signal_observed_identity(*identity, libc::SIGKILL)?;
-            }
         }
-        let waited = unsafe { libc::waitpid(payload.pid, &mut status, 0) };
-        if waited != payload.pid
-            && !(waited < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD))
-        {
-            return Err(GuardError::io(
-                "reap killed guarded payload",
-                io::Error::last_os_error(),
-            ));
-        }
-    }
-    let deadline = std::time::Instant::now() + policy.kill_timeout;
-    loop {
-        let group_alive = crate::process::snapshot_processes()
-            .map_err(|error| GuardError::Blocked(error.to_string()))?
-            .into_iter()
-            .any(|process| process.pgid == process_group.pgid);
-        let payload_alive = payload
-            .is_alive()
-            .map_err(|error| GuardError::io("observe guarded payload exit", error))?;
-        let escaped_alive = known_descendants
-            .iter()
-            .map(|identity| {
-                identity
-                    .is_alive()
-                    .map_err(|error| GuardError::io("observe guarded descendant exit", error))
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .any(|alive| alive);
-        if !group_alive && !payload_alive && !escaped_alive {
+        snapshot = crate::process::snapshot_processes()
+            .map_err(|error| GuardError::Blocked(error.to_string()))?;
+        extend_observed_descendants(&mut known_descendants, payload, &snapshot);
+        require_guarded_group_ownership(payload, process_group, &known_descendants, &snapshot)?;
+        signal_guarded_payload(
+            payload,
+            process_group,
+            &known_descendants,
+            &snapshot,
+            libc::SIGTERM,
+        )?;
+        if guarded_payload_is_empty(payload, process_group, &known_descendants, &snapshot)? {
             return Ok(());
         }
-        for identity in &known_descendants {
-            if identity
-                .is_alive()
-                .map_err(|error| GuardError::io("observe escaped guarded descendant", error))?
+        std::thread::sleep(policy.poll_interval);
+    }
+    signal_guarded_payload(
+        payload,
+        process_group,
+        &known_descendants,
+        &snapshot,
+        libc::SIGKILL,
+    )?;
+    let deadline = std::time::Instant::now() + policy.kill_timeout;
+    loop {
+        if !reaped {
+            let waited = unsafe { libc::waitpid(payload.pid, &mut status, libc::WNOHANG) };
+            if waited == payload.pid
+                || (waited < 0
+                    && io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD))
             {
-                let result = unsafe { libc::kill(identity.pid, libc::SIGKILL) };
-                if result != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
-                    return Err(GuardError::io(
-                        "kill escaped guarded descendant",
-                        io::Error::last_os_error(),
-                    ));
-                }
+                reaped = true;
+            } else if waited < 0 {
+                return Err(GuardError::io(
+                    "reap killed guarded payload",
+                    io::Error::last_os_error(),
+                ));
             }
         }
+        snapshot = crate::process::snapshot_processes()
+            .map_err(|error| GuardError::Blocked(error.to_string()))?;
+        extend_observed_descendants(&mut known_descendants, payload, &snapshot);
+        require_guarded_group_ownership(payload, process_group, &known_descendants, &snapshot)?;
+        if guarded_payload_is_empty(payload, process_group, &known_descendants, &snapshot)? {
+            return Ok(());
+        }
+        signal_guarded_payload(
+            payload,
+            process_group,
+            &known_descendants,
+            &snapshot,
+            libc::SIGKILL,
+        )?;
         if std::time::Instant::now() >= deadline {
             return Err(GuardError::Blocked(format!(
                 "guard {} could not confirm cooperative cleanup for payload group {}",
@@ -1246,6 +1216,89 @@ fn cleanup_guarded_payload(
         }
         std::thread::sleep(policy.poll_interval);
     }
+}
+
+fn require_guarded_group_ownership(
+    payload: ProcessIdentity,
+    process_group: ProcessGroupRecord,
+    known_descendants: &BTreeSet<ProcessIdentity>,
+    snapshot: &[crate::process::ProcessRecord],
+) -> Result<(), GuardError> {
+    if let Some(process) = snapshot.iter().find(|process| {
+        process.pgid == process_group.pgid
+            && process.identity != payload
+            && !known_descendants.contains(&process.identity)
+    }) {
+        return Err(GuardError::Blocked(format!(
+            "payload pgid {} contains untracked process {}/{}",
+            process_group.pgid, process.identity.pid, process.identity.start_identity
+        )));
+    }
+    Ok(())
+}
+
+fn guarded_identities_outside_registered_group(
+    payload: ProcessIdentity,
+    process_group: ProcessGroupRecord,
+    known_descendants: &BTreeSet<ProcessIdentity>,
+    snapshot: &[crate::process::ProcessRecord],
+) -> BTreeSet<ProcessIdentity> {
+    let registered_group_is_owned = snapshot.iter().any(|process| {
+        process.identity == process_group.leader && process.pgid == process_group.pgid
+    });
+    std::iter::once(payload)
+        .chain(known_descendants.iter().copied())
+        .filter(|identity| {
+            snapshot.iter().any(|process| {
+                process.identity == *identity
+                    && (!registered_group_is_owned || process.pgid != process_group.pgid)
+            })
+        })
+        .collect()
+}
+
+fn signal_guarded_payload(
+    payload: ProcessIdentity,
+    process_group: ProcessGroupRecord,
+    known_descendants: &BTreeSet<ProcessIdentity>,
+    snapshot: &[crate::process::ProcessRecord],
+    signal: i32,
+) -> Result<(), GuardError> {
+    if snapshot.iter().any(|process| {
+        process.identity == process_group.leader && process.pgid == process_group.pgid
+    }) {
+        let group_result = unsafe { libc::killpg(process_group.pgid, signal) };
+        if group_result != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            return Err(GuardError::io(
+                "signal guarded payload group",
+                io::Error::last_os_error(),
+            ));
+        }
+    }
+    for identity in guarded_identities_outside_registered_group(
+        payload,
+        process_group,
+        known_descendants,
+        snapshot,
+    ) {
+        signal_observed_identity(identity, signal)?;
+    }
+    Ok(())
+}
+
+fn guarded_payload_is_empty(
+    payload: ProcessIdentity,
+    process_group: ProcessGroupRecord,
+    known_descendants: &BTreeSet<ProcessIdentity>,
+    snapshot: &[crate::process::ProcessRecord],
+) -> Result<bool, GuardError> {
+    let group_alive = snapshot
+        .iter()
+        .any(|process| process.pgid == process_group.pgid);
+    let payload_alive = payload
+        .is_alive()
+        .map_err(|error| GuardError::io("observe guarded payload exit", error))?;
+    Ok(!group_alive && !payload_alive && observed_identities_are_gone(known_descendants)?)
 }
 
 fn signal_observed_identity(identity: ProcessIdentity, signal: i32) -> Result<(), GuardError> {
@@ -1644,11 +1697,18 @@ mod tests {
         extend_observed_descendants(
             &mut known,
             payload,
-            &[crate::process::ProcessRecord {
-                identity: handed_off,
-                parent_pid: payload.pid,
-                pgid: handed_off.pid,
-            }],
+            &[
+                crate::process::ProcessRecord {
+                    identity: payload,
+                    parent_pid: 1,
+                    pgid: payload.pid,
+                },
+                crate::process::ProcessRecord {
+                    identity: handed_off,
+                    parent_pid: payload.pid,
+                    pgid: handed_off.pid,
+                },
+            ],
         );
         extend_observed_descendants(
             &mut known,
@@ -1667,5 +1727,95 @@ mod tests {
             ],
         );
         assert_eq!(known, BTreeSet::from([handed_off, child]));
+        assert_eq!(
+            guarded_identities_outside_registered_group(
+                payload,
+                ProcessGroupRecord {
+                    leader: payload,
+                    pgid: payload.pid,
+                },
+                &known,
+                &[
+                    crate::process::ProcessRecord {
+                        identity: handed_off,
+                        parent_pid: 1,
+                        pgid: handed_off.pid,
+                    },
+                    crate::process::ProcessRecord {
+                        identity: child,
+                        parent_pid: handed_off.pid,
+                        pgid: handed_off.pid,
+                    },
+                ],
+            ),
+            BTreeSet::from([handed_off, child]),
+            "TERM and KILL must target every observed handed-off identity",
+        );
+    }
+
+    #[test]
+    fn does_not_follow_descendants_from_a_reused_observed_pid() {
+        let payload = ProcessIdentity {
+            pid: 10,
+            start_identity: 100,
+        };
+        let stale = ProcessIdentity {
+            pid: 11,
+            start_identity: 110,
+        };
+        let reused = ProcessIdentity {
+            pid: 11,
+            start_identity: 999,
+        };
+        let unrelated_child = ProcessIdentity {
+            pid: 12,
+            start_identity: 120,
+        };
+        let mut known = BTreeSet::from([stale]);
+        extend_observed_descendants(
+            &mut known,
+            payload,
+            &[
+                crate::process::ProcessRecord {
+                    identity: reused,
+                    parent_pid: 1,
+                    pgid: reused.pid,
+                },
+                crate::process::ProcessRecord {
+                    identity: unrelated_child,
+                    parent_pid: reused.pid,
+                    pgid: reused.pid,
+                },
+            ],
+        );
+        assert_eq!(known, BTreeSet::from([stale]));
+    }
+
+    #[test]
+    fn vanished_payload_leader_requires_direct_signals_for_known_descendants() {
+        let payload = ProcessIdentity {
+            pid: 10,
+            start_identity: 100,
+        };
+        let descendant = ProcessIdentity {
+            pid: 11,
+            start_identity: 110,
+        };
+        assert_eq!(
+            guarded_identities_outside_registered_group(
+                payload,
+                ProcessGroupRecord {
+                    leader: payload,
+                    pgid: payload.pid,
+                },
+                &BTreeSet::from([descendant]),
+                &[crate::process::ProcessRecord {
+                    identity: descendant,
+                    parent_pid: 1,
+                    pgid: payload.pid,
+                }],
+            ),
+            BTreeSet::from([descendant]),
+        );
     }
 }

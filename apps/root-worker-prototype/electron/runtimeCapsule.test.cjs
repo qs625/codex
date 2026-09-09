@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
+  LEGACY_PROHIBITED_PROCESS_BEHAVIORS,
   PROCESS_SUPERVISION_CONTRACT,
   PROHIBITED_PROCESS_BEHAVIORS,
   computeRuntimeCapsulePreimage,
@@ -63,10 +64,11 @@ test("release preimage matches the Rust Capsule v1 golden vector", () => {
       "001272656164696e6573732e70726f746f636f6c00000000000000116c61756e636865722d72656164792d7631",
       "001472656164696e6573732e74696d656f75745f6d7300000000000000080000000000001388",
       "001c70726f636573735f7375706572766973696f6e2e636f6e74726163740000000000000017636f6f70657261746976652d6f627365727665642d7631",
-      "002470726f636573735f7375706572766973696f6e2e70726f686962697465642e636f756e7400000000000000080000000000000003",
+      "002470726f636573735f7375706572766973696f6e2e70726f686962697465642e636f756e7400000000000000080000000000000004",
       "001e70726f636573735f7375706572766973696f6e2e70726f6869626974656400000000000000096461656d6f6e697a65",
       "001e70726f636573735f7375706572766973696f6e2e70726f68696269746564000000000000000b646f75626c652d666f726b",
       "001e70726f636573735f7375706572766973696f6e2e70726f686962697465640000000000000006736574736964",
+      "001e70726f636573735f7375706572766973696f6e2e70726f68696269746564000000000000001470726f636573732d67726f75702d657363617065",
       "000d656e74726965732e636f756e7400000000000000080000000000000004",
       "000c656e7472792e302e70617468000000000000000362696e",
       "000c656e7472792e302e7479706500000000000000096469726563746f7279",
@@ -80,6 +82,41 @@ test("release preimage matches the Rust Capsule v1 golden vector", () => {
       "000c656e7472792e332e706174680000000000000004776f726b",
       "000c656e7472792e332e7479706500000000000000096469726563746f7279",
     ].join(""),
+  );
+});
+
+test("legacy three-behavior Capsule remains valid with its original release preimage", () => {
+  const manifest = {
+    schemaVersion: 1,
+    releaseId: `sha256:${"0".repeat(64)}`,
+    target: { os: "toy-os", arch: "toy-arch" },
+    launch: {
+      executable: "bin/runtime",
+      arguments: [],
+      readiness: { protocol: "launcher-ready-v1", timeoutMs: 5_000 },
+    },
+    processSupervision: {
+      contract: PROCESS_SUPERVISION_CONTRACT,
+      prohibitedBehaviors: [...LEGACY_PROHIBITED_PROCESS_BEHAVIORS],
+    },
+    entries: [
+      { type: "directory", path: "bin" },
+      {
+        type: "file",
+        path: "bin/runtime",
+        sha256: "00".repeat(32),
+        executable: true,
+      },
+    ],
+    metadata: {},
+  };
+  assert.doesNotThrow(() => validateRuntimeCapsuleManifest(manifest));
+  assert.notEqual(
+    computeRuntimeCapsuleReleaseId(manifest),
+    computeRuntimeCapsuleReleaseId({
+      ...manifest,
+      processSupervision: cooperativeProcessSupervision(),
+    }),
   );
 });
 

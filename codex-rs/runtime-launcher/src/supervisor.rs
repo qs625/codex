@@ -690,7 +690,12 @@ fn reconcile_active_launch_inner(
             active.payload_registration.as_ref(),
         ) {
             (Some(guard_registration), Some(payload_registration)) => {
-                terminate_registered_launch(guard_registration, payload_registration)
+                reconcile_registered_launch(
+                    paths,
+                    active,
+                    guard_registration,
+                    payload_registration,
+                )
             }
             (Some(guard_registration), None) => {
                 let payload_path = active_payload_registration_path(paths, active);
@@ -704,7 +709,12 @@ fn reconcile_active_launch_inner(
                         &payload_registration,
                     )?;
                     recovered_payload = Some(payload_registration.clone());
-                    terminate_registered_launch(guard_registration, &payload_registration)
+                    reconcile_registered_launch(
+                        paths,
+                        active,
+                        guard_registration,
+                        &payload_registration,
+                    )
                 } else if guard_registration
                     .guard
                     .is_alive()
@@ -744,7 +754,12 @@ fn reconcile_active_launch_inner(
                             &payload_registration,
                         )?;
                         recovered_payload = Some(payload_registration.clone());
-                        terminate_registered_launch(&registration, &payload_registration)
+                        reconcile_registered_launch(
+                            paths,
+                            active,
+                            &registration,
+                            &payload_registration,
+                        )
                     } else if registration
                         .guard
                         .is_alive()
@@ -1384,9 +1399,15 @@ fn launch_selected(
             && ControlState::load(&paths.control)?
                 .is_some_and(|control| control.activation.phase == ActivationPhase::RollbackDecided)
         {
-            terminate_registered_launch(&guard_registration, &payload_registration)?;
-            clear_active_launch(paths, &launch_instance_id)?;
             drop(parent_keeper);
+            wait_for_guard_cleanup(
+                &exit_report_path,
+                &mut guard_child,
+                &guard_registration,
+                &payload_registration,
+                "rollback request",
+            )?;
+            clear_active_launch(paths, &launch_instance_id)?;
             return Err(LauncherError::Launch("rollback requested".to_string()));
         }
         if guard::consume_ready_marker(&ready_path, &bearer.expectation)
@@ -1431,12 +1452,15 @@ fn launch_selected(
                         LauncherError::Conflict("control state disappeared".to_string())
                     })?;
                     if latest.activation.phase == ActivationPhase::RollbackDecided {
-                        terminate_registered_launch(
+                        drop(parent_keeper);
+                        wait_for_guard_cleanup(
+                            &exit_report_path,
+                            &mut guard_child,
                             &guard_registration,
                             &payload_registration,
+                            "rollback during candidate observation",
                         )?;
                         clear_active_launch(paths, &launch_instance_id)?;
-                        drop(parent_keeper);
                         return Err(LauncherError::Launch(
                             "rollback requested during observation".to_string(),
                         ));
@@ -1487,9 +1511,15 @@ fn launch_selected(
             });
         }
         if Instant::now() >= deadline {
-            terminate_registered_launch(&guard_registration, &payload_registration)?;
-            clear_active_launch(paths, &launch_instance_id)?;
             drop(parent_keeper);
+            wait_for_guard_cleanup(
+                &exit_report_path,
+                &mut guard_child,
+                &guard_registration,
+                &payload_registration,
+                "payload readiness timeout",
+            )?;
+            clear_active_launch(paths, &launch_instance_id)?;
             return Err(LauncherError::Launch("payload readiness timed out".to_string()));
         }
         ensure_guard_alive(
@@ -1807,6 +1837,36 @@ fn wait_for_guard_exit(
     }
 }
 
+fn wait_for_guard_cleanup(
+    path: &Path,
+    guard_child: &mut std::process::Child,
+    guard_registration: &GuardRegistration,
+    payload_registration: &PayloadRegistration,
+    context: &str,
+) -> Result<ExitStatus> {
+    let policy = TerminationPolicy::default();
+    let deadline =
+        Instant::now() + policy.term_timeout + policy.kill_timeout + GUARD_HANDSHAKE_TIMEOUT;
+    loop {
+        if let Some(status) = read_guard_exit_status(
+            path,
+            guard_child,
+            guard_registration,
+            payload_registration,
+        )? {
+            return Ok(status);
+        }
+        ensure_guard_alive(guard_child, guard_registration, payload_registration)?;
+        if Instant::now() >= deadline {
+            terminate_registered_launch(guard_registration, payload_registration)?;
+            return Err(LauncherError::Blocked(format!(
+                "hidden guard did not publish durable cooperative cleanup evidence after {context}"
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn ensure_guard_alive(
     guard_child: &mut std::process::Child,
     guard_registration: &GuardRegistration,
@@ -1839,6 +1899,67 @@ fn terminate_registered_launch(
     )
     .map_err(|error| LauncherError::Blocked(error.to_string()))?;
     Ok(())
+}
+
+fn reconcile_registered_launch(
+    paths: &LauncherPaths,
+    active: &ActiveLaunchRecord,
+    guard_registration: &GuardRegistration,
+    payload_registration: &PayloadRegistration,
+) -> Result<()> {
+    let exit_report_path = paths
+        .attempts
+        .join(&active.spawn_attempt_id)
+        .with_extension("exit-report.json");
+    let deadline = Instant::now()
+        + TerminationPolicy::default().term_timeout
+        + TerminationPolicy::default().kill_timeout
+        + GUARD_HANDSHAKE_TIMEOUT;
+    loop {
+        if let Some(report) =
+            guard::read_protocol_file_if_exists::<GuardExitReport>(&exit_report_path)
+                .map_err(|error| LauncherError::Blocked(error.to_string()))?
+        {
+            let observation = validate_guard_exit_report(
+                &report,
+                &guard_registration.release_id,
+                &guard_registration.launch_instance_id,
+                &guard_registration.spawn_attempt_id,
+                payload_registration.payload,
+            )?;
+            match observation {
+                GuardTerminalObservation::Exited(_)
+                    if !guard_registration
+                        .guard
+                        .is_alive()
+                        .map_err(|error| LauncherError::Blocked(error.to_string()))? =>
+                {
+                    return Ok(());
+                }
+                GuardTerminalObservation::Exited(_) => {}
+                GuardTerminalObservation::ContractViolated(message) => {
+                    return Err(LauncherError::Blocked(message));
+                }
+            }
+        }
+        if !guard_registration
+            .guard
+            .is_alive()
+            .map_err(|error| LauncherError::Blocked(error.to_string()))?
+        {
+            return Err(LauncherError::Blocked(
+                "recovered guard exited without durable cooperative cleanup evidence".to_string(),
+            ));
+        }
+        if Instant::now() >= deadline {
+            terminate_registered_launch(guard_registration, payload_registration)?;
+            return Err(LauncherError::Blocked(
+                "recovered guard did not publish cooperative cleanup evidence before timeout"
+                    .to_string(),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn clear_active_launch(paths: &LauncherPaths, launch_instance_id: &str) -> Result<ControlState> {
@@ -3265,7 +3386,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_guard_violation_reconciles_to_acknowledgeable_blocked_state() {
+    fn durable_guard_violation_blocks_and_retains_unproven_active_launch() {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths = LauncherPaths::new(temp.path().join("state"));
         paths.ensure().expect("paths");
@@ -3302,10 +3423,10 @@ mod tests {
             .expect("load")
             .expect("control");
         assert_eq!(blocked.activation.phase, ActivationPhase::Blocked);
-        assert!(blocked.active_launch.is_none());
+        assert!(blocked.active_launch.is_some());
         assert!(paths.failure_evidence.exists());
 
-        let idle = ack_failure(
+        let error = ack_failure(
             &paths,
             MutationRequest {
                 activation_id: "activation-1".to_string(),
@@ -3314,13 +3435,14 @@ mod tests {
                 reason: "ack".to_string(),
             },
         )
-        .expect("acknowledge");
-        assert_eq!(idle.activation.phase, ActivationPhase::Idle);
-        assert!(idle.active_launch.is_none());
+        .expect_err("cleanup evidence is required before acknowledgement");
+        assert!(error
+            .to_string()
+            .contains("must be observed stopped"));
     }
 
     #[test]
-    fn active_committed_launch_error_clears_and_blocks_in_one_reconcile() {
+    fn active_committed_launch_error_blocks_without_clearing_unproven_launch() {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths = LauncherPaths::new(temp.path().join("state"));
         paths.ensure().expect("paths");
@@ -3336,20 +3458,24 @@ mod tests {
             "committed relaunch failed",
         )
         .expect_err("pending failure must stop the launcher");
-        assert!(error.to_string().contains("committed relaunch failed"));
+        assert!(error
+            .to_string()
+            .contains("without durable cooperative cleanup evidence"));
         let blocked = ControlState::load(&paths.control)
             .expect("load")
             .expect("control");
         assert_eq!(blocked.revision, initial_revision + 1);
         assert_eq!(blocked.activation.phase, ActivationPhase::Blocked);
-        assert!(blocked.active_launch.is_none());
+        assert!(blocked.active_launch.is_some());
         assert_eq!(
             blocked
                 .activation
                 .blocked
                 .as_ref()
                 .map(|blocked| blocked.failure.message.as_str()),
-            Some("committed relaunch failed")
+            Some(
+                "runtime lifecycle blocked: recovered guard exited without durable cooperative cleanup evidence"
+            )
         );
     }
 
@@ -3402,7 +3528,7 @@ mod tests {
             .expect("load")
             .expect("control");
         assert_eq!(blocked.activation.phase, ActivationPhase::Blocked);
-        assert!(blocked.active_launch.is_none());
+        assert!(blocked.active_launch.is_some());
     }
 
     #[test]
@@ -3441,8 +3567,40 @@ mod tests {
             .expect("load")
             .expect("control");
         assert_eq!(blocked.activation.phase, ActivationPhase::Blocked);
-        assert!(blocked.active_launch.is_none());
+        assert!(blocked.active_launch.is_some());
         assert!(paths.failure_evidence.exists());
+    }
+
+    #[test]
+    fn matching_exited_report_clears_the_active_launch_after_guard_exit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let (state, guard_registration, payload_registration) = attach_active_launch(
+            committed_candidate_state(temp.path(), ActivationPhase::CommitRelaunch),
+        );
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("control");
+        let report_path = paths
+            .attempts
+            .join(&guard_registration.spawn_attempt_id)
+            .with_extension("exit-report.json");
+        guard::write_protocol_file(
+            &report_path,
+            &GuardExitReport::Exited {
+                release_id: guard_registration.release_id,
+                launch_instance_id: guard_registration.launch_instance_id,
+                spawn_attempt_id: guard_registration.spawn_attempt_id,
+                payload: payload_registration.payload,
+                raw_wait_status: 0,
+                parent_liveness_lost: true,
+                cleanup_evidence: CleanupEvidence::CooperativeObservedEmpty,
+            },
+        )
+        .expect("write report");
+
+        let reconciled = reconcile_active_launch(&paths, state).expect("reconcile");
+        assert!(reconciled.active_launch.is_none());
     }
 
     #[test]

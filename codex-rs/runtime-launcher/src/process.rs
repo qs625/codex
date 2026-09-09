@@ -153,6 +153,9 @@ pub fn descendants_of(
     root: ProcessIdentity,
     processes: &[ProcessRecord],
 ) -> BTreeSet<ProcessIdentity> {
+    if !processes.iter().any(|process| process.identity == root) {
+        return BTreeSet::new();
+    }
     let by_parent = processes.iter().fold(
         BTreeMap::<i32, Vec<&ProcessRecord>>::new(),
         |mut index, process| {
@@ -190,57 +193,22 @@ pub fn terminate_and_observe_empty(
     }
 
     let before = snapshot_processes()?;
-    if !target.root.is_alive()? {
-        if before
-            .iter()
-            .any(|process| process.pgid == target.process_group.pgid)
-        {
-            return Err(ProcessCleanupError::Blocked(format!(
-                "registered root identity is gone while pgid {} is still occupied; refusing a potentially reused process group",
-                target.process_group.pgid
-            )));
-        }
-        if let Some(guard) = target.guard {
-            terminate_identity_and_observe_empty(guard, policy)?;
-        }
-        let survivors = live_identities(&target.known_descendants)?;
-        if !survivors.is_empty() {
-            return Err(ProcessCleanupError::Blocked(format!(
-                "registered root identity is gone but known descendants remain alive: {survivors:?}"
-            )));
-        }
-        let mut observed_exited = target.known_descendants.clone();
-        observed_exited.insert(target.root);
-        if let Some(guard) = target.guard {
-            observed_exited.insert(guard);
-        }
-        return Ok(CooperativeCleanupEvidence {
-            term_was_sent: false,
-            kill_was_sent: false,
-            observed_exited,
-        });
-    }
     let mut tracked = target.known_descendants.clone();
     tracked.insert(target.root);
-    tracked.extend(descendants_of(target.root, &before));
     if let Some(guard) = target.guard {
         tracked.insert(guard);
-        tracked.extend(descendants_of(guard, &before));
     }
+    extend_observed_descendants(&mut tracked, &before);
     require_cooperative_group(target, &tracked, &before)?;
 
-    let mut term_was_sent = signal_group(target.process_group.pgid, libc::SIGTERM)?;
-    if let Some(guard) = target.guard
-        && guard != target.root
-        && guard.is_alive()?
-    {
-        term_was_sent |= signal_identity(guard, libc::SIGTERM)?;
-    }
+    let term_was_sent =
+        signal_supervised_processes(target, &tracked, &before, libc::SIGTERM)?;
     if wait_for_exit(
         target,
         &mut tracked,
         policy.term_timeout,
         policy.poll_interval,
+        libc::SIGTERM,
     )? {
         return Ok(CooperativeCleanupEvidence {
             term_was_sent,
@@ -249,18 +217,15 @@ pub fn terminate_and_observe_empty(
         });
     }
 
-    let mut kill_was_sent = signal_group(target.process_group.pgid, libc::SIGKILL)?;
-    if let Some(guard) = target.guard
-        && guard != target.root
-        && guard.is_alive()?
-    {
-        kill_was_sent |= signal_identity(guard, libc::SIGKILL)?;
-    }
+    let before_kill = snapshot_processes()?;
+    let kill_was_sent =
+        signal_supervised_processes(target, &tracked, &before_kill, libc::SIGKILL)?;
     if wait_for_exit(
         target,
         &mut tracked,
         policy.kill_timeout,
         policy.poll_interval,
+        libc::SIGKILL,
     )? {
         return Ok(CooperativeCleanupEvidence {
             term_was_sent,
@@ -387,10 +352,6 @@ fn require_cooperative_group(
     tracked: &BTreeSet<ProcessIdentity>,
     processes: &[ProcessRecord],
 ) -> Result<(), ProcessCleanupError> {
-    let records = processes
-        .iter()
-        .map(|record| (record.identity, record))
-        .collect::<BTreeMap<_, _>>();
     for record in processes
         .iter()
         .filter(|record| record.pgid == target.process_group.pgid)
@@ -404,13 +365,63 @@ fn require_cooperative_group(
             )));
         }
     }
-    // macOS Electron can hand off the app's main process into a separate
-    // process group. Every such process is already in `tracked`, keyed by a
-    // PID plus start identity, and cleanup signals tracked identities directly
-    // after terminating the original group. An untracked group member still
-    // blocks cleanup above, because its ownership is ambiguous.
-    let _ = records;
     Ok(())
+}
+
+fn tracked_identities_requiring_direct_signal(
+    target: &TerminationTarget,
+    tracked: &BTreeSet<ProcessIdentity>,
+    processes: &[ProcessRecord],
+) -> BTreeSet<ProcessIdentity> {
+    let process_groups = processes
+        .iter()
+        .map(|record| (record.identity, record.pgid))
+        .collect::<BTreeMap<_, _>>();
+    let registered_group_is_owned = process_groups
+        .get(&target.process_group.leader)
+        .is_some_and(|pgid| *pgid == target.process_group.pgid);
+    tracked
+        .iter()
+        .copied()
+        .filter(|identity| {
+            process_groups
+                .get(identity)
+                .is_some_and(|pgid| {
+                    !registered_group_is_owned || *pgid != target.process_group.pgid
+                })
+        })
+        .collect()
+}
+
+fn signal_supervised_processes(
+    target: &TerminationTarget,
+    tracked: &BTreeSet<ProcessIdentity>,
+    processes: &[ProcessRecord],
+    signal: i32,
+) -> io::Result<bool> {
+    let registered_group_is_owned = processes.iter().any(|process| {
+        process.identity == target.process_group.leader
+            && process.pgid == target.process_group.pgid
+    });
+    let mut sent = if registered_group_is_owned {
+        signal_group(target.process_group.pgid, signal)?
+    } else {
+        false
+    };
+    for identity in tracked_identities_requiring_direct_signal(target, tracked, processes) {
+        sent |= signal_identity(identity, signal)?;
+    }
+    Ok(sent)
+}
+
+fn extend_observed_descendants(
+    tracked: &mut BTreeSet<ProcessIdentity>,
+    processes: &[ProcessRecord],
+) {
+    let roots = tracked.iter().copied().collect::<Vec<_>>();
+    for root in roots {
+        tracked.extend(descendants_of(root, processes));
+    }
 }
 
 fn wait_for_exit(
@@ -418,19 +429,14 @@ fn wait_for_exit(
     tracked: &mut BTreeSet<ProcessIdentity>,
     timeout: Duration,
     poll_interval: Duration,
+    signal: i32,
 ) -> Result<bool, ProcessCleanupError> {
     let deadline = Instant::now() + timeout;
     loop {
         let processes = snapshot_processes()?;
-        if target.root.is_alive()? {
-            tracked.extend(descendants_of(target.root, &processes));
-        }
-        if let Some(guard) = target.guard
-            && guard.is_alive()?
-        {
-            tracked.extend(descendants_of(guard, &processes));
-        }
+        extend_observed_descendants(tracked, &processes);
         require_cooperative_group(target, tracked, &processes)?;
+        signal_supervised_processes(target, tracked, &processes, signal)?;
         let group_alive = processes
             .iter()
             .any(|process| process.pgid == target.process_group.pgid);
@@ -759,6 +765,27 @@ mod tests {
     }
 
     #[test]
+    fn descendant_walk_does_not_follow_a_reused_root_pid() {
+        let stale_root = ProcessIdentity {
+            pid: 10,
+            start_identity: 100,
+        };
+        let reused_root = ProcessRecord {
+            identity: ProcessIdentity {
+                pid: 10,
+                start_identity: 999,
+            },
+            parent_pid: 1,
+            pgid: 10,
+        };
+        let unrelated_child = record(11, 10);
+        assert!(
+            descendants_of(stale_root, &[reused_root, unrelated_child]).is_empty(),
+            "a PID-reused process must not inherit ownership from the stale identity",
+        );
+    }
+
+    #[test]
     fn cooperative_cleanup_allows_an_observed_process_group_handoff() {
         let root = ProcessIdentity {
             pid: 10,
@@ -796,5 +823,64 @@ mod tests {
             &processes,
         )
         .expect("an observed handoff remains safely trackable by identity");
+        assert_eq!(
+            tracked_identities_requiring_direct_signal(
+                &target,
+                &BTreeSet::from([root, escaped]),
+                &processes,
+            ),
+            BTreeSet::from([escaped]),
+            "the handed-off identity must be signaled directly in addition to the original group",
+        );
+
+        let late_child = ProcessRecord {
+            identity: ProcessIdentity {
+                pid: 12,
+                start_identity: 120,
+            },
+            parent_pid: escaped.pid,
+            pgid: escaped.pid,
+        };
+        let mut tracked = BTreeSet::from([root, escaped]);
+        extend_observed_descendants(
+            &mut tracked,
+            &[processes[0], processes[1], late_child],
+        );
+        assert!(tracked.contains(&late_child.identity));
+    }
+
+    #[test]
+    fn stale_registered_group_requires_direct_identity_signals() {
+        let root = ProcessIdentity {
+            pid: 10,
+            start_identity: 100,
+        };
+        let descendant = ProcessIdentity {
+            pid: 11,
+            start_identity: 110,
+        };
+        let target = TerminationTarget {
+            root,
+            process_group: ProcessGroupRecord {
+                leader: root,
+                pgid: root.pid,
+            },
+            guard: None,
+            known_descendants: BTreeSet::from([descendant]),
+        };
+        let processes = [ProcessRecord {
+            identity: descendant,
+            parent_pid: 1,
+            pgid: root.pid,
+        }];
+        assert_eq!(
+            tracked_identities_requiring_direct_signal(
+                &target,
+                &BTreeSet::from([root, descendant]),
+                &processes,
+            ),
+            BTreeSet::from([descendant]),
+            "a vanished group leader makes the stale PGID ineligible for killpg",
+        );
     }
 }

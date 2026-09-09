@@ -70,11 +70,15 @@ asks the stable Launcher to prepare it, stops the current `app-server`, and
 exits with the coordinated restart code. The Launcher proves the old Runtime
 tree has stopped before selecting and starting the candidate. Runtime Capsule
 v1 is a trusted cooperative supervision contract, not a hostile same-UID
-sandbox: every manifest prohibits daemonizing, double-forking, and `setsid`.
-Known descendants remain supervised by stable process identity even when macOS
-Electron hands the app process to a separate process group. The typed completion evidence is
-`CooperativeObservedEmpty`; any identity mismatch, timeout, ambiguous ownership,
-or residual process durably blocks selection, fallback,
+sandbox: every manifest prohibits daemonizing, double-forking, `setsid`, and
+process-group escape. A process-group handoff by an already-observed descendant
+remains supervised by stable process identity and is not treated as an escape.
+Capsules produced before this contract extension, which declared the original
+three prohibitions, remain readable with their original release identity so an
+installed `current` or `previous` generation can still recover or roll back.
+The typed completion evidence is `CooperativeObservedEmpty`; any unobserved
+escape, identity mismatch, timeout, ambiguous ownership, or residual process
+durably blocks selection, fallback,
 commit, and further spawn. It does not claim kernel-contained proof for an
 unobserved malicious escape. Readiness or
 observation failure rolls back to the previous external Capsule, or to the
