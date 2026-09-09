@@ -3,10 +3,18 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.openai.root-worker-prototype.dev</string>
   <key>CFBundleDisplayName</key>
   <string>Root Worker Prototype</string>
   <key>CFBundleExecutable</key>
   <string>MorpheusLauncher</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Root Worker Prototype uses the microphone to transcribe voice input into the composer.</string>
   <key>NSScreenCaptureUsageDescription</key>

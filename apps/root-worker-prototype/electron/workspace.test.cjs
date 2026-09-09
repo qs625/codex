@@ -8,8 +8,8 @@ const path = require("node:path");
 const {
   ensureDefaultWorkspace,
   ensureMorpheusSourceInstructionSync,
-  INSTALLED_SOURCE_ORIGIN_URL,
   morpheusSourceInstructionPath,
+  removeMorpheusSourceInstructionIfManagedSync,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
 
@@ -46,12 +46,21 @@ test("resolveDefaultWorkspace ignores CODEX_HOME", () => {
 });
 
 test("resolveDefaultWorkspace prefers installed source workspace for packaged app", () => {
+  const sourceWorkspace = "/tmp/prototype-home/source_workspace";
   const workspace = resolveDefaultWorkspace(
     {
       MORPHEUS_HOME: "/tmp/prototype-home",
     },
     {
       isPackagedApp: true,
+      existsSync: (target) =>
+        target ===
+          path.join(
+            sourceWorkspace,
+            "apps",
+            "root-worker-prototype",
+            "package.json",
+          ) || target === path.join(sourceWorkspace, "codex-rs", "Cargo.toml"),
     },
   );
 
@@ -66,13 +75,36 @@ test("resolveDefaultWorkspace keeps explicit ROOT_WORKER_WORKSPACE", () => {
     },
     {
       isPackagedApp: true,
+      existsSync: (target) =>
+        target ===
+          path.join(
+            "/custom/workspace",
+            "apps",
+            "root-worker-prototype",
+            "package.json",
+          ) || target === path.join("/custom/workspace", "codex-rs", "Cargo.toml"),
     },
   );
 
   assert.equal(workspace, "/custom/workspace");
 });
 
-test("ensureDefaultWorkspace clones installed source workspace when missing", async () => {
+test("packaged startup ignores an invalid explicit source workspace consistently", () => {
+  const workspace = resolveDefaultWorkspace(
+    {
+      MORPHEUS_HOME: "/tmp/prototype-home",
+      ROOT_WORKER_WORKSPACE: "/deleted/source-workspace",
+    },
+    {
+      isPackagedApp: true,
+      existsSync: () => false,
+    },
+  );
+
+  assert.equal(workspace, "/tmp/prototype-home/root_workspace");
+});
+
+test("packaged startup without source workspace uses an operational workspace without cloning", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-source-workspace-"));
   const morpheusHome = path.join(tempRoot, "morpheus-home");
   const calls = [];
@@ -81,37 +113,19 @@ test("ensureDefaultWorkspace clones installed source workspace when missing", as
     { MORPHEUS_HOME: morpheusHome },
     {
       isPackagedApp: true,
-      cloneTempSuffix: "test",
-      spawnSync: (command, args, options) => {
-        calls.push({ command, args, cwd: options.cwd, encoding: options.encoding });
-        fsSync.mkdirSync(args[3], { recursive: true });
-        fsSync.mkdirSync(path.join(args[3], ".git"), { recursive: true });
-        return { status: 0, stderr: "" };
-      },
+      spawnSync: (...args) => calls.push(args),
     },
   );
 
-  assert.equal(workspace, path.join(morpheusHome, "source_workspace"));
-  const tempWorkspace = path.join(morpheusHome, ".source_workspace.clone-test");
-  assert.deepEqual(calls, [
-    {
-      command: "rtk",
-      args: ["git", "clone", INSTALLED_SOURCE_ORIGIN_URL, tempWorkspace],
-      cwd: morpheusHome,
-      encoding: "utf8",
-    },
-  ]);
-  assert.equal(fsSync.statSync(path.join(workspace, ".git")).isDirectory(), true);
-  const instruction = fsSync.readFileSync(
-    morpheusSourceInstructionPath({ MORPHEUS_HOME: morpheusHome }),
-    "utf8",
+  assert.equal(workspace, path.join(morpheusHome, "root_workspace"));
+  assert.deepEqual(calls, []);
+  assert.equal(fsSync.statSync(workspace).isDirectory(), true);
+  assert.equal(
+    fsSync.existsSync(
+      morpheusSourceInstructionPath({ MORPHEUS_HOME: morpheusHome }),
+    ),
+    false,
   );
-  assert.match(instruction, new RegExp(escapeRegExp(workspace)));
-  assert.match(instruction, /request_runtime_restart/);
-  assert.match(instruction, /"hot"/);
-  assert.match(instruction, /"full"/);
-  assert.match(instruction, /complete the relevant tests first/);
-  assert.match(instruction, /update the runnable app artifacts/);
 
   await fs.rm(tempRoot, { recursive: true, force: true });
 });
@@ -120,7 +134,7 @@ test("ensureDefaultWorkspace does not overwrite existing installed source worksp
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-source-existing-"));
   const morpheusHome = path.join(tempRoot, "morpheus-home");
   const workspace = path.join(morpheusHome, "source_workspace");
-  fsSync.mkdirSync(workspace, { recursive: true });
+  createSourceWorkspace(workspace);
   fsSync.writeFileSync(path.join(workspace, "README.md"), "custom readme\n");
   const calls = [];
 
@@ -193,6 +207,26 @@ test("ensureMorpheusSourceInstructionSync updates only managed instruction file"
   await fs.rm(tempRoot, { recursive: true, force: true });
 });
 
+test("removes stale managed source instruction without deleting user content", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-instruction-"));
+  const env = { MORPHEUS_HOME: path.join(tempRoot, "morpheus-home") };
+  const instructionPath = morpheusSourceInstructionPath(env);
+
+  ensureMorpheusSourceInstructionSync(env, "/workspace/one");
+  assert.equal(removeMorpheusSourceInstructionIfManagedSync(env), true);
+  assert.equal(fsSync.existsSync(instructionPath), false);
+
+  fsSync.mkdirSync(path.dirname(instructionPath), { recursive: true });
+  fsSync.writeFileSync(instructionPath, "user managed instructions\n");
+  assert.equal(removeMorpheusSourceInstructionIfManagedSync(env), false);
+  assert.equal(
+    fsSync.readFileSync(instructionPath, "utf8"),
+    "user managed instructions\n",
+  );
+
+  await fs.rm(tempRoot, { recursive: true, force: true });
+});
+
 test("ensureDefaultWorkspace keeps dev default workspace local without clone", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-dev-workspace-"));
   const morpheusHome = path.join(tempRoot, "morpheus-home");
@@ -216,95 +250,18 @@ test("ensureDefaultWorkspace keeps dev default workspace local without clone", a
   await fs.rm(tempRoot, { recursive: true, force: true });
 });
 
-test("ensureDefaultWorkspace surfaces clone failure and removes partial workspace", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-clone-fail-"));
-  const morpheusHome = path.join(tempRoot, "morpheus-home");
-  const workspace = path.join(morpheusHome, "source_workspace");
-
-  await assert.rejects(
-    ensureDefaultWorkspace(
-      { MORPHEUS_HOME: morpheusHome },
-      {
-        isPackagedApp: true,
-        cloneTempSuffix: "failed",
-        spawnSync: (_command, args) => {
-          fsSync.mkdirSync(args[3], { recursive: true });
-          fsSync.writeFileSync(path.join(args[3], "partial"), "partial\n");
-          return { status: 128, stderr: "clone failed\n" };
-        },
-      },
-    ),
-    /rtk git clone git@github\.com:qs625\/codex\.git .* exited with 128: clone failed/,
+function createSourceWorkspace(workspace) {
+  fsSync.mkdirSync(
+    path.join(workspace, "apps", "root-worker-prototype"),
+    { recursive: true },
   );
-  assert.equal(fsSync.existsSync(workspace), false);
-
-  await fs.rm(tempRoot, { recursive: true, force: true });
-});
-
-test("ensureDefaultWorkspace clone failure does not remove externally created workspace", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-clone-race-"));
-  const morpheusHome = path.join(tempRoot, "morpheus-home");
-  const workspace = path.join(morpheusHome, "source_workspace");
-  const tempWorkspace = path.join(morpheusHome, ".source_workspace.clone-race");
-
-  await assert.rejects(
-    ensureDefaultWorkspace(
-      { MORPHEUS_HOME: morpheusHome },
-      {
-        isPackagedApp: true,
-        cloneTempSuffix: "race",
-        spawnSync: (_command, args) => {
-          fsSync.mkdirSync(args[3], { recursive: true });
-          fsSync.writeFileSync(path.join(args[3], "partial"), "partial\n");
-          fsSync.mkdirSync(workspace, { recursive: true });
-          fsSync.writeFileSync(path.join(workspace, "user-file"), "keep\n");
-          return { status: 128, stderr: "clone failed\n" };
-        },
-      },
-    ),
-    /rtk git clone git@github\.com:qs625\/codex\.git .* exited with 128: clone failed/,
+  fsSync.writeFileSync(
+    path.join(workspace, "apps", "root-worker-prototype", "package.json"),
+    "{}\n",
   );
-  assert.equal(fsSync.existsSync(tempWorkspace), false);
-  assert.equal(fsSync.readFileSync(path.join(workspace, "user-file"), "utf8"), "keep\n");
-
-  await fs.rm(tempRoot, { recursive: true, force: true });
-});
-
-test("ensureDefaultWorkspace successful clone does not replace raced workspace", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-clone-install-race-"));
-  const morpheusHome = path.join(tempRoot, "morpheus-home");
-  const workspace = path.join(morpheusHome, "source_workspace");
-  const tempWorkspace = path.join(morpheusHome, ".source_workspace.clone-race-install");
-
-  const resolved = await ensureDefaultWorkspace(
-    { MORPHEUS_HOME: morpheusHome },
-    {
-      isPackagedApp: true,
-      cloneTempSuffix: "race-install",
-      spawnSync: (_command, args) => {
-        fsSync.mkdirSync(args[3], { recursive: true });
-        fsSync.mkdirSync(path.join(args[3], ".git"), { recursive: true });
-        return { status: 0, stderr: "" };
-      },
-      mkdirSync: (target, options) => {
-        if (target === workspace && !fsSync.existsSync(workspace)) {
-          fsSync.mkdirSync(workspace, { recursive: true });
-          fsSync.writeFileSync(path.join(workspace, "user-file"), "keep\n");
-          const error = new Error("already exists");
-          error.code = "EEXIST";
-          throw error;
-        }
-        fsSync.mkdirSync(target, options);
-      },
-    },
-  );
-
-  assert.equal(resolved, workspace);
-  assert.equal(fsSync.existsSync(tempWorkspace), false);
-  assert.equal(fsSync.readFileSync(path.join(workspace, "user-file"), "utf8"), "keep\n");
-
-  await fs.rm(tempRoot, { recursive: true, force: true });
-});
+  fsSync.mkdirSync(path.join(workspace, "codex-rs"), { recursive: true });
+  fsSync.writeFileSync(path.join(workspace, "codex-rs", "Cargo.toml"), "\n");
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
-const INTENT_VERSION = 1;
+const INTENT_VERSION = 2;
 const MAX_INTENT_RECORDS = 32;
 const MAX_REQUEST_ID_BYTES = 256;
 const RECOVERY_LEASE_MS = 60_000;
@@ -33,6 +33,37 @@ function createRuntimeRestartIntentStore(
   return {
     accept(notification) {
       const input = normalizeNotification(notification);
+      if (input.kind === "unsupported") {
+        return transact((state) => {
+          const duplicate = state.records.find(
+            (record) => record.requestId === input.requestId,
+          );
+          if (duplicate) {
+            return {
+              kind: "unsupported",
+              duplicate: true,
+              reason: duplicate.error ?? input.reason,
+              record: { ...duplicate, phase: effectivePhase(duplicate) },
+            };
+          }
+          const timestamp = now();
+          const record = {
+            requestId: input.requestId,
+            requestedByThreadId: input.requestedByThreadId,
+            reason: input.requestedReason,
+            phase: "failed",
+            createdAtMs: timestamp,
+            updatedAtMs: timestamp,
+            error: input.reason,
+          };
+          state.records.push(record);
+          return {
+            kind: "unsupported",
+            reason: input.reason,
+            record: { ...record },
+          };
+        });
+      }
       if (!input.ok) {
         return Promise.resolve(input);
       }
@@ -51,19 +82,6 @@ function createRuntimeRestartIntentStore(
               effectivePhase(record) === "executing"),
         );
         const timestamp = now();
-        if (active && active.mode !== input.mode) {
-          const record = {
-            ...input,
-            phase: "failed",
-            createdAtMs: timestamp,
-            updatedAtMs: timestamp,
-            error: `Runtime refresh mode conflict: requested ${input.mode} while ${active.mode} is in progress`,
-            executingRequestId: active.requestId,
-          };
-          state.records.push(record);
-          return { kind: "conflict", record: { ...record } };
-        }
-
         const record = {
           ...input,
           phase: "received",
@@ -80,7 +98,12 @@ function createRuntimeRestartIntentStore(
       });
     },
 
-    updateGroup(requestId, phase, error = null) {
+    updateGroup(
+      requestId,
+      phase,
+      error = null,
+      completedByHostInstanceId = null,
+    ) {
       return transact((state) => {
         const updated = [];
         const timestamp = now();
@@ -89,6 +112,9 @@ function createRuntimeRestartIntentStore(
             record.requestId !== requestId &&
             record.coalescedInto !== requestId
           ) {
+            continue;
+          }
+          if (record.phase === "consumed") {
             continue;
           }
           if (record.phase === "recovering") {
@@ -102,31 +128,32 @@ function createRuntimeRestartIntentStore(
           } else {
             delete record.error;
           }
+          if (phase === "completed" && completedByHostInstanceId) {
+            record.completedByHostInstanceId = completedByHostInstanceId;
+          } else if (phase !== "completed") {
+            delete record.completedByHostInstanceId;
+          }
           updated.push({ ...record, phase: effectivePhase(record) });
         }
         return updated;
       });
     },
 
-    claim(requestId, claimId) {
-      return transact((state) => {
-        const record = state.records.find(
-          (candidate) => candidate.requestId === requestId,
-        );
-        if (!record) {
-          return null;
-        }
-        return claimRecord(record, claimId, now(), RECOVERY_LEASE_MS);
-      });
-    },
-
-    claimRecoverable(claimId) {
+    claimRecoverable(
+      claimId,
+      currentHostInstanceId = null,
+      requestedByThreadId = null,
+      recoverablePhases = RECOVERABLE_PHASES,
+    ) {
       return transact((state) => {
         const timestamp = now();
         return state.records.flatMap((record) => {
           if (
             typeof record.requestedByThreadId !== "string" ||
-            record.requestedByThreadId.length === 0
+            record.requestedByThreadId.length === 0 ||
+            (requestedByThreadId &&
+              record.requestedByThreadId !== requestedByThreadId) ||
+            !recoverablePhases.has(effectivePhase(record))
           ) {
             return [];
           }
@@ -135,52 +162,70 @@ function createRuntimeRestartIntentStore(
             claimId,
             timestamp,
             RECOVERY_LEASE_MS,
+            currentHostInstanceId,
           );
           return claimed ? [claimed] : [];
         });
       });
     },
 
-    consumeClaim(requestId, claimId) {
+    consumeClaims(requestIds, claimId) {
       return transact((state) => {
-        const record = state.records.find(
-          (candidate) => candidate.requestId === requestId,
+        const requested = new Set(requestIds);
+        const records = state.records.filter((record) =>
+          requested.has(record.requestId),
         );
         if (
-          !record ||
-          record.phase !== "recovering" ||
-          record.recoveryClaimId !== claimId
+          records.length !== requested.size ||
+          records.some(
+            (record) =>
+              record.phase !== "recovering" ||
+              record.recoveryClaimId !== claimId,
+          )
         ) {
           return null;
         }
-        record.outcomePhase = record.recoveryPhase;
-        record.phase = "consumed";
-        record.updatedAtMs = now();
-        clearRecoveryClaim(record);
-        return { ...record };
+        const timestamp = now();
+        return records.map((record) => {
+          record.outcomePhase = record.recoveryPhase;
+          record.phase = "consumed";
+          record.updatedAtMs = timestamp;
+          clearRecoveryClaim(record);
+          return { ...record };
+        });
       });
     },
 
-    releaseClaim(requestId, claimId) {
+    releaseClaims(requestIds, claimId) {
       return transact((state) => {
-        const record = state.records.find(
-          (candidate) => candidate.requestId === requestId,
+        const requested = new Set(requestIds);
+        const records = state.records.filter((record) =>
+          requested.has(record.requestId),
         );
         if (
-          !record ||
-          record.phase !== "recovering" ||
-          record.recoveryClaimId !== claimId
+          records.length !== requested.size ||
+          records.some(
+            (record) =>
+              record.phase !== "recovering" ||
+              record.recoveryClaimId !== claimId,
+          )
         ) {
           return null;
         }
-        record.phase = record.recoveryPhase;
-        record.updatedAtMs = now();
-        clearRecoveryClaim(record);
-        return { ...record };
+        const timestamp = now();
+        return records.map((record) => {
+          record.phase = record.recoveryPhase;
+          record.updatedAtMs = timestamp;
+          clearRecoveryClaim(record);
+          return { ...record };
+        });
       });
     },
 
-    async recoverable() {
+    async recoverable(
+      requestedByThreadId = null,
+      recoverablePhases = RECOVERABLE_PHASES,
+    ) {
       await updateQueue;
       const state = await readState(filePath, fs);
       return state.records
@@ -188,9 +233,11 @@ function createRuntimeRestartIntentStore(
           const phase =
             record.phase === "recovering" ? record.recoveryPhase : record.phase;
           return (
-            RECOVERABLE_PHASES.has(phase) &&
+            recoverablePhases.has(phase) &&
             typeof record.requestedByThreadId === "string" &&
-            record.requestedByThreadId.length > 0
+            record.requestedByThreadId.length > 0 &&
+            (!requestedByThreadId ||
+              record.requestedByThreadId === requestedByThreadId)
           );
         })
         .map((record) => ({
@@ -207,28 +254,78 @@ function createRuntimeRestartController({
   execute,
   recover,
   broadcastStatus,
+  hostInstanceId = randomUUID(),
   logger = console,
 } = {}) {
   const inFlight = new Set();
   const recoveryClaimId = randomUUID();
+  const currentRequestIdByThread = new Map();
+  const terminalThreadIds = new Set();
   let recoverPendingPromise = null;
 
-  const recoverPersistedRecord = async (record) => {
-    const claimed = await store.claim(record.requestId, recoveryClaimId);
-    if (!claimed) {
-      return false;
+  const recoverFailedAfterTerminal = async (requestedByThreadId) => {
+    const threadId = normalizeString(requestedByThreadId);
+    if (!threadId || !terminalThreadIds.has(threadId)) {
+      return emptyRecoveryResult();
     }
-    return recoverClaimedRecord(
+    const result = await recoverPendingRuntimeRestarts({
       store,
-      claimed,
-      recoveryClaimId,
       recover,
       logger,
+      claimId: recoveryClaimId,
+      hostInstanceId,
+      requestedByThreadId: threadId,
+      recoverablePhases: new Set(["failed"]),
+    });
+    if (
+      result.recoveredThreadIds.includes(threadId) &&
+      !result.failedThreadIds.includes(threadId)
+    ) {
+      terminalThreadIds.delete(threadId);
+    }
+    return result;
+  };
+
+  const recoverFailedRecordsAfterTerminal = async (records) => {
+    const threadIds = [
+      ...new Set(
+        records
+          .map((record) => normalizeString(record.requestedByThreadId))
+          .filter(Boolean),
+      ),
+    ];
+    await Promise.all(
+      threadIds.map((threadId) => recoverFailedAfterTerminal(threadId)),
     );
+  };
+
+  const clearTerminalRecords = (records) => {
+    for (const record of records) {
+      const threadId = normalizeString(record.requestedByThreadId);
+      if (
+        threadId &&
+        currentRequestIdByThread.get(threadId) === record.requestId
+      ) {
+        terminalThreadIds.delete(threadId);
+      }
+    }
   };
 
   return {
     async handle(notification) {
+      const input = normalizeNotification(notification);
+      if (input.ok || input.kind === "unsupported") {
+        const currentRequestId = currentRequestIdByThread.get(
+          input.requestedByThreadId,
+        );
+        if (currentRequestId !== input.requestId) {
+          currentRequestIdByThread.set(
+            input.requestedByThreadId,
+            input.requestId,
+          );
+          terminalThreadIds.delete(input.requestedByThreadId);
+        }
+      }
       let admission;
       try {
         admission = await store.accept(notification);
@@ -239,7 +336,6 @@ function createRuntimeRestartController({
           requestedByThreadId: normalizeString(
             notification?.params?.requestedByThreadId,
           ),
-          mode: notification?.params?.mode ?? null,
           phase: "failed",
           error: reason,
         };
@@ -248,7 +344,6 @@ function createRuntimeRestartController({
           failedRecord,
           reason,
         );
-        await recoverWithoutIntent(failedRecord, recover, logger);
         return { ok: false, persisted: false, reason };
       }
 
@@ -256,20 +351,20 @@ function createRuntimeRestartController({
         reportFailure(broadcastStatus, admission, admission.reason);
         return { ok: false, persisted: false, reason: admission.reason };
       }
+      if (admission.kind === "unsupported") {
+        reportFailure(broadcastStatus, admission.record, admission.reason);
+        return {
+          ok: false,
+          unsupported: true,
+          persisted: true,
+          reason: admission.reason,
+          record: admission.record,
+        };
+      }
       if (admission.kind === "duplicate") {
         return {
           ok: admission.record.phase !== "failed",
           duplicate: true,
-          persisted: true,
-          record: admission.record,
-        };
-      }
-      if (admission.kind === "conflict") {
-        reportFailure(broadcastStatus, admission.record, admission.record.error);
-        await recoverPersistedRecord(admission.record);
-        return {
-          ok: false,
-          conflict: true,
           persisted: true,
           record: admission.record,
         };
@@ -288,8 +383,9 @@ function createRuntimeRestartController({
         execute,
         logger,
         notification,
-        recover,
-        recoverPersistedRecord,
+        clearTerminalRecords,
+        recoverFailedRecordsAfterTerminal,
+        hostInstanceId,
         requestId: admission.record.requestId,
         store,
       });
@@ -319,11 +415,21 @@ function createRuntimeRestartController({
           recover,
           logger,
           claimId: recoveryClaimId,
+          hostInstanceId,
         }).finally(() => {
           recoverPendingPromise = null;
         });
       }
       return recoverPendingPromise;
+    },
+
+    recoverPendingForThread(requestedByThreadId) {
+      const threadId = normalizeString(requestedByThreadId);
+      if (!threadId) {
+        return Promise.resolve(emptyRecoveryResult());
+      }
+      terminalThreadIds.add(threadId);
+      return recoverFailedAfterTerminal(threadId);
     },
 
     async waitForIdle() {
@@ -334,11 +440,12 @@ function createRuntimeRestartController({
 
 async function runAcceptedRestart({
   broadcastStatus,
+  clearTerminalRecords,
   execute,
   logger,
   notification,
-  recover,
-  recoverPersistedRecord,
+  recoverFailedRecordsAfterTerminal,
+  hostInstanceId,
   requestId,
   store,
 }) {
@@ -347,16 +454,20 @@ async function runAcceptedRestart({
     const result = await execute(notification);
     const phase = result?.ok ? "completed" : "failed";
     const reason = result?.reason ?? (result?.ok ? null : "Runtime restart failed");
-    const records = await store.updateGroup(requestId, phase, reason);
+    const records = await store.updateGroup(
+      requestId,
+      phase,
+      reason,
+      phase === "completed" ? hostInstanceId : null,
+    );
     if (phase === "failed") {
       reportFailure(broadcastStatus, records[0], reason);
     }
-    if (phase === "completed" && notification?.params?.mode === "full") {
+    if (phase === "completed") {
+      clearTerminalRecords(records);
       return;
     }
-    for (const record of records) {
-      await recoverPersistedRecord(record);
-    }
+    await recoverFailedRecordsAfterTerminal(records);
   } catch (error) {
     const reason = errorMessage(error);
     logger.error?.(
@@ -370,13 +481,10 @@ async function runAcceptedRestart({
       const failureReason = `${reason}; failed to persist failure outcome: ${errorMessage(persistError)}`;
       const record = failureRecord(notification, requestId, failureReason);
       reportFailure(broadcastStatus, record, failureReason);
-      await recoverWithoutIntent(record, recover, logger);
       return;
     }
     reportFailure(broadcastStatus, records[0], reason);
-    for (const record of records) {
-      await recoverPersistedRecord(record);
-    }
+    await recoverFailedRecordsAfterTerminal(records);
   }
 }
 
@@ -385,21 +493,32 @@ async function recoverPendingRuntimeRestarts({
   recover,
   logger = console,
   claimId = randomUUID(),
+  hostInstanceId = randomUUID(),
+  requestedByThreadId = null,
+  recoverablePhases = RECOVERABLE_PHASES,
 }) {
   const recoveredThreadIds = [];
   const failedThreadIds = [];
-  const records = await store.claimRecoverable(claimId);
-  const expectedRecords = [...records, ...(await store.recoverable())];
-  for (const record of records) {
-    const recovered = await recoverClaimedRecord(
+  const records = await store.claimRecoverable(
+    claimId,
+    hostInstanceId,
+    requestedByThreadId,
+    recoverablePhases,
+  );
+  const expectedRecords = [
+    ...records,
+    ...(await store.recoverable(requestedByThreadId, recoverablePhases)),
+  ];
+  for (const group of groupRecoveryRecords(records)) {
+    const recovered = await recoverClaimedGroup(
       store,
-      record,
+      group,
       claimId,
       recover,
       logger,
     );
     (recovered ? recoveredThreadIds : failedThreadIds).push(
-      record.requestedByThreadId,
+      group[0].requestedByThreadId,
     );
   }
   return {
@@ -412,19 +531,60 @@ async function recoverPendingRuntimeRestarts({
   };
 }
 
-async function recoverClaimedRecord(store, record, claimId, recover, logger) {
-  if (typeof recover !== "function" || !record.requestedByThreadId) {
-    await store.releaseClaim(record.requestId, claimId);
+function recoverRuntimeRestartAfterThreadTerminal(controller, notification) {
+  const threadId = normalizeString(notification?.params?.threadId);
+  if (
+    notification?.method !== "thread/status/changed" ||
+    notification?.params?.lifecycleStatus?.type !== "final" ||
+    !threadId
+  ) {
+    return Promise.resolve(emptyRecoveryResult());
+  }
+  return controller.recoverPendingForThread(threadId);
+}
+
+function emptyRecoveryResult() {
+  return {
+    recoveredThreadIds: [],
+    failedThreadIds: [],
+    expectedThreadIds: [],
+    focusThreadId: null,
+  };
+}
+
+function groupRecoveryRecords(records) {
+  const groups = new Map();
+  for (const record of records) {
+    const primaryRequestId = record.coalescedInto ?? record.requestId;
+    const key = `${primaryRequestId}\0${record.requestedByThreadId}`;
+    const group = groups.get(key) ?? [];
+    group.push(record);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) =>
+    group.sort((left, right) => {
+      const leftIsCoalesced = left.coalescedInto ? 1 : 0;
+      const rightIsCoalesced = right.coalescedInto ? 1 : 0;
+      return leftIsCoalesced - rightIsCoalesced;
+    }),
+  );
+}
+
+async function recoverClaimedGroup(store, records, claimId, recover, logger) {
+  const record = records[0];
+  const requestIds = records.map((candidate) => candidate.requestId);
+  if (typeof recover !== "function" || !record?.requestedByThreadId) {
+    await store.releaseClaims(requestIds, claimId);
     return false;
   }
   try {
     await recover(record);
-    const consumed = await store.consumeClaim(record.requestId, claimId);
+    const consumed = await store.consumeClaims(requestIds, claimId);
     if (!consumed) {
       logger.warn?.(
         "[prototype] runtime restart recovery claim was lost before consumption",
         JSON.stringify({
-          requestId: record.requestId,
+          requestIds,
           threadId: record.requestedByThreadId,
         }),
       );
@@ -432,31 +592,11 @@ async function recoverClaimedRecord(store, record, claimId, recover, logger) {
     }
     return true;
   } catch (error) {
-    await store.releaseClaim(record.requestId, claimId).catch(() => {});
+    await store.releaseClaims(requestIds, claimId).catch(() => {});
     logger.warn?.(
       "[prototype] failed to recover runtime restart intent",
       JSON.stringify({
-        requestId: record.requestId,
-        threadId: record.requestedByThreadId,
-        reason: errorMessage(error),
-      }),
-    );
-    return false;
-  }
-}
-
-async function recoverWithoutIntent(record, recover, logger) {
-  if (typeof recover !== "function" || !record.requestedByThreadId) {
-    return false;
-  }
-  try {
-    await recover(record);
-    return true;
-  } catch (error) {
-    logger.warn?.(
-      "[prototype] failed to report unpersisted runtime restart failure",
-      JSON.stringify({
-        requestId: record.requestId,
+        requestIds,
         threadId: record.requestedByThreadId,
         reason: errorMessage(error),
       }),
@@ -473,7 +613,7 @@ function expectedRuntimeRestartPrompt(record) {
         ? "completed"
         : "was interrupted after the Host durably accepted it";
   return [
-    `Morpheus recovered expected runtime restart request ${record.requestId} (${record.mode}); it ${outcome}.`,
+    `Morpheus recovered expected Runtime Capsule restart request ${record.requestId}; it ${outcome}.`,
     "This is an expected restart recovery, not a generic crash.",
     "Do not call request_runtime_restart again automatically.",
     "Review the recovered context and continue from the durable outcome.",
@@ -485,32 +625,45 @@ function normalizeNotification(notification) {
   const requestedByThreadId = normalizeString(
     notification?.params?.requestedByThreadId,
   );
-  const mode = notification?.params?.mode;
+  const legacyMode = notification?.params?.mode;
   if (
     !requestId ||
     Buffer.byteLength(requestId, "utf8") > MAX_REQUEST_ID_BYTES ||
-    !requestedByThreadId ||
-    (mode !== "hot" && mode !== "full")
+    !requestedByThreadId
   ) {
     return {
       kind: "invalid",
       requestId: requestId ?? "",
       requestedByThreadId,
-      mode: mode ?? null,
       reason: !requestId
         ? "Invalid runtime restart requestId"
         : Buffer.byteLength(requestId, "utf8") > MAX_REQUEST_ID_BYTES
           ? `Runtime restart requestId exceeds ${MAX_REQUEST_ID_BYTES} UTF-8 bytes`
-        : !requestedByThreadId
-          ? "Invalid runtime restart requestedByThreadId"
-        : `Invalid runtime restart mode: ${String(mode ?? "missing")}`,
+          : "Invalid runtime restart requestedByThreadId",
+    };
+  }
+  if (legacyMode === "hot") {
+    return {
+      kind: "unsupported",
+      requestId,
+      requestedByThreadId,
+      reason:
+        "Legacy hot runtime refresh requests are unsupported; request a Runtime Capsule restart without mode.",
+      requestedReason: normalizeString(notification?.params?.reason),
+    };
+  }
+  if (legacyMode != null && legacyMode !== "full") {
+    return {
+      kind: "invalid",
+      requestId,
+      requestedByThreadId,
+      reason: `Invalid legacy runtime restart mode: ${String(legacyMode)}`,
     };
   }
   return {
     ok: true,
     requestId,
     requestedByThreadId,
-    mode,
     reason: normalizeString(notification?.params?.reason),
   };
 }
@@ -521,7 +674,6 @@ function failureRecord(notification, requestId, reason) {
     requestedByThreadId: normalizeString(
       notification?.params?.requestedByThreadId,
     ),
-    mode: notification?.params?.mode ?? null,
     phase: "failed",
     error: reason,
   };
@@ -531,7 +683,13 @@ function normalizeString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function claimRecord(record, claimId, timestamp, leaseMs) {
+function claimRecord(
+  record,
+  claimId,
+  timestamp,
+  leaseMs,
+  currentHostInstanceId = null,
+) {
   const recovering =
     record.phase === "recovering" &&
     typeof record.recoveryPhase === "string" &&
@@ -545,6 +703,13 @@ function claimRecord(record, claimId, timestamp, leaseMs) {
   }
   const recoveryPhase = recovering ? record.recoveryPhase : record.phase;
   if (!RECOVERABLE_PHASES.has(recoveryPhase)) {
+    return null;
+  }
+  if (
+    recoveryPhase === "completed" &&
+    currentHostInstanceId &&
+    record.completedByHostInstanceId === currentHostInstanceId
+  ) {
     return null;
   }
   record.phase = "recovering";
@@ -573,7 +738,7 @@ async function readState(filePath, fs) {
     return {
       version: INTENT_VERSION,
       records: Array.isArray(parsed?.records)
-        ? parsed.records.filter(isValidRecord)
+        ? parsed.records.flatMap(normalizeStoredRecord)
         : [],
     };
   } catch (error) {
@@ -647,13 +812,26 @@ function pruneRecords(state) {
   ].slice(0, MAX_INTENT_RECORDS);
 }
 
-function isValidRecord(record) {
-  return (
-    record &&
-    typeof record.requestId === "string" &&
-    (record.mode === "hot" || record.mode === "full") &&
-    typeof record.phase === "string"
-  );
+function normalizeStoredRecord(record) {
+  if (
+    !record ||
+    typeof record.requestId !== "string" ||
+    typeof record.phase !== "string"
+  ) {
+    return [];
+  }
+  if (record.mode != null && record.mode !== "full" && record.mode !== "hot") {
+    return [];
+  }
+  const normalized = { ...record };
+  delete normalized.mode;
+  if (record.mode === "hot") {
+    normalized.phase = "failed";
+    normalized.error =
+      "Legacy hot runtime refresh intent is unsupported; a complete Runtime Capsule restart is required.";
+    clearRecoveryClaim(normalized);
+  }
+  return [normalized];
 }
 
 function reportFailure(broadcastStatus, record, reason) {
@@ -661,14 +839,12 @@ function reportFailure(broadcastStatus, record, reason) {
     lifecycle: {
       type: "clientRelaunch",
       phase: "failed",
-      mode: record?.mode ?? null,
       requestId: record?.requestId ?? "",
       reason,
     },
     relaunch: {
       ok: false,
       relaunching: false,
-      mode: record?.mode ?? null,
       reason,
     },
   });
@@ -684,4 +860,5 @@ module.exports = {
   expectedRuntimeRestartPrompt,
   MAX_REQUEST_ID_BYTES,
   recoverPendingRuntimeRestarts,
+  recoverRuntimeRestartAfterThreadTerminal,
 };

@@ -30,9 +30,7 @@ impl HostLifecycleToolRuntime for FakeHostLifecycleRuntime {
                 request_id: request.request_id,
                 status: HostRelaunchStatus::Accepted,
                 accepted: true,
-                relaunching: false,
-                requested_mode: request.mode,
-                executed_mode: None,
+                restarting: false,
                 message: "accepted".to_string(),
                 reason: request.reason,
                 resume_strategy: RESUME_STRATEGY.to_string(),
@@ -78,7 +76,6 @@ async fn accepted_restart_is_terminal_and_has_no_function_call_output() {
         Some(runtime.clone()),
         tool_call(json!({
             "reason": " runtime update ",
-            "mode": "full",
         })),
     )
     .await
@@ -88,7 +85,6 @@ async fn accepted_restart_is_terminal_and_has_no_function_call_output() {
     let requests = runtime.requests.lock().expect("requests mutex");
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].request_id, "restart-call");
-    assert_eq!(requests[0].mode, HostRelaunchMode::Full);
     assert_eq!(requests[0].reason.as_deref(), Some("runtime update"));
     assert_eq!(
         requests[0].requested_by_thread_id,
@@ -105,7 +101,7 @@ async fn unsupported_restart_remains_a_model_visible_error_result() {
         session,
         turn,
         None,
-        tool_call(json!({ "mode": "hot" })),
+        tool_call(json!({})),
     )
     .await
     .expect("unsupported is model-visible");
@@ -117,12 +113,15 @@ async fn unsupported_restart_remains_a_model_visible_error_result() {
     assert_eq!(response_json["status"], "unsupported");
     assert_eq!(response_json["requestId"], "restart-call");
     assert_eq!(response_json["accepted"], false);
-    assert_eq!(response_json["requestedMode"], "hot");
+    assert_eq!(response_json["restarting"], false);
+    assert!(response_json.get("relaunching").is_none());
+    assert!(response_json.get("requestedMode").is_none());
+    assert!(response_json.get("executedMode").is_none());
     assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
 }
 
 #[tokio::test]
-async fn invalid_mode_is_rejected_before_host_dispatch() {
+async fn legacy_mode_is_rejected_before_host_dispatch() {
     let (session, turn) = test_support::make_session_and_context().await;
     let runtime = Arc::new(FakeHostLifecycleRuntime::default());
 
@@ -131,17 +130,17 @@ async fn invalid_mode_is_rejected_before_host_dispatch() {
         session,
         turn,
         Some(runtime.clone()),
-        tool_call(json!({ "mode": "auto" })),
+        tool_call(json!({ "mode": "hot" })),
     )
     .await
     {
-        Ok(_) => panic!("invalid mode should fail"),
+        Ok(_) => panic!("legacy mode should fail"),
         Err(error) => error,
     };
 
     match error {
         FunctionCallError::RespondToModel(message) => {
-            assert!(message.contains("unknown variant `auto`"));
+            assert!(message.contains("unknown field `mode`"));
         }
         other => panic!("expected model-visible parse error, got {other:?}"),
     }
@@ -166,7 +165,7 @@ async fn unauthorized_paths_reject_forged_restart_before_host_dispatch() {
             session,
             turn,
             Some(runtime.clone()),
-            tool_call(json!({ "mode": "hot" })),
+            tool_call(json!({})),
         )
         .await
         {
@@ -244,15 +243,15 @@ fn request_runtime_restart_tool_schema_is_narrow() {
     assert_eq!(tool.name, REQUEST_RUNTIME_RESTART_TOOL_NAME);
     assert!(tool.description.contains("Use after completing a feature"));
     assert!(tool.description.contains("frontend and backend builds"));
+    assert!(tool.description.contains("complete Runtime Capsule restart"));
+    assert!(!tool.description.contains("hot"));
+    assert!(!tool.description.contains("full"));
     assert!(!tool.description.contains("run shell commands"));
     assert!(!tool.description.contains("kill processes"));
-    assert_eq!(tool.parameters.required, Some(vec!["mode".to_string()]));
+    assert_eq!(tool.parameters.required, Some(vec![]));
     assert_eq!(tool.parameters.additional_properties, Some(false.into()));
     let properties = tool.parameters.properties.expect("properties");
-    assert_eq!(properties.len(), 2);
-    assert_eq!(
-        properties.get("mode").expect("mode property").enum_values,
-        Some(vec![json!("hot"), json!("full")])
-    );
+    assert_eq!(properties.len(), 1);
+    assert!(!properties.contains_key("mode"));
     assert!(properties.contains_key("reason"));
 }

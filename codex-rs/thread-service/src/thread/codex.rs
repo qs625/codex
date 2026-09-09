@@ -453,7 +453,7 @@ impl CodexThread {
         self.codex
             .session
             .deliver_event_raw(Event {
-                id: event.transaction_id,
+                id: event.activation_id,
                 msg: event_msg,
             })
             .await;

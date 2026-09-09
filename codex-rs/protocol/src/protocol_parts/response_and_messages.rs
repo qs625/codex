@@ -243,14 +243,13 @@ pub struct ThreadGoalUpdateDisplayEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ClientRecoveryEvent {
     pub recovery_id: String,
-    pub transaction_id: String,
-    pub mode: String,
-    pub build_id: String,
+    pub activation_id: String,
+    pub release_id: String,
     pub reason: String,
     pub occurred_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub previous_build_id: Option<String>,
+    pub fallback_release_id: Option<String>,
 }
 
 pub trait HasLegacyEvent {

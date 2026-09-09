@@ -180,10 +180,9 @@ test("builds a conversation event for typed client recovery", () => {
       {
         type: "clientRecovery",
         id: "recovery-1",
-        transactionId: "transaction-1",
-        mode: "rollback",
-        buildId: "build-2",
-        previousBuildId: "build-1",
+        activationId: "activation-1",
+        releaseId: "release-2",
+        fallbackReleaseId: "release-1",
         reason: "health check failed",
         occurredAt: "2026-09-09T08:30:00.000Z",
       },
@@ -197,7 +196,7 @@ test("builds a conversation event for typed client recovery", () => {
       author: "root",
       role: "system",
       text:
-        "Client recovery (rollback): health check failed\nBuild: build-2\nPrevious build: build-1\nTransaction: transaction-1",
+        "Runtime Capsule recovery: health check failed\nRelease: release-2\nFallback release: release-1\nActivation: activation-1",
       timestamp: formatClockTime(
         Date.parse("2026-09-09T08:30:00.000Z") / 1000,
       ),

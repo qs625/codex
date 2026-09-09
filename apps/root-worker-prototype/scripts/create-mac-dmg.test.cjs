@@ -229,6 +229,11 @@ test("copyAppBundleForDmg preserves Electron framework relative symlinks", async
     const framework = path.join(
       sourceApp,
       "Contents",
+      "Resources",
+      "seed-capsule",
+      "payload",
+      "Root Worker Runtime.app",
+      "Contents",
       "Frameworks",
       "Electron Framework.framework",
     );
@@ -243,6 +248,11 @@ test("copyAppBundleForDmg preserves Electron framework relative symlinks", async
     );
     const stagedFramework = path.join(
       stagedApp,
+      "Contents",
+      "Resources",
+      "seed-capsule",
+      "payload",
+      "Root Worker Runtime.app",
       "Contents",
       "Frameworks",
       "Electron Framework.framework",
@@ -266,6 +276,11 @@ test("assertMacAppBundleSymlinksRelative rejects absolute framework symlinks", a
     const appBundle = path.join(tmpDir, "Broken.app");
     const framework = path.join(
       appBundle,
+      "Contents",
+      "Resources",
+      "seed-capsule",
+      "payload",
+      "Root Worker Runtime.app",
       "Contents",
       "Frameworks",
       "Electron Framework.framework",

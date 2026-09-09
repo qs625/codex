@@ -7,5 +7,5 @@ export function clientLifecycleFailureReason(
     return null;
   }
   const reason = status.lifecycle.reason?.trim();
-  return reason || "Runtime refresh failed.";
+  return reason || "Runtime Capsule restart failed.";
 }

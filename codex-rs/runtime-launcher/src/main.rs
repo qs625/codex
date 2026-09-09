@@ -1,13 +1,17 @@
+#[cfg(unix)]
+mod supported {
 use clap::Parser;
 use clap::Subcommand;
+use runtime_launcher::CapsuleTarget;
 use runtime_launcher::LauncherPaths;
+use runtime_launcher::MutationRequest;
 use runtime_launcher::RunOutcome;
 use serde::Serialize;
 use serde_json::json;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "MorpheusLauncher")]
+#[command(name = "RuntimeCapsuleLauncher")]
 struct Cli {
     #[arg(long, global = true)]
     state_root: Option<PathBuf>,
@@ -19,31 +23,27 @@ struct Cli {
 enum Command {
     Run {
         #[arg(long)]
-        app_bundle: PathBuf,
+        outer_bundle: PathBuf,
+        #[arg(long)]
+        target_os: String,
+        #[arg(long)]
+        target_arch: String,
     },
-    PrepareFull {
+    PrepareActivation {
         #[arg(long)]
         request: PathBuf,
     },
-    ActivateHot {
+    CancelActivation {
         #[arg(long)]
         request: PathBuf,
     },
-    AbortFull {
+    RequestRollback {
         #[arg(long)]
-        transaction: String,
-    },
-    CommitHot {
-        #[arg(long)]
-        transaction: String,
-    },
-    RollbackHot {
-        #[arg(long)]
-        transaction: String,
+        request: PathBuf,
     },
     AckFailure {
         #[arg(long)]
-        recovery_identity: String,
+        request: PathBuf,
     },
     Status,
 }
@@ -54,21 +54,28 @@ struct Success<T: Serialize> {
     result: T,
 }
 
-fn main() {
+pub(super) fn main() {
+    match runtime_launcher::run_hidden_guard_mode(std::env::args_os().skip(1)) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
     let exit_code = match execute(Cli::parse()) {
         Ok(Some(code)) => code,
         Ok(None) => 0,
         Err(error) => {
-            let body = json!({
-                "ok": false,
-                "error": {
-                    "message": error.to_string(),
-                }
-            });
             println!(
                 "{}",
-                serde_json::to_string(&body)
-                    .unwrap_or_else(|_| "{\"ok\":false,\"error\":{\"message\":\"launcher error\"}}".to_string())
+                serde_json::to_string(&json!({
+                    "ok": false,
+                    "error": {"message": error.to_string()}
+                }))
+                .unwrap_or_else(|_| {
+                    "{\"ok\":false,\"error\":{\"message\":\"launcher error\"}}".to_string()
+                })
             );
             1
         }
@@ -77,44 +84,56 @@ fn main() {
 }
 
 fn execute(cli: Cli) -> runtime_launcher::Result<Option<i32>> {
-    let implicit_start = cli.command.is_none();
-    let root = if implicit_start {
-        startup_state_root(cli.state_root)?
-    } else {
-        runtime_launcher::state_root(cli.state_root)?
-    };
+    let root = runtime_launcher::state_root(cli.state_root)?;
     let paths = LauncherPaths::new(root);
+    let launcher_path =
+        std::env::current_exe().map_err(|error| runtime_launcher::LauncherError::Io {
+            context: "resolve launcher executable".to_string(),
+            source: error,
+        })?;
     match cli.command {
-        None => match runtime_launcher::run(&paths, &current_app_bundle()?)? {
+        None => {
+            let outer_bundle = std::env::var_os("RUNTIME_CAPSULE_OUTER_BUNDLE")
+                .map(PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(infer_outer_bundle)?;
+            let target = host_target();
+            match runtime_launcher::run(&paths, &outer_bundle, target, &launcher_path)? {
+                RunOutcome::Exited(code) => Ok(Some(code)),
+            }
+        }
+        Some(Command::Run {
+            outer_bundle,
+            target_os,
+            target_arch,
+        }) => match runtime_launcher::run(
+            &paths,
+            &outer_bundle,
+            CapsuleTarget {
+                os: target_os,
+                arch: target_arch,
+            },
+            &launcher_path,
+        )? {
             RunOutcome::Exited(code) => Ok(Some(code)),
         },
-        Some(Command::Run { app_bundle }) => match runtime_launcher::run(&paths, &app_bundle)? {
-            RunOutcome::Exited(code) => Ok(Some(code)),
-        },
-        Some(Command::PrepareFull { request }) => {
-            print_success(runtime_launcher::prepare_full(&paths, &request)?)?;
+        Some(Command::PrepareActivation { request }) => {
+            print_success(runtime_launcher::prepare_activation(&paths, &request)?)?;
             Ok(None)
         }
-        Some(Command::ActivateHot { request }) => {
-            print_success(runtime_launcher::activate_hot(&paths, &request)?)?;
+        Some(Command::CancelActivation { request }) => {
+            let request: MutationRequest = runtime_launcher::read_request(&request)?;
+            print_success(runtime_launcher::cancel_activation(&paths, request)?)?;
             Ok(None)
         }
-        Some(Command::AbortFull { transaction }) => {
-            print_success(runtime_launcher::abort_full(&paths, &transaction)?)?;
+        Some(Command::RequestRollback { request }) => {
+            let request: MutationRequest = runtime_launcher::read_request(&request)?;
+            print_success(runtime_launcher::request_rollback(&paths, request)?)?;
             Ok(None)
         }
-        Some(Command::CommitHot { transaction }) => {
-            print_success(runtime_launcher::commit_hot(&paths, &transaction)?)?;
-            Ok(None)
-        }
-        Some(Command::RollbackHot { transaction }) => {
-            print_success(runtime_launcher::rollback_hot(&paths, &transaction)?)?;
-            Ok(None)
-        }
-        Some(Command::AckFailure { recovery_identity }) => {
-            print_success(json!({
-                "acknowledged": runtime_launcher::ack_failure(&paths, &recovery_identity)?
-            }))?;
+        Some(Command::AckFailure { request }) => {
+            let request: MutationRequest = runtime_launcher::read_request(&request)?;
+            print_success(runtime_launcher::ack_failure(&paths, request)?)?;
             Ok(None)
         }
         Some(Command::Status) => {
@@ -124,54 +143,110 @@ fn execute(cli: Cli) -> runtime_launcher::Result<Option<i32>> {
     }
 }
 
-fn current_app_bundle() -> runtime_launcher::Result<PathBuf> {
-    let executable = std::env::current_exe().map_err(|err| runtime_launcher::LauncherError::Io {
-        context: "resolve current launcher executable".to_string(),
-        source: err,
-    })?;
-    let bundle = executable
-        .parent()
-        .and_then(std::path::Path::parent)
-        .and_then(std::path::Path::parent)
-        .ok_or_else(|| {
-            runtime_launcher::LauncherError::InvalidRequest(format!(
-                "cannot derive app bundle from {}",
-                executable.display()
-            ))
-        })?;
-    if bundle.extension().and_then(|value| value.to_str()) != Some("app") {
-        return Err(runtime_launcher::LauncherError::InvalidRequest(format!(
-            "launcher is not inside a macOS app bundle: {}",
-            executable.display()
-        )));
+fn host_target() -> CapsuleTarget {
+    CapsuleTarget {
+        os: protocol_os(std::env::consts::OS).to_string(),
+        arch: protocol_arch(std::env::consts::ARCH).to_string(),
     }
-    Ok(bundle.to_path_buf())
 }
 
-fn startup_state_root(explicit: Option<PathBuf>) -> runtime_launcher::Result<PathBuf> {
-    if explicit.is_some() || std::env::var_os("MORPHEUS_RUNTIME_LAUNCHER_HOME").is_some() {
-        return runtime_launcher::state_root(explicit);
+fn protocol_arch(host_arch: &str) -> &str {
+    match host_arch {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        other => other,
     }
-    if let Some(home) = std::env::var_os("MORPHEUS_HOME") {
-        return Ok(PathBuf::from(home).join("runtime-launcher"));
+}
+
+fn protocol_os(host_os: &str) -> &str {
+    match host_os {
+        "macos" => "darwin",
+        other => other,
     }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".morpheus/runtime-launcher"))
-        .ok_or_else(|| {
-            runtime_launcher::LauncherError::InvalidRequest(
-                "cannot resolve launcher state root".to_string(),
-            )
-        })
+}
+
+fn infer_outer_bundle() -> runtime_launcher::Result<PathBuf> {
+    infer_outer_bundle_from_executable(
+        &std::env::current_exe().map_err(|error| runtime_launcher::LauncherError::Io {
+            context: "resolve launcher executable".to_string(),
+            source: error,
+        })?,
+    )
+}
+
+fn infer_outer_bundle_from_executable(
+    executable: &std::path::Path,
+) -> runtime_launcher::Result<PathBuf> {
+    let macos = executable.parent().filter(|path| {
+        path.file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new("MacOS"))
+    });
+    let contents = macos.and_then(std::path::Path::parent).filter(|path| {
+        path.file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new("Contents"))
+    });
+    let bundle = contents.and_then(std::path::Path::parent).filter(|path| {
+        path.extension()
+            .is_some_and(|extension| extension == std::ffi::OsStr::new("app"))
+    });
+    bundle.map(PathBuf::from).ok_or_else(|| {
+        runtime_launcher::LauncherError::InvalidRequest(format!(
+            "launcher executable is not inside <bundle>.app/Contents/MacOS: {}",
+            executable.display()
+        ))
+    })
 }
 
 fn print_success<T: Serialize>(result: T) -> runtime_launcher::Result<()> {
-    let body = Success { ok: true, result };
-    let json = serde_json::to_string(&body)
-        .map_err(|err| runtime_launcher::LauncherError::Json {
+    let json = serde_json::to_string(&Success { ok: true, result }).map_err(|error| {
+        runtime_launcher::LauncherError::Json {
             context: "serialize command result".to_string(),
-            source: err,
-        })?;
+            source: error,
+        }
+    })?;
     println!("{json}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macos_uses_manifest_darwin_vocabulary() {
+        assert_eq!(protocol_os("macos"), "darwin");
+        assert_eq!(protocol_os("linux"), "linux");
+        assert_eq!(protocol_arch("aarch64"), "arm64");
+        assert_eq!(protocol_arch("x86_64"), "x64");
+    }
+
+    #[test]
+    fn installed_launcher_path_resolves_outer_bundle() {
+        assert_eq!(
+            infer_outer_bundle_from_executable(std::path::Path::new(
+                "/Applications/Runtime.app/Contents/MacOS/runtime-capsule-launcher"
+            ))
+            .expect("outer bundle"),
+            PathBuf::from("/Applications/Runtime.app")
+        );
+        assert!(
+            infer_outer_bundle_from_executable(std::path::Path::new(
+                "/tmp/runtime-capsule-launcher"
+            ))
+            .is_err()
+        );
+    }
+}
+
+}
+
+#[cfg(unix)]
+fn main() {
+    supported::main();
+}
+
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("Runtime Capsule Launcher is unsupported on this platform");
+    std::process::exit(1);
 }

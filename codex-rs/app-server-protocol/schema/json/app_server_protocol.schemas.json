@@ -1107,6 +1107,41 @@
       ],
       "type": "object"
     },
+    "ClientLifecycleRegisterParams": {
+      "properties": {
+        "hostId": {
+          "description": "Stable identifier for the Electron Host instance owning this connection.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hostId"
+      ],
+      "type": "object"
+    },
+    "ClientLifecycleRegisterResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registered": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hostId",
+        "registered"
+      ],
+      "title": "ClientLifecycleRegisterResponse",
+      "type": "object"
+    },
     "ClientNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "oneOf": [
@@ -1128,6 +1163,37 @@
         }
       ],
       "title": "ClientNotification"
+    },
+    "ClientRelaunchRequestedNotification": {
+      "properties": {
+        "reason": {
+          "description": "Optional human-readable reason supplied by the runtime tool caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestId": {
+          "description": "Correlation identifier for this lifecycle operation.",
+          "type": "string"
+        },
+        "requestedByThreadId": {
+          "description": "Thread that requested the client relaunch, when the request originated from a thread turn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resumeStrategy": {
+          "description": "Reminder that post-relaunch continuation is handled by client bootstrap autoresume.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "resumeStrategy"
+      ],
+      "type": "object"
     },
     "ClientRequest": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1155,6 +1221,30 @@
             "params"
           ],
           "title": "InitializeRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "client/lifecycle/register"
+              ],
+              "title": "Client/lifecycle/registerRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ClientLifecycleRegisterParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Client/lifecycle/registerRequest",
           "type": "object"
         },
         {
@@ -1541,6 +1631,30 @@
             "params"
           ],
           "title": "Thread/injectItemsRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/clientRecovery/record"
+              ],
+              "title": "Thread/clientRecovery/recordRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadClientRecoveryRecordParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/clientRecovery/recordRequest",
           "type": "object"
         },
         {
@@ -5616,7 +5730,7 @@
           ]
         },
         "includeHome": {
-          "description": "If true, include detection under the user's home (~/.claude, ~/.morpheus, etc.).",
+          "description": "If true, include detection under the user's home (~/.claude, ~/.codex, etc.).",
           "type": "boolean"
         }
       },
@@ -13638,6 +13752,26 @@
           "properties": {
             "method": {
               "enum": [
+                "client/relaunch/requested"
+              ],
+              "title": "Client/relaunch/requestedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ClientRelaunchRequestedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Client/relaunch/requestedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "workflow/run/updated"
               ],
               "title": "Workflow/run/updatedNotificationMethod",
@@ -15777,6 +15911,56 @@
       ],
       "type": "object"
     },
+    "ThreadClientRecoveryRecordParams": {
+      "properties": {
+        "activationId": {
+          "type": "string"
+        },
+        "fallbackReleaseId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "occurredAt": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "recoveryId": {
+          "type": "string"
+        },
+        "releaseId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "activationId",
+        "occurredAt",
+        "reason",
+        "recoveryId",
+        "releaseId",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadClientRecoveryRecordResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "recorded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "recorded"
+      ],
+      "title": "ThreadClientRecoveryRecordResponse",
+      "type": "object"
+    },
     "ThreadClosedNotification": {
       "properties": {
         "threadId": {
@@ -17300,6 +17484,48 @@
             "type"
           ],
           "title": "ThreadGoalUpdateThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "activationId": {
+              "type": "string"
+            },
+            "fallbackReleaseId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "occurredAt": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "releaseId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "clientRecovery"
+              ],
+              "title": "ClientRecoveryThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "activationId",
+            "id",
+            "occurredAt",
+            "reason",
+            "releaseId",
+            "type"
+          ],
+          "title": "ClientRecoveryThreadItem",
           "type": "object"
         },
         {

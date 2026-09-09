@@ -38,7 +38,10 @@ export type { ChatgptAuthTokensRefreshParams } from "./ChatgptAuthTokensRefreshP
 export type { ChatgptAuthTokensRefreshReason } from "./ChatgptAuthTokensRefreshReason";
 export type { ChatgptAuthTokensRefreshResponse } from "./ChatgptAuthTokensRefreshResponse";
 export type { ClientInfo } from "./ClientInfo";
+export type { ClientLifecycleRegisterParams } from "./ClientLifecycleRegisterParams";
+export type { ClientLifecycleRegisterResponse } from "./ClientLifecycleRegisterResponse";
 export type { ClientNotification } from "./ClientNotification";
+export type { ClientRelaunchRequestedNotification } from "./ClientRelaunchRequestedNotification";
 export type { ClientRequest } from "./ClientRequest";
 export type { CodexErrorInfo } from "./CodexErrorInfo";
 export type { CollabAgentOperation } from "./CollabAgentOperation";
@@ -379,6 +382,8 @@ export type { ThreadApproveGuardianDeniedActionResponse } from "./ThreadApproveG
 export type { ThreadArchiveParams } from "./ThreadArchiveParams";
 export type { ThreadArchiveResponse } from "./ThreadArchiveResponse";
 export type { ThreadArchivedNotification } from "./ThreadArchivedNotification";
+export type { ThreadClientRecoveryRecordParams } from "./ThreadClientRecoveryRecordParams";
+export type { ThreadClientRecoveryRecordResponse } from "./ThreadClientRecoveryRecordResponse";
 export type { ThreadClosedNotification } from "./ThreadClosedNotification";
 export type { ThreadCompactStartParams } from "./ThreadCompactStartParams";
 export type { ThreadCompactStartResponse } from "./ThreadCompactStartResponse";

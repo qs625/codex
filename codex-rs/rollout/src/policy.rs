@@ -801,12 +801,11 @@ mod tests {
     fn limited_mode_persists_client_recovery() {
         let event = EventMsg::ClientRecovery(protocol::protocol::ClientRecoveryEvent {
             recovery_id: "recovery-1".into(),
-            transaction_id: "transaction-1".into(),
-            mode: "rollback".into(),
-            build_id: "build-2".into(),
+            activation_id: "activation-1".into(),
+            release_id: "release-2".into(),
             reason: "health check failed".into(),
             occurred_at: "2026-09-09T08:30:00.000Z".into(),
-            previous_build_id: Some("build-1".into()),
+            fallback_release_id: Some("release-1".into()),
         });
 
         assert!(should_persist_event_msg(

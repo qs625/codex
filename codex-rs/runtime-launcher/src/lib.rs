@@ -1,45 +1,42 @@
-mod artifact;
-mod failure;
-mod platform;
-mod state;
+#![cfg(unix)]
+
+mod capsule;
+mod control;
+mod guard;
+mod migration;
+mod process;
+mod seed;
 mod supervisor;
-mod transaction;
 
-pub use artifact::ArtifactManifest;
-pub use artifact::ArtifactManifestEntry;
-pub use artifact::PreparedArtifactRequest;
-pub use failure::FailureEvidence;
-pub use state::ArtifactIdentity;
-pub use state::ArtifactRecord;
-pub use state::LauncherPaths;
-pub use state::LauncherState;
-pub use supervisor::EXIT_COORDINATED_RESTART;
+pub use capsule::CapsuleEntry;
+pub use capsule::CapsuleLaunch;
+pub use capsule::CapsuleManifest;
+pub use capsule::CapsuleReadiness;
+pub use capsule::CapsuleRecord;
+pub use capsule::CapsuleTarget;
+pub use capsule::ImportRequest;
+pub use capsule::compute_release_id;
+pub use capsule::compute_release_preimage;
+pub use control::ActivationOutcome;
+pub use control::ActivationPhase;
+pub use control::ActivationReceipt;
+pub use control::BlockedRecord;
+pub use control::CapsuleRef;
+pub use control::ControlState;
+pub use control::FailureProjection;
+pub use control::SelectedRuntime;
+pub use control::TrustedSeed;
+pub use guard::ReadyMarker;
+pub use guard::write_ready_marker;
+pub use supervisor::LauncherPaths;
+pub use supervisor::PrepareActivationDisposition;
+pub use supervisor::PrepareActivationResult;
 pub use supervisor::RunOutcome;
-pub use transaction::ActivationChanges;
-pub use transaction::HotActivationRequest;
-pub use transaction::TransactionRecord;
-pub use transaction::TransactionFailure;
-pub use transaction::TransactionState;
-pub use transaction::TransactionType;
+pub use supervisor::Status;
 
-use crate::artifact::install_prepared_artifact;
-use crate::artifact::plan_prepared_artifact;
-use crate::failure::ack_failure_evidence;
-use crate::failure::require_no_failure_evidence;
-use crate::state::OperationLock;
-use crate::state::read_json_if_exists;
-use crate::state::write_json_atomic;
-use crate::transaction::load_transaction;
-use crate::transaction::require_no_transaction;
-use crate::transaction::activate_transaction;
-use crate::transaction::ActivationOutcome;
-use crate::transaction::RecoveredActivationFailure;
-use crate::transaction::commit_transaction;
-use crate::transaction::rollback_transaction;
-use crate::transaction::rollback_failure;
-use crate::transaction::recovered_transaction_failure;
-use crate::transaction::reconcile_transaction;
+use serde::Deserialize;
 use serde::Serialize;
+use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -61,10 +58,12 @@ pub enum LauncherError {
     },
     #[error("invalid request: {0}")]
     InvalidRequest(String),
-    #[error("invalid artifact: {0}")]
+    #[error("invalid capsule: {0}")]
     InvalidArtifact(String),
     #[error("launcher state conflict: {0}")]
     Conflict(String),
+    #[error("runtime lifecycle blocked: {0}")]
+    Blocked(String),
     #[error("runtime launch failed: {0}")]
     Launch(String),
 }
@@ -86,200 +85,96 @@ pub(crate) fn json_error(
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrepareActivationRequest {
+    pub schema_version: u32,
+    pub activation_id: String,
+    pub release_id: String,
+    pub expected_revision: u64,
+    pub expected_executor_epoch: u64,
+    pub target: CapsuleTarget,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MutationRequest {
+    pub activation_id: String,
+    pub expected_revision: u64,
+    pub expected_executor_epoch: u64,
+    #[serde(default)]
+    pub reason: String,
+}
+
 pub fn read_request<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     let bytes =
-        std::fs::read(path).map_err(|err| io_error(format!("read {}", path.display()), err))?;
+        std::fs::read(path).map_err(|error| io_error(format!("read {}", path.display()), error))?;
     serde_json::from_slice(&bytes)
-        .map_err(|err| json_error(format!("parse {}", path.display()), err))
+        .map_err(|error| json_error(format!("parse {}", path.display()), error))
 }
 
-pub fn prepare_full(paths: &LauncherPaths, request_path: &Path) -> Result<TransactionRecord> {
-    let _lock = OperationLock::acquire(paths)?;
-    reconcile_and_record_failure(paths)?;
-    require_no_failure_evidence(paths)?;
-    require_no_transaction(paths)?;
-    let request: PreparedArtifactRequest = read_request(request_path)?;
-    request.validate_common()?;
-    let planned = plan_prepared_artifact(paths, &request)?;
-    let mut transaction = TransactionRecord::full_prepared(request.clone(), planned);
-    write_json_atomic(&paths.transaction, &transaction)?;
-    let artifact = match install_prepared_artifact(paths, &request) {
-        Ok(artifact) => artifact,
-        Err(error) => {
-            state::remove_file_if_exists(&paths.transaction)?;
-            return Err(error);
-        }
-    };
-    transaction.candidate = artifact;
-    write_json_atomic(&paths.transaction, &transaction)?;
-    Ok(transaction)
+pub fn prepare_activation(
+    paths: &LauncherPaths,
+    request_path: &Path,
+) -> Result<PrepareActivationResult> {
+    supervisor::prepare_activation(paths, read_request(request_path)?)
 }
 
-pub fn activate_hot(paths: &LauncherPaths, request_path: &Path) -> Result<TransactionRecord> {
-    let _lock = OperationLock::acquire(paths)?;
-    reconcile_and_record_failure(paths)?;
-    require_no_failure_evidence(paths)?;
-    require_no_transaction(paths)?;
-    let request: HotActivationRequest = read_request(request_path)?;
-    request.validate()?;
-    let mut state = LauncherState::load(paths)?;
-    let previous = state.current.clone().ok_or_else(|| {
-        LauncherError::Conflict("hot activation requires an existing current artifact".to_string())
-    })?;
-    let planned = plan_prepared_artifact(paths, &request.artifact)?;
-    let mut transaction = TransactionRecord::hot_prepared(request.clone(), planned);
-    write_json_atomic(&paths.transaction, &transaction)?;
-    let artifact = match install_prepared_artifact(paths, &request.artifact) {
-        Ok(artifact) => artifact,
-        Err(error) => {
-            state::remove_file_if_exists(&paths.transaction)?;
-            return Err(error);
-        }
-    };
-    transaction.candidate = artifact;
-    write_json_atomic(&paths.transaction, &transaction)?;
-    let (current, previous) = match activate_transaction(paths, &mut transaction, &previous)? {
-        ActivationOutcome::Activated { current, previous } => (current, previous),
-        ActivationOutcome::RecoveredFailure(failure) => {
-            return record_recovered_activation_failure(paths, failure);
-        }
-    };
-    state.previous = Some(previous);
-    state.current = Some(current);
-    state.save(paths)?;
-    Ok(transaction)
+pub fn cancel_activation(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
+    supervisor::cancel_activation(paths, request)
 }
 
-pub fn abort_full(paths: &LauncherPaths, transaction_id: &str) -> Result<LauncherState> {
-    let _lock = OperationLock::acquire(paths)?;
-    reconcile_and_record_failure(paths)?;
-    let transaction = load_transaction(paths)?.ok_or_else(|| {
-        LauncherError::Conflict("there is no prepared full transaction".to_string())
-    })?;
-    transaction.require(TransactionType::Full, transaction_id)?;
-    if transaction.state != TransactionState::Prepared {
-        return Err(LauncherError::Conflict(format!(
-            "full transaction {} is not prepared",
-            transaction.transaction_id
-        )));
-    }
-    transaction::abort_prepared_full(paths, &transaction)?;
-    LauncherState::load(paths)
+pub fn request_rollback(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
+    supervisor::request_rollback(paths, request)
 }
 
-pub fn commit_hot(paths: &LauncherPaths, transaction_id: &str) -> Result<LauncherState> {
-    let _lock = OperationLock::acquire(paths)?;
-    reconcile_and_record_failure(paths)?;
-    let transaction = load_transaction(paths)?.ok_or_else(|| {
-        LauncherError::Conflict("there is no active hot transaction".to_string())
-    })?;
-    transaction.require(TransactionType::Hot, transaction_id)?;
-    if transaction.state != TransactionState::Launching {
-        return Err(LauncherError::Conflict(format!(
-            "hot transaction {} is not launching",
-            transaction.transaction_id
-        )));
-    }
-    let state = LauncherState::load(paths)?;
-    if state.current.as_ref().map(|item| &item.identity) != Some(&transaction.candidate.identity) {
-        return Err(LauncherError::Conflict(
-            "current artifact does not match the hot transaction candidate".to_string(),
-        ));
-    }
-    commit_transaction(paths, &transaction, state)
-}
-
-pub fn rollback_hot(paths: &LauncherPaths, transaction_id: &str) -> Result<LauncherState> {
-    let _lock = OperationLock::acquire(paths)?;
-    reconcile_and_record_failure(paths)?;
-    let mut transaction = load_transaction(paths)?.ok_or_else(|| {
-        LauncherError::Conflict("there is no active hot transaction".to_string())
-    })?;
-    transaction.require(TransactionType::Hot, transaction_id)?;
-    if transaction.state != TransactionState::Launching {
-        return Err(LauncherError::Conflict(format!(
-            "hot transaction {} is not launching",
-            transaction.transaction_id
-        )));
-    }
-    let state = LauncherState::load(paths)?;
-    let failure = rollback_failure(&transaction, "hot activation was rolled back")?;
-    let state = rollback_transaction(paths, &mut transaction, state, failure)?;
-    let recovered = recovered_transaction_failure(&transaction)?;
-    persist_recovered_activation_failure(paths, &recovered)?;
-    Ok(state)
-}
-
-pub fn ack_failure(paths: &LauncherPaths, recovery_identity: &str) -> Result<bool> {
-    let _lock = OperationLock::acquire(paths)?;
-    ack_failure_evidence(paths, recovery_identity)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Status {
-    pub state: LauncherState,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transaction: Option<TransactionRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub failure_evidence: Option<FailureEvidence>,
+pub fn ack_failure(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
+    supervisor::ack_failure(paths, request)
 }
 
 pub fn status(paths: &LauncherPaths) -> Result<Status> {
-    let _lock = OperationLock::acquire(paths)?;
-    reconcile_and_record_failure(paths)?;
-    Ok(Status {
-        state: LauncherState::load(paths)?,
-        transaction: load_transaction(paths)?,
-        failure_evidence: read_json_if_exists(&paths.failure_evidence)?,
-    })
+    supervisor::status(paths)
 }
 
-pub fn run(paths: &LauncherPaths, app_bundle: &Path) -> Result<RunOutcome> {
-    supervisor::run(paths, app_bundle)
-}
-
-pub(crate) fn reconcile_and_record_failure(paths: &LauncherPaths) -> Result<()> {
-    if let Some(failure) = reconcile_transaction(paths)? {
-        return record_recovered_activation_failure(paths, failure);
-    }
-    Ok(())
-}
-
-pub(crate) fn record_recovered_activation_failure<T>(
+pub fn run(
     paths: &LauncherPaths,
-    failure: RecoveredActivationFailure,
-) -> Result<T> {
-    persist_recovered_activation_failure(paths, &failure)?;
-    Err(failure.error)
+    outer_bundle: &Path,
+    target: CapsuleTarget,
+    launcher_path: &Path,
+) -> Result<RunOutcome> {
+    supervisor::run(paths, outer_bundle, target, launcher_path)
 }
 
-pub(crate) fn persist_recovered_activation_failure(
-    paths: &LauncherPaths,
-    failure: &RecoveredActivationFailure,
-) -> Result<()> {
-    failure::record_failure(
-        paths,
-        &failure.failed,
-        Some(&failure.fallback),
-        failure.mode,
-        &failure.reason,
-    )?;
-    state::remove_file_if_exists(&paths.transaction)?;
-    Ok(())
+pub fn run_hidden_guard_mode<I>(arguments: I) -> Result<bool>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    guard::guard_hidden_mode_entrypoint(arguments, guard::run_hidden_guard)
+        .map_err(|error| LauncherError::Launch(error.to_string()))
 }
 
 pub fn state_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(path) = explicit {
-        return Ok(path);
-    }
-    std::env::var_os("MORPHEUS_RUNTIME_LAUNCHER_HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            LauncherError::InvalidRequest(
-                "--state-root or MORPHEUS_RUNTIME_LAUNCHER_HOME is required".to_string(),
-            )
-        })
+    resolve_state_root(
+        explicit,
+        std::env::var_os("RUNTIME_CAPSULE_LAUNCHER_HOME").map(PathBuf::from),
+        std::env::var_os("MORPHEUS_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )
+}
+
+fn resolve_state_root(
+    explicit: Option<PathBuf>,
+    launcher_home: Option<PathBuf>,
+    morpheus_home: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Result<PathBuf> {
+    explicit
+        .or(launcher_home)
+        .or_else(|| morpheus_home.map(|home| home.join("runtime-launcher")))
+        .or_else(|| home.map(|home| home.join(".morpheus/runtime-launcher")))
+        .ok_or_else(|| LauncherError::InvalidRequest("launcher home is unavailable".to_string()))
 }
 
 #[cfg(test)]
@@ -287,55 +182,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recovered_activation_failure_records_single_evidence() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let paths = LauncherPaths::new(temp.path().join("state"));
-        paths.ensure().expect("state");
-        let app_bundle = temp.path().join("Morpheus.app");
-        let failed = artifact("tx", "new", &app_bundle, "candidate");
-        let fallback = artifact("installed", "old", &app_bundle, "Resources");
-
-        let error = record_recovered_activation_failure::<()>(
-            &paths,
-            RecoveredActivationFailure {
-                failed: failed.clone(),
-                fallback: fallback.clone(),
-                mode: TransactionType::Full,
-                reason: "candidate signature is invalid".to_string(),
-                error: LauncherError::InvalidArtifact(
-                    "candidate signature is invalid".to_string(),
-                ),
-            },
-        )
-        .expect_err("activation must remain failed");
-        assert!(error.to_string().contains("candidate signature is invalid"));
-
-        let evidence: FailureEvidence =
-            read_json_if_exists(&paths.failure_evidence)
-                .expect("read evidence")
-                .expect("evidence");
-        assert_eq!(evidence.mode, TransactionType::Full);
-        assert_eq!(evidence.failed, failed.identity);
-        assert_eq!(evidence.fallback, Some(fallback.identity));
-    }
-
-    fn artifact(
-        transaction_id: &str,
-        build_id: &str,
-        app_bundle: &Path,
-        root: &str,
-    ) -> ArtifactRecord {
-        let artifact_root = app_bundle.join("Contents").join(root);
-        ArtifactRecord {
-            identity: ArtifactIdentity {
-                transaction_id: transaction_id.to_string(),
-                build_id: build_id.to_string(),
-                source_commit: "commit".to_string(),
-            },
-            entrypoint: artifact_root.join("app.asar"),
-            artifact_root,
-            app_bundle_path: app_bundle.to_path_buf(),
-            installed_at_unix_ms: 1,
-        }
+    fn launcher_home_resolution_has_installed_defaults() {
+        let explicit = PathBuf::from("/explicit");
+        assert_eq!(
+            resolve_state_root(
+                Some(explicit.clone()),
+                Some(PathBuf::from("/launcher")),
+                Some(PathBuf::from("/morpheus")),
+                Some(PathBuf::from("/home")),
+            )
+            .expect("explicit"),
+            explicit
+        );
+        assert_eq!(
+            resolve_state_root(
+                None,
+                Some(PathBuf::from("/launcher")),
+                Some(PathBuf::from("/morpheus")),
+                Some(PathBuf::from("/home")),
+            )
+            .expect("launcher"),
+            PathBuf::from("/launcher")
+        );
+        assert_eq!(
+            resolve_state_root(
+                None,
+                None,
+                Some(PathBuf::from("/morpheus")),
+                Some(PathBuf::from("/home")),
+            )
+            .expect("configured home"),
+            PathBuf::from("/morpheus/runtime-launcher")
+        );
+        assert_eq!(
+            resolve_state_root(None, None, None, Some(PathBuf::from("/home")))
+                .expect("user home"),
+            PathBuf::from("/home/.morpheus/runtime-launcher")
+        );
     }
 }

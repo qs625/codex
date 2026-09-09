@@ -11498,6 +11498,7 @@ source = "git+https://github.com/dzbarsky/rules_rust?rev=b56cbaa8465e74127f1ea21
 name = "runtime-launcher"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "clap",
  "libc",
  "serde",

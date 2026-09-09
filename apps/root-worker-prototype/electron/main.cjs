@@ -91,6 +91,7 @@ const {
   createRuntimeRestartController,
   createRuntimeRestartIntentStore,
   expectedRuntimeRestartPrompt,
+  recoverRuntimeRestartAfterThreadTerminal,
 } = require("./runtimeRestartIntent.cjs");
 const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
 const {
@@ -123,15 +124,11 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
 const installedArtifactUpdateLifecycle =
   createInstalledArtifactUpdateLifecycleAdapter({
     appExit: (code) => app.exit(code),
-    appServerRestart: {
-      requestRestart: (reason) => appServerClient.restart(reason),
-    },
     appServerStop: {
       requestStop: (reason) => appServerClient.stop(reason),
     },
     cleanupPreparedArtifact: (preparedRoot) =>
       fs.rm(preparedRoot, { force: true, recursive: true }),
-    reloadWindows: reloadRendererWindows,
     resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
     runtimeLauncher,
     updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
@@ -160,7 +157,6 @@ let quittingAfterAppServerStop = false;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
-const builtRendererPath = path.join(__dirname, "../dist/index.html");
 
 applyRemoteDebuggingConfig(app, process.env, console);
 
@@ -204,7 +200,7 @@ async function createWindow() {
     }
   } else {
     await ensureBuiltRenderer();
-    await window.loadFile(builtRendererPath);
+    await window.loadFile(builtRendererPath());
   }
   await runtimeLaunchReadiness.markRendererReady();
 
@@ -255,6 +251,20 @@ appServerClient.on("notification", (notification) => {
   if (isClientRelaunchNotification(normalizedNotification)) {
     void getRuntimeRestartController().handle(normalizedNotification);
     return;
+  }
+  if (
+    normalizedNotification.method === "thread/status/changed" &&
+    normalizedNotification.params?.lifecycleStatus?.type === "final"
+  ) {
+    void recoverRuntimeRestartAfterThreadTerminal(
+      getRuntimeRestartController(),
+      normalizedNotification,
+    ).catch((error) => {
+      console.error(
+        "[prototype] runtime restart recovery after thread terminal failed",
+        error,
+      );
+    });
   }
   broadcast("codex:notification", normalizedNotification);
 });
@@ -781,7 +791,7 @@ app.whenReady().then(() => {
       await runtimeLaunchReadiness.markAppServerReady();
       await recordLauncherRecoveryIfPresent({
         appServerClient,
-        evidencePath: process.env.MORPHEUS_LAUNCHER_FAILURE_EVIDENCE,
+        evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
         fs,
         listThreads: () => listThreads(defaultWorkspace),
         runtimeLauncher,
@@ -1226,14 +1236,19 @@ function configurePermissionHandlers(targetSession, isAllowed) {
 }
 
 async function ensureBuiltRenderer() {
+  const rendererPath = builtRendererPath();
   try {
-    await fs.access(builtRendererPath);
+    await fs.access(rendererPath);
   } catch (error) {
     throw new Error(
-      `Built renderer not found at ${builtRendererPath}. Run 'pnpm --filter @my-codex/root-worker-prototype build' before 'pnpm --filter @my-codex/root-worker-prototype start'.`,
+      `Built renderer not found at ${rendererPath}. Run 'pnpm --filter @my-codex/root-worker-prototype build' before 'pnpm --filter @my-codex/root-worker-prototype start'.`,
       { cause: error },
     );
   }
+}
+
+function builtRendererPath() {
+  return path.join(__dirname, "../dist/index.html");
 }
 
 function handleStartupError(error) {
@@ -1300,7 +1315,14 @@ function reloadWindowRenderer(window) {
     webContents.once("did-finish-load", handleFinish);
     webContents.on("did-fail-load", handleFail);
     try {
-      if (typeof webContents.reloadIgnoringCache === "function") {
+      if (!isDev) {
+        void window
+          .loadFile(builtRendererPath())
+          .catch((error) => {
+            cleanup();
+            reject(error);
+          });
+      } else if (typeof webContents.reloadIgnoringCache === "function") {
         webContents.reloadIgnoringCache();
       } else {
         webContents.reload();
@@ -1462,7 +1484,13 @@ async function ensureSelfProjectForCurrentApp() {
   if (!isPackagedApp()) {
     return null;
   }
-  const workspace = await ensureDefaultWorkspace();
+  const workspace = resolveDefaultWorkspace(process.env, {
+    isPackagedApp: true,
+    sourceOnly: true,
+  });
+  if (!workspace) {
+    return null;
+  }
   return ensureSelfProjectSync(process.env, workspace);
 }
 

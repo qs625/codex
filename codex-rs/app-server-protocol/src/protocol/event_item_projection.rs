@@ -196,15 +196,14 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             completed_at_ms: event.completed_at_ms,
         }),
         EventMsg::ClientRecovery(event) => Some(ProjectedEventItem::Completed {
-            turn_id: event.transaction_id.clone(),
+            turn_id: event.activation_id.clone(),
             item: ThreadItem::ClientRecovery {
                 id: event.recovery_id.clone(),
-                transaction_id: event.transaction_id.clone(),
-                mode: event.mode.clone(),
-                build_id: event.build_id.clone(),
+                activation_id: event.activation_id.clone(),
+                release_id: event.release_id.clone(),
                 reason: event.reason.clone(),
                 occurred_at: event.occurred_at.clone(),
-                previous_build_id: event.previous_build_id.clone(),
+                fallback_release_id: event.fallback_release_id.clone(),
             },
             completed_at_ms: chrono::DateTime::parse_from_rfc3339(&event.occurred_at)
                 .ok()?

@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   SELF_PROJECT_ID,
   ensureSelfProjectSync,
+  removeSelfProjectIfManagedSync,
   selfProjectPath,
 } = require("./selfProject.cjs");
 
@@ -64,4 +65,29 @@ test("ensureSelfProjectSync updates workspace while preserving non-target fields
   assert.equal(project.label, "Morpheus");
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("removeSelfProjectIfManagedSync removes only Morpheus-managed records", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "self-project-remove-"));
+  try {
+    const env = { MORPHEUS_HOME: root };
+    const projectPath = selfProjectPath(env);
+    ensureSelfProjectSync(env, "/workspace/source");
+    assert.equal(removeSelfProjectIfManagedSync(env), true);
+    assert.equal(fs.existsSync(projectPath), false);
+
+    fs.writeFileSync(
+      projectPath,
+      `${JSON.stringify({
+        id: "/self",
+        path: "/self",
+        workspace: "/workspace/user",
+        managedBy: "user",
+      })}\n`,
+    );
+    assert.equal(removeSelfProjectIfManagedSync(env), false);
+    assert.equal(fs.existsSync(projectPath), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

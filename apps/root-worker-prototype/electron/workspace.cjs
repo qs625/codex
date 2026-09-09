@@ -2,10 +2,8 @@ const path = require("node:path");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
-const { spawnSync } = require("node:child_process");
 
 const PACKAGED_SOURCE_WORKSPACE_DIR_NAME = "source_workspace";
-const INSTALLED_SOURCE_ORIGIN_URL = "git@github.com:qs625/codex.git";
 const MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME = "instructions";
 const MORPHEUS_SOURCE_INSTRUCTION_FILE_NAME = "morpheus-source-workspace.md";
 const MORPHEUS_SOURCE_INSTRUCTION_MARKER =
@@ -17,15 +15,45 @@ function resolvePrototypeMorpheusHome(env = process.env) {
 
 function resolveDefaultWorkspace(env = process.env, options = {}) {
   if (env.ROOT_WORKER_WORKSPACE) {
-    return env.ROOT_WORKER_WORKSPACE;
+    if (
+      !isPackagedApp(options) ||
+      isSourceWorkspaceSync(env.ROOT_WORKER_WORKSPACE, options)
+    ) {
+      return env.ROOT_WORKER_WORKSPACE;
+    }
+    if (options.sourceOnly) {
+      return null;
+    }
+    return resolveOperationalWorkspace(env);
   }
   if (isPackagedApp(options)) {
-    return path.join(
+    const sourceWorkspace = path.join(
       resolvePrototypeMorpheusHome(env),
       PACKAGED_SOURCE_WORKSPACE_DIR_NAME,
     );
+    if (isSourceWorkspaceSync(sourceWorkspace, options)) {
+      return sourceWorkspace;
+    }
+    if (options.sourceOnly) {
+      return null;
+    }
   }
+  return resolveOperationalWorkspace(env);
+}
+
+function resolveOperationalWorkspace(env = process.env) {
   return path.join(resolvePrototypeMorpheusHome(env), "root_workspace");
+}
+
+function isSourceWorkspaceSync(workspace, options = {}) {
+  if (typeof workspace !== "string" || !workspace.trim()) {
+    return false;
+  }
+  const existsSync = options.existsSync ?? fsSync.existsSync;
+  return (
+    existsSync(path.join(workspace, "apps", "root-worker-prototype", "package.json")) &&
+    existsSync(path.join(workspace, "codex-rs", "Cargo.toml"))
+  );
 }
 
 async function ensureWorkspaceExists(workspacePath) {
@@ -40,9 +68,15 @@ function ensureWorkspaceExistsSync(workspacePath) {
 
 async function ensureDefaultWorkspace(env = process.env, options = {}) {
   const workspace = resolveDefaultWorkspace(env, options);
-  await cloneInstalledSourceWorkspaceIfNeeded(workspace, env, options);
+  if (!workspace) {
+    return null;
+  }
   await ensureWorkspaceExists(workspace);
-  if (!env.ROOT_WORKER_WORKSPACE && isPackagedApp(options)) {
+  if (
+    !env.ROOT_WORKER_WORKSPACE &&
+    isPackagedApp(options) &&
+    path.basename(workspace) === PACKAGED_SOURCE_WORKSPACE_DIR_NAME
+  ) {
     ensureMorpheusSourceInstructionSync(env, workspace, options);
   }
   return workspace;
@@ -50,113 +84,18 @@ async function ensureDefaultWorkspace(env = process.env, options = {}) {
 
 function ensureDefaultWorkspaceSync(env = process.env, options = {}) {
   const workspace = resolveDefaultWorkspace(env, options);
-  cloneInstalledSourceWorkspaceIfNeededSync(workspace, env, options);
+  if (!workspace) {
+    return null;
+  }
   fsSync.mkdirSync(workspace, { recursive: true });
-  if (!env.ROOT_WORKER_WORKSPACE && isPackagedApp(options)) {
+  if (
+    !env.ROOT_WORKER_WORKSPACE &&
+    isPackagedApp(options) &&
+    path.basename(workspace) === PACKAGED_SOURCE_WORKSPACE_DIR_NAME
+  ) {
     ensureMorpheusSourceInstructionSync(env, workspace, options);
   }
   return workspace;
-}
-
-async function cloneInstalledSourceWorkspaceIfNeeded(
-  workspace,
-  env = process.env,
-  options = {},
-) {
-  return cloneInstalledSourceWorkspaceIfNeededSync(workspace, env, options);
-}
-
-function cloneInstalledSourceWorkspaceIfNeededSync(
-  workspace,
-  env = process.env,
-  options = {},
-) {
-  if (env.ROOT_WORKER_WORKSPACE) {
-    return false;
-  }
-  if (!isPackagedApp(options) || pathExistsSync(workspace, options)) {
-    return false;
-  }
-
-  const mkdirSync = options.mkdirSync ?? fsSync.mkdirSync;
-  const parentDir = path.dirname(workspace);
-  const tempWorkspace = cloneTempWorkspacePath(workspace, options);
-  mkdirSync(parentDir, { recursive: true });
-  cleanupPath(tempWorkspace, options);
-  const spawn = options.spawnSync ?? spawnSync;
-  const result = spawn(
-    "rtk",
-    ["git", "clone", INSTALLED_SOURCE_ORIGIN_URL, tempWorkspace],
-    {
-      cwd: parentDir,
-      encoding: "utf8",
-      stdio: options.stdio ?? "pipe",
-    },
-  );
-  if (result.error) {
-    cleanupPath(tempWorkspace, options);
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    cleanupPath(tempWorkspace, options);
-    const stderr = result.stderr ? String(result.stderr).trim() : "";
-    throw new Error(
-      `rtk git clone ${INSTALLED_SOURCE_ORIGIN_URL} ${workspace} exited with ${result.status}${stderr ? `: ${stderr}` : ""}`,
-    );
-  }
-  if (pathExistsSync(workspace, options)) {
-    cleanupPath(tempWorkspace, options);
-    return false;
-  }
-  if (!claimWorkspacePath(workspace, options)) {
-    cleanupPath(tempWorkspace, options);
-    return false;
-  }
-  try {
-    moveDirectoryContentsSync(tempWorkspace, workspace, options);
-    cleanupPath(tempWorkspace, options);
-  } catch (error) {
-    cleanupPath(tempWorkspace, options);
-    cleanupPath(workspace, options);
-    throw error;
-  }
-  return true;
-}
-
-function claimWorkspacePath(workspace, options = {}) {
-  const mkdirSync = options.mkdirSync ?? fsSync.mkdirSync;
-  try {
-    mkdirSync(workspace);
-    return true;
-  } catch (error) {
-    if (error && error.code === "EEXIST") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-function moveDirectoryContentsSync(sourceDir, targetDir, options = {}) {
-  const readdirSync = options.readdirSync ?? fsSync.readdirSync;
-  const renameSync = options.renameSync ?? fsSync.renameSync;
-  for (const name of readdirSync(sourceDir)) {
-    renameSync(path.join(sourceDir, name), path.join(targetDir, name));
-  }
-}
-
-function cloneTempWorkspacePath(workspace, options = {}) {
-  const suffix =
-    options.cloneTempSuffix ??
-    `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return path.join(path.dirname(workspace), `.${path.basename(workspace)}.clone-${suffix}`);
-}
-
-function cleanupPath(targetPath, options = {}) {
-  if (!pathExistsSync(targetPath, options)) {
-    return;
-  }
-  const rmSync = options.rmSync ?? fsSync.rmSync;
-  rmSync(targetPath, { recursive: true, force: true });
 }
 
 function ensureMorpheusSourceInstructionSync(
@@ -182,6 +121,28 @@ function ensureMorpheusSourceInstructionSync(
   return true;
 }
 
+function removeMorpheusSourceInstructionIfManagedSync(
+  env = process.env,
+  options = {},
+) {
+  const instructionPath = morpheusSourceInstructionPath(env);
+  const existsSync = options.existsSync ?? fsSync.existsSync;
+  if (!existsSync(instructionPath)) {
+    return false;
+  }
+  const readFileSync = options.readFileSync ?? fsSync.readFileSync;
+  if (
+    !readFileSync(instructionPath, "utf8").includes(
+      MORPHEUS_SOURCE_INSTRUCTION_MARKER,
+    )
+  ) {
+    return false;
+  }
+  const unlinkSync = options.unlinkSync ?? fsSync.unlinkSync;
+  unlinkSync(instructionPath);
+  return true;
+}
+
 function morpheusSourceInstructionPath(env = process.env) {
   return path.join(
     resolvePrototypeMorpheusHome(env),
@@ -197,7 +158,7 @@ function morpheusSourceInstructionContent(workspace) {
 The Morpheus source workspace for this app is:
 \`${workspace}\`
 
-When modifying Morpheus runtime, client, server, frontend, or backend code in this workspace, complete the relevant tests first. After those tests pass, call \`request_runtime_restart\` with an explicit \`mode\`: use \`"hot"\` for app-server restart plus renderer reload, or \`"full"\` when Electron main/preload changes must be loaded by a full app relaunch. Installed desktop builds will rebuild this source workspace and update the runnable app artifacts before applying the requested mode.
+When modifying Morpheus runtime, client, server, frontend, or backend code in this workspace, complete the relevant tests first. After those tests pass, call \`request_runtime_restart\`. Installed desktop builds produce and activate one complete versioned Runtime Capsule from this workspace without modifying the signed application bundle. If this workspace is absent, the installed Seed or current external Runtime Capsule still runs, but producing a new candidate is unsupported.
 `;
 }
 
@@ -232,16 +193,15 @@ module.exports = {
   ensureDefaultWorkspaceSync,
   ensureWorkspaceExists,
   ensureWorkspaceExistsSync,
-  cloneInstalledSourceWorkspaceIfNeeded,
-  cloneInstalledSourceWorkspaceIfNeededSync,
-  cloneTempWorkspacePath,
   ensureMorpheusSourceInstructionSync,
-  INSTALLED_SOURCE_ORIGIN_URL,
   isPackagedApp,
   MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME,
   MORPHEUS_SOURCE_INSTRUCTION_FILE_NAME,
   morpheusSourceInstructionContent,
   morpheusSourceInstructionPath,
+  removeMorpheusSourceInstructionIfManagedSync,
+  isSourceWorkspaceSync,
   resolveDefaultWorkspace,
+  resolveOperationalWorkspace,
   resolvePrototypeMorpheusHome,
 };

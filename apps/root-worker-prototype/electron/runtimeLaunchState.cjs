@@ -2,16 +2,29 @@ const crypto = require("node:crypto");
 const fsConstants = require("node:fs").constants;
 const path = require("node:path");
 
+const RUNTIME_CAPSULE_READY_PROTOCOL = "1";
+const RUNTIME_CAPSULE_READY_PROTOCOL_VERSION = 1;
+
 function createRuntimeLaunchReadiness({
   createId = crypto.randomUUID,
   env = process.env,
   fs,
-  now = Date.now,
   onReady,
+  pid = process.pid,
 } = {}) {
-  const readyPath = normalizeString(env.MORPHEUS_LAUNCHER_READY_PATH);
-  const transactionId = normalizeString(env.MORPHEUS_LAUNCH_TRANSACTION_ID);
-  const buildId = normalizeString(env.MORPHEUS_LAUNCH_BUILD_ID);
+  const protocol = normalizeString(env.RUNTIME_CAPSULE_READY_PROTOCOL);
+  const readyPath = normalizeString(env.RUNTIME_CAPSULE_READY_PATH);
+  const token = normalizeString(env.RUNTIME_CAPSULE_READY_TOKEN);
+  const releaseId = normalizeString(env.RUNTIME_CAPSULE_RELEASE_ID);
+  const launchInstanceId = normalizeString(
+    env.RUNTIME_CAPSULE_LAUNCH_INSTANCE_ID,
+  );
+  const spawnAttemptId = normalizeString(
+    env.RUNTIME_CAPSULE_SPAWN_ATTEMPT_ID,
+  );
+  const startIdentity = normalizeUnsignedIntegerString(
+    env.RUNTIME_CAPSULE_START_IDENTITY,
+  );
   let appServerReady = false;
   let rendererReady = false;
   let completion = null;
@@ -22,13 +35,17 @@ function createRuntimeLaunchReadiness({
     }
     if (!completion) {
       completion = completeReadiness({
-        buildId,
         createId,
         fs,
-        now,
+        launchInstanceId,
         onReady,
+        pid,
+        protocol,
         readyPath,
-        transactionId,
+        releaseId,
+        spawnAttemptId,
+        startIdentity,
+        token,
       });
     }
     return completion;
@@ -47,20 +64,36 @@ function createRuntimeLaunchReadiness({
 }
 
 async function completeReadiness({
-  buildId,
   createId,
   fs,
-  now,
+  launchInstanceId,
   onReady,
+  pid,
+  protocol,
   readyPath,
-  transactionId,
+  releaseId,
+  spawnAttemptId,
+  startIdentity,
+  token,
 }) {
   const payload =
-    readyPath && transactionId && buildId
+    protocol === RUNTIME_CAPSULE_READY_PROTOCOL &&
+    readyPath &&
+    token &&
+    releaseId &&
+    launchInstanceId &&
+    spawnAttemptId &&
+    Number.isSafeInteger(pid) &&
+    pid > 0 &&
+    startIdentity !== null
       ? {
-          transactionId,
-          buildId,
-          readyAtMs: now(),
+          protocolVersion: RUNTIME_CAPSULE_READY_PROTOCOL_VERSION,
+          releaseId,
+          launchInstanceId,
+          spawnAttemptId,
+          pid,
+          startIdentity,
+          token,
         }
       : null;
   if (payload) {
@@ -103,7 +136,7 @@ async function writeJsonAtomically(targetPath, payload, fs, createId) {
 }
 
 async function readLauncherFailureEvidence(
-  evidencePath = process.env.MORPHEUS_LAUNCHER_FAILURE_EVIDENCE,
+  evidencePath = process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
   fs,
 ) {
   if (!normalizeString(evidencePath)) {
@@ -124,41 +157,28 @@ async function readLauncherFailureEvidence(
 }
 
 function buildLauncherRecoveryRecordParams(evidence) {
-  const recoveryId =
-    normalizeString(evidence?.recoveryIdentity) ??
-    normalizeString(evidence?.recoveryId);
-  if (!recoveryId) {
-    throw new Error("Launcher failure evidence is missing recovery identity");
-  }
-  const transactionId =
-    normalizeString(evidence?.transactionId) ??
-    normalizeString(evidence?.failed?.transactionId);
-  const buildId =
-    normalizeString(evidence?.buildId) ??
-    normalizeString(evidence?.failedBuildId) ??
-    normalizeString(evidence?.failed?.buildId);
-  const mode = normalizeString(evidence?.mode);
+  const activationId = normalizeString(evidence?.activationId);
+  const releaseId = normalizeString(evidence?.releaseId);
   const occurredAt = resolveOccurredAt(evidence);
-  if (!transactionId || !buildId || (mode !== "full" && mode !== "hot")) {
+  if (!activationId || !releaseId) {
     throw new Error(
-      "Launcher failure evidence is missing transaction, build, or activation mode",
+      "Launcher failure evidence is missing activation or release identity",
     );
   }
-  const previousBuildId =
-    normalizeString(evidence?.previousBuildId) ??
-    normalizeString(evidence?.recoveredBuildId) ??
-    normalizeString(evidence?.fallback?.buildId);
+  const recoveryId =
+    normalizeString(evidence?.recoveryId) ?? `${activationId}:${releaseId}`;
+  const fallbackReleaseId = normalizeString(evidence?.fallbackReleaseId);
   return {
     recoveryId,
-    transactionId,
-    mode,
-    buildId,
+    activationId,
+    releaseId,
     reason:
       normalizeString(evidence?.reason) ??
+      normalizeString(evidence?.message) ??
       normalizeString(evidence?.summary) ??
       "Runtime activation failed",
     occurredAt,
-    ...(previousBuildId ? { previousBuildId } : {}),
+    ...(fallbackReleaseId ? { fallbackReleaseId } : {}),
   };
 }
 
@@ -187,7 +207,7 @@ async function recordLauncherRecovery({
   if (typeof response?.recorded !== "boolean") {
     throw new Error("thread/clientRecovery/record returned an invalid response");
   }
-  await runtimeLauncher.ackFailure(recoveryParams.recoveryId);
+  await runtimeLauncher.ackFailure(recoveryParams.activationId);
   return response.recorded;
 }
 
@@ -252,6 +272,15 @@ function resolveOccurredAt(evidence) {
 
 function normalizeString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeUnsignedIntegerString(value) {
+  const normalized = normalizeString(value);
+  if (!normalized || !/^(0|[1-9][0-9]*)$/.test(normalized)) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 module.exports = {

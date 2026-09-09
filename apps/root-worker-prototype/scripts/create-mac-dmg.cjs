@@ -9,12 +9,19 @@ const DIST_DIR_NAME = "dist-app";
 const MOUNT_ROOT_DIR_NAME = "dmg-mount";
 const STAGING_DIR_NAME = "dmg-staging";
 const TEMP_DMG_FILE_NAME = "Root Worker Prototype-arm64.temp.dmg";
+const SEED_PAYLOAD_PREFIX = [
+  "Contents",
+  "Resources",
+  "seed-capsule",
+  "payload",
+  "Root Worker Runtime.app",
+];
 const ELECTRON_FRAMEWORK_SYMLINKS = [
-  ["Contents", "Frameworks", "Electron Framework.framework", "Electron Framework"],
-  ["Contents", "Frameworks", "Electron Framework.framework", "Helpers"],
-  ["Contents", "Frameworks", "Electron Framework.framework", "Libraries"],
-  ["Contents", "Frameworks", "Electron Framework.framework", "Resources"],
-  ["Contents", "Frameworks", "Electron Framework.framework", "Versions", "Current"],
+  [...SEED_PAYLOAD_PREFIX, "Contents", "Frameworks", "Electron Framework.framework", "Electron Framework"],
+  [...SEED_PAYLOAD_PREFIX, "Contents", "Frameworks", "Electron Framework.framework", "Helpers"],
+  [...SEED_PAYLOAD_PREFIX, "Contents", "Frameworks", "Electron Framework.framework", "Libraries"],
+  [...SEED_PAYLOAD_PREFIX, "Contents", "Frameworks", "Electron Framework.framework", "Resources"],
+  [...SEED_PAYLOAD_PREFIX, "Contents", "Frameworks", "Electron Framework.framework", "Versions", "Current"],
 ];
 
 function buildMacDmgPaths({

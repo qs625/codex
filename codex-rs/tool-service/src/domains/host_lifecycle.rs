@@ -20,7 +20,6 @@ use tool_service_api::ToolName;
 use tool_service_api::ToolSpec;
 
 use crate::HostLifecycleToolRuntime;
-use crate::HostRelaunchMode;
 use crate::HostRelaunchRequest;
 use crate::HostRelaunchResult;
 use crate::HostRelaunchStatus;
@@ -60,9 +59,7 @@ pub(crate) async fn dispatch(
     ensure_runtime_restart_authorized(current_agent_path.as_ref())?;
     let args: RequestRuntimeRestartArgs = parse_arguments(&call)?;
     let reason = normalize_reason(args.reason);
-    let mode = args.mode;
     let display_arguments = json!({
-        "mode": mode,
         "reason": reason.clone(),
     });
     session
@@ -82,13 +79,12 @@ pub(crate) async fn dispatch(
             runtime
                 .request_client_relaunch(HostRelaunchRequest {
                     request_id: call.call_id.clone(),
-                    mode: mode.clone(),
                     reason: reason.clone(),
                     requested_by_thread_id: Some(session.conversation_id().to_string()),
                 })
                 .await
         }
-        None => unsupported_relaunch_result(call.call_id.clone(), mode.clone(), reason.clone()),
+        None => unsupported_relaunch_result(call.call_id.clone(), reason.clone()),
     };
     let output = serde_json::to_value(&result).map_err(|err| {
         FunctionCallError::Fatal(format!(
@@ -149,40 +145,29 @@ fn is_runtime_restart_authorized(current_agent_path: Option<&AgentPath>) -> bool
 }
 
 fn create_request_runtime_restart_tool() -> ToolSpec {
-    let properties = std::collections::BTreeMap::from([
-        (
-            "mode".to_string(),
-            JsonSchema::string_enum(
-                vec![json!("hot"), json!("full")],
-                Some(
-                    "Required refresh mode. Use hot to restart the app-server and reload renderer windows after updating artifacts. Use full when Electron main or preload code must be loaded by a full app relaunch.".to_string(),
-                ),
-            ),
-        ),
-        (
-            "reason".to_string(),
-            JsonSchema::string(Some(
-                "Optional concise reason for refreshing the running Morpheus host.".to_string(),
-            )),
-        ),
-    ]);
+    let properties = std::collections::BTreeMap::from([(
+        "reason".to_string(),
+        JsonSchema::string(Some(
+            "Optional concise reason for restarting the running Morpheus Runtime Capsule."
+                .to_string(),
+        )),
+    )]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: REQUEST_RUNTIME_RESTART_TOOL_NAME.to_string(),
         description: concat!(
             "Use after completing a feature, fixing a bug, or changing Morpheus runtime, ",
             "client, server, frontend, or backend code when the running app needs to pick up ",
-            "the latest compiled code. You must explicitly choose mode: \"hot\" for app-server ",
-            "restart plus renderer reload, or mode: \"full\" when Electron main/preload changes ",
-            "require a full app relaunch. Before calling, ensure the relevant frontend and ",
-            "backend builds needed for the changes have already completed."
+            "the latest compiled code. This requests one complete Runtime Capsule restart. ",
+            "Before calling, ensure the relevant frontend and backend builds needed for the ",
+            "changes have already completed."
         )
         .to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(
             properties,
-            Some(vec!["mode".to_string()]),
+            Some(vec![]),
             Some(false.into()),
         ),
         output_schema: Some(request_runtime_restart_output_schema()),
@@ -200,25 +185,15 @@ fn request_runtime_restart_output_schema() -> Value {
             "status": {
                 "type": "string",
                 "enum": ["accepted", "unsupported", "failed"],
-                "description": "Whether the host accepted, does not support, or failed the refresh request."
+                "description": "Whether the host accepted, does not support, or failed the Runtime Capsule restart request."
             },
             "accepted": {
                 "type": "boolean",
                 "description": "Whether the request was delivered to the registered Host as a terminal control action."
             },
-            "relaunching": {
+            "restarting": {
                 "type": "boolean",
-                "description": "Whether the host has already confirmed that a relaunch-style fallback is in progress. A delivered request can still report false while the host update is pending."
-            },
-            "requestedMode": {
-                "type": "string",
-                "enum": ["hot", "full"],
-                "description": "The explicit refresh mode requested by the tool caller."
-            },
-            "executedMode": {
-                "type": ["string", "null"],
-                "enum": ["hot", "full", null],
-                "description": "The refresh mode the host accepted for execution, when available."
+                "description": "Whether the host has already confirmed that the Runtime Capsule restart is in progress. A delivered request can still report false while restart execution is pending."
             },
             "message": {
                 "type": "string",
@@ -226,15 +201,15 @@ fn request_runtime_restart_output_schema() -> Value {
             },
             "reason": {
                 "type": ["string", "null"],
-                "description": "The normalized refresh reason."
+                "description": "The normalized restart reason."
             },
             "resumeStrategy": {
                 "type": "string",
                 "enum": [RESUME_STRATEGY],
-                "description": "How continuation is attempted after the host refreshes."
+                "description": "How continuation is attempted after the Runtime Capsule restarts."
             }
         },
-        "required": ["requestId", "status", "accepted", "relaunching", "requestedMode", "executedMode", "message", "reason", "resumeStrategy"],
+        "required": ["requestId", "status", "accepted", "restarting", "message", "reason", "resumeStrategy"],
         "additionalProperties": false
     })
 }
@@ -286,17 +261,14 @@ fn normalize_reason(reason: Option<String>) -> Option<String> {
 
 fn unsupported_relaunch_result(
     request_id: String,
-    requested_mode: HostRelaunchMode,
     reason: Option<String>,
 ) -> HostRelaunchResult {
     HostRelaunchResult {
         request_id,
         status: HostRelaunchStatus::Unsupported,
         accepted: false,
-        relaunching: false,
-        requested_mode,
-        executed_mode: None,
-        message: "The current host does not expose a client relaunch runtime.".to_string(),
+        restarting: false,
+        message: "The current host does not expose a Runtime Capsule restart runtime.".to_string(),
         reason,
         resume_strategy: RESUME_STRATEGY.to_string(),
     }
@@ -331,9 +303,8 @@ fn now_unix_timestamp_ms() -> i64 {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RequestRuntimeRestartArgs {
-    mode: HostRelaunchMode,
     reason: Option<String>,
 }
 
