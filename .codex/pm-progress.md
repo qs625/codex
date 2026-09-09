@@ -8,24 +8,24 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Move Morpheus updateable Electron runtime resources outside the signed macOS App Bundle, while keeping a stable Launcher/Electron shell responsible for supervision, verified activation, startup-ready rollback, bounded crash-loop fallback, and targeted recovery handoff to `/self`.
+Make the stable Morpheus Launcher supervise a framework-independent Runtime Capsule declared by a generic launch manifest, with immutable Seed, external current/previous, complete child-process restart activation, verified ready, rollback, and targeted recovery handoff to `/self`.
 
 ## Active Work
-- id: external-versioned-electron-runtime
+- id: generic-runtime-capsule-launcher
   owner: /self/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: feature/external-versioned-electron-runtime
+  branch: feature/generic-runtime-capsule-launcher
   task_type: feature/runtime-packaging-lifecycle
   depends_on: `runtime-restart-plan-resources-path-tdz` merged; stable Launcher integration `a96bc0eb0f`
-  files: macOS package layout and Electron entrypoint; Launcher artifact/state/activation/rollback; installed artifact preparation; Electron hot/full coordination; focused packaging, transaction and real installed-app tests
-  base_commit: 08c704430e
-  pending_sync_from_main: none; dev-3 fast-forwarded to `08c704430e`
+  files: generic Runtime Capsule manifest/schema/validation; Launcher generic entrypoint/process-tree shutdown/control/readiness/state/activation/rollback; Seed Capsule packaging; Electron Capsule build producer/ready adapter; focused capsule, transaction, packaging and real installed-app tests
+  base_commit: d89351e08d
+  pending_sync_from_main: PM-only progress commits through `4665470f75`; dev-3 has uncommitted superseded design drafts and is not force-synchronized
   status: in_progress
-  objective: Keep the signed macOS App Bundle stable with Launcher, Electron and signed Seed Runtime, while loading updateable `main.cjs`, preload, renderer, app-server and configuration from a versioned external runtime; renderer/app-server-only updates remain window-preserving Hot updates, while Main/preload changes use a Launcher-supervised Full Electron restart.
-  last_update: 2026-09-09 CST user selected a signed read-only Seed Runtime inside the App Bundle, then evaluated and explicitly rejected the additional stable-Host/reloadable-Main-Controller design because its scoped module lifecycle, IPC/listener cleanup and state handoff complexity is not justified now. Final semantic boundary: Hot is only for candidates whose Main/preload comparison remains unchanged, keeping the current Host/window while restarting app-server and reloading renderer; any `main.cjs` or preload change requires Full, which keeps Launcher alive but exits/recreates Electron Host, app-server, renderer and window. Full activation still switches only external runtime state, never rewrites or re-signs the App Bundle, and rolls back external previous or Seed on startup failure. External current remains preferred, Seed is immutable final fallback, and source workspace/self-evolution remain optional with no startup clone/build requirement. Owner briefly paused with uncommitted Electron/runtime-root and Launcher state drafts while PM and user discussed a future generic Launcher/artifact protocol; user explicitly deferred that abstraction and instructed this implementation to continue with the current Morpheus-specific artifact knowledge. Owner was resumed and must audit the drafts against the final simpler boundary before continuing.
-  next_action: fixed dev-3 owner implements the simpler external runtime plus Seed architecture, preserving the existing Hot eligibility check and Launcher-supervised Full restart semantics
+  objective: Make Launcher independent of Electron and Morpheus build layout by supervising a generic, manifest-declared Runtime Capsule. Seed and external current/previous are ordinary Capsules whose payload may be Electron now and Tauri or native later; Launcher only validates an opaque content manifest, directly spawns a safe relative entrypoint, coordinates versioned readiness/activation and rolls back without knowing `app.asar`, app-server, configuration or UI framework semantics.
+  last_update: 2026-09-09 CST user explicitly promoted framework decoupling into the current implementation and deferred only permission inheritance. The prior Electron-specific external-runtime brief is superseded. Capsule v1 must use a declarative manifest rather than model-provided shell: target OS/arch, release identity, safe relative entrypoint/argv/cwd, typed readiness/control protocol, and complete content declarations including executable mode and contained symlinks. Launcher directly spawns the declared root process, never invokes a shell, and rejects absolute/escaping paths, undeclared leaves, invalid link targets, target mismatch or readiness for the wrong release. Every Capsule activation fully stops the current root process and its non-detached descendants before switching current and starting the candidate; there is no Launcher-level Hot/live activation or `liveCompatibilityId`. Seed is the bundled immutable Capsule, and external current/previous use the identical contract. Electron is only the first Capsule payload and ready adapter. Owner paused with uncommitted obsolete Electron-specific drafts and must audit or replace them rather than preserve the old abstraction.
+  next_action: fixed dev-3 owner audits/discards incompatible old drafts, implements the generic Capsule v1 boundary, reuses its fixed reviewer, and returns focused plus real Electron-as-Capsule package evidence
   blockers: none
-  validation: pending; must cover missing/corrupt current, Seed bootstrap, current/previous atomicity, window-preserving renderer/app-server Hot, Main/preload Full window restart, ready-before-commit rollback, post-ready crash-loop fallback to previous/Seed, App Bundle immutability/hash stability, no activation-time codesign, and real packaged macOS launch/update
+  validation: pending; must cover manifest parser/schema/path/link/mode/target/entrypoint validation, complete process-tree shutdown before activation, missing/corrupt current, Seed bootstrap, current/previous atomicity, generic direct spawn and release-matched ready, ready-before-commit rollback, post-ready crash-loop fallback to previous/Seed, App Bundle immutability, and real Electron payload packaged and launched solely through the generic manifest
   commit:
 - id: runtime-restart-plan-resources-path-tdz
   owner: /self/owner_dev_3
