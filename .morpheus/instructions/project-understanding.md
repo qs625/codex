@@ -2,7 +2,7 @@
 
 ## Stable Working Rules
 - Morpheus 自身源码的 canonical 主 checkout 是 `~/.morpheus/source_workspace`；固定普通开发 worktree 是 `~/.morpheus/source_workspace-dev`、`~/.morpheus/source_workspace-dev-2`、`~/.morpheus/source_workspace-dev-3`。PM 集成、安装包构建与后续 runtime/client/server/frontend/backend 构建均以这套 checkout 为准；旧 `~/Projects/my-codex*` 只作为迁移期间的只读/恢复来源，不再作为后续主线。
-- 产品 bugfix 或新功能的完成边界包含安装态交付：代码必须先验收并 merge 到 canonical main，再由该主 checkout 产出 Launcher manifest 所声明的完整 Runtime Capsule，而不是复用旧 dist/target 或只替换零散文件；随后通过 exact `/self` 的 `request_runtime_restart(mode=full)` 重启，并以 control state、release identity、Launcher、payload、app-server 和 ready identity 证明新构建已生效。纯文档/协作规则变更不需要该交付步骤。
+- 产品代码的 merge 状态与安装生效状态必须分开记录。重大 bugfix、重大 feature、Launcher/runtime/安装升级恢复语义改动，以及依赖真实安装态完成验收的修改，应在 merge 后立即由 canonical main 产出 Launcher manifest 所声明的完整 Runtime Capsule，而不是复用旧 dist/target 或只替换零散文件；随后通过 exact `/self` 的 `request_runtime_restart(mode=full)` 重启，并以 control state、release identity、Launcher、payload、app-server 和 ready identity 证明新构建已生效。低风险小修复可以标记 `pending_capsule_delivery`，与后续修改批量构建重启，但必须保留待交付 main commit 与当前 installed release 的差距。纯文档/协作规则变更不需要该交付步骤。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
 - 当前项目的 PM / owner / reviewer 协作规则以 `.morpheus/agents/project-pm.agent.md` 及对应 owner agent 定义为准。

@@ -24,7 +24,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - PM agent 只维护协作、进度、验收和集成规则；owner/reviewer 的执行细节以及项目架构约束应分别放在对应 agent 文件或项目 memory/AGENTS 文档中，不在此处重复展开。
 - owner 完成后，PM 必须按派发 brief 中的设计意图、不变量、禁止路径、预期实现轮廓和回归矩阵逐项验收；不能只因“测试通过”或“看起来能工作”就视为完成。
 - 如果 owner 提交偏离已给定设计、遗漏必须收口的层、走了 brief 明确禁止的路径，或只做了表面补丁，PM 必须要求返工，直到实现与设计对齐或与用户重新确认设计变更。
-- 每个会改变产品运行行为的 bugfix 或新功能，在 review、测试和主分支 merge 完成后都必须执行安装态交付：从 canonical 主 checkout `~/.morpheus/source_workspace` 按 Launcher 要求构建完整 Runtime Capsule，完成必要的 manifest、entrypoint、签名和 runnable artifact 校验，调用 exact `/self` 可用的 `request_runtime_restart` 执行 `full` 重启，并验证 Launcher、payload、app-server、ready/control state 已切换到新构建。纯文档、协作规则或不进入运行产物的修改不触发此步骤；用户明确要求暂不重启时记录为 blocker/pending action，不得默认为已交付。
+- 产品改动合并后由 PM 选择合适的安装态交付时机，不要求每个小提交都单独构建重启。重大 bugfix、重大 feature、Launcher/runtime 协议、安装/升级/恢复链路改动，或必须通过真实安装态才能完成验收的修改，应立即从 canonical 主 checkout `~/.morpheus/source_workspace` 按 Launcher 要求构建完整 Runtime Capsule，校验 manifest、entrypoint、签名、runnable artifact 和 release identity，调用 exact `/self` 可用的 `request_runtime_restart(mode=full)`，并验证 Launcher、payload、app-server、ready/control state 已切换到新构建。低风险小修复可以与后续改动批量交付，但必须在 progress file 记录 `pending_capsule_delivery`、待交付 main commit 和当前 installed release，不能遗忘或把尚未部署描述为已经生效。纯文档、协作规则或不进入运行产物的修改不触发构建重启。
 
 ## 二、固定 Checkout 与 Owner
 
@@ -157,7 +157,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 7. 收到 owner / reviewer / runtime event 或 child agent 自动完成通知后，先更新 progress file，再决定继续、返工、排队或合并；不要为了等待子任务而主动调用 `wait_agent` 阻塞主线程。
    - 对复杂 runtime / 状态机任务，优先检查“是否按设计完成”，再看测试结果；测试通过不能替代设计验收。
 8. 普通开发任务通过后，由 PM 在主 checkout 基于 dev checkout 已提交的 commit 执行 merge，更新 progress file，并同步所有空闲 dev checkout；不要用复制文件的方式回收改动。
-9. 对产品 bugfix 或新功能执行安装态交付：只从 `~/.morpheus/source_workspace` 的已验收主分支构建 Launcher 期望的完整 Runtime Capsule，校验 manifest、entrypoint、runnable artifacts、签名与 release identity，调用 `request_runtime_restart` 的 `full` 模式，并在新进程中核对 control state、Launcher/payload/app-server 和 ready identity。构建或重启未完成时，任务不能标记为最终交付完成。
+9. 判断安装态交付时机：重大 bugfix、重大 feature、Launcher/runtime/安装恢复语义改动或依赖真实安装态验收的修改，应立即从 `~/.morpheus/source_workspace` 构建 Launcher 期望的完整 Runtime Capsule并 full restart；低风险小修复可合并为一次批量交付，但要在 progress file 持续记录 `pending_capsule_delivery`、待交付 commit 与当前 installed release。每次实际交付都必须校验 manifest、entrypoint、runnable artifacts、签名、release identity，并在新进程中核对 control state、Launcher、payload、app-server 和 ready identity。
 
 ## 七、Owner 委派消息模板
 
@@ -256,4 +256,4 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 普通开发任务已从 dev checkout 的提交 merge 到主 checkout，而不是通过复制文件回收改动。
 - 涉及 `.morpheus/instructions/project-understanding.md` 的任务，PM 已在 merge 时检查冲突、重复项、过时项和最终表述。
 - 空闲 dev checkout 已同步，未同步的 checkout 已记录原因。
-- 产品 bugfix / 新功能已从 canonical 主 checkout 构建为 Launcher 可接受的完整 Runtime Capsule，执行 full restart，并验证新 release 的 Launcher、payload、app-server、ready/control state；或者已明确记录用户要求暂缓导致的 pending delivery。
+- PM 已基于改动规模、风险、运行时边界和安装态验收需要决定是否立即交付。需要立即交付的改动已从 canonical 主 checkout 构建完整 Runtime Capsule、执行 full restart 并验证新 release；允许批量交付的小修复已明确记录 `pending_capsule_delivery`、待交付 main commit 和当前 installed release。

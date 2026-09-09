@@ -2,7 +2,7 @@
 
 ## Stable Preferences
 - Morpheus 自身源码的主 checkout 固定为 `~/.morpheus/source_workspace`；普通开发 worktree 固定使用相邻的 `source_workspace-dev`、`source_workspace-dev-2`、`source_workspace-dev-3`，后续构建也从这套 checkout 执行，不再使用 `~/Projects/my-codex*`。
-- 每个产品 bugfix 或新功能完成验收并 merge 到主分支后，都要从 `~/.morpheus/source_workspace` 按 Launcher 期望的完整 Runtime Capsule 结构构建，再执行 full restart 并验证新 Capsule、payload 和 app-server 已实际运行；不能只提交代码或只重启旧构建。纯文档/协作规则修改无需构建重启。
+- 产品改动要选择合适的构建重启时机：重大 bugfix、重大 feature、Launcher/runtime/安装恢复链路改动，或需要真实安装态验收的修改，应从 `~/.morpheus/source_workspace` 立即构建 Launcher 期望的完整 Runtime Capsule并 full restart；低风险小修复不必每次单独重启，可以记录后与后续改动批量交付。必须区分“已 merge”和“已安装生效”，并持续记录待交付 commit 与当前 installed release。纯文档/协作规则修改无需构建重启。
 - 全程使用中文进行工作和记录。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
