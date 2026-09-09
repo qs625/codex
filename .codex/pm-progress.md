@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Make the stable Morpheus Launcher supervise a framework-independent Runtime Capsule declared by a generic launch manifest, with immutable Seed, external current/previous, complete child-process restart activation, verified ready, rollback, and targeted recovery handoff to `/self`.
+Deliver a full interactive PTY terminal experience in the Root Worker right panel, with multiple independent tabs and one provider-neutral session path shared by user-created terminals and attachable model command sessions.
 
 ## Active Work
 - id: generic-runtime-capsule-launcher
@@ -19,14 +19,14 @@ Make the stable Morpheus Launcher supervise a framework-independent Runtime Caps
   depends_on: `runtime-restart-plan-resources-path-tdz` merged; stable Launcher integration `a96bc0eb0f`
   files: generic Runtime Capsule manifest/schema/validation; Launcher generic entrypoint/process-tree shutdown/control/readiness/state/activation/rollback; Seed Capsule packaging; Electron Capsule build producer/ready adapter; focused capsule, transaction, packaging and real installed-app tests
   base_commit: d89351e08d
-  pending_sync_from_main: main advanced from task base `d89351e08d` through invalid-context quarantine integration `34e2f9b32a`; dev-3 completed on its task branch and must be integrated by Git merge, not force-synchronized first
-  status: review
+  pending_sync_from_main: none; dev-3 fast-forwarded to accepted main `092747995d`
+  status: merged
   objective: Make Launcher independent of Electron and Morpheus build layout by supervising a generic, manifest-declared Runtime Capsule. Seed and external current/previous are ordinary Capsules whose payload may be Electron now and Tauri or native later; Launcher only validates an opaque content manifest, directly spawns a safe relative entrypoint, coordinates versioned readiness/activation and rolls back without knowing `app.asar`, app-server, configuration or UI framework semantics.
-  last_update: 2026-09-10 CST fixed dev-3 owner delivered clean commit `b97cc33618` after eleven rounds with fixed reviewer `/self/owner_dev_3/reviewer`. Delivery reports generic Capsule v1 manifest/import/migration/activation/rollback and durable CAS control state; cooperative guard/process cleanup with typed `CooperativeObservedEmpty` and fail-closed `Blocked`; immutable Seed plus external current/previous; manifest-bound ready identity; Electron producer/adapter and typed recovery live/reload chain; real macOS package, deep strict codesign and verified DMG. Owner validation passed 141 focused Node tests, runtime-launcher 58 library plus 2 binary tests, focused protocol/rollout/thread-history/app-server recovery paths, production app-server build and real packaging. PM has begun design-first inspection against the agreed invariants before merge.
-  next_action: PM completes design inspection of the committed state machine, generic Launcher boundary, cooperative containment, manifest/symlink/entrypoint rules, ready/rollback identity and canonical project-understanding changes; if accepted, merge `b97cc33618` through Git to main, rerun focused integration validation and synchronize idle dev checkouts
+  last_update: 2026-09-09 CST PM design-accepted owner commit `b97cc33618` and merged it through Git to main as `092747995d`. Inspection confirmed the generic Launcher boundary, single CAS control state, durable guard/payload pre-exec registration barrier, cooperative-only `CooperativeObservedEmpty` proof, fail-closed Blocked handling, direct regular-file entrypoint, declared contained directory symlinks, manifest-bound ready identity, rollback stop proof and irreversible CommitDecided recovery. Canonical project-understanding preserved the invalid-context quarantine facts while replacing obsolete Electron-specific installed-runtime statements. Merged-main validation passed Runtime Launcher 58 library plus 2 binary tests, Node lifecycle/packaging 141/141, client recovery integration 2/2, rollout/thread-history/protocol focused recovery tests and production app-server build. dev-2 and dev-3 were fast-forwarded to the accepted main commit.
+  next_action: none; future release monitoring should retain Seed fallback and durable Blocked recovery visibility
   blockers: none; containment product decision resolved as option 1
-  validation: owner/fixed reviewer passed; owner evidence includes Node 141/141, runtime-launcher 58 library plus 2 binary tests, protocol recovery projection, Limited rollout persistence, thread-history recovery replay, app-server recovery integration 2/2, app-server production build, JSON schema fixture, real macOS App/DMG packaging, deep strict codesign, 276-entry Seed manifest and relative Framework symlinks. TypeScript full schema fixture remains blocked by pre-existing WebSearchAction drift; codex-tool-service lib tests remain blocked by pre-existing mock/planning compile errors. PM focused design and merged-main validation pending.
-  commit: b97cc33618d8c3b350f659b74121d0a3dbb065e4
+  validation: fixed reviewer passed eleven rounds. Owner passed Node 141/141, runtime-launcher 58 library plus 2 binary tests, protocol recovery projection, Limited rollout persistence, thread-history recovery replay, app-server recovery integration 2/2, app-server production build, JSON schema fixture, real macOS App/DMG packaging, deep strict codesign, 276-entry Seed manifest and relative Framework symlinks. PM merged-main rerun passed Runtime Launcher 58+2, Node 141/141, client recovery 2/2, rollout/thread-history/protocol recovery tests and production app-server build. TypeScript full schema fixture remains blocked by pre-existing WebSearchAction drift; codex-tool-service lib tests remain blocked by pre-existing mock/planning compile errors.
+  commit: 092747995d, b97cc33618d8c3b350f659b74121d0a3dbb065e4
 - id: quarantine-invalid-model-context
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -98,13 +98,13 @@ Make the stable Morpheus Launcher supervise a framework-independent Runtime Caps
   task_type: feature/ui-runtime-terminal
   depends_on: `restrict-runtime-restart-to-self-thread` merged; `stable-launcher-runtime-update` merged because Launcher currently modifies overlapping Electron main, app-server protocol/runtime, Root Worker types and conversation files
   files: provider-neutral/live terminal session ownership and typed app-server RPC/events; unified exec PTY attach/write/resize/terminate path; Root Worker app-server client/preload bridge; RightPanel Terminal surface with xterm-compatible renderer and multi-tab state; focused runtime/UI/reload tests
-  base_commit: pending latest main after dependencies merge
-  pending_sync_from_main: dev-2 must be fast-forwarded after both dependencies merge; dev-3 remains active and cannot be synchronized
-  status: planned
+  base_commit: 092747995d
+  pending_sync_from_main: none; dev-2 fast-forwarded to accepted Capsule integration baseline
+  status: in_progress
   objective: Provide a complete interactive terminal experience for PTY-backed commands and a multi-tab Terminal panel in the Root Worker right sidebar. ANSI/VT screen state, cursor motion, alternate screen, terminal queries, keyboard input and resize must work through a real terminal emulator instead of rendering raw escape sequences as `<pre>` text.
-  last_update: 2026-09-09 CST user requested full PTY terminal support plus a multi-tab right-side Terminal panel after a Fly CLI prompt exposed raw ANSI cursor/erase/hide-cursor/DSR bytes. PM confirmed the current conversation UI concatenates raw command deltas and renders them as plain `<pre>`, while app-server already has connection-scoped `command/exec` PTY streaming/write/resize/terminate RPCs. The existing RightPanel Browser multi-tab strip is the UI design anchor, so ui-design does not require a new image-generation mockup. Product direction is one typed terminal-session capability shared by user-created terminal tabs and attachable `exec_command(tty=true)` sessions, not separate fake terminal and command transcript implementations.
-  next_action: wait for dev-2 restart authorization and dev-3 Launcher to merge; then fast-forward dev-2, prepare the full runtime/UI brief, and dispatch to the fixed dev-2 owner with its fixed reviewer
-  blockers: no clean conflict-safe dev checkout is currently available: dev has extensive unrelated dirty work, dev-2 is active, and dev-3 owns overlapping Electron/app-server/protocol/client files
+  last_update: 2026-09-09 CST Capsule integration is accepted and dev-2 is synchronized. PM applied the ui-design workflow: the existing RightPanel Browser tab strip and current panel tokens are the design anchor, so no image generation is needed; owner must first extract a compact design brief and then implement Terminal as an integrated operational panel. Runtime design remains one typed terminal-session capability shared by user-created tabs and attachable `exec_command(tty=true)` sessions. Existing connection-scoped `command/exec` PTY streaming/write/resize/terminate is useful evidence but must be generalized where necessary for stable session ownership, inspection, attach and disconnect semantics rather than copied into a parallel frontend-only terminal path.
+  next_action: fixed dev-2 owner implements on `feature/full-terminal-panel`, reuses `/self/owner_dev_2/reviewer`, performs design-first review plus runtime/UI validation, and returns a committed clean delivery
+  blockers: none
   validation: pending; must include ANSI cursor/erase/color/alternate-screen/DSR, raw keyboard input, terminal resize, multiple independent tabs, tab close/termination, model PTY attach, long output, narrow panel, disconnect/reload/restored behavior, and Playwright verification of the real Electron client
   commit:
 - id: remove-built-in-worker-explorer-roles
