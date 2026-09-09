@@ -1654,6 +1654,7 @@ pub(crate) fn tool_service_request<'a>(
 ) -> tool_service_api::ToolSpecRequest<'a> {
     tool_service_api::ToolSpecRequest {
         config: &turn_context.tools_config,
+        current_agent_path: Some(sess.current_agent_path_for_turn(turn_context)),
         session_capability: tool_inputs.session_capability.clone(),
         session: Arc::clone(sess) as Arc<dyn thread_service_api::ThreadSessionCapability>,
         approval_session: Arc::clone(sess)

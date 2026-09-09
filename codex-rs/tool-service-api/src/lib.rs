@@ -222,6 +222,7 @@ pub enum ToolCallOutcome {
 
 pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
+    pub current_agent_path: Option<protocol::AgentPath>,
     pub session_capability: Weak<dyn ThreadSessionCapability>,
     pub session: Arc<dyn ThreadSessionCapability>,
     pub approval_session: Arc<dyn ApprovalSessionCapability>,

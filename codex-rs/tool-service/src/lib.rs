@@ -16,9 +16,9 @@ use mcp_service_api::McpServiceApi;
 use permissions_service_api::PermissionsServiceApi;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCallOutcome;
 use tool_service_api::ToolDiffConsumerRequest;
 use tool_service_api::ToolDispatchRequest;
-use tool_service_api::ToolCallOutcome;
 use tool_service_api::ToolParallelRequest;
 use tool_service_api::ToolServiceApi;
 use tool_service_api::ToolServiceFuture;
@@ -207,6 +207,7 @@ impl ToolServiceApi for ToolService {
         let mcp_service_api = Arc::clone(&self.mcp_service_api);
         let permissions_api = Arc::clone(&self.permissions_api);
         let host_lifecycle_runtime = self.host_lifecycle_runtime();
+        let current_agent_path = tool_request.current_agent_path.clone();
         let session = Arc::clone(&tool_request.session);
         let approval_session = Arc::clone(&tool_request.approval_session);
         let turn = Arc::clone(&tool_request.turn);
@@ -293,6 +294,7 @@ impl ToolServiceApi for ToolService {
                         ));
                     }
                     let outcome = domains::host_lifecycle::dispatch(
+                        current_agent_path,
                         Arc::clone(&session),
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         host_lifecycle_runtime,

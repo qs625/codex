@@ -5,6 +5,7 @@ use tool_service_api::ToolSpecRequest;
 
 pub(crate) struct TypedToolSpecRequest<'a> {
     pub(crate) config: &'a tool_config::ToolsConfig,
+    pub(crate) current_agent_path: Option<protocol::AgentPath>,
     pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
     pub(crate) session: Arc<dyn thread_service_api::ThreadSessionCapability>,
     pub(crate) approval_session: Arc<dyn ApprovalSessionCapability>,
@@ -20,6 +21,7 @@ impl Clone for TypedToolSpecRequest<'_> {
     fn clone(&self) -> Self {
         Self {
             config: self.config,
+            current_agent_path: self.current_agent_path.clone(),
             session_capability: self.session_capability.clone(),
             session: Arc::clone(&self.session),
             approval_session: Arc::clone(&self.approval_session),
@@ -43,6 +45,7 @@ impl<'a> TypedToolSpecRequest<'a> {
     pub(crate) fn from_request(request: ToolSpecRequest<'a>) -> TypedToolSpecRequest<'a> {
         TypedToolSpecRequest {
             config: request.config,
+            current_agent_path: request.current_agent_path,
             session_capability: request.session_capability,
             session: request.session,
             approval_session: request.approval_session,

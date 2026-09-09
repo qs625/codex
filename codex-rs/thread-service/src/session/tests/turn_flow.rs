@@ -1571,6 +1571,36 @@ async fn built_tools_include_custom_agent_roles_in_spawn_agent_schema() {
 }
 
 #[tokio::test]
+async fn tool_service_request_carries_current_agent_path() {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |_config| {},
+    )
+    .await;
+
+    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let tool_inputs = crate::session::turn::built_tools(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::downgrade(&session_capability),
+        &[],
+        &std::collections::HashSet::new(),
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("build tool inputs");
+
+    let request = crate::session::turn::tool_service_request(&session, &turn_context, &tool_inputs);
+    assert_eq!(
+        request.current_agent_path,
+        Some(session.current_agent_path_for_turn(&turn_context))
+    );
+}
+
+#[tokio::test]
 async fn compact_turn_hides_model_visible_tools_without_affecting_regular_turns() {
     let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
         CodexAuth::from_api_key("Test API Key"),
