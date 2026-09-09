@@ -8,9 +8,41 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Implement a minimal stable Launcher for Morpheus self-update: the model builds and repairs source artifacts, while Launcher owns installation, Electron supervision, startup-ready rollback, bounded crash-loop fallback, and targeted recovery handoff to `/self`.
 
 ## Active Work
+- id: remove-built-in-worker-explorer-roles
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: refactor/remove-built-in-worker-explorer
+  task_type: refactor/agent-role-resolution
+  depends_on: main baseline `ffb6145eb8`; external role loading must remain supported
+  files: codex-rs/agent-roles built-in registry, role resolver and spawn tool schema; focused tests; agent-role documentation only if required
+  base_commit: ffb6145eb8a42ca4e8e41040f42169aaf1ee71d3
+  pending_sync_from_main: none; dev-2 will be fast-forwarded to the accepted main progress commit
+  status: merged
+  objective: Remove the built-in `worker` and `explorer` roles so only explicitly configured external agent definitions can provide those names, while preserving other built-in roles and external same-name role loading/override behavior.
+  last_update: 2026-09-09 CST fixed dev-2 owner removed the Rust built-in worker/explorer declarations and explorer embedded config fallback, preserved default and external role loading, added resolver/spawn-spec/runtime-apply coverage including external Markdown worker, and confirmed persisted historical role metadata read/list does not invoke role resolution. Fixed reviewer passed after correcting the role-cap omitted count and reviewing the added external worker runtime test. PM design-accepted the four-file diff and merged it to main as `8b053432df`; merged-main focused tests passed.
+  next_action: none
+  blockers: none
+  validation: owner and PM `cargo test -p codex-agent-roles` 17 passed; PM external worker/explorer runtime apply tests 3 passed; PM no-external rejection test 1 passed; fmt/diff checks passed; one unrelated pre-existing session-flags layer-count test remains failing
+  commit: 8b053432df27f8dcb6f1be8449a8d3e2eb327031, d81470f8ccbaf162f0467fab6ffe15b4588b3b7d
+- id: stable-launcher-runtime-update
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/runtime-launcher-update
+  task_type: feature/runtime-packaging-lifecycle
+  depends_on: main baseline `ffb6145eb8`; merged runtime update/restart path and installed artifact updater
+  files: Root Worker packaging/entrypoint; stable launcher and persisted update transaction; Electron launcher IPC/ready/shutdown contract; installed artifact staging/validation/activation/rollback; hot/full lifecycle coordination; targeted `/self` recovery record/prompt; focused tests and package scripts
+  base_commit: ffb6145eb8a42ca4e8e41040f42169aaf1ee71d3
+  pending_sync_from_main: dev-3 is actively developing and remains on `ffb6145eb8`; sync from main commit `8b053432df` is deferred until Launcher work completes. dev-2 will be fast-forwarded after the role-removal acceptance commit; dev remains unavailable because of extensive unrelated tracked work
+  status: in_progress
+  objective: Make a stable OS-launched Launcher supervise the replaceable Morpheus Electron runtime. The model remains responsible for modifying, testing, and building source artifacts. Launcher imports and validates already-built artifacts, preserves only current plus previous outside active transactions, activates hot/full updates, rolls back full startup failures before ready, detects bounded Electron crash loops after ready, and hands persisted failure evidence to the restored `/self` model for diagnosis and forward repair.
+  last_update: 2026-09-09 CST PM reran all 97 Launcher tests, 205 focused Electron/packaging/recovery/conversation tests, and the app-server build successfully, and confirmed the Rust CFBundle entry and no Launcher-side cargo/pnpm build. Design acceptance rejected commit `3ab3bcdaee` because it expanded to 161 files and +29311/-6191 lines with excessive journal/repair/security machinery and formatting churn. Owner has now added auditable revert commit `fa9ba2fad8`, returning the branch to the functional baseline without rewriting history. The minimal implementation is being rebuilt in three narrow owned areas: modular Rust Launcher core, Electron/packaging integration, and typed `/self` recovery. All briefs prohibit multi-generation journals, legacy repair, fd/inode framework expansion, broad formatting, and other nonessential reliability mechanisms.
+  next_action: wait for the fixed owner simplification delivery; re-check net scope, remaining state-machine necessity, core full/hot/rollback/typed-recovery matrix, and reviewer evidence before merge
+  blockers: none
+  validation: initial owner/reviewer tests passed; PM design acceptance failed due over-complexity and unrelated churn; simplification required
+  commit: 3ab3bcdaee88e5481f4d68989c0ad83f193e8b74, fa9ba2fad8
 - id: unify-project-memory-as-instructions-and-refresh-on-compact
   owner: /self/owner_main
   checkout: /Users/bytedance/Projects/my-codex
