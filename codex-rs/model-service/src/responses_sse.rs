@@ -5,8 +5,6 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 
-use transport_client::ByteStream;
-use transport_client::StreamResponse;
 use eventsource_stream::Eventsource;
 use futures::Stream;
 use futures::StreamExt;
@@ -21,10 +19,13 @@ use protocol::protocol::TokenUsage;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::OwnedPermit;
 use tokio::time::Instant;
-use tokio::time::timeout;
+use tokio::time::timeout_at;
 use tracing::debug;
 use tracing::trace;
+use transport_client::ByteStream;
+use transport_client::StreamResponse;
 
 use crate::transport_telemetry::summarize_sse_poll;
 
@@ -32,6 +33,7 @@ const X_REASONING_INCLUDED_HEADER: &str = "x-reasoning-included";
 const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
+const RESPONSE_EVENT_CHANNEL_CAPACITY: usize = 1600;
 
 struct ReceiverResponseStream {
     rx_event: mpsc::Receiver<Result<ResponseEvent, ApiError>>,
@@ -50,6 +52,19 @@ pub(crate) fn response_stream_from_receiver(
     upstream_request_id: Option<String>,
 ) -> ResponseStream {
     ResponseStream::new(ReceiverResponseStream { rx_event }, upstream_request_id)
+}
+
+pub(crate) fn response_event_channel() -> (
+    mpsc::Sender<Result<ResponseEvent, ApiError>>,
+    mpsc::Receiver<Result<ResponseEvent, ApiError>>,
+    OwnedPermit<Result<ResponseEvent, ApiError>>,
+) {
+    let (tx_event, rx_event) = mpsc::channel(RESPONSE_EVENT_CHANNEL_CAPACITY + 1);
+    let terminal_error = tx_event
+        .clone()
+        .try_reserve_owned()
+        .expect("fresh response event channel has terminal error capacity");
+    (tx_event, rx_event, terminal_error)
 }
 
 pub(crate) fn spawn_response_stream(
@@ -87,7 +102,7 @@ pub(crate) fn spawn_response_stream(
         let _ = turn_state.set(header_value.to_string());
     }
 
-    let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent, ApiError>>(1600);
+    let (tx_event, rx_event, terminal_error) = response_event_channel();
     tokio::spawn(async move {
         if let Some(model) = server_model {
             let _ = tx_event.send(Ok(ResponseEvent::ServerModel(model))).await;
@@ -103,7 +118,14 @@ pub(crate) fn spawn_response_stream(
                 .send(Ok(ResponseEvent::ServerReasoningIncluded(true)))
                 .await;
         }
-        process_sse(stream_response.bytes, tx_event, idle_timeout, telemetry).await;
+        process_sse(
+            stream_response.bytes,
+            tx_event,
+            terminal_error,
+            idle_timeout,
+            telemetry,
+        )
+        .await;
     });
 
     response_stream_from_receiver(rx_event, upstream_request_id)
@@ -412,16 +434,18 @@ pub(crate) fn process_responses_event(
 async fn process_sse(
     stream: ByteStream,
     tx_event: mpsc::Sender<Result<ResponseEvent, ApiError>>,
+    terminal_error: OwnedPermit<Result<ResponseEvent, ApiError>>,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
 ) {
     let mut stream = stream.eventsource();
     let mut response_error: Option<ApiError> = None;
     let mut last_server_model: Option<String> = None;
+    let mut response_deadline = Instant::now() + idle_timeout;
 
     loop {
         let start = Instant::now();
-        let response = timeout(idle_timeout, stream.next()).await;
+        let response = timeout_at(response_deadline, stream.next()).await;
         if let Some(telemetry) = telemetry.as_ref() {
             let event = summarize_sse_poll(&response);
             telemetry.on_sse_poll(event.as_ref(), start.elapsed());
@@ -430,22 +454,18 @@ async fn process_sse(
             Ok(Some(Ok(sse))) => sse,
             Ok(Some(Err(error))) => {
                 debug!("SSE Error: {error:#}");
-                let _ = tx_event
-                    .send(Err(ApiError::Stream(error.to_string())))
-                    .await;
+                terminal_error.send(Err(ApiError::Stream(error.to_string())));
                 return;
             }
             Ok(None) => {
                 let error = response_error.unwrap_or(ApiError::Stream(
                     "stream closed before response.completed".into(),
                 ));
-                let _ = tx_event.send(Err(error)).await;
+                terminal_error.send(Err(error));
                 return;
             }
             Err(_) => {
-                let _ = tx_event
-                    .send(Err(ApiError::Stream("idle timeout waiting for SSE".into())))
-                    .await;
+                terminal_error.send(Err(ApiError::Stream("idle timeout waiting for SSE".into())));
                 return;
             }
         };
@@ -464,30 +484,53 @@ async fn process_sse(
         if let Some(model) = event.response_model()
             && last_server_model.as_deref() != Some(model.as_str())
         {
-            if tx_event
-                .send(Ok(ResponseEvent::ServerModel(model.clone())))
-                .await
-                .is_err()
+            match timeout_at(
+                response_deadline,
+                tx_event.send(Ok(ResponseEvent::ServerModel(model.clone()))),
+            )
+            .await
             {
-                return;
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    terminal_error
+                        .send(Err(ApiError::Stream("idle timeout waiting for SSE".into())));
+                    return;
+                }
             }
             last_server_model = Some(model);
         }
-        if let Some(verifications) = model_verifications
-            && tx_event
-                .send(Ok(ResponseEvent::ModelVerifications(verifications)))
-                .await
-                .is_err()
-        {
-            return;
+        if let Some(verifications) = model_verifications {
+            match timeout_at(
+                response_deadline,
+                tx_event.send(Ok(ResponseEvent::ModelVerifications(verifications))),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    terminal_error
+                        .send(Err(ApiError::Stream("idle timeout waiting for SSE".into())));
+                    return;
+                }
+            }
         }
 
         match process_responses_event(event) {
             Ok(Some(event)) => {
                 let is_completed = matches!(event, ResponseEvent::Completed { .. });
-                if tx_event.send(Ok(event)).await.is_err() {
-                    return;
+                let next_deadline = Instant::now() + idle_timeout;
+                match timeout_at(next_deadline, tx_event.send(Ok(event))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => return,
+                    Err(_) => {
+                        terminal_error
+                            .send(Err(ApiError::Stream("idle timeout waiting for SSE".into())));
+                        return;
+                    }
                 }
+                response_deadline = next_deadline;
                 if is_completed {
                     return;
                 }

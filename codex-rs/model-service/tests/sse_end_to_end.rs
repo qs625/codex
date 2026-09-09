@@ -4,11 +4,6 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
-use transport_client::HttpTransport;
-use transport_client::Request;
-use transport_client::Response;
-use transport_client::StreamResponse;
-use transport_client::TransportError;
 use futures::StreamExt;
 use http::HeaderMap;
 use http::StatusCode;
@@ -21,6 +16,11 @@ use model_service_api::RetryConfig;
 use pretty_assertions::assert_eq;
 use protocol::models::ResponseItem;
 use serde_json::Value;
+use transport_client::HttpTransport;
+use transport_client::Request;
+use transport_client::Response;
+use transport_client::StreamResponse;
+use transport_client::TransportError;
 
 #[derive(Clone)]
 struct FixtureSseTransport {
@@ -30,6 +30,32 @@ struct FixtureSseTransport {
 impl FixtureSseTransport {
     fn new(body: String) -> Self {
         Self { body }
+    }
+}
+
+#[derive(Clone)]
+struct DelayedSseTransport {
+    chunks: Vec<(Duration, String)>,
+}
+
+#[async_trait]
+impl HttpTransport for DelayedSseTransport {
+    async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
+        Err(TransportError::Build("execute should not run".to_string()))
+    }
+
+    async fn stream(&self, _req: Request) -> Result<StreamResponse, TransportError> {
+        let chunks = self.chunks.clone();
+        let stream = futures::stream::unfold(chunks.into_iter(), |mut chunks| async move {
+            let (delay, chunk) = chunks.next()?;
+            tokio::time::sleep(delay).await;
+            Some((Ok::<Bytes, TransportError>(Bytes::from(chunk)), chunks))
+        });
+        Ok(StreamResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            bytes: Box::pin(stream),
+        })
     }
 }
 
@@ -89,6 +115,10 @@ fn build_responses_body(events: Vec<Value>) -> String {
         }
     }
     body
+}
+
+fn build_response_chunk(event: Value) -> String {
+    build_responses_body(vec![event])
 }
 
 #[tokio::test]
@@ -167,6 +197,164 @@ async fn responses_stream_parses_items_and_completed_end_to_end() -> Result<()> 
         }
         other => panic!("unexpected third event: {other:?}"),
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_stream_control_chatter_does_not_extend_idle_timeout() -> Result<()> {
+    let item = serde_json::json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "partial"}]
+        }
+    });
+    let control = serde_json::json!({"type": "keepalive"});
+    let transport = DelayedSseTransport {
+        chunks: vec![
+            (Duration::ZERO, build_response_chunk(item)),
+            (
+                Duration::from_millis(20),
+                build_response_chunk(control.clone()),
+            ),
+            (
+                Duration::from_millis(20),
+                build_response_chunk(control.clone()),
+            ),
+            (Duration::from_millis(20), build_response_chunk(control)),
+        ],
+    };
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let mut stream = client
+        .stream(
+            serde_json::json!({"echo": true}),
+            HeaderMap::new(),
+            Compression::None,
+            /*turn_state*/ None,
+        )
+        .await?;
+
+    loop {
+        match stream.next().await {
+            Some(Ok(ResponseEvent::OutputItemDone(_))) => break,
+            Some(Ok(ResponseEvent::RateLimits(_))) => {}
+            other => panic!("unexpected event before response item: {other:?}"),
+        }
+    }
+    let error = tokio::time::timeout(Duration::from_millis(250), stream.next())
+        .await
+        .expect("logical response idle timeout should terminate the stream")
+        .expect("stream should yield a timeout error")
+        .expect_err("missing response.completed should be an error");
+    assert!(matches!(
+        error,
+        model_service_api::ApiError::Stream(message)
+            if message == "idle timeout waiting for SSE"
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_stream_progress_resets_idle_timeout() -> Result<()> {
+    let item1 = serde_json::json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Hello"}]
+        }
+    });
+    let item2 = serde_json::json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "World"}]
+        }
+    });
+    let completed = serde_json::json!({
+        "type": "response.completed",
+        "response": { "id": "resp-progress" }
+    });
+    let transport = DelayedSseTransport {
+        chunks: vec![
+            (Duration::ZERO, build_response_chunk(item1)),
+            (Duration::from_millis(30), build_response_chunk(item2)),
+            (Duration::from_millis(30), build_response_chunk(completed)),
+        ],
+    };
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let mut stream = client
+        .stream(
+            serde_json::json!({"echo": true}),
+            HeaderMap::new(),
+            Compression::None,
+            /*turn_state*/ None,
+        )
+        .await?;
+
+    let mut events = Vec::new();
+    tokio::time::timeout(Duration::from_millis(250), async {
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("progressing stream should succeed"));
+        }
+    })
+    .await
+    .expect("progress should keep the logical response alive");
+
+    let events: Vec<ResponseEvent> = events
+        .into_iter()
+        .filter(|event| !matches!(event, ResponseEvent::RateLimits(_)))
+        .collect();
+    assert_eq!(events.len(), 3);
+    assert!(matches!(
+        events.last(),
+        Some(ResponseEvent::Completed { response_id, .. }) if response_id == "resp-progress"
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_stream_backpressure_preserves_terminal_error() -> Result<()> {
+    let delta = serde_json::json!({
+        "type": "response.output_text.delta",
+        "delta": "x"
+    });
+    let body = build_responses_body((0..1601).map(|_| delta.clone()).collect());
+    let transport = FixtureSseTransport::new(body);
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let mut stream = client
+        .stream(
+            serde_json::json!({"echo": true}),
+            HeaderMap::new(),
+            Compression::None,
+            /*turn_state*/ None,
+        )
+        .await?;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut ordinary_events = 0;
+    let error = loop {
+        match stream
+            .next()
+            .await
+            .expect("reserved terminal slot should contain an error")
+        {
+            Ok(_) => ordinary_events += 1,
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(ordinary_events, 1600);
+    assert!(matches!(
+        error,
+        model_service_api::ApiError::Stream(message)
+            if message == "idle timeout waiting for SSE"
+    ));
 
     Ok(())
 }
