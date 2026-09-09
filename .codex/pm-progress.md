@@ -27,6 +27,22 @@ Make the stable Morpheus Launcher supervise a framework-independent Runtime Caps
   blockers: fifth pre-implementation fixed-reviewer review pending on the final pre-registration and rollback stop-proof gates
   validation: pending; must cover manifest parser/schema/path/link/mode/target/entrypoint validation, complete process-tree shutdown before activation, missing/corrupt current, Seed bootstrap, current/previous atomicity, generic direct spawn and release-matched ready, ready-before-commit rollback, post-ready crash-loop fallback to previous/Seed, App Bundle immutability, and real Electron payload packaged and launched solely through the generic manifest
   commit:
+- id: quarantine-invalid-model-context
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/quarantine-invalid-model-context
+  task_type: bugfix/runtime-context-recovery
+  depends_on: main baseline `483d5bfbe2`; reproduced poisoned compact-head call `call_AWmopSKwAH75jYUua4zEbQxE`
+  files: structured model API invalid-input error propagation; outbound prompt item/index mapping; durable typed context quarantine and replay/compact projection; paired tool call/output removal; bounded retry; focused context-manager/model-service/thread-service/rollout tests
+  base_commit: 483d5bfbe2
+  pending_sync_from_main: none; clean dev-2 checkout was branched directly from current main
+  status: in_progress
+  objective: Automatically recover a thread when a persisted historical model-input item is rejected by the provider, especially a malformed tool call whose JSON is syntactically valid but violates the provider schema. Preserve the original rollout/display evidence, durably quarantine only the precisely identified model-visible item and its paired tool interaction from future prompt projections, tell the model what was omitted through a sanitized typed recovery input, and retry without requiring manual rollout editing.
+  last_update: 2026-09-09 CST PM reproduced the failure chain. A malformed client `tool_search_call` stored 1,872 characters of assistant scratch text as an `arguments` object property name. `ToolSearchCall.arguments` is an unconstrained JSON value, rollout/compact persisted it, context normalization retained it, and every subsequent Responses request replayed it as `input[14]`; the provider rejected the whole request before streaming with `property_name_above_max_length`. Manual repair of the compact-head item restored the thread. The accepted recovery direction is not “drop the newest item”: preserve immutable evidence, carry structured provider error code/param, map outbound `input[n]` back to its source history item, quarantine only eligible historical tool/context items with their paired call/output, persist the quarantine so reload and compact cannot resurrect them, inject a bounded sanitized explanation for the model, and retry under a strict loop cap. Current user input, system/developer instructions and items that cannot be mapped uniquely must fail closed rather than be silently deleted.
+  next_action: fixed dev-2 owner implements the typed quarantine/retry path, reuses `/self/owner_dev_2/reviewer`, and returns focused live/reload/compact/provider-error evidence
+  blockers: none
+  validation: pending; must cover the exact oversized tool-search property reproduction, structured `input[n]` mapping after compatibility filtering, paired call/output quarantine, durable reload and compact behavior, sanitized model notification without replaying toxic raw arguments, successful bounded retry, multiple invalid items within cap, cap exhaustion, malformed/missing/out-of-range provider param, current-user/system/developer item protection, non-invalid-request errors unchanged, SSE and WebSocket paths, and transparency of original persisted/display evidence
+  commit:
 - id: runtime-restart-plan-resources-path-tdz
   owner: /self/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
