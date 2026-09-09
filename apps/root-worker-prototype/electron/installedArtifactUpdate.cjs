@@ -28,15 +28,22 @@ const WORKER_FILES = [
 ];
 let workerBundlePath = null;
 
-function resolveInstalledArtifactUpdatePlan({
-  commandEnv,
-  env = process.env,
-  isPackaged = isPackagedApp({ resourcesPath }),
-  platform = process.platform,
-  resourcesPath = currentResourcesPath(),
-  spawnSync: spawn = spawnSync,
-  workspace,
-} = {}) {
+function resolveInstalledArtifactUpdatePlan(options = {}) {
+  const {
+    commandEnv,
+    env = process.env,
+    platform = process.platform,
+    spawnSync: spawn = spawnSync,
+    workspace,
+  } = options;
+  const resourcesPath =
+    options.resourcesPath === undefined
+      ? currentResourcesPath()
+      : options.resourcesPath;
+  const isPackaged =
+    options.isPackaged === undefined
+      ? isPackagedApp({ resourcesPath })
+      : options.isPackaged;
   if (platform !== "darwin" || !isPackaged || !resourcesPath) {
     return null;
   }

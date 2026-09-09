@@ -91,6 +91,7 @@ test("installed update plan exists only for a packaged macOS app", () => {
     resolveInstalledArtifactUpdatePlan({
       isPackaged: false,
       platform: "darwin",
+      resourcesPath: "/Applications/Root Worker Prototype.app/Contents/Resources",
     }),
     null,
   );
@@ -101,6 +102,75 @@ test("installed update plan exists only for a packaged macOS app", () => {
     }),
     null,
   );
+  assert.equal(
+    resolveInstalledArtifactUpdatePlan({
+      isPackaged: true,
+      platform: "darwin",
+      resourcesPath: null,
+    }),
+    null,
+  );
+});
+
+test("installed update plan resolves the current resources path before packaged detection", () => {
+  const root = temporaryDirectory();
+  const resourcesPath = path.join(
+    root,
+    "Root Worker Prototype.app",
+    "Contents",
+    "Resources",
+  );
+  const workspace = path.join(root, "workspace");
+  const originalResourcesPathDescriptor = Object.getOwnPropertyDescriptor(
+    process,
+    "resourcesPath",
+  );
+  Object.defineProperty(process, "resourcesPath", {
+    configurable: true,
+    value: resourcesPath,
+  });
+  try {
+    const planOptions = {
+      commandEnv: { CARGO_TARGET_DIR: "/shared/target" },
+      env: { ROOT_WORKER_WORKSPACE: workspace },
+      platform: "darwin",
+      spawnSync(_command, args) {
+        fs.mkdirSync(args[4], { recursive: true });
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    };
+    const plan = resolveInstalledArtifactUpdatePlan(planOptions);
+
+    assert.equal(plan.resourcesPath, resourcesPath);
+    assert.equal(
+      plan.appBundlePath,
+      path.join(root, "Root Worker Prototype.app"),
+    );
+
+    const explicitResourcesPath = path.join(
+      root,
+      "Explicit.app",
+      "Contents",
+      "Resources",
+    );
+    const explicitPlan = resolveInstalledArtifactUpdatePlan({
+      ...planOptions,
+      resourcesPath: explicitResourcesPath,
+    });
+    assert.equal(explicitPlan.resourcesPath, explicitResourcesPath);
+    assert.equal(explicitPlan.appBundlePath, path.join(root, "Explicit.app"));
+  } finally {
+    if (originalResourcesPathDescriptor) {
+      Object.defineProperty(
+        process,
+        "resourcesPath",
+        originalResourcesPathDescriptor,
+      );
+    } else {
+      delete process.resourcesPath;
+    }
+    fs.rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("electron shell comparison reads a real app.asar and detects file hashes and presence", () => {
