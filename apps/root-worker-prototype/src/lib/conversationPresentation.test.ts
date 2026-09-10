@@ -21,7 +21,7 @@ function entry(
   };
 }
 
-test("filters command entries from the conversation display without rewriting siblings", () => {
+test("keeps command entries visible while filtering command notifications", () => {
   const cells = [
     {
       id: "mixed",
@@ -39,13 +39,13 @@ test("filters command entries from the conversation display without rewriting si
     {
       id: "mixed",
       kind: "tool",
-      entries: [entry("message")],
+      entries: [entry("message"), entry("command", "command")],
     },
   ]);
   assert.equal(cells[0].entries.length, 2);
 });
 
-test("filters command entries inside compact and archived display cells", () => {
+test("keeps command entries inside compact and archived display cells", () => {
   const cells = [
     {
       id: "compact",
@@ -74,6 +74,7 @@ test("filters command entries inside compact and archived display cells", () => 
 
   const result = filterConversationCellsForDisplay(cells);
   assert.deepEqual(result[0]?.entries[0]?.replacementHistoryCells?.[0]?.entries, [
+    entry("command", "command"),
     entry("message"),
   ]);
   assert.deepEqual(result[0]?.entries[0]?.archivedCells, []);
