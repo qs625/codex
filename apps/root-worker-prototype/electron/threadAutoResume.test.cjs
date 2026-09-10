@@ -28,6 +28,10 @@ function projectRootThread(overrides = {}) {
   };
 }
 
+function runtimeRestartRecovery(expectedThreadIds = ["restart-origin"]) {
+  return { expectedThreadIds };
+}
+
 test("auto-resume selects every non-completed project root and excludes children", () => {
   assert.equal(isAutoResumeEligibleThread(projectRootThread()), true);
   assert.equal(
@@ -117,7 +121,7 @@ test("auto-resume candidates are newest first", () => {
   );
 });
 
-test("auto-resume coordinator resumes once and submits recovery input", async () => {
+test("restart recovery fanout resumes once and submits recovery input", async () => {
   const calls = [];
   const marked = new Set();
   const coordinator = createThreadAutoResumeCoordinator({
@@ -147,8 +151,14 @@ test("auto-resume coordinator resumes once and submits recovery input", async ()
     logger: { warn: () => {} },
   });
 
-  const first = await coordinator.run([projectRootThread({ id: "thread-a" })]);
-  const second = await coordinator.run([projectRootThread({ id: "thread-a" })]);
+  const first = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread({ id: "thread-a" })],
+    expectedRestart: runtimeRestartRecovery(),
+  });
+  const second = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread({ id: "thread-a" })],
+    expectedRestart: runtimeRestartRecovery(),
+  });
 
   assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
   assert.equal(first.focusThreadId, "thread-a");
@@ -172,7 +182,26 @@ test("auto-resume coordinator resumes once and submits recovery input", async ()
   );
 });
 
-test("auto-resume fans out exactly once to every eligible project root", async () => {
+test("cold startup without a durable restart fact does not fan out", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async () => calls.push("read"),
+    subscribeThread: async () => calls.push("subscribe"),
+    sendResumeInput: async () => calls.push("send"),
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread()],
+    expectedRestart: { expectedThreadIds: [] },
+  });
+
+  assert.deepEqual(result.resumedThreadIds, []);
+  assert.deepEqual(calls, []);
+});
+
+test("durable restart fans out exactly once to every eligible project root", async () => {
   const sent = [];
   const marked = new Set();
   const coordinator = createThreadAutoResumeCoordinator({
@@ -208,14 +237,31 @@ test("auto-resume fans out exactly once to every eligible project root", async (
       id: "child",
       parentThreadId: "running",
     }),
+    projectRootThread({
+      id: "restart-origin",
+      updatedAt: 4,
+    }),
   ];
 
   assert.deepEqual(
-    (await coordinator.run(threads)).resumedThreadIds,
+    (
+      await coordinator.runAfterRuntimeRestartRecovery({
+        threads,
+        expectedRestart: runtimeRestartRecovery(),
+      })
+    ).resumedThreadIds,
     ["running", "waiting"],
   );
   assert.deepEqual(sent, ["running", "waiting"]);
-  assert.deepEqual((await coordinator.run(threads)).resumedThreadIds, []);
+  assert.deepEqual(
+    (
+      await coordinator.runAfterRuntimeRestartRecovery({
+        threads,
+        expectedRestart: runtimeRestartRecovery(),
+      })
+    ).resumedThreadIds,
+    [],
+  );
   assert.deepEqual(sent, ["running", "waiting"]);
 });
 
@@ -255,7 +301,10 @@ test("auto-resume skips interrupted threads that already contain recovery input"
   });
 
   assert.equal(threadHasAutoResumePrompt(restored), true);
-  const result = await coordinator.run([projectRootThread()]);
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread()],
+    expectedRestart: runtimeRestartRecovery(),
+  });
 
   assert.deepEqual(result.resumedThreadIds, []);
   assert.deepEqual(result.skippedThreadIds, ["thread-1"]);
@@ -281,7 +330,10 @@ test("auto-resume coordinator handles failures without throwing", async () => {
     logger: { warn: (...args) => warnings.push(args) },
   });
 
-  const result = await coordinator.run([projectRootThread()]);
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread()],
+    expectedRestart: runtimeRestartRecovery(),
+  });
 
   assert.deepEqual(result.resumedThreadIds, []);
   assert.deepEqual(result.failedThreadIds, ["thread-1"]);

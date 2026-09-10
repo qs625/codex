@@ -17,7 +17,19 @@ function createThreadAutoResumeCoordinator({
   const completedKeys = new Set();
 
   return {
-    async run(threads = []) {
+    async runAfterRuntimeRestartRecovery({
+      threads = [],
+      expectedRestart,
+    } = {}) {
+      if (!hasDurableRuntimeRestartRecovery(expectedRestart)) {
+        return emptyAutoResumeResult();
+      }
+      const expectedThreadIds = new Set(expectedRestart.expectedThreadIds);
+      return run(threads.filter((thread) => !expectedThreadIds.has(thread.id)));
+    },
+  };
+
+  async function run(threads = []) {
       const resumedThreadIds = [];
       const skippedThreadIds = [];
       const failedThreadIds = [];
@@ -79,7 +91,21 @@ function createThreadAutoResumeCoordinator({
         errors,
         focusThreadId: resumedThreadIds[0] ?? null,
       };
-    },
+  }
+}
+
+function hasDurableRuntimeRestartRecovery(expectedRestart) {
+  return Array.isArray(expectedRestart?.expectedThreadIds) &&
+    expectedRestart.expectedThreadIds.length > 0;
+}
+
+function emptyAutoResumeResult() {
+  return {
+    resumedThreadIds: [],
+    skippedThreadIds: [],
+    failedThreadIds: [],
+    errors: [],
+    focusThreadId: null,
   };
 }
 
@@ -234,6 +260,7 @@ module.exports = {
   autoResumeFingerprint,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
+  hasDurableRuntimeRestartRecovery,
   isCompletedFinalLifecycleStatus,
   isAutoResumeEligibleThread,
   isInterruptedLifecycleStatus,

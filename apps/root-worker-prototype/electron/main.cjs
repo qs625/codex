@@ -316,10 +316,11 @@ ipcMain.handle("codex:bootstrap", async () => {
   const threads = listResult.threads;
   const expectedRestart =
     await getRuntimeRestartController().recoverPending();
-  const expectedThreadIds = new Set(expectedRestart.expectedThreadIds);
-  const autoResume = await getAutoResumeCoordinator().run(
-    threads.filter((thread) => !expectedThreadIds.has(thread.id)),
-  );
+  const autoResume =
+    await getAutoResumeCoordinator().runAfterRuntimeRestartRecovery({
+      threads,
+      expectedRestart,
+    });
   return {
     workspace: defaultWorkspace,
     threads,
