@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `ea297f8f` / `sha256:3871abd050bdbab88ceb164ba3f32d6ff9871c733d62cf712d2d4f40b23a012f`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has both the Conversation command display fix and Terminal live PTY focus fix installed. Follow-up fish terminal PDA query response forwarding fix is merged on main at `2249a73e78` but is not yet installed/effective.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `c07a1735` / `sha256:d79ad7de33615cb537f984acd2bb66d5be63293593f766f363a1b062ec9d59a7`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has the Conversation command display fix, Terminal live PTY focus fix, and fish terminal PDA query response forwarding fix installed.
 
 ## Active Work
 - id: terminal-fish-primary-device-attribute-warning
@@ -20,13 +20,13 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
   files: apps/root-worker-prototype/src/components/TerminalPanel.tsx; apps/root-worker-prototype/src/components/TerminalPanel.test.tsx
   base_commit: 3fbeae0e5
   pending_sync_from_main: none
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   objective: Ensure xterm-generated terminal capability query responses are forwarded back to the PTY even when the query sequence is parsed from replay/early startup output.
-  last_update: 2026-09-11 CST root cause likely confirmed from TerminalPanel initialization order: `activeTab.replayBase64` was written into xterm before `onData`/`onBinary` were subscribed, so responses generated while parsing early fish terminal queries could be dropped before reaching the PTY. Fixed dev-2 as `9ead0abed`; reviewer passed; PM merged to canonical main as `2249a73e78`.
-  next_action: build/install a complete Runtime Capsule from canonical main `2249a73e78`, restart, then ask the user to open a fresh fish terminal and confirm the PDA warning is gone.
-  blockers: not installed/effective yet; current active payload remains `ea297f8f`.
-  validation: dev-2 and PM ran `pnpm --dir apps/root-worker-prototype test src/components/TerminalPanel.test.tsx src/components/RightPanel.test.tsx` -> 42/42 passed; dev-2 Vite production build passed with only existing chunk-size warning; reviewer found no blockers.
-  commit: 9ead0abed, 2249a73e78
+  last_update: 2026-09-11 CST root cause likely confirmed from TerminalPanel initialization order: `activeTab.replayBase64` was written into xterm before `onData`/`onBinary` were subscribed, so responses generated while parsing early fish terminal queries could be dropped before reaching the PTY. Fixed dev-2 as `9ead0abed`; reviewer passed; PM merged to canonical main as `2249a73e78`, recorded as `c07a1735`, built a complete Runtime Capsule, and restored/restarted into active external release `sha256:d79ad7de33615cb537f984acd2bb66d5be63293593f766f363a1b062ec9d59a7` with payload PID `24471`; failure evidence absent.
+  next_action: ask the user to open a fresh fish terminal and confirm the PDA warning is gone.
+  blockers: none
+  validation: dev-2 and PM ran `pnpm --dir apps/root-worker-prototype test src/components/TerminalPanel.test.tsx src/components/RightPanel.test.tsx` -> 42/42 passed; dev-2 and PM Vite production builds passed with only existing chunk-size warning; reviewer found no blockers. Canonical main packaged Runtime Capsule `sha256:d79ad7de33615cb537f984acd2bb66d5be63293593f766f363a1b062ec9d59a7` and launcher control reports selected/activeLaunch on that release with `lastFailure: null`.
+  commit: 9ead0abed, 2249a73e78, c07a1735
 - id: conversation-command-item-display-regression
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
