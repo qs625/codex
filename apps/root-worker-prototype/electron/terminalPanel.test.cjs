@@ -18,6 +18,8 @@ const {
   mergeTerminalSessions,
   reattachTerminalSessions,
   terminalPanelSnapshot,
+  terminalCommandItemKey,
+  terminalSessionKey,
   terminalTabSupports,
 } = require("./terminalPanel.cjs");
 
@@ -152,9 +154,9 @@ test("explicit reattach clears detached tombstones", () => {
   const state = createTerminalPanelState();
   mergeTerminalSessions(state, [descriptor()], "thread");
   closeTerminalTab(state, state.tabs[0].id);
-  assert.equal(terminalPanelSnapshot(state).detachedCount, 1);
+  assert.equal(terminalPanelSnapshot(state).detachedCount, 2);
 
-  assert.equal(reattachTerminalSessions(state), 1);
+  assert.equal(reattachTerminalSessions(state), 2);
   mergeTerminalSessions(state, [descriptor()], "thread");
 
   assert.equal(state.tabs.length, 1);
@@ -322,6 +324,45 @@ test("live command session keeps focus available when active snapshot is stale",
   assert.equal(tab.readOnlyOutput, undefined);
 });
 
+test("live command session wins over active command fallback descriptor", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        commandItemId: "call",
+        processId: "42",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: null,
+  };
+  const activeCommand = {
+    type: "commandExecution",
+    id: "call",
+    command: "npm test",
+    cwd: "/repo",
+    processId: null,
+    status: "running",
+    aggregatedOutput: null,
+  };
+  const session = liveCommandSessionForTerminalFocus(state, command);
+
+  assert.deepEqual(
+    commandFocusDescriptorForTerminalFocus(command, activeCommand, session, {
+      liveSessionRefreshed: true,
+    }),
+    commandFocusDescriptorFromLiveSession(command, session),
+  );
+});
+
 test("live command session cannot prove focus when session refresh failed", () => {
   const state = createTerminalPanelState();
   mergeTerminalSessions(state, [descriptor()], "thread");
@@ -445,6 +486,111 @@ test("live session merge upgrades a read-only request fallback", () => {
     }),
     fallback,
   );
+});
+
+test("live session merge upgrades read-only fallback with placeholder process id", () => {
+  const state = createTerminalPanelState();
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: null,
+    command: "npm test",
+    cwd: "/repo",
+    status: "running",
+  };
+  const fallback = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest(command),
+  );
+
+  assert.equal(fallback.processId, "call");
+  assert.equal(fallback.readOnlyOutput, true);
+  assert.equal(fallback.canResize, false);
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        generation: "call",
+        commandItemId: "call",
+        processId: "42",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs[0], fallback);
+  assert.equal(state.activeTabId, fallback.id);
+  assert.equal(fallback.sessionId, "model:thread:call:42");
+  assert.equal(fallback.processId, "42");
+  assert.equal(fallback.readOnlyOutput, undefined);
+  assert.equal(fallback.canResize, true);
+  assert.equal(terminalTabSupports(fallback, "resize"), true);
+});
+
+test("closed read-only fallback detaches later live descriptor with different process id", () => {
+  const state = createTerminalPanelState();
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: null,
+    command: "npm test",
+    cwd: "/repo",
+    status: "running",
+  };
+  const fallback = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest(command),
+  );
+
+  assert.equal(closeTerminalTab(state, fallback.id), true);
+  assert.equal(
+    state.detachedSessionKeys.has(terminalSessionKey(fallback)),
+    true,
+  );
+  assert.equal(
+    state.detachedSessionKeys.has(terminalCommandItemKey(fallback)),
+    true,
+  );
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        generation: "call",
+        commandItemId: "call",
+        processId: "42",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+  assert.equal(state.tabs.length, 0);
+
+  assert.equal(reattachTerminalSessions(state), 2);
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        generation: "call",
+        commandItemId: "call",
+        processId: "42",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs[0].readOnlyOutput, undefined);
+  assert.equal(state.tabs[0].canResize, true);
 });
 
 test("live command session can match process id when descriptor lacks command item id", () => {
