@@ -242,7 +242,7 @@ pub fn run(
                 return Err(error);
             }
         };
-        if is_selected_capsule_switch(&outcome.status, paths, &selected)? {
+        if is_selected_capsule_switch(&outcome.status) {
             continue;
         }
         let Some(failure) = RuntimeFailure::from_exit_status(&outcome.status) else {
@@ -258,21 +258,12 @@ pub fn run(
 }
 
 /// Exit code emitted by Electron after a successfully selected Runtime Capsule
-/// update. It is honored only when control state confirms a different selected
-/// release, so an unrelated process cannot request a restart with this code.
+/// update. It asks the Launcher to return to the supervise loop and spawn the
+/// current persisted selection.
 const CAPSULE_SWITCH_EXIT_CODE: i32 = 75;
 
-fn is_selected_capsule_switch(
-    status: &std::process::ExitStatus,
-    paths: &LauncherPaths,
-    launched: &CapsuleRecord,
-) -> Result<bool> {
-    if status.code() != Some(CAPSULE_SWITCH_EXIT_CODE) {
-        return Ok(false);
-    }
-    let latest = ControlState::load(&paths.control)?
-        .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
-    Ok(latest.selected.capsule().release_id != launched.release_id)
+fn is_selected_capsule_switch(status: &std::process::ExitStatus) -> bool {
+    status.code() == Some(CAPSULE_SWITCH_EXIT_CODE)
 }
 
 fn reconcile_active_launch(paths: &LauncherPaths, state: ControlState) -> Result<ControlState> {
@@ -1433,12 +1424,7 @@ mod tests {
         let failure =
             RuntimeFailure::from_exit_status(&status).expect("abnormal payload exit");
 
-        handle_unexpected_payload_exit(
-            &paths,
-            "release-current",
-            None,
-            failure,
-        )
+        handle_unexpected_payload_exit(&paths, "release-current", None, failure)
         .expect("restore previous");
 
         let restored = ControlState::load(&paths.control)
@@ -1469,12 +1455,7 @@ mod tests {
         let failure =
             RuntimeFailure::from_exit_status(&status).expect("abnormal payload exit");
 
-        handle_unexpected_payload_exit(
-            &paths,
-            "release-current",
-            None,
-            failure,
-        )
+        handle_unexpected_payload_exit(&paths, "release-current", None, failure)
         .expect("restore seed");
 
         let restored = ControlState::load(&paths.control)
@@ -1521,12 +1502,7 @@ mod tests {
         )
         .expect("abnormal payload exit");
 
-        handle_unexpected_payload_exit(
-            &paths,
-            "release-current",
-            None,
-            failed,
-        )
+        handle_unexpected_payload_exit(&paths, "release-current", None, failed)
         .expect("ignore stale payload exit");
 
         let current = ControlState::load(&paths.control)
@@ -1536,6 +1512,52 @@ mod tests {
         assert!(crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
             .expect("read evidence")
             .is_none());
+    }
+
+    #[test]
+    fn capsule_switch_exit_accepts_identical_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), true);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+
+        let status = Command::new("/bin/sh")
+            .args(["-c", &format!("exit {CAPSULE_SWITCH_EXIT_CODE}")])
+            .status()
+            .expect("run capsule switch exit");
+
+        assert!(is_selected_capsule_switch(&status));
+        assert!(
+            RuntimeFailure::from_exit_status(&status).is_some(),
+            "exit 75 is still an abnormal payload code outside the supervisor switch path"
+        );
+    }
+
+    #[test]
+    fn capsule_switch_exit_accepts_new_release_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), true);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+
+        let replacement = capsule(temp.path(), "replacement");
+        let mut selected_after_exit = state.clone();
+        selected_after_exit.external_previous = selected_after_exit.external_current.clone();
+        selected_after_exit.external_current = Some(replacement.clone());
+        selected_after_exit.selected = SelectedRuntime::external(replacement);
+        crate::control::write_json_atomic(&paths.control.control, &selected_after_exit)
+            .expect("write release selection");
+
+        let status = Command::new("/bin/sh")
+            .args(["-c", &format!("exit {CAPSULE_SWITCH_EXIT_CODE}")])
+            .status()
+            .expect("run capsule switch exit");
+
+        assert!(is_selected_capsule_switch(&status));
     }
 
     #[test]
