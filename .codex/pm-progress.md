@@ -27,6 +27,38 @@ Complete the Terminal-first PTY improvements and then deliver all pending Launch
   blockers: none
   validation: owner `git diff --check`, focused frontend tests 72/72, and Vite production build passed. PM reran focused frontend tests 72/72, `git diff --check`, and Vite production build on merged main; all passed.
   commit: b21f9407f, 52b07f41d
+- id: terminal-focus-command-live-session-mismatch
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: feature/full-terminal-panel
+  task_type: bugfix/ui-terminal-focus
+  depends_on: main `5082bb2a6`; related to `thread-analysis-command-monitor-restoration`
+  files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/terminalPanel.cjs; apps/root-worker-prototype/electron/terminalPanel.test.cjs; apps/root-worker-prototype/src/components/TerminalPanel.tsx only if frontend request shape must change
+  base_commit: 5082bb2a69511f84e882ce47888929379e58a37f
+  pending_sync_from_main: none
+  status: merged
+  objective: Fix `codex:terminal:focusCommand` so clicking a visible live command summary reliably opens/focuses the Terminal tab without exposing command output in Thread Analysis.
+  last_update: 2026-09-11 CST fixed dev-2 owner delivered `b849ddd44`, reviewer passed after tightening missing-commandItemId PTY reuse to live tabs only, and PM merged it to canonical main. The IPC now validates live command by active `commandItemId` + running status instead of renderer `processId`; Terminal descriptor matching still uses the runtime process id when available.
+  next_action: include in next installed Runtime Capsule delivery after the Launcher exit 75 fix is merged.
+  blockers: none
+  validation: owner `git diff --check`, Electron terminal panel tests 14/14, focused frontend tests 72/72, and Vite production build passed.
+  commit: b849ddd44
+- id: runtime-launcher-capsule-switch-same-release
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-lifecycle-state-machine
+  depends_on: main `5082bb2a6`; installed runtime recovered expected restart request `call_Lor16dbTO9LnlGHRElh9AO5i`
+  files: codex-rs/runtime-launcher/src/supervisor.rs; focused runtime-launcher tests
+  base_commit: 5082bb2a69511f84e882ce47888929379e58a37f
+  pending_sync_from_main: none
+  status: in_progress
+  objective: Treat payload exit 75 as an unconditional supervised capsule restart signal; do not compare releaseId, sourceCommit, metadata, or capsule identity before continuing the Launcher supervise loop.
+  last_update: 2026-09-11 CST clean install from `5082bb2a6` produced the same releaseId as `0904d0c16`; Launcher compared only releaseId, treated exit 75 as payload failure, and recovered to the previous sourceCommit. User then clarified the desired rule: "不要管releaseid是不是变了, 只要exit 75就重启"; PM updated the dev-3 brief accordingly and must not invoke `request_runtime_restart` automatically after merge.
+  next_action: fixed dev-3 owner should simplify exit 75 handling to unconditional continue, add regression tests proving identical releaseId/selected state still restarts, review, and commit.
+  blockers: none
+  validation: pending
+  commit: pending
 - id: project-thread-restart-prompt-fanout
   owner: /self/owner_main
   checkout: /Users/bytedance/.morpheus/source_workspace
