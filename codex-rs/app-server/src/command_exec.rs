@@ -145,6 +145,7 @@ struct RunCommandParams {
     terminal_delivery_lock: Arc<Mutex<()>>,
     spawned: SpawnedProcess,
     control_rx: mpsc::Receiver<CommandControlRequest>,
+    tty: bool,
     stream_stdin: bool,
     stream_stdout_stderr: bool,
     expiration: ExecExpiration,
@@ -377,7 +378,9 @@ impl CommandExecManager {
                 return Err(internal_error(format!("failed to spawn command: {err}")));
             }
         };
-        if let Some(process_id) = notification_process_id.as_ref() {
+        if tty
+            && let Some(process_id) = notification_process_id.as_ref()
+        {
             outgoing
                 .send_server_notification_to_connection_and_wait(
                     request_id.connection_id,
@@ -400,6 +403,7 @@ impl CommandExecManager {
                 terminal_delivery_lock,
                 spawned,
                 control_rx,
+                tty,
                 stream_stdin,
                 stream_stdout_stderr,
                 expiration,
@@ -715,6 +719,7 @@ async fn run_command(params: RunCommandParams) {
         terminal_delivery_lock,
         spawned,
         control_rx,
+        tty,
         stream_stdin,
         stream_stdout_stderr,
         expiration,
@@ -814,7 +819,9 @@ async fn run_command(params: RunCommandParams) {
     let stderr = stderr_handle.await.unwrap_or_default();
     timeout_handle.abort();
 
-    if let Some(process_id) = process_id.as_ref() {
+    if tty
+        && let Some(process_id) = process_id.as_ref()
+    {
         outgoing
             .send_server_notification_to_connection_and_wait(
                 terminal_notification_connection_id(&terminal_runtime).await,
