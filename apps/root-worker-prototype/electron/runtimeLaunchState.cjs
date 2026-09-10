@@ -1,3 +1,6 @@
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+
 async function readLauncherFailureEvidence(
   evidencePath = process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
   fs,
@@ -17,6 +20,56 @@ async function readLauncherFailureEvidence(
     }
     throw error;
   }
+}
+
+async function writePayloadFailureEvidence({
+  evidencePath = process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
+  fs,
+  releaseId = process.env.RUNTIME_CAPSULE_RELEASE_ID,
+  payloadPid = process.pid,
+  reason,
+  now = Date.now,
+  createId = randomUUID,
+}) {
+  const resolvedEvidencePath = normalizeString(evidencePath);
+  const resolvedReleaseId = normalizeString(releaseId);
+  const resolvedReason = normalizeString(reason);
+  if (!resolvedEvidencePath || !resolvedReleaseId || !resolvedReason) {
+    return null;
+  }
+  const timestamp = now();
+  if (!Number.isFinite(timestamp) || timestamp < 0) {
+    throw new Error("Payload failure evidence requires a valid timestamp");
+  }
+  const evidence = {
+    activationId: `payload-${payloadPid}-${Math.trunc(timestamp)}-${createId()}`,
+    releaseId: resolvedReleaseId,
+    occurredAt: new Date(timestamp).toISOString(),
+    code: "payload_reported_error",
+    message: resolvedReason,
+    details: {
+      payloadPid: String(payloadPid),
+      source: "payload",
+    },
+  };
+  const parentDirectory = path.dirname(resolvedEvidencePath);
+  const temporaryPath = path.join(
+    parentDirectory,
+    `.${path.basename(resolvedEvidencePath)}.${createId()}.tmp`,
+  );
+  await fs.mkdir(parentDirectory, { recursive: true });
+  try {
+    await fs.writeFile(
+      temporaryPath,
+      `${JSON.stringify(evidence)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    await fs.rename(temporaryPath, resolvedEvidencePath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+  return evidence;
 }
 
 function buildLauncherRecoveryRecordParams(evidence) {
@@ -72,6 +125,36 @@ async function recordLauncherRecovery({
   return response.recorded;
 }
 
+async function recoverPayloadRuntimeFailureIfPresent({
+  evidencePath,
+  formatPayloadRuntimeRecoveryPrompt,
+  fs,
+  sendSelfCommand,
+}) {
+  const evidence = await readLauncherFailureEvidence(evidencePath, fs);
+  if (!isPayloadRuntimeRecoveryEvidence(evidence)) {
+    return { recovered: false, evidence: Boolean(evidence) };
+  }
+  if (typeof formatPayloadRuntimeRecoveryPrompt !== "function") {
+    throw new Error("Payload recovery prompt formatter is unavailable");
+  }
+  if (typeof sendSelfCommand !== "function") {
+    throw new Error("Payload recovery requires the /self input path");
+  }
+  const text = formatPayloadRuntimeRecoveryPrompt({
+    failedReleaseId: evidence.releaseId,
+    reason: normalizeString(evidence.message),
+    exitCode: numericDetail(evidence.details?.exitCode),
+    signal: numericDetail(evidence.details?.signal),
+  });
+  if (!normalizeString(text)) {
+    throw new Error("Payload recovery prompt formatter returned no input");
+  }
+  await sendSelfCommand(text);
+  await fs.rm(evidencePath, { force: true });
+  return { recovered: true, evidence: true };
+}
+
 async function recordLauncherRecoveryIfPresent({
   appServerClient,
   evidencePath,
@@ -109,6 +192,27 @@ async function recordLauncherRecoveryIfPresent({
   }
 }
 
+function isPayloadRuntimeRecoveryEvidence(evidence) {
+  const code = normalizeString(evidence?.code);
+  return Boolean(
+    normalizeString(evidence?.activationId) &&
+      normalizeString(evidence?.releaseId) &&
+      normalizeString(evidence?.fallbackReleaseId) &&
+      (code === "payload_reported_error" ||
+        code === "payload_exit_code" ||
+        code === "payload_exit_signal" ||
+        code === "payload_spawn_or_load_error"),
+  );
+}
+
+function numericDetail(value) {
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) ? numeric : null;
+}
+
 function resolveOccurredAt(evidence) {
   const explicit = normalizeString(evidence?.occurredAt);
   if (explicit) {
@@ -135,7 +239,9 @@ function normalizeString(value) {
 
 module.exports = {
   buildLauncherRecoveryRecordParams,
+  recoverPayloadRuntimeFailureIfPresent,
   readLauncherFailureEvidence,
   recordLauncherRecovery,
   recordLauncherRecoveryIfPresent,
+  writePayloadFailureEvidence,
 };
