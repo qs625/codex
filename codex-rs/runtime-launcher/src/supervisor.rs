@@ -3,6 +3,7 @@ use crate::SelectCandidateRequest;
 use crate::Result;
 use crate::capsule::CapsuleRecord;
 use crate::capsule::CapsuleTarget;
+use crate::capsule::gc_unreferenced_external_artifacts;
 use crate::capsule::import_incoming;
 use crate::capsule::load_and_verify_capsule;
 use crate::capsule::verify_record_for_spawn;
@@ -156,19 +157,17 @@ pub fn select_candidate(
     let current = load_unlocked(&paths.control)?.ok_or_else(|| {
         LauncherError::Conflict("control state disappeared during candidate import".to_string())
     })?;
-    if selection_is_already_current(&current, &candidate) {
-        return Ok(SelectCandidateResult {
-            activation_id: request.activation_id,
-            release_id,
-            control: current,
-        });
-    }
-    let control = update_locked(&paths.control, |state| {
-        state.external_previous = state.external_current.clone();
-        state.external_current = Some(candidate.clone());
-        state.selected = SelectedRuntime::external(candidate.clone());
-        Ok(())
-    })?;
+    let control = if selection_is_already_current(&current, &candidate) {
+        current
+    } else {
+        update_locked(&paths.control, |state| {
+            state.external_previous = state.external_current.clone();
+            state.external_current = Some(candidate.clone());
+            state.selected = SelectedRuntime::external(candidate.clone());
+            Ok(())
+        })?
+    };
+    gc_unreferenced_external_artifacts_locked(paths, &control);
     Ok(SelectCandidateResult {
         activation_id: request.activation_id,
         release_id,
@@ -199,6 +198,7 @@ pub fn run(
         .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
     let state = reconcile_active_launch(paths, state)?;
     rebind_seed(paths, state.revision, state.executor_epoch, seed)?;
+    gc_unreferenced_external_artifacts_at_safe_boundary(paths);
 
     loop {
         let state = ControlState::load(&paths.control)?
@@ -249,6 +249,8 @@ pub fn run(
                 outcome.payload_pid,
                 failure,
             )?;
+        } else if let Some(outcome) = normal_payload_exit_outcome(&outcome.status) {
+            return Ok(outcome);
         }
     }
 }
@@ -868,6 +870,7 @@ fn restore_failed_external(
         }
         Err(error) => return Err(error),
     };
+    gc_unreferenced_external_artifacts_at_safe_boundary(paths);
     write_runtime_failure(
         paths,
         failed,
@@ -876,6 +879,56 @@ fn restore_failed_external(
         payload_pid,
     )?;
     Ok(ExternalFallback::Restored)
+}
+
+fn gc_unreferenced_external_artifacts_at_safe_boundary(paths: &LauncherPaths) {
+    let Ok(_lock) = StateLock::acquire(&paths.control) else {
+        return;
+    };
+    let Ok(Some(state)) = load_unlocked(&paths.control) else {
+        return;
+    };
+    gc_unreferenced_external_artifacts_locked(paths, &state);
+}
+
+fn gc_unreferenced_external_artifacts_locked(paths: &LauncherPaths, state: &ControlState) {
+    let artifacts = paths.root.join("artifacts");
+    let mut protected = BTreeSet::new();
+    for capsule in [
+        state.external_current.as_ref(),
+        state.external_previous.as_ref(),
+        match &state.selected {
+            SelectedRuntime::External { capsule } => Some(capsule),
+            SelectedRuntime::Seed { .. } => None,
+        },
+        state.active_launch.as_ref().and_then(|active| match &active.selected {
+            SelectedRuntime::External { capsule } => Some(capsule),
+            SelectedRuntime::Seed { .. } => None,
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(digest) = canonical_artifact_digest(&artifacts, capsule) {
+            protected.insert(digest);
+        }
+    }
+    let _ = gc_unreferenced_external_artifacts(&paths.root, &protected);
+}
+
+fn canonical_artifact_digest(artifacts: &Path, capsule: &CapsuleRef) -> Option<String> {
+    let digest = capsule.release_id.strip_prefix("sha256:")?;
+    if !is_content_digest(digest) || capsule.root != artifacts.join(digest) {
+        return None;
+    }
+    Some(digest.to_string())
+}
+
+fn is_content_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn handle_unexpected_payload_exit(
@@ -901,6 +954,12 @@ fn handle_unexpected_payload_exit(
         )?;
     }
     Ok(())
+}
+
+fn normal_payload_exit_outcome(status: &ExitStatus) -> Option<RunOutcome> {
+    status
+        .success()
+        .then(|| RunOutcome::Exited(status.code().unwrap_or(0)))
 }
 
 impl RuntimeFailure {
@@ -1133,6 +1192,136 @@ mod tests {
         state
     }
 
+    fn artifact_capsule(state_root: &Path, digit: char) -> CapsuleRef {
+        let digest = digit.to_string().repeat(64);
+        let root = state_root.join("artifacts").join(&digest);
+        std::fs::create_dir_all(&root).expect("artifact");
+        CapsuleRef {
+            release_id: format!("sha256:{digest}"),
+            entrypoint: root.join("bin/runtime"),
+            root,
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn activation_gc_keeps_current_and_previous_and_removes_the_retired_generation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let retired = artifact_capsule(&paths.root, 'a');
+        let previous = artifact_capsule(&paths.root, 'b');
+        let current = artifact_capsule(&paths.root, 'c');
+        let mut state = ControlState::initialize(TrustedSeed {
+            capsule: capsule(temp.path(), "seed"),
+            trust_anchor: temp.path().join("seed-anchor"),
+            metadata: serde_json::Value::Null,
+        });
+        state.external_current = Some(current.clone());
+        state.external_previous = Some(previous.clone());
+        state.selected = SelectedRuntime::external(current);
+
+        gc_unreferenced_external_artifacts_locked(&paths, &state);
+
+        assert!(!retired.root.exists());
+        assert!(previous.root.is_dir());
+        assert!(state.selected.capsule().root.is_dir());
+    }
+
+    #[test]
+    fn fallback_gc_removes_failed_current_after_the_durable_selection_transition() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let previous = artifact_capsule(&paths.root, 'a');
+        let failed = artifact_capsule(&paths.root, 'b');
+        let mut state = ControlState::initialize(TrustedSeed {
+            capsule: capsule(temp.path(), "seed"),
+            trust_anchor: temp.path().join("seed-anchor"),
+            metadata: serde_json::Value::Null,
+        });
+        state.external_current = Some(failed.clone());
+        state.external_previous = Some(previous.clone());
+        state.selected = SelectedRuntime::external(failed);
+        crate::control::write_json_atomic(&paths.control.control, &state).expect("write state");
+
+        restore_failed_external(
+            &paths,
+            &state,
+            RuntimeFailure::load("load failed".to_string()),
+            None,
+        )
+        .expect("restore previous");
+
+        let restored = ControlState::load(&paths.control)
+            .expect("load state")
+            .expect("state");
+        assert_eq!(restored.selected.capsule(), &previous);
+        assert!(previous.root.is_dir());
+        assert!(!state.selected.capsule().root.exists());
+    }
+
+    #[test]
+    fn seed_fallback_gc_removes_all_unreferenced_external_artifacts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let failed = artifact_capsule(&paths.root, 'a');
+        let mut state = ControlState::initialize(TrustedSeed {
+            capsule: capsule(temp.path(), "seed"),
+            trust_anchor: temp.path().join("seed-anchor"),
+            metadata: serde_json::Value::Null,
+        });
+        state.external_current = Some(failed.clone());
+        state.selected = SelectedRuntime::external(failed.clone());
+        crate::control::write_json_atomic(&paths.control.control, &state).expect("write state");
+
+        restore_failed_external(
+            &paths,
+            &state,
+            RuntimeFailure::load("load failed".to_string()),
+            None,
+        )
+        .expect("restore Seed");
+
+        let restored = ControlState::load(&paths.control)
+            .expect("load state")
+            .expect("state");
+        assert!(matches!(restored.selected, SelectedRuntime::Seed { .. }));
+        assert!(!failed.root.exists());
+    }
+
+    #[test]
+    fn active_launch_reference_is_protected_during_gc() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let active = artifact_capsule(&paths.root, 'a');
+        let current = artifact_capsule(&paths.root, 'b');
+        let retired = artifact_capsule(&paths.root, 'c');
+        let mut state = ControlState::initialize(TrustedSeed {
+            capsule: capsule(temp.path(), "seed"),
+            trust_anchor: temp.path().join("seed-anchor"),
+            metadata: serde_json::Value::Null,
+        });
+        state.external_current = Some(current.clone());
+        state.selected = SelectedRuntime::external(current.clone());
+        state.active_launch = Some(ActiveLaunchRecord {
+            selected: SelectedRuntime::external(active.clone()),
+            launch_instance_id: "launch-1".to_string(),
+            spawn_attempt_id: "spawn-1".to_string(),
+            phase: ActiveLaunchPhase::SpawnPlanned,
+            payload_registration: None,
+            known_descendants: Vec::new(),
+        });
+
+        gc_unreferenced_external_artifacts_locked(&paths, &state);
+
+        assert!(active.root.is_dir());
+        assert!(current.root.is_dir());
+        assert!(!retired.root.exists());
+    }
+
     #[test]
     fn repeat_selection_of_current_capsule_is_a_control_no_op() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1302,6 +1491,10 @@ mod tests {
             .status()
             .expect("run successful payload");
         assert!(RuntimeFailure::from_exit_status(&success).is_none());
+        assert_eq!(
+            normal_payload_exit_outcome(&success),
+            Some(RunOutcome::Exited(0))
+        );
 
         let replacement = capsule(temp.path(), "replacement");
         let mut selected_after_exit = state.clone();
