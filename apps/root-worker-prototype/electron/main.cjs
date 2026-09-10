@@ -112,9 +112,11 @@ const {
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 const {
+  activeCommandForTerminalFocus,
   addUserTerminal,
   appendTerminalOutput,
   closeTerminalTab,
+  commandFocusDescriptor,
   focusCommandTerminal,
   createTerminalPanelState,
   markRunningTerminalsLost,
@@ -774,36 +776,16 @@ ipcMain.handle("codex:terminal:focusCommand", async (event, command) => {
     throw new Error("Live command is no longer available");
   }
   const { thread } = await readThread(command.threadId, true);
-  const activeCommand = thread?.activeCommandItems?.find(
-    (item) =>
-      item.type === "commandExecution" &&
-      item.id === command.commandItemId &&
-      isRunningCommandStatus(item.status) &&
-      (!command.processId || item.processId === command.processId),
-  );
+  const activeCommand = activeCommandForTerminalFocus(thread, command);
   if (!activeCommand || activeCommand.type !== "commandExecution") {
     throw new Error("Live command is no longer available");
   }
   panel.threadId = command.threadId;
   await refreshTerminalPanelSessions(panel, command.threadId);
-  const tab = focusCommandTerminal(panel.state, {
-    sessionId: `command:${command.threadId}:${command.commandItemId}`,
-    generation: command.commandItemId,
-    origin: "model",
-    threadId: command.threadId,
-    commandItemId: command.commandItemId,
-    processId: activeCommand.processId || activeCommand.id,
-    title: activeCommand.command,
-    cwd: activeCommand.cwd,
-    replayBase64: activeCommand.aggregatedOutput
-      ? Buffer.from(activeCommand.aggregatedOutput).toString("base64")
-      : null,
-    replayTruncated: false,
-    replayThroughSequence: 0,
-    canResize: false,
-    canWrite: false,
-    canTerminate: false,
-  });
+  const tab = focusCommandTerminal(
+    panel.state,
+    commandFocusDescriptor(command, activeCommand),
+  );
   panel.error = null;
   sendTerminalPanelState(panel);
   return { state: terminalPanelState(panel), tabId: tab.id };
@@ -1315,14 +1297,6 @@ async function refreshTerminalPanelSessions(panel, threadId = panel.threadId) {
   });
   panel.refreshPromise = refreshPromise;
   return refreshPromise;
-}
-
-function isRunningCommandStatus(status) {
-  const normalized = String(status || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[_-]/g, "");
-  return normalized === "running" || normalized === "inprogress";
 }
 
 function requireTerminalTab(panel, tabId) {

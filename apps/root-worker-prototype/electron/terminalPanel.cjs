@@ -128,7 +128,11 @@ function focusCommandTerminal(state, descriptor) {
     (tab) =>
       tab.origin === "model" &&
       tab.threadId === descriptor.threadId &&
-      tab.commandItemId === descriptor.commandItemId,
+      ((tab.commandItemId === descriptor.commandItemId &&
+        (tab.readOnlyOutput === true || isLivePtyTerminalTab(tab))) ||
+        (tab.commandItemId == null &&
+          isLivePtyTerminalTab(tab) &&
+          tab.processId === descriptor.processId)),
   );
   if (existing) {
     state.activeTabId = existing.id;
@@ -149,6 +153,49 @@ function focusCommandTerminal(state, descriptor) {
   state.tabs.push(tab);
   state.activeTabId = tab.id;
   return tab;
+}
+
+function isLivePtyTerminalTab(tab) {
+  return (
+    tab.readOnlyOutput !== true &&
+    (tab.status === "running" || tab.status === "starting")
+  );
+}
+
+function activeCommandForTerminalFocus(thread, command) {
+  if (!thread || !Array.isArray(thread.activeCommandItems)) {
+    return null;
+  }
+  return (
+    thread.activeCommandItems.find(
+      (item) =>
+        item &&
+        item.type === "commandExecution" &&
+        item.id === command.commandItemId &&
+        isRunningCommandStatus(item.status),
+    ) ?? null
+  );
+}
+
+function commandFocusDescriptor(command, activeCommand) {
+  return {
+    sessionId: `command:${command.threadId}:${command.commandItemId}`,
+    generation: command.commandItemId,
+    origin: "model",
+    threadId: command.threadId,
+    commandItemId: command.commandItemId,
+    processId: activeCommand.processId || command.processId || activeCommand.id,
+    title: activeCommand.command,
+    cwd: activeCommand.cwd,
+    replayBase64: activeCommand.aggregatedOutput
+      ? Buffer.from(activeCommand.aggregatedOutput).toString("base64")
+      : null,
+    replayTruncated: false,
+    replayThroughSequence: 0,
+    canResize: false,
+    canWrite: false,
+    canTerminate: false,
+  };
 }
 
 function selectTerminalTab(state, tabId) {
@@ -229,6 +276,14 @@ function isTerminalSessionDetached(state, value) {
   return state.detachedSessionKeys.has(terminalSessionKey(value));
 }
 
+function isRunningCommandStatus(status) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]/g, "");
+  return normalized === "running" || normalized === "inprogress";
+}
+
 function normalizeDescriptor(descriptor) {
   return {
     sessionId: descriptor.sessionId,
@@ -256,7 +311,9 @@ function normalizeSequence(value) {
 
 module.exports = {
   MAX_TERMINAL_REPLAY_BYTES,
+  activeCommandForTerminalFocus,
   addUserTerminal,
+  commandFocusDescriptor,
   focusCommandTerminal,
   appendTerminalOutput,
   closeTerminalTab,
@@ -266,6 +323,7 @@ module.exports = {
   mergeTerminalSessions,
   reattachTerminalSessions,
   isTerminalSessionDetached,
+  isRunningCommandStatus,
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
