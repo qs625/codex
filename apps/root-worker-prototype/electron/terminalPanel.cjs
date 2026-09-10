@@ -47,12 +47,18 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
   for (const descriptor of sessions) {
     const key = terminalSessionKey(descriptor);
     activeKeys.add(key);
-    if (state.detachedSessionKeys.has(key)) {
+    if (isTerminalSessionDetached(state, descriptor)) {
       continue;
     }
     const existing = state.tabs.find(
       (tab) =>
         terminalSessionKey(tab) === key ||
+        (tab.origin === "model" &&
+          descriptor.origin === "model" &&
+          tab.threadId === descriptor.threadId &&
+          tab.commandItemId != null &&
+          tab.commandItemId === descriptor.commandItemId &&
+          tab.readOnlyOutput === true) ||
         (tab.origin === "user" &&
           tab.status === "starting" &&
           tab.processId === descriptor.processId),
@@ -228,13 +234,16 @@ function commandFocusDescriptorForTerminalFocus(
   liveSession,
   options = {},
 ) {
+  if (options.liveSessionRefreshed === true && liveSession) {
+    return commandFocusDescriptorFromLiveSession(command, liveSession);
+  }
   if (activeCommand) {
     return commandFocusDescriptor(command, activeCommand);
   }
-  if (options.liveSessionRefreshed !== true || !liveSession) {
+  if (options.liveSessionRefreshed !== true) {
     return commandFocusDescriptorFromRequest(command);
   }
-  return commandFocusDescriptorFromLiveSession(command, liveSession);
+  return commandFocusDescriptorFromRequest(command);
 }
 
 function commandFocusDescriptorFromRequest(command) {
@@ -302,7 +311,7 @@ function closeTerminalTab(state, tabId) {
     return false;
   }
   const wasActive = state.activeTabId === tabId;
-  state.detachedSessionKeys.add(terminalSessionKey(state.tabs[index]));
+  recordDetachedTerminalSession(state, state.tabs[index]);
   state.tabs.splice(index, 1);
   if (wasActive) {
     state.activeTabId =
@@ -360,8 +369,31 @@ function terminalSessionKey(value) {
   ].join(":");
 }
 
+function terminalCommandItemKey(value) {
+  if (
+    value.origin !== "model" ||
+    !value.threadId ||
+    !value.commandItemId
+  ) {
+    return null;
+  }
+  return ["model-command", value.threadId, value.commandItemId].join(":");
+}
+
+function recordDetachedTerminalSession(state, value) {
+  state.detachedSessionKeys.add(terminalSessionKey(value));
+  const commandItemKey = terminalCommandItemKey(value);
+  if (commandItemKey) {
+    state.detachedSessionKeys.add(commandItemKey);
+  }
+}
+
 function isTerminalSessionDetached(state, value) {
-  return state.detachedSessionKeys.has(terminalSessionKey(value));
+  if (state.detachedSessionKeys.has(terminalSessionKey(value))) {
+    return true;
+  }
+  const commandItemKey = terminalCommandItemKey(value);
+  return commandItemKey ? state.detachedSessionKeys.has(commandItemKey) : false;
 }
 
 function isRunningCommandStatus(status) {
@@ -420,5 +452,6 @@ module.exports = {
   terminalPanelSnapshot,
   terminalTabMetadata,
   terminalTabSupports,
+  terminalCommandItemKey,
   terminalSessionKey,
 };
