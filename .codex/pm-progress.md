@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `5e86f021a` / `sha256:f8c76d80c5dec8eb55b02ae1a67f430bdce6a2878a21165a85c1a8cb831a1765`; `/Applications/Root Worker Prototype.app` has also been replaced with a seed capsule from `5e86f021a`. The exact `/self` restart request `call_ieo7A4aMh6dIMZ22Iv0EWTfb` was durably accepted and caused the expected client interruption/recovery; active payload PID `94645` is running from the new external artifact path.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `889b416d` / `sha256:47441f97e5eb0167715bc3f3ae39962932f0f63513f8665cc5204a0ca13eb7af`; `/Applications/Root Worker Prototype.app` has also been replaced with a seed capsule from `889b416d`. The exact `/self` restart request `call_rhfVTwIj9jzmfVPHrjumdX27` was durably accepted and caused the expected client interruption/recovery; active payload PID `99822` is running from the new external artifact path.
 
 ## Active Work
 - id: thread-analysis-command-monitor-restoration
@@ -54,11 +54,11 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
   pending_sync_from_main: none
   status: merged
   objective: Keep commandExecution items visible in the Conversation and RightPanel live summaries while removing concrete command stdout/stderr output from those surfaces; focus live commands via Terminal session proof when activeCommandItems reads are stale.
-  last_update: 2026-09-11 CST fixed dev-2 owner delivered `879c147c`, reviewer passed after requiring terminal/session/list refresh success before using live session fallback, and PM merged it to canonical main. Conversation command item shell/summary remains visible, command output payload is no longer rendered there, and focusCommand can use a freshly listed live Terminal session when activeCommandItems is stale.
-  next_action: no further source or delivery action unless user reports a new UI regression; manually verify Conversation now shows command item summary/status without stdout/stderr payload.
+  last_update: 2026-09-11 CST user reported the real `codex:terminal:focusCommand` stale error still reproduced after the earlier `879c147c` fix. Fixed dev-2 owner delivered `ac3db765` and PM merged as `889b416d`: Conversation now projects running/inProgress `activeCommandItems` as transient visible command rows without output; RightPanel/TerminalPanel include renderer live command summary in focus requests; Electron focus can use that running summary as a narrow no-output read-only fallback when `readThread.activeCommandItems` and freshly refreshed terminal sessions are stale/missing. Completed request summaries still cannot prove live focus.
+  next_action: manually verify installed UI: clicking a live command no longer throws `Live command is no longer available`; Conversation shows live command item summary/status without stdout/stderr payload.
   blockers: none
-  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` 20/20, focused frontend tests 366/366, Vite build, and `git diff --check` passed. PM reran Electron terminal panel tests 20/20, focused frontend tests 366/366, and `git diff --check`; all passed. Installed runtime delivery completed on 2026-09-11 CST: `/Applications` seed and active external artifact both report `sha256:f8c76d80c5dec8eb55b02ae1a67f430bdce6a2878a21165a85c1a8cb831a1765` with source commit `5e86f021a`; active payload PID `94645` runs from the new artifact path and failure evidence is absent.
-  commit: 879c147c
+  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` 23/23, focused frontend tests 165/165, Vite build, and `git diff --check` passed; fixed reviewer passed after two rounds. PM reran Electron terminal panel tests 23/23, focused frontend tests 165/165, and `git diff --check`; all passed. Installed runtime delivery completed on 2026-09-11 CST: `/Applications` seed and active external artifact both report `sha256:47441f97e5eb0167715bc3f3ae39962932f0f63513f8665cc5204a0ca13eb7af` with source commit `889b416d`; active payload PID `99822` runs from the new artifact path and failure evidence is absent.
+  commit: 879c147c, ac3db765, 889b416d
 - id: runtime-launcher-capsule-switch-same-release
   owner: /self/owner_dev_3
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
