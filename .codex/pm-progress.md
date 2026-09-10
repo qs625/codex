@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `5942c54e3` / `sha256:f84b08c2f03691cc8cc48d855d25527fefc46ffb68963d5ecde01ec0c10c0c19`; the `/Applications` app bundle has also been replaced with a seed capsule from `5942c54e3`, but the currently supervising Launcher process remains the pre-existing PID `79797` until the outer app/launcher is fully quit and relaunched.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `5e86f021a` / `sha256:f8c76d80c5dec8eb55b02ae1a67f430bdce6a2878a21165a85c1a8cb831a1765`; `/Applications/Root Worker Prototype.app` has also been replaced with a seed capsule from `5e86f021a`. The exact `/self` restart request `call_ieo7A4aMh6dIMZ22Iv0EWTfb` was durably accepted and caused the expected client interruption/recovery; active payload PID `94645` is running from the new external artifact path.
 
 ## Active Work
 - id: thread-analysis-command-monitor-restoration
@@ -55,9 +55,9 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
   status: merged
   objective: Keep commandExecution items visible in the Conversation and RightPanel live summaries while removing concrete command stdout/stderr output from those surfaces; focus live commands via Terminal session proof when activeCommandItems reads are stale.
   last_update: 2026-09-11 CST fixed dev-2 owner delivered `879c147c`, reviewer passed after requiring terminal/session/list refresh success before using live session fallback, and PM merged it to canonical main. Conversation command item shell/summary remains visible, command output payload is no longer rendered there, and focusCommand can use a freshly listed live Terminal session when activeCommandItems is stale.
-  next_action: deliver in installed runtime if user wants immediate UI verification; otherwise include in next batch. Do not auto-invoke `request_runtime_restart`.
-  blockers: installed runtime currently predates this commit.
-  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` 20/20, focused frontend tests 366/366, Vite build, and `git diff --check` passed. PM reran Electron terminal panel tests 20/20, focused frontend tests 366/366, and `git diff --check`; all passed.
+  next_action: no further source or delivery action unless user reports a new UI regression; manually verify Conversation now shows command item summary/status without stdout/stderr payload.
+  blockers: none
+  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` 20/20, focused frontend tests 366/366, Vite build, and `git diff --check` passed. PM reran Electron terminal panel tests 20/20, focused frontend tests 366/366, and `git diff --check`; all passed. Installed runtime delivery completed on 2026-09-11 CST: `/Applications` seed and active external artifact both report `sha256:f8c76d80c5dec8eb55b02ae1a67f430bdce6a2878a21165a85c1a8cb831a1765` with source commit `5e86f021a`; active payload PID `94645` runs from the new artifact path and failure evidence is absent.
   commit: 879c147c
 - id: runtime-launcher-capsule-switch-same-release
   owner: /self/owner_dev_3
