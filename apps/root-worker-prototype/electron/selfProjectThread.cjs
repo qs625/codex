@@ -3,16 +3,26 @@ const { buildSelfCommandThreadStartParams } = require("./threadConfig.cjs");
 const SELF_PROJECT_THREAD_NAME = "/self";
 
 function isSelfProjectThread(thread, project) {
+  const systemThreadId = normalizeThreadId(project?.systemThreadId);
   return (
-    normalizeProjectPath(thread?.agentPath) === SELF_PROJECT_THREAD_NAME ||
-    normalizeProjectPath(thread?.path) === SELF_PROJECT_THREAD_NAME ||
-    thread?.name === SELF_PROJECT_THREAD_NAME
+    isManagedSystemSelfProject(project) &&
+    systemThreadId !== null &&
+    thread?.id === systemThreadId &&
+    thread?.name === SELF_PROJECT_THREAD_NAME &&
+    normalizeProjectPath(thread?.cwd) === normalizeProjectPath(project.workspace) &&
+    !thread?.parentThreadId &&
+    !thread?.parent_thread_id &&
+    !thread?.forkedFromId &&
+    !thread?.forked_from_id &&
+    thread?.threadSource !== "subagent" &&
+    !isSubAgentSource(thread?.source)
   );
 }
 
 async function ensureSelfProjectThread(
   appServerClient,
   normalizeThread,
+  persistSystemThreadId,
   project,
   threads,
 ) {
@@ -38,6 +48,10 @@ async function ensureSelfProjectThread(
     { ...start.thread, name: SELF_PROJECT_THREAD_NAME },
     runtime,
   );
+  project.systemThreadId = thread.id;
+  if (typeof persistSystemThreadId === "function") {
+    await persistSystemThreadId(thread.id);
+  }
   return {
     created: true,
     runtime,
@@ -52,6 +66,7 @@ async function sendSelfCommandToThread({
   loadThreadForTurn,
   normalizeThread,
   project,
+  persistSystemThreadId,
   rememberThreadRuntime,
   startThreadTurn,
   text,
@@ -65,6 +80,7 @@ async function sendSelfCommandToThread({
   const result = await ensureSelfProjectThread(
     appServerClient,
     normalizeThread,
+    persistSystemThreadId,
     project,
     threads,
   );
@@ -111,6 +127,27 @@ function normalizePath(value) {
 
 function normalizeProjectPath(value) {
   return normalizePath(value);
+}
+
+function normalizeThreadId(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isManagedSystemSelfProject(project) {
+  return (
+    project?.id === SELF_PROJECT_THREAD_NAME &&
+    project?.path === SELF_PROJECT_THREAD_NAME &&
+    project?.system === true &&
+    project?.managedBy === "morpheus"
+  );
+}
+
+function isSubAgentSource(source) {
+  return (
+    source &&
+    typeof source === "object" &&
+    Object.prototype.hasOwnProperty.call(source, "subAgent")
+  );
 }
 
 module.exports = {

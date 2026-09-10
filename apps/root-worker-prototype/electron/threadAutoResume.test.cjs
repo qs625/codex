@@ -2,17 +2,20 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
-  AUTO_RESUME_PROMPT,
   autoResumeFingerprint,
   createThreadAutoResumeCoordinator,
   isAutoResumeEligibleThread,
   pickAutoResumeCandidates,
   threadHasAutoResumePrompt,
 } = require("./threadAutoResume.cjs");
+const {
+  RESTART_RECOVERY_PROMPTS,
+} = require("./restartRecoveryPrompts.cjs");
 
-function interruptedThread(overrides = {}) {
+function projectRootThread(overrides = {}) {
   return {
     id: "thread-1",
+    cwd: "/workspace/project",
     updatedAt: 10,
     source: "appServer",
     threadSource: "user",
@@ -25,20 +28,20 @@ function interruptedThread(overrides = {}) {
   };
 }
 
-test("auto-resume selects interrupted root app-server threads only", () => {
-  assert.equal(isAutoResumeEligibleThread(interruptedThread()), true);
+test("auto-resume selects every non-completed project root and excludes children", () => {
+  assert.equal(isAutoResumeEligibleThread(projectRootThread()), true);
   assert.equal(
     isAutoResumeEligibleThread(
-      interruptedThread({
+      projectRootThread({
         id: "running",
         lifecycleStatus: { type: "active", activeFlags: ["running"] },
       }),
     ),
-    false,
+    true,
   );
   assert.equal(
     isAutoResumeEligibleThread(
-      interruptedThread({
+      projectRootThread({
         id: "completed",
         lifecycleStatus: { type: "final", result: { type: "completed" } },
       }),
@@ -47,7 +50,7 @@ test("auto-resume selects interrupted root app-server threads only", () => {
   );
   assert.equal(
     isAutoResumeEligibleThread(
-      interruptedThread({
+      projectRootThread({
         id: "subagent",
         threadSource: "subagent",
         agentPath: "/root/worker",
@@ -57,31 +60,58 @@ test("auto-resume selects interrupted root app-server threads only", () => {
   );
   assert.equal(
     isAutoResumeEligibleThread(
-      interruptedThread({
+      projectRootThread({
         id: "external-readonly",
         modelProvider: "opencode",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "chat",
+        cwd: "/workspace/.my-codex-root-worker-chat-cwd",
       }),
     ),
     false,
   );
   assert.equal(
     isAutoResumeEligibleThread(
-      interruptedThread({
-        id: "external-restorable",
-        modelProvider: "opencode",
-        restoreThread: true,
+      projectRootThread({
+        id: "child-with-parent",
+        parentThreadId: "parent-1",
       }),
     ),
-    true,
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(projectRootThread({ id: "ephemeral", ephemeral: true })),
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({ id: "source-subagent", source: { subAgent: true } }),
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({ id: "snake-case-child", parent_thread_id: "parent-2" }),
+    ),
+    false,
   );
 });
 
 test("auto-resume candidates are newest first", () => {
   assert.deepEqual(
     pickAutoResumeCandidates([
-      interruptedThread({ id: "old", updatedAt: 1 }),
-      interruptedThread({ id: "skip", lifecycleStatus: { type: "notLoaded" } }),
-      interruptedThread({ id: "new", updatedAt: 3 }),
+      projectRootThread({ id: "old", updatedAt: 1 }),
+      projectRootThread({
+        id: "skip",
+        lifecycleStatus: { type: "final", result: { type: "completed" } },
+      }),
+      projectRootThread({ id: "new", updatedAt: 3 }),
     ]).map((thread) => thread.id),
     ["new", "old"],
   );
@@ -97,28 +127,28 @@ test("auto-resume coordinator resumes once and submits recovery input", async ()
     },
     readThread: async (threadId) => {
       calls.push(["read", threadId]);
-      return { thread: interruptedThread({ id: threadId }) };
+      return { thread: projectRootThread({ id: threadId }) };
     },
     subscribeThread: async (threadId) => {
       calls.push(["subscribe", threadId]);
-      return { thread: interruptedThread({ id: threadId }) };
+      return { thread: projectRootThread({ id: threadId }) };
     },
-    sendResumeInput: async (thread) => {
+    sendResumeInput: async (thread, text) => {
       calls.push([
         "send",
         thread.id,
         thread.model,
         thread.modelProvider,
         thread.reasoningEffort,
-        AUTO_RESUME_PROMPT,
+        text,
       ]);
       return { turn: { id: "turn-1" } };
     },
     logger: { warn: () => {} },
   });
 
-  const first = await coordinator.run([interruptedThread({ id: "thread-a" })]);
-  const second = await coordinator.run([interruptedThread({ id: "thread-a" })]);
+  const first = await coordinator.run([projectRootThread({ id: "thread-a" })]);
+  const second = await coordinator.run([projectRootThread({ id: "thread-a" })]);
 
   assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
   assert.equal(first.focusThreadId, "thread-a");
@@ -127,23 +157,82 @@ test("auto-resume coordinator resumes once and submits recovery input", async ()
   assert.deepEqual(calls, [
     ["read", "thread-a"],
     ["subscribe", "thread-a"],
-    ["send", "thread-a", "gpt", "openai", "medium", AUTO_RESUME_PROMPT],
+    [
+      "send",
+      "thread-a",
+      "gpt",
+      "openai",
+      "medium",
+      RESTART_RECOVERY_PROMPTS.projectRootFanout,
+    ],
   ]);
   assert.equal(
-    marked.has(autoResumeFingerprint(interruptedThread({ id: "thread-a" }))),
+    marked.has(autoResumeFingerprint(projectRootThread({ id: "thread-a" }))),
     true,
   );
 });
 
+test("auto-resume fans out exactly once to every eligible project root", async () => {
+  const sent = [];
+  const marked = new Set();
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async (key) => marked.has(key),
+      mark: async (key) => marked.add(key),
+    },
+    readThread: async (threadId) => ({
+      thread: projectRootThread({
+        id: threadId,
+        lifecycleStatus:
+          threadId === "waiting"
+            ? { type: "waiting", reason: "command" }
+            : { type: "active", activeFlags: ["running"] },
+      }),
+    }),
+    subscribeThread: async () => {},
+    sendResumeInput: async (thread) => sent.push(thread.id),
+    logger: { warn: () => {} },
+  });
+  const threads = [
+    projectRootThread({ id: "running", updatedAt: 3 }),
+    projectRootThread({
+      id: "waiting",
+      updatedAt: 2,
+      lifecycleStatus: { type: "waiting", reason: "command" },
+    }),
+    projectRootThread({
+      id: "completed",
+      lifecycleStatus: { type: "final", result: { type: "completed" } },
+    }),
+    projectRootThread({
+      id: "child",
+      parentThreadId: "running",
+    }),
+  ];
+
+  assert.deepEqual(
+    (await coordinator.run(threads)).resumedThreadIds,
+    ["running", "waiting"],
+  );
+  assert.deepEqual(sent, ["running", "waiting"]);
+  assert.deepEqual((await coordinator.run(threads)).resumedThreadIds, []);
+  assert.deepEqual(sent, ["running", "waiting"]);
+});
+
 test("auto-resume skips interrupted threads that already contain recovery input", async () => {
-  const restored = interruptedThread({
+  const restored = projectRootThread({
     turns: [
       {
         id: "turn-1",
         items: [
           {
             type: "userMessage",
-            content: [{ type: "text", text: AUTO_RESUME_PROMPT }],
+            content: [
+              {
+                type: "text",
+                text: RESTART_RECOVERY_PROMPTS.projectRootFanout,
+              },
+            ],
           },
         ],
       },
@@ -166,11 +255,11 @@ test("auto-resume skips interrupted threads that already contain recovery input"
   });
 
   assert.equal(threadHasAutoResumePrompt(restored), true);
-  const result = await coordinator.run([interruptedThread()]);
+  const result = await coordinator.run([projectRootThread()]);
 
   assert.deepEqual(result.resumedThreadIds, []);
   assert.deepEqual(result.skippedThreadIds, ["thread-1"]);
-  assert.equal(marked.has(autoResumeFingerprint(interruptedThread())), true);
+  assert.equal(marked.has(autoResumeFingerprint(projectRootThread())), true);
 });
 
 test("auto-resume coordinator handles failures without throwing", async () => {
@@ -182,7 +271,7 @@ test("auto-resume coordinator handles failures without throwing", async () => {
         throw new Error("must not mark failed attempts");
       },
     },
-    readThread: async () => ({ thread: interruptedThread() }),
+    readThread: async () => ({ thread: projectRootThread() }),
     subscribeThread: async () => {
       throw new Error("resume failed");
     },
@@ -192,7 +281,7 @@ test("auto-resume coordinator handles failures without throwing", async () => {
     logger: { warn: (...args) => warnings.push(args) },
   });
 
-  const result = await coordinator.run([interruptedThread()]);
+  const result = await coordinator.run([projectRootThread()]);
 
   assert.deepEqual(result.resumedThreadIds, []);
   assert.deepEqual(result.failedThreadIds, ["thread-1"]);

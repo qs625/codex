@@ -68,10 +68,33 @@ function removeSelfProjectIfManagedSync(env = process.env, options = {}) {
   return true;
 }
 
+function recordSystemSelfThreadIdSync(env = process.env, threadId, options = {}) {
+  const normalizedThreadId =
+    typeof threadId === "string" && threadId.trim() ? threadId.trim() : null;
+  if (!normalizedThreadId) {
+    throw new Error("system self thread id is required");
+  }
+  const projectPath = selfProjectPath(env);
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
+  const writeFileSync = options.writeFileSync ?? fs.writeFileSync;
+  const project = readExistingSelfProject(projectPath, { readFileSync });
+  if (
+    project.id !== SELF_PROJECT_ID ||
+    project.path !== SELF_PROJECT_ID ||
+    project.managedBy !== "morpheus"
+  ) {
+    throw new Error("managed system self project is unavailable");
+  }
+  const updated = { ...project, systemThreadId: normalizedThreadId };
+  writeFileSync(projectPath, `${JSON.stringify(updated, null, 2)}\n`);
+  return updated;
+}
+
 module.exports = {
   SELF_PROJECT_FILE_NAME,
   SELF_PROJECT_ID,
   ensureSelfProjectSync,
+  recordSystemSelfThreadIdSync,
   removeSelfProjectIfManagedSync,
   selfProjectPath,
 };

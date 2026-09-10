@@ -13,6 +13,8 @@ const selfProject = {
   workspace: "/Users/example/.morpheus/source_workspace",
   hidden: true,
   system: true,
+  managedBy: "morpheus",
+  systemThreadId: "self-root",
 };
 
 test("isSelfProjectThread matches self roots without agentPath", () => {
@@ -65,6 +67,7 @@ test("ensureSelfProjectThread reuses an existing self root", async () => {
       },
     },
     (thread) => thread,
+    null,
     selfProject,
     [selfRoot],
   );
@@ -75,7 +78,7 @@ test("ensureSelfProjectThread reuses an existing self root", async () => {
   assert.deepEqual(requests, []);
 });
 
-test("ensureSelfProjectThread reuses a /self root returned by the backend", async () => {
+test("ensureSelfProjectThread does not reuse a same-name root from another workspace", async () => {
   const requests = [];
   const otherWorkspaceSelfRoot = {
     id: "other-self-root",
@@ -88,18 +91,32 @@ test("ensureSelfProjectThread reuses a /self root returned by the backend", asyn
     {
       async request(method, params) {
         requests.push({ method, params });
-        throw new Error("unexpected app-server request");
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "created-self-root",
+              cwd: selfProject.workspace,
+              path: null,
+              agentPath: null,
+            },
+          };
+        }
+        assert.equal(method, "thread/name/set");
+        return {};
       },
     },
     (thread) => thread,
-    selfProject,
+    null,
+    { ...selfProject, systemThreadId: null },
     [otherWorkspaceSelfRoot],
   );
 
-  assert.equal(result.created, false);
-  assert.equal(result.thread, otherWorkspaceSelfRoot);
-  assert.deepEqual(result.threads, [otherWorkspaceSelfRoot]);
-  assert.deepEqual(requests, []);
+  assert.equal(result.created, true);
+  assert.equal(result.thread.id, "created-self-root");
+  assert.deepEqual(
+    result.threads.map((thread) => thread.id),
+    ["created-self-root", "other-self-root"],
+  );
 });
 
 test("ensureSelfProjectThread creates and names a real self root when missing", async () => {
@@ -137,7 +154,8 @@ test("ensureSelfProjectThread creates and names a real self root when missing", 
   const result = await ensureSelfProjectThread(
     appServerClient,
     (thread, runtime) => ({ ...thread, runtime }),
-    selfProject,
+    null,
+    { ...selfProject, systemThreadId: null },
     [workspaceRoot],
   );
 
@@ -157,6 +175,34 @@ test("ensureSelfProjectThread creates and names a real self root when missing", 
   assert.equal(requests[0].params.cwd, selfProject.workspace);
   assert.equal(requests[0].params.taskName, "self");
   assert.equal(requests[1].method, "thread/name/set");
+});
+
+test("isSelfProjectThread rejects forked and child threads using the system id", () => {
+  const baseThread = {
+    id: "self-root",
+    name: "/self",
+    cwd: selfProject.workspace,
+  };
+
+  assert.equal(isSelfProjectThread(baseThread, selfProject), true);
+  assert.equal(
+    isSelfProjectThread({ ...baseThread, forkedFromId: "origin" }, selfProject),
+    false,
+  );
+  assert.equal(
+    isSelfProjectThread({ ...baseThread, parentThreadId: "parent" }, selfProject),
+    false,
+  );
+  assert.equal(
+    isSelfProjectThread(
+      {
+        ...baseThread,
+        source: { subAgent: { parentThreadId: "parent" } },
+      },
+      selfProject,
+    ),
+    false,
+  );
 });
 
 test("sendSelfCommandToThread reuses an existing self root and starts a turn", async () => {
@@ -265,7 +311,7 @@ test("sendSelfCommandToThread materializes without putting user text in thread s
       throw new Error("newly materialized self root should already be live");
     },
     normalizeThread: (thread, runtime) => ({ ...thread, runtime }),
-    project: selfProject,
+    project: { ...selfProject, systemThreadId: null },
     rememberThreadRuntime(threadId, runtime) {
       rememberedRuntime.push({ threadId, runtime });
     },

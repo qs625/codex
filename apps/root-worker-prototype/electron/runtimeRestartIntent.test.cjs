@@ -7,10 +7,12 @@ const path = require("node:path");
 const {
   createRuntimeRestartController,
   createRuntimeRestartIntentStore,
-  expectedRuntimeRestartPrompt,
   MAX_REQUEST_ID_BYTES,
   recoverRuntimeRestartAfterThreadTerminal,
 } = require("./runtimeRestartIntent.cjs");
+const {
+  expectedRuntimeRestartRecoveryPrompt,
+} = require("./restartRecoveryPrompts.cjs");
 
 async function withStore(run, initialState = null) {
   const directory = await fs.mkdtemp(
@@ -40,12 +42,6 @@ function notification(requestId, threadId = "thread-1") {
       reason: "runtime update",
     },
   };
-}
-
-function legacyNotification(requestId, mode, threadId = "thread-1") {
-  const value = notification(requestId, threadId);
-  value.params.mode = mode;
-  return value;
 }
 
 test("controller persists received intent before executing restart", async () => {
@@ -149,108 +145,17 @@ test("concurrent restart requests coalesce into one Runtime Capsule restart", as
   });
 });
 
-test("legacy hot requests are rejected as unsupported before execution", async () => {
+test("restart requests with obsolete mode are rejected before persistence", async () => {
   await withStore(async (store) => {
-    let executions = 0;
-    const recovered = [];
-    let releaseRecovery;
-    const recoveryBlocked = new Promise((resolve) => {
-      releaseRecovery = resolve;
-    });
-    let markRecoveryStarted;
-    const recoveryStarted = new Promise((resolve) => {
-      markRecoveryStarted = resolve;
-    });
-    const controller = createRuntimeRestartController({
-      store,
-      execute: async () => {
-        executions += 1;
-        return { ok: true };
-      },
-      recover: async (record) => {
-        recovered.push(record);
-        markRecoveryStarted();
-        await recoveryBlocked;
-      },
-      logger: { error: () => {}, warn: () => {} },
-    });
+    for (const mode of [undefined, null, "full", "hot"]) {
+      const obsolete = notification(`obsolete-mode-${String(mode)}`);
+      obsolete.params.mode = mode;
 
-    const result = await controller.handle(
-      legacyNotification("legacy-hot", "hot"),
-    );
+      const result = await store.accept(obsolete);
 
-    assert.equal(result.ok, false);
-    assert.equal(result.unsupported, true);
-    assert.equal(result.persisted, true);
-    assert.match(result.reason, /hot runtime refresh requests are unsupported/);
-    assert.equal(executions, 0);
-    assert.equal(recovered.length, 0);
-    assert.equal((await store.recoverable())[0].phase, "failed");
-
-    const activeResult = await recoverRuntimeRestartAfterThreadTerminal(
-      controller,
-      {
-        method: "thread/status/changed",
-        params: {
-          threadId: "thread-1",
-          lifecycleStatus: { type: "active", activeFlags: [] },
-        },
-      },
-    );
-    assert.deepEqual(activeResult.recoveredThreadIds, []);
-    assert.equal(recovered.length, 0);
-
-    const terminalNotification = {
-      method: "thread/status/changed",
-      params: {
-        threadId: "thread-1",
-        lifecycleStatus: {
-          type: "final",
-          result: { type: "completed" },
-        },
-      },
-    };
-    const terminalRecovery = recoverRuntimeRestartAfterThreadTerminal(
-      controller,
-      terminalNotification,
-    );
-    await recoveryStarted;
-    const duplicateTerminalRecovery =
-      await recoverRuntimeRestartAfterThreadTerminal(
-        controller,
-        terminalNotification,
-      );
-    assert.deepEqual(duplicateTerminalRecovery.recoveredThreadIds, []);
-    assert.equal(recovered.length, 1);
-    releaseRecovery();
-
-    assert.deepEqual((await terminalRecovery).recoveredThreadIds, ["thread-1"]);
-    assert.equal(recovered.length, 1);
-    assert.equal(recovered[0].requestId, "legacy-hot");
-    assert.equal(recovered[0].phase, "failed");
-    assert.deepEqual(await store.recoverable(), []);
-  });
-});
-
-test("malformed legacy hot requests are rejected before persistence", async () => {
-  await withStore(async (store) => {
-    const emptyRequestId = legacyNotification("", "hot");
-    const missingThread = legacyNotification("legacy-hot", "hot", "");
-    const oversized = legacyNotification(
-      "é".repeat(MAX_REQUEST_ID_BYTES),
-      "hot",
-    );
-
-    const emptyRequestIdResult = await store.accept(emptyRequestId);
-    const missingThreadResult = await store.accept(missingThread);
-    const oversizedResult = await store.accept(oversized);
-
-    assert.equal(emptyRequestIdResult.kind, "invalid");
-    assert.match(emptyRequestIdResult.reason, /requestId/);
-    assert.equal(missingThreadResult.kind, "invalid");
-    assert.match(missingThreadResult.reason, /requestedByThreadId/);
-    assert.equal(oversizedResult.kind, "invalid");
-    assert.match(oversizedResult.reason, /UTF-8 bytes/);
+      assert.equal(result.kind, "invalid");
+      assert.match(result.reason, /do not support mode/);
+    }
     assert.deepEqual(await store.recoverable(), []);
   });
 });
@@ -322,57 +227,18 @@ test("completed restart is recoverable only from a new Host instance", async () 
   });
 });
 
-test("legacy full requests are accepted and normalized to the single restart shape", async () => {
-  await withStore(async (store) => {
-    const accepted = await store.accept(
-      legacyNotification("legacy-full", "full"),
-    );
-
-    assert.equal(accepted.kind, "execute");
-    assert.equal(Object.hasOwn(accepted.record, "mode"), false);
-  });
-});
-
-test("persisted legacy full intent is normalized during recovery", async () => {
+test("persisted obsolete mode intents are ignored", async () => {
   await withStore(
     async (store) => {
-      const [record] = await store.recoverable();
-
-      assert.equal(record.requestId, "legacy-full");
-      assert.equal(record.phase, "completed");
-      assert.equal(Object.hasOwn(record, "mode"), false);
+      assert.deepEqual(await store.recoverable(), []);
     },
     {
       version: 1,
       records: [
         {
-          requestId: "legacy-full",
+          requestId: "obsolete-mode",
           requestedByThreadId: "thread-1",
           mode: "full",
-          phase: "completed",
-        },
-      ],
-    },
-  );
-});
-
-test("persisted legacy hot intent becomes a recoverable unsupported failure", async () => {
-  await withStore(
-    async (store) => {
-      const [record] = await store.recoverable();
-
-      assert.equal(record.requestId, "legacy-hot");
-      assert.equal(record.phase, "failed");
-      assert.equal(Object.hasOwn(record, "mode"), false);
-      assert.match(record.error, /hot runtime refresh intent is unsupported/);
-    },
-    {
-      version: 1,
-      records: [
-        {
-          requestId: "legacy-hot",
-          requestedByThreadId: "thread-1",
-          mode: "hot",
           phase: "completed",
         },
       ],
@@ -458,14 +324,10 @@ test("failed execution is durable and recovery prompt forbids automatic restart"
     assert.equal(record.phase, "failed");
     assert.equal(record.error, "build failed");
     assert.equal(recovered.length, 1);
-    assert.match(expectedRuntimeRestartPrompt(record), /expected restart/);
-    assert.match(expectedRuntimeRestartPrompt(record), /Runtime Capsule restart/);
-    assert.doesNotMatch(expectedRuntimeRestartPrompt(record), /\(hot\)|\(full\)/);
-    assert.match(
-      expectedRuntimeRestartPrompt(record),
-      /Do not call request_runtime_restart again automatically/,
-    );
-
+    const prompt = expectedRuntimeRestartRecoveryPrompt(record);
+    assert.match(prompt, /预期的 Runtime Capsule 重启请求/);
+    assert.match(prompt, /不要自动再次调用/);
+    assert.doesNotMatch(prompt, /\(hot\)|\(full\)/);
     assert.equal(recovered[0].requestId, "restart-1");
     assert.deepEqual(await store.recoverable(), []);
   });

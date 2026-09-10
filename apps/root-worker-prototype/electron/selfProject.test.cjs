@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   SELF_PROJECT_ID,
   ensureSelfProjectSync,
+  recordSystemSelfThreadIdSync,
   removeSelfProjectIfManagedSync,
   selfProjectPath,
 } = require("./selfProject.cjs");
@@ -65,6 +66,37 @@ test("ensureSelfProjectSync updates workspace while preserving non-target fields
   assert.equal(project.label, "Morpheus");
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("recordSystemSelfThreadIdSync persists only the managed system self identity", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "self-project-thread-id-"));
+  try {
+    const env = { MORPHEUS_HOME: root };
+    ensureSelfProjectSync(env, "/workspace/source");
+
+    const updated = recordSystemSelfThreadIdSync(env, "system-self-thread");
+    assert.equal(updated.systemThreadId, "system-self-thread");
+    assert.equal(
+      JSON.parse(fs.readFileSync(selfProjectPath(env), "utf8")).systemThreadId,
+      "system-self-thread",
+    );
+
+    fs.writeFileSync(
+      selfProjectPath(env),
+      JSON.stringify({
+        id: "/self",
+        path: "/self",
+        workspace: "/workspace/source",
+        managedBy: "user",
+      }),
+    );
+    assert.throws(
+      () => recordSystemSelfThreadIdSync(env, "untrusted-thread"),
+      /managed system self project is unavailable/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("removeSelfProjectIfManagedSync removes only Morpheus-managed records", () => {

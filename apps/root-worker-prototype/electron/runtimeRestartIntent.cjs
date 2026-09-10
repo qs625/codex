@@ -605,27 +605,11 @@ async function recoverClaimedGroup(store, records, claimId, recover, logger) {
   }
 }
 
-function expectedRuntimeRestartPrompt(record) {
-  const outcome =
-    record.phase === "failed"
-      ? `failed before restart completed: ${record.error ?? "unknown failure"}`
-      : record.phase === "completed"
-        ? "completed"
-        : "was interrupted after the Host durably accepted it";
-  return [
-    `Morpheus recovered expected Runtime Capsule restart request ${record.requestId}; it ${outcome}.`,
-    "This is an expected restart recovery, not a generic crash.",
-    "Do not call request_runtime_restart again automatically.",
-    "Review the recovered context and continue from the durable outcome.",
-  ].join(" ");
-}
-
 function normalizeNotification(notification) {
   const requestId = normalizeString(notification?.params?.requestId);
   const requestedByThreadId = normalizeString(
     notification?.params?.requestedByThreadId,
   );
-  const legacyMode = notification?.params?.mode;
   if (
     !requestId ||
     Buffer.byteLength(requestId, "utf8") > MAX_REQUEST_ID_BYTES ||
@@ -642,22 +626,12 @@ function normalizeNotification(notification) {
           : "Invalid runtime restart requestedByThreadId",
     };
   }
-  if (legacyMode === "hot") {
-    return {
-      kind: "unsupported",
-      requestId,
-      requestedByThreadId,
-      reason:
-        "Legacy hot runtime refresh requests are unsupported; request a Runtime Capsule restart without mode.",
-      requestedReason: normalizeString(notification?.params?.reason),
-    };
-  }
-  if (legacyMode != null && legacyMode !== "full") {
+  if (Object.hasOwn(notification?.params ?? {}, "mode")) {
     return {
       kind: "invalid",
       requestId,
       requestedByThreadId,
-      reason: `Invalid legacy runtime restart mode: ${String(legacyMode)}`,
+      reason: "Runtime restart requests do not support mode.",
     };
   }
   return {
@@ -820,18 +794,10 @@ function normalizeStoredRecord(record) {
   ) {
     return [];
   }
-  if (record.mode != null && record.mode !== "full" && record.mode !== "hot") {
+  if (Object.hasOwn(record, "mode")) {
     return [];
   }
-  const normalized = { ...record };
-  delete normalized.mode;
-  if (record.mode === "hot") {
-    normalized.phase = "failed";
-    normalized.error =
-      "Legacy hot runtime refresh intent is unsupported; a complete Runtime Capsule restart is required.";
-    clearRecoveryClaim(normalized);
-  }
-  return [normalized];
+  return [{ ...record }];
 }
 
 function reportFailure(broadcastStatus, record, reason) {
@@ -857,7 +823,6 @@ function errorMessage(error) {
 module.exports = {
   createRuntimeRestartController,
   createRuntimeRestartIntentStore,
-  expectedRuntimeRestartPrompt,
   MAX_REQUEST_ID_BYTES,
   recoverPendingRuntimeRestarts,
   recoverRuntimeRestartAfterThreadTerminal,

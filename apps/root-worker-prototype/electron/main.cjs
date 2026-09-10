@@ -51,7 +51,10 @@ const {
   buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { listThreads: listAllThreads } = require("./threadList.cjs");
-const { ensureSelfProjectSync } = require("./selfProject.cjs");
+const {
+  ensureSelfProjectSync,
+  recordSystemSelfThreadIdSync,
+} = require("./selfProject.cjs");
 const {
   ensureSelfProjectThread,
   sendSelfCommandToThread,
@@ -84,16 +87,20 @@ const {
   updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 const {
-  AUTO_RESUME_PROMPT,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
 } = require("./threadAutoResume.cjs");
 const {
   createRuntimeRestartController,
   createRuntimeRestartIntentStore,
-  expectedRuntimeRestartPrompt,
   recoverRuntimeRestartAfterThreadTerminal,
 } = require("./runtimeRestartIntent.cjs");
+const {
+  expectedRuntimeRestartRecoveryPrompt,
+} = require("./restartRecoveryPrompts.cjs");
+const {
+  notifyRecoverableRestartErrorOnSelf,
+} = require("./restartRecoverySelfNotice.cjs");
 const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
 const {
   recordLauncherRecoveryIfPresent,
@@ -453,6 +460,7 @@ ipcMain.handle("codex:startSelfCommand", async (_event, payload = {}) => {
     loadThreadForTurn: async (threadId) =>
       (await subscribeThread(threadId)).thread ?? null,
     normalizeThread,
+    persistSystemThreadId: persistCurrentSystemSelfThreadId,
     project,
     rememberThreadRuntime,
     startThreadTurn,
@@ -1387,15 +1395,32 @@ function getRuntimeRestartController() {
 }
 
 async function recoverRuntimeRestartRecord(record) {
-  const readResult = await readThread(record.requestedByThreadId, true);
-  const thread = readResult.thread;
-  await subscribeThread(record.requestedByThreadId);
+  return notifyRecoverableRestartErrorOnSelf({
+    sourceThreadId: record.requestedByThreadId,
+    prompt: expectedRuntimeRestartRecoveryPrompt(record),
+    listThreads: () => listThreads(defaultWorkspace),
+    readThread,
+    subscribeThread,
+    sendUserInput: (thread, text) =>
+      startThreadTurn({
+        threadId: thread?.id,
+        model: thread?.model ?? null,
+        modelProvider: thread?.modelProvider ?? null,
+        effort: thread?.reasoningEffort ?? null,
+        text,
+        skills: [],
+        images: [],
+      }),
+  });
+}
+
+async function sendAutoResumeInput(thread, text) {
   return startThreadTurn({
-    threadId: record.requestedByThreadId,
+    threadId: thread.id,
     model: thread?.model ?? null,
     modelProvider: thread?.modelProvider ?? null,
     effort: thread?.reasoningEffort ?? null,
-    text: expectedRuntimeRestartPrompt(record),
+    text,
     skills: [],
     images: [],
   });
@@ -1414,6 +1439,7 @@ async function listThreads(cwd) {
   const result = await ensureSelfProjectThread(
     appServerClient,
     normalizeThread,
+    persistCurrentSystemSelfThreadId,
     project,
     threads,
   );
@@ -1463,18 +1489,6 @@ async function subscribeThread(threadId) {
   };
 }
 
-async function sendAutoResumeInput(thread) {
-  return startThreadTurn({
-    threadId: thread.id,
-    model: thread.model ?? null,
-    modelProvider: thread.modelProvider ?? null,
-    effort: thread.reasoningEffort ?? null,
-    text: AUTO_RESUME_PROMPT,
-    skills: [],
-    images: [],
-  });
-}
-
 async function ensureSelfProjectForCurrentApp() {
   if (!isPackagedApp()) {
     return null;
@@ -1487,6 +1501,10 @@ async function ensureSelfProjectForCurrentApp() {
     return null;
   }
   return ensureSelfProjectSync(process.env, workspace);
+}
+
+function persistCurrentSystemSelfThreadId(threadId) {
+  return recordSystemSelfThreadIdSync(process.env, threadId);
 }
 
 async function startThreadTurn(payload, input = buildTurnInput(payload)) {

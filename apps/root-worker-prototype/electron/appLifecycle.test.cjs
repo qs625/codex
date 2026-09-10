@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  createClientRelaunchNotificationHandler,
   createInstalledArtifactUpdateLifecycleAdapter,
 } = require("./appLifecycle.cjs");
 
@@ -97,4 +98,47 @@ test("selection failure removes only the unselected incoming candidate", async (
   assert.equal(result.ok, false);
   assert.match(result.reason, /invalid Capsule/);
   assert.deepEqual(cleaned, ["/tmp/incoming/candidate-1"]);
+});
+
+test("client relaunch rejects every obsolete mode shape before relaunch", async () => {
+  let relaunches = 0;
+  const handler = createClientRelaunchNotificationHandler({
+    fullRelaunch: {
+      async requestRelaunch() {
+        relaunches += 1;
+        return { ok: true, relaunching: true };
+      },
+    },
+  });
+
+  for (const mode of [undefined, null, "full", "hot"]) {
+    const result = await handler({
+      method: "client/relaunch/requested",
+      params: { requestId: `obsolete-${String(mode)}`, mode },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /do not support mode/);
+  }
+  assert.equal(relaunches, 0);
+});
+
+test("client relaunch without mode uses the current relaunch path", async () => {
+  const reasons = [];
+  const handler = createClientRelaunchNotificationHandler({
+    fullRelaunch: {
+      async requestRelaunch(reason) {
+        reasons.push(reason);
+        return { ok: true, relaunching: true, reason };
+      },
+    },
+  });
+
+  const result = await handler({
+    method: "client/relaunch/requested",
+    params: { requestId: "current-shape", reason: "更新 Runtime" },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, "current-shape");
+  assert.deepEqual(reasons, ["更新 Runtime"]);
 });

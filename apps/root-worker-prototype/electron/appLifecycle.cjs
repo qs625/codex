@@ -77,24 +77,7 @@ function createClientRelaunchNotificationHandler({
     const requestId = normalizeClientRelaunchRequestId(
       notification?.params?.requestId,
     );
-    if (notification?.params?.mode === "hot") {
-      return Promise.resolve({
-        ok: false,
-        unsupported: true,
-        legacyModeRejected: true,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: false,
-        ...requestIdFields(requestId),
-        reason:
-          "Legacy hot runtime refresh is unsupported; Runtime Capsules always restart the complete Runtime",
-      });
-    }
-    if (
-      notification?.params?.mode !== undefined &&
-      notification.params.mode !== "full"
-    ) {
+    if (Object.hasOwn(notification?.params ?? {}, "mode")) {
       return Promise.resolve({
         ok: false,
         unsupported: true,
@@ -103,7 +86,7 @@ function createClientRelaunchNotificationHandler({
         reloaded: false,
         updated: false,
         ...requestIdFields(requestId),
-        reason: `Unsupported legacy runtime restart mode: ${String(notification.params.mode)}`,
+        reason: "Runtime restart requests do not support mode.",
       });
     }
     if (inFlight) {
@@ -503,16 +486,6 @@ function createRendererReloadLifecycleAdapter({
         inFlight = null;
       });
       return inFlight;
-    },
-    requestHotReload() {
-      return Promise.resolve({
-        ok: false,
-        unsupported: true,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        reason: "Legacy hot runtime refresh is unsupported",
-      });
     },
   };
 }

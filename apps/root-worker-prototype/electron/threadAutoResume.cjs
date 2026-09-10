@@ -1,10 +1,10 @@
-const AUTO_RESUME_PROMPT =
-  "The Morpheus client restarted and restored this interrupted session. Review the recovered context and decide whether to continue, rerun checks, explain the interruption, or stop.";
-const EXTERNAL_THREAD_PROVIDER_IDS = new Set([
-  "claude_cli",
-  "codex_cli",
-  "opencode",
-]);
+const path = require("node:path");
+const {
+  RESTART_RECOVERY_PROMPTS,
+} = require("./restartRecoveryPrompts.cjs");
+const {
+  CHAT_COMPAT_CWD_BASENAME,
+} = require("./threadConfig.cjs");
 
 function createThreadAutoResumeCoordinator({
   readThread,
@@ -51,7 +51,10 @@ function createThreadAutoResumeCoordinator({
           }
 
           await subscribeThread(thread.id);
-          await sendResumeInput(restoredThread);
+          await sendResumeInput(
+            restoredThread,
+            RESTART_RECOVERY_PROMPTS.projectRootFanout,
+          );
           completedKeys.add(key);
           await markCompletedAutoResume(stateStore, key, logger);
           resumedThreadIds.push(thread.id);
@@ -61,7 +64,7 @@ function createThreadAutoResumeCoordinator({
             error instanceof Error ? error.message : String(error);
           errors.push({ threadId: thread.id, message });
           logger.warn?.(
-            "[prototype] failed to auto-resume interrupted thread",
+            "[prototype] failed to fan out restart recovery to project root",
             JSON.stringify({ threadId: thread.id, message }),
           );
         } finally {
@@ -110,27 +113,13 @@ function pickAutoResumeCandidates(threads = []) {
 }
 
 function isAutoResumeEligibleThread(thread) {
-  if (!thread?.id || !isInterruptedLifecycleStatus(thread.lifecycleStatus)) {
+  if (!thread?.id || isCompletedFinalLifecycleStatus(thread.lifecycleStatus)) {
     return false;
   }
-  if (thread.ephemeral || thread.threadSource === "subagent") {
+  if (!isProjectRootThread(thread)) {
     return false;
   }
-  if (thread.agentPath || thread.agentRole || thread.agentNickname) {
-    return false;
-  }
-  if (isSubAgentSource(thread.source)) {
-    return false;
-  }
-
-  const provider = readThreadProvider(thread);
-  if (!provider) {
-    return thread.source === "appServer" || thread.threadSource === "user";
-  }
-  if (provider.id === "native") {
-    return true;
-  }
-  return provider.restoreThread === true;
+  return true;
 }
 
 function autoResumeFingerprint(thread) {
@@ -147,28 +136,26 @@ function isInterruptedLifecycleStatus(status) {
   );
 }
 
-function readThreadProvider(thread) {
-  let providerId =
-    thread.threadProvider ??
-    thread.thread_provider ??
-    thread.provider?.id ??
-    thread.providerId ??
-    null;
-  if (!providerId) {
-    const modelProvider = thread.modelProvider ?? thread.model_provider ?? null;
-    if (EXTERNAL_THREAD_PROVIDER_IDS.has(modelProvider)) {
-      providerId = modelProvider;
-    }
+function isProjectRootThread(thread) {
+  if (thread.ephemeral || thread.threadSource === "subagent") {
+    return false;
   }
-  if (!providerId) {
-    return null;
+  if (isSubAgentSource(thread.source)) {
+    return false;
   }
-  const capabilities =
-    thread.provider?.capabilities ?? thread.capabilities ?? {};
-  return {
-    id: providerId,
-    restoreThread: capabilities.restoreThread ?? thread.restoreThread ?? false,
-  };
+  if (thread.parentThreadId || thread.parent_thread_id) {
+    return false;
+  }
+  const cwd = typeof thread.cwd === "string" ? thread.cwd.trim() : "";
+  return (
+    cwd.length > 0 &&
+    !cwd.startsWith("codex://") &&
+    path.basename(cwd) !== CHAT_COMPAT_CWD_BASENAME
+  );
+}
+
+function isCompletedFinalLifecycleStatus(status) {
+  return status?.type === "final" && status.result?.type === "completed";
 }
 
 function isSubAgentSource(source) {
@@ -186,7 +173,10 @@ function threadHasAutoResumePrompt(thread) {
         continue;
       }
       for (const content of item.content ?? []) {
-        if (content?.type === "text" && content.text === AUTO_RESUME_PROMPT) {
+        if (
+          content?.type === "text" &&
+          content.text === RESTART_RECOVERY_PROMPTS.projectRootFanout
+        ) {
           return true;
         }
       }
@@ -241,12 +231,13 @@ function createJsonAutoResumeStateStore(filePath, fs) {
 }
 
 module.exports = {
-  AUTO_RESUME_PROMPT,
   autoResumeFingerprint,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
+  isCompletedFinalLifecycleStatus,
   isAutoResumeEligibleThread,
   isInterruptedLifecycleStatus,
+  isProjectRootThread,
   pickAutoResumeCandidates,
   threadHasAutoResumePrompt,
 };
