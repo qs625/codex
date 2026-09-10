@@ -82,6 +82,58 @@ test("controller persists received intent before executing restart", async () =>
   });
 });
 
+test("controller can persist completed handoff before expected Host exit", async () => {
+  await withStore(async (store) => {
+    let markHandoffPersisted;
+    const handoffPersisted = new Promise((resolve) => {
+      markHandoffPersisted = resolve;
+    });
+    const controller = createRuntimeRestartController({
+      store,
+      execute: async (_notification, handoff) => {
+        await handoff.markExpectedRestartHandoffReady();
+        const [completed] = await store.recoverable();
+        assert.equal(completed.requestId, "restart-1");
+        assert.equal(completed.phase, "completed");
+        assert.equal(completed.completedByHostInstanceId, "host-1");
+        markHandoffPersisted();
+        return new Promise(() => {});
+      },
+      recover: async () => {
+        throw new Error("current Host must not recover its own completed handoff");
+      },
+      hostInstanceId: "host-1",
+      logger: { error: () => {}, warn: () => {} },
+    });
+
+    const accepted = await controller.handle(notification("restart-1"));
+    assert.equal(accepted.ok, true);
+    await handoffPersisted;
+
+    const sameHostRecovery = await controller.recoverPending();
+    assert.deepEqual(sameHostRecovery.recoveredThreadIds, []);
+    assert.deepEqual(sameHostRecovery.failedThreadIds, []);
+    assert.deepEqual(sameHostRecovery.expectedThreadIds, ["thread-1"]);
+
+    const recovered = [];
+    const nextHost = createRuntimeRestartController({
+      store,
+      execute: async () => {
+        throw new Error("recovery must not execute another restart");
+      },
+      recover: async (record) => recovered.push(record),
+      hostInstanceId: "host-2",
+      logger: { error: () => {}, warn: () => {} },
+    });
+    const nextHostRecovery = await nextHost.recoverPending();
+
+    assert.deepEqual(nextHostRecovery.recoveredThreadIds, ["thread-1"]);
+    assert.equal(recovered[0].phase, "completed");
+    assert.equal(recovered[0].completedByHostInstanceId, "host-1");
+    assert.deepEqual(await store.recoverable(), []);
+  });
+});
+
 test("concurrent restart requests coalesce into one Runtime Capsule restart", async () => {
   await withStore(async (store) => {
     let releaseExecution;

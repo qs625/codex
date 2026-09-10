@@ -78,6 +78,11 @@ function createClientRelaunchNotificationHandler({
   let inFlight = null;
   return function handleClientRelaunchNotification(notification) {
     const reason = notification?.params?.reason ?? notification?.method ?? null;
+    const handoff =
+      notification?.params?.runtimeRestartHandoff &&
+      typeof notification.params.runtimeRestartHandoff === "object"
+        ? notification.params.runtimeRestartHandoff
+        : {};
     const requestId = normalizeClientRelaunchRequestId(
       notification?.params?.requestId,
     );
@@ -105,6 +110,10 @@ function createClientRelaunchNotificationHandler({
       installedArtifactUpdate,
       reason,
       requestId,
+      markExpectedRestartHandoffReady:
+        typeof handoff.markExpectedRestartHandoffReady === "function"
+          ? handoff.markExpectedRestartHandoffReady
+          : null,
     }).finally(() => {
       inFlight = null;
     });
@@ -115,6 +124,7 @@ function createClientRelaunchNotificationHandler({
 async function runClientRelaunchNotification({
   fullRelaunch,
   installedArtifactUpdate,
+  markExpectedRestartHandoffReady,
   reason,
   requestId,
 }) {
@@ -125,6 +135,7 @@ async function runClientRelaunchNotification({
     const result = await installedArtifactUpdate.requestUpdateAndRelaunch(
       reason,
       requestId,
+      { markExpectedRestartHandoffReady },
     );
     if (!result?.unsupported || result?.disabled) {
       return result;
@@ -206,7 +217,7 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 } = {}) {
   let inFlight = null;
   return {
-    requestUpdateAndRelaunch(reason = null, requestId = null) {
+    requestUpdateAndRelaunch(reason = null, requestId = null, options = {}) {
       if (inFlight) {
         return inFlight.then((result) => ({
           ...result,
@@ -227,6 +238,10 @@ function createInstalledArtifactUpdateLifecycleAdapter({
         logger,
         reason,
         requestId,
+        markExpectedRestartHandoffReady:
+          typeof options?.markExpectedRestartHandoffReady === "function"
+            ? options.markExpectedRestartHandoffReady
+            : null,
       }).finally(() => {
         inFlight = null;
       });
@@ -245,6 +260,7 @@ async function resolveAndRunInstalledArtifactUpdate({
   logger,
   reason,
   requestId,
+  markExpectedRestartHandoffReady,
 }) {
   let plan;
   try {
@@ -286,6 +302,7 @@ async function resolveAndRunInstalledArtifactUpdate({
     logger,
     reason,
     requestId,
+    markExpectedRestartHandoffReady,
   });
 }
 
@@ -299,6 +316,7 @@ async function runInstalledArtifactUpdate({
   logger,
   reason,
   requestId,
+  markExpectedRestartHandoffReady,
 }) {
   if (typeof updateArtifacts !== "function") {
     return {
@@ -355,6 +373,9 @@ async function runInstalledArtifactUpdate({
     });
     if (typeof appExit !== "function") {
       throw new Error("Application exit is unavailable after Runtime Capsule selection");
+    }
+    if (typeof markExpectedRestartHandoffReady === "function") {
+      await markExpectedRestartHandoffReady();
     }
     appExit(CAPSULE_SWITCH_EXIT_CODE);
     const relaunch = {

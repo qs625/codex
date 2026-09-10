@@ -12,6 +12,7 @@ test("complete candidate selection exits with the capsule switch code", async ()
   const exits = [];
   const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
     appExit(code) {
+      events.push({ type: "exit", code });
       exits.push(code);
     },
     async resolvePlan() {
@@ -42,11 +43,23 @@ test("complete candidate selection exits with the capsule switch code", async ()
     },
   });
 
-  const result = await lifecycle.requestUpdateAndRelaunch("update", "request-1");
+  const result = await lifecycle.requestUpdateAndRelaunch(
+    "update",
+    "request-1",
+    {
+      async markExpectedRestartHandoffReady() {
+        events.push({ type: "handoff-ready" });
+      },
+    },
+  );
 
   assert.equal(result.ok, true);
   assert.equal(result.relaunch.exitCode, CAPSULE_SWITCH_EXIT_CODE);
   assert.deepEqual(exits, [CAPSULE_SWITCH_EXIT_CODE]);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["status", "select", "status", "handoff-ready", "exit", "status"],
+  );
   assert.deepEqual(events[0], {
     type: "status",
     status: {
@@ -66,10 +79,24 @@ test("complete candidate selection exits with the capsule switch code", async ()
       reason: "update",
     },
   });
+  assert.deepEqual(events[2], {
+    type: "status",
+    status: {
+      lifecycle: {
+        type: "installedArtifactUpdate",
+        phase: "selected",
+        activationId: "candidate-1",
+        releaseId: `sha256:${"a".repeat(64)}`,
+        requestId: "request-1",
+        reason: "update",
+      },
+    },
+  });
 });
 
 test("selection failure removes only the unselected incoming candidate", async () => {
   const cleaned = [];
+  let handoffMarkers = 0;
   const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
     async resolvePlan() {
       return {};
@@ -94,11 +121,34 @@ test("selection failure removes only the unselected incoming candidate", async (
     },
   });
 
-  const result = await lifecycle.requestUpdateAndRelaunch("update");
+  const result = await lifecycle.requestUpdateAndRelaunch("update", null, {
+    async markExpectedRestartHandoffReady() {
+      handoffMarkers += 1;
+    },
+  });
 
   assert.equal(result.ok, false);
   assert.match(result.reason, /invalid Capsule/);
   assert.deepEqual(cleaned, ["/tmp/incoming/candidate-1"]);
+  assert.equal(handoffMarkers, 0);
+});
+
+test("disabled installed update does not mark expected restart handoff", async () => {
+  let handoffMarkers = 0;
+  const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
+    async resolvePlan() {
+      return { disabled: true, reason: "source workspace missing" };
+    },
+  });
+
+  const result = await lifecycle.requestUpdateAndRelaunch("update", null, {
+    async markExpectedRestartHandoffReady() {
+      handoffMarkers += 1;
+    },
+  });
+
+  assert.equal(result.disabled, true);
+  assert.equal(handoffMarkers, 0);
 });
 
 test("client relaunch rejects every obsolete mode shape before relaunch", async () => {
@@ -142,4 +192,64 @@ test("client relaunch without mode uses the current relaunch path", async () => 
   assert.equal(result.ok, true);
   assert.equal(result.requestId, "current-shape");
   assert.deepEqual(reasons, ["更新 Runtime"]);
+});
+
+test("client relaunch forwards expected restart handoff marker to installed update", async () => {
+  let marker = null;
+  const expectedMarker = async () => {};
+  const handler = createClientRelaunchNotificationHandler({
+    installedArtifactUpdate: {
+      async requestUpdateAndRelaunch(_reason, _requestId, options) {
+        marker = options?.markExpectedRestartHandoffReady;
+        return { ok: true, relaunching: true };
+      },
+    },
+  });
+
+  const result = await handler({
+    method: "client/relaunch/requested",
+    params: {
+      requestId: "current-shape",
+      runtimeRestartHandoff: {
+        markExpectedRestartHandoffReady: expectedMarker,
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(marker, expectedMarker);
+});
+
+test("client relaunch fallback does not mark expected restart handoff", async () => {
+  let markerCalls = 0;
+  let fullRelaunches = 0;
+  const handler = createClientRelaunchNotificationHandler({
+    installedArtifactUpdate: {
+      async requestUpdateAndRelaunch() {
+        return { ok: false, unsupported: true };
+      },
+    },
+    fullRelaunch: {
+      async requestRelaunch() {
+        fullRelaunches += 1;
+        return { ok: true, relaunching: true };
+      },
+    },
+  });
+
+  const result = await handler({
+    method: "client/relaunch/requested",
+    params: {
+      requestId: "fallback",
+      runtimeRestartHandoff: {
+        async markExpectedRestartHandoffReady() {
+          markerCalls += 1;
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(fullRelaunches, 1);
+  assert.equal(markerCalls, 0);
 });

@@ -451,7 +451,19 @@ async function runAcceptedRestart({
 }) {
   try {
     await store.updateGroup(requestId, "executing");
-    const result = await execute(notification);
+    const markExpectedRestartHandoffReady = async () => {
+      const records = await store.updateGroup(
+        requestId,
+        "completed",
+        null,
+        hostInstanceId,
+      );
+      clearTerminalRecords(records);
+      return records;
+    };
+    const result = await execute(notification, {
+      markExpectedRestartHandoffReady,
+    });
     const phase = result?.ok ? "completed" : "failed";
     const reason = result?.reason ?? (result?.ok ? null : "Runtime restart failed");
     const records = await store.updateGroup(

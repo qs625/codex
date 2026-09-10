@@ -1887,9 +1887,15 @@ function getRuntimeRestartController() {
   if (!runtimeRestartController) {
     runtimeRestartController = createRuntimeRestartController({
       store: getRuntimeRestartIntentStore(),
-      execute: (notification) =>
+      execute: (notification, handoff = null) =>
         observeClientRelaunchResult(
-          handleClientRelaunchNotification(notification),
+          handleClientRelaunchNotification({
+            ...notification,
+            params: {
+              ...(notification?.params ?? {}),
+              runtimeRestartHandoff: handoff,
+            },
+          }),
           {
             broadcastStatus: (status) =>
               broadcast("codex:status", {
