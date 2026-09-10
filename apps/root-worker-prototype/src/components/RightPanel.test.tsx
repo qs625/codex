@@ -16,6 +16,10 @@ import type {
   WorkflowSummary,
 } from "../types";
 import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
+import {
+  createTerminalStateRequestSequencer,
+  isTerminalCommandFocusRequestForThread,
+} from "../lib/terminalCommandFocus";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const {
@@ -35,6 +39,7 @@ const {
   filePreviewRenderMode,
   filePreviewSourceEditorVisible,
   normalizeBrowserPanelState,
+  resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
   syncFilePreviewEditState,
@@ -553,12 +558,13 @@ test("omits plan work queue from thread analysis", () => {
   assert.doesNotMatch(markup, /Todo Board/);
 });
 
-test("keeps live commands out of thread analysis while rendering schedules", () => {
+test("keeps live commands visible without output while rendering schedules", () => {
   const activeCommand = {
     type: "commandExecution",
     id: "command-1",
     command: "tail -f /tmp/out.log",
     cwd: "/tmp",
+    processId: "pid-1",
     status: "running",
     aggregatedOutput: "changed:/tmp/out.log\n",
     exitCode: null,
@@ -589,11 +595,12 @@ test("keeps live commands out of thread analysis while rendering schedules", () 
   } satisfies Thread;
   const markup = renderRightPanel(thread);
 
-  assert.doesNotMatch(markup, /tail -f \/tmp\/out\.log/);
+  assert.match(markup, /Live Commands/);
+  assert.match(markup, /tail -f \/tmp\/out\.log/);
+  assert.match(markup, /Open terminal for tail -f \/tmp\/out\.log/);
   assert.match(markup, /Lifetime/);
   assert.match(markup, /<span>Compactions<\/span><strong>2<\/strong>/);
   assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
-  assert.doesNotMatch(markup, /Live Commands/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /every_interval 6h/);
@@ -602,6 +609,68 @@ test("keeps live commands out of thread analysis while rendering schedules", () 
   assert.match(markup, /2 items/);
   assert.match(markup, /Every 6 hours/);
   assert.doesNotMatch(markup, /every 21600000 ms/);
+  assert.deepEqual(
+    resolveThreadAnalysisCommandFocus(thread, {
+      id: "command-1",
+      subscriptionId: "command-1",
+      kind: "command",
+      label: "tail -f /tmp/out.log",
+      detail: "/tmp",
+      status: "Running",
+      eventCount: 0,
+      latestEvent: null,
+    }),
+    { threadId: "thread-1", commandItemId: "command-1", processId: "pid-1" },
+  );
+  assert.equal(
+    resolveThreadAnalysisCommandFocus(thread, {
+      id: "schedule-1",
+      subscriptionId: "sub-schedule",
+      kind: "schedule",
+      label: "standup ping",
+      detail: "every_interval 6h",
+      status: "Active",
+      eventCount: 0,
+      latestEvent: null,
+    }),
+    null,
+  );
+});
+
+test("keeps newer terminal focus request current over initial state load", () => {
+  const sequencer = createTerminalStateRequestSequencer();
+  const initialLoad = sequencer.begin();
+  const focusRequest = sequencer.begin();
+
+  assert.equal(sequencer.isCurrent(initialLoad), false);
+  assert.equal(sequencer.isCurrent(focusRequest), true);
+});
+
+test("rejects stale terminal focus requests from another thread", () => {
+  assert.equal(
+    isTerminalCommandFocusRequestForThread(
+      {
+        threadId: "thread-a",
+        commandItemId: "command-1",
+        processId: "pid-1",
+        token: 1,
+      },
+      "thread-b",
+    ),
+    false,
+  );
+  assert.equal(
+    isTerminalCommandFocusRequestForThread(
+      {
+        threadId: "thread-b",
+        commandItemId: "command-1",
+        processId: "pid-1",
+        token: 1,
+      },
+      "thread-b",
+    ),
+    true,
+  );
 });
 
 test("renders backend tool I/O buckets as top-level context categories", () => {

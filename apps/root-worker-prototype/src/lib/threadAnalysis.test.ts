@@ -443,8 +443,8 @@ test("running active command current state replaces stale running command monito
         label: "cargo test --watch",
         detail: "/tmp/project",
         status: "Running",
-        eventCount: 1,
-        latestEvent: "new output",
+        eventCount: 0,
+        latestEvent: null,
       },
     ],
   );
@@ -645,7 +645,7 @@ test("ignores incomplete file change items", () => {
   ]);
 });
 
-test("keeps running command active and records latest output line", () => {
+test("keeps running command active without exposing latest output", () => {
   const analysis = buildThreadAnalysis(
     {
       ...makeThread([], { type: "active", activeFlags: ["running"] }),
@@ -666,7 +666,7 @@ test("keeps running command active and records latest output line", () => {
   );
 
   assert.equal(analysis.monitors.totalCount, 1);
-  assert.equal(analysis.monitors.eventCount, 1);
+  assert.equal(analysis.monitors.eventCount, 0);
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
     {
       id: "command-1",
@@ -675,8 +675,8 @@ test("keeps running command active and records latest output line", () => {
       label: "tail -f /tmp/build.log",
       detail: "/repo",
       status: "Running",
-      eventCount: 1,
-      latestEvent: "changed:/tmp/build.log",
+      eventCount: 0,
+      latestEvent: null,
     },
   ]);
 });
@@ -764,7 +764,7 @@ test("omits failed completed commands from live command index", () => {
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
 });
 
-test("uses command notification as latest live command event", () => {
+test("keeps command notifications out of live command summaries", () => {
   const analysis = buildThreadAnalysis(
     {
       ...makeThread(
@@ -798,10 +798,9 @@ test("uses command notification as latest live command event", () => {
     0,
   );
 
-  assert.equal(
-    analysis.monitors.sections[0]?.monitors[0]?.latestEvent,
-    "fresh notification",
-  );
+  assert.equal(analysis.monitors.eventCount, 0);
+  assert.equal(analysis.monitors.sections[0]?.monitors[0]?.eventCount, 0);
+  assert.equal(analysis.monitors.sections[0]?.monitors[0]?.latestEvent, null);
 });
 
 test("ignores stale running command residue after reload when thread is complete", () => {

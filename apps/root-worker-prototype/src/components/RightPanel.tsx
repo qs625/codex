@@ -29,6 +29,7 @@ import { normalizeBrowserUrl } from "../lib/browserUrl";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
+import type { TerminalCommandFocusRequest } from "../lib/terminalCommandFocus";
 import {
   buildThreadAnalysis,
   type MonitorSummary,
@@ -64,6 +65,12 @@ type BrowserViewBounds = {
   y: number;
   width: number;
   height: number;
+};
+
+export type ThreadAnalysisCommandFocusTarget = {
+  threadId: string;
+  commandItemId: string;
+  processId?: string | null;
 };
 
 type BrowserPanelTabState = {
@@ -276,6 +283,21 @@ export function RightPanel({
   );
   const workflowPanel = buildWorkflowPanelViewModel(thread, availableWorkflows);
   const { contextUsage } = threadAnalysis;
+  const [terminalCommandFocusRequest, setTerminalCommandFocusRequest] =
+    useState<TerminalCommandFocusRequest | null>(null);
+
+  const focusCommandMonitor = (monitor: MonitorSummary) => {
+    const target = resolveThreadAnalysisCommandFocus(thread, monitor);
+    if (!target) {
+      return;
+    }
+    setTerminalCommandFocusRequest((current) => ({
+      ...target,
+      token: (current?.token ?? 0) + 1,
+    }));
+    onSetActiveView("terminal");
+    onSetCollapsed(false);
+  };
 
   return (
     <aside className={`right-panel ${isCollapsed ? "collapsed" : ""}`}>
@@ -288,6 +310,7 @@ export function RightPanel({
                 goal={goal}
                 goalAction={goalAction}
                 goalActionError={goalActionError}
+                onFocusCommandMonitor={focusCommandMonitor}
                 onCancelGoal={onCancelGoal}
                 onPauseGoal={onPauseGoal}
                 onResumeGoal={onResumeGoal}
@@ -301,7 +324,10 @@ export function RightPanel({
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
               />
             ) : activeView === "terminal" ? (
-              <TerminalPanel thread={thread} />
+              <TerminalPanel
+                thread={thread}
+                focusCommandRequest={terminalCommandFocusRequest}
+              />
             ) : activeView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
             ) : (
@@ -432,6 +458,27 @@ export function RightPanel({
       </div>
     </aside>
   );
+}
+
+export function resolveThreadAnalysisCommandFocus(
+  thread: Thread | null,
+  monitor: MonitorSummary,
+): ThreadAnalysisCommandFocusTarget | null {
+  if (monitor.kind !== "command") {
+    return null;
+  }
+  if (!thread) {
+    return null;
+  }
+  const command = (thread.activeCommandItems ?? []).find(
+    (item) => item.type === "commandExecution" && item.id === monitor.id,
+  );
+  return {
+    threadId: thread.id,
+    commandItemId: monitor.id,
+    processId:
+      command && command.type === "commandExecution" ? command.processId : null,
+  };
 }
 
 function WorkflowPanel({
@@ -1193,6 +1240,7 @@ function ThreadAnalysisPanel({
   goal,
   goalAction,
   goalActionError,
+  onFocusCommandMonitor,
   onCancelGoal,
   onPauseGoal,
   onResumeGoal,
@@ -1202,15 +1250,14 @@ function ThreadAnalysisPanel({
   goal: ThreadGoal | null;
   goalAction: GoalActionKind | null;
   goalActionError: string | null;
+  onFocusCommandMonitor: (monitor: MonitorSummary) => void;
   onCancelGoal: () => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
   planUpdate: ThreadPlanUpdate | null;
 }) {
   const { contextUsage, monitors, runtime } = analysis;
-  const displayedMonitorSections = monitors.sections.filter(
-    (section) => section.kind !== "command",
-  );
+  const displayedMonitorSections = monitors.sections;
   const displayedMonitorCount = displayedMonitorSections.reduce(
     (count, section) => count + section.monitors.length,
     0,
@@ -1340,25 +1387,21 @@ function ThreadAnalysisPanel({
                 {section.monitors.length > 0 ? (
                   <div className="monitor-list">
                     {section.monitors.map((monitor) => (
-                      <article
-                        key={monitor.id}
-                        className="monitor-row"
-                      >
-                        <div className="monitor-row-main">
-                          <strong title={monitor.label}>{monitor.label}</strong>
-                          <span title={monitor.detail}>{monitor.detail}</span>
-                          {shouldRenderMonitorLatestEvent(monitor) ? (
-                            <span title={monitor.latestEvent ?? undefined}>
-                              {monitor.latestEvent}
-                            </span>
-                          ) : null}
-                        </div>
-                        <span
-                          className={`monitor-status ${statusClassName(monitor.status)}`}
+                      monitor.kind === "command" ? (
+                        <button
+                          key={monitor.id}
+                          type="button"
+                          className="monitor-row clickable"
+                          aria-label={`Open terminal for ${monitor.label}`}
+                          onClick={() => onFocusCommandMonitor(monitor)}
                         >
-                          {monitor.status}
-                        </span>
-                      </article>
+                          <MonitorRowContent monitor={monitor} />
+                        </button>
+                      ) : (
+                        <article key={monitor.id} className="monitor-row">
+                          <MonitorRowContent monitor={monitor} />
+                        </article>
+                      )
                     ))}
                   </div>
                 ) : (
@@ -1400,6 +1443,25 @@ function ThreadAnalysisPanel({
         </section>
       </div>
     </div>
+  );
+}
+
+function MonitorRowContent({ monitor }: { monitor: MonitorSummary }) {
+  return (
+    <>
+      <div className="monitor-row-main">
+        <strong title={monitor.label}>{monitor.label}</strong>
+        <span title={monitor.detail}>{monitor.detail}</span>
+        {shouldRenderMonitorLatestEvent(monitor) ? (
+          <span title={monitor.latestEvent ?? undefined}>
+            {monitor.latestEvent}
+          </span>
+        ) : null}
+      </div>
+      <span className={`monitor-status ${statusClassName(monitor.status)}`}>
+        {monitor.status}
+      </span>
+    </>
   );
 }
 

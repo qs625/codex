@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
+import type { Terminal as XTermTerminal } from "@xterm/xterm";
 
 import { GearIcon, PlusIcon, StopIcon, XIcon } from "./icons";
 import {
@@ -12,6 +11,11 @@ import {
   terminalFontFamilyValue,
   updateTerminalDisplayPreferences,
 } from "../lib/terminalDisplayPreferences";
+import {
+  createTerminalStateRequestSequencer,
+  isTerminalCommandFocusRequestForThread,
+  type TerminalCommandFocusRequest,
+} from "../lib/terminalCommandFocus";
 import type { Thread } from "../types";
 
 type TerminalPanelState = Awaited<
@@ -32,13 +36,22 @@ const EMPTY_STATE: TerminalPanelState = {
   error: null,
 };
 
-export function TerminalPanel({ thread }: { thread: Thread | null }) {
+export function TerminalPanel({
+  thread,
+  focusCommandRequest,
+}: {
+  thread: Thread | null;
+  focusCommandRequest?: TerminalCommandFocusRequest | null;
+}) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
+  const terminalRef = useRef<XTermTerminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const syncTerminalSizeRef = useRef<(() => void) | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+  const terminalStateRequestSeqRef = useRef(
+    createTerminalStateRequestSequencer(),
+  );
   const [state, setState] = useState<TerminalPanelState>(EMPTY_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const [displayPreferences, setDisplayPreferences] = useState(
@@ -74,16 +87,17 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
         terminalRef.current?.write(decodeBase64(event.deltaBase64));
       }
     });
+    const requestSeq = terminalStateRequestSeqRef.current.begin();
     void window.codexDesktop
       .getTerminalState(thread?.id ?? null)
       .then((nextState) => {
-        if (!disposed) {
+        if (!disposed && terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
           setState(nextState);
           setLocalError(null);
         }
       })
       .catch((error) => {
-        if (!disposed) {
+        if (!disposed && terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
           setLocalError(toTerminalError(error));
         }
       });
@@ -94,6 +108,36 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
   }, [thread?.id]);
 
   useEffect(() => {
+    if (!isTerminalCommandFocusRequestForThread(focusCommandRequest, thread?.id)) {
+      return;
+    }
+    const requestSeq = terminalStateRequestSeqRef.current.begin();
+    void window.codexDesktop
+      .focusTerminalCommand({
+        threadId: focusCommandRequest.threadId,
+        commandItemId: focusCommandRequest.commandItemId,
+        processId: focusCommandRequest.processId,
+      })
+      .then(({ state: nextState }) => {
+        if (terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
+          setState(nextState);
+          setLocalError(null);
+        }
+      })
+      .catch((error) => {
+        if (terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
+          setLocalError(toTerminalError(error));
+        }
+      });
+  }, [
+    focusCommandRequest?.commandItemId,
+    focusCommandRequest?.processId,
+    focusCommandRequest?.threadId,
+    focusCommandRequest?.token,
+    thread?.id,
+  ]);
+
+  useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !activeTab) {
       terminalRef.current?.dispose();
@@ -101,111 +145,138 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
       return undefined;
     }
 
-    const terminal = new Terminal({
-      allowProposedApi: false,
-      convertEol: false,
-      cursorBlink: isInteractive(activeTab.status),
-      cursorStyle: "bar",
-      fontFamily: terminalFontFamilyValue(displayPreferences.fontFamily),
-      fontSize: displayPreferences.fontSize,
-      lineHeight: displayPreferences.lineHeight,
-      scrollback: 10_000,
-      theme: {
-        background: "#111827",
-        foreground: "#e7e5e4",
-        cursor: "#f59e0b",
-        cursorAccent: "#111827",
-        selectionBackground: "#0f766e66",
-        black: "#1c1917",
-        red: "#f87171",
-        green: "#4ade80",
-        yellow: "#fbbf24",
-        blue: "#60a5fa",
-        magenta: "#c084fc",
-        cyan: "#2dd4bf",
-        white: "#e7e5e4",
-        brightBlack: "#78716c",
-      },
-    });
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(viewport);
-    terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
-    if (activeTab.replayTruncated || activeTab.hasSequenceGap) {
-      terminal.writeln(
-        "\r\n\u001b[33m[Earlier terminal output is unavailable.]\u001b[0m",
-      );
-    }
-    if (activeTab.replayBase64) {
-      terminal.write(decodeBase64(activeTab.replayBase64));
-    }
-    if (activeTab.status === "lost") {
-      terminal.writeln(
-        "\r\n\u001b[31m[Session disconnected from the runtime.]\u001b[0m",
-      );
-    }
-    if (activeTab.status === "exited") {
-      terminal.writeln(
-        `\r\n\u001b[90m[Process exited${activeTab.exitCode == null ? "" : ` with code ${activeTab.exitCode}`}.]\u001b[0m`,
-      );
-    }
+    let disposed = false;
+    let terminal: XTermTerminal | null = null;
+    let sendSize: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let dataSubscription: { dispose: () => void } | null = null;
+    let binarySubscription: { dispose: () => void } | null = null;
 
-    const sendSize = () => {
-      try {
-        fitAddon.fit();
-      } catch {
-        return;
-      }
-      const next = { rows: terminal.rows, cols: terminal.cols };
-      const previous = lastSizeRef.current;
-      if (
-        activeTab.canResize &&
-        isInteractive(activeTab.status) &&
-        (previous?.rows !== next.rows || previous.cols !== next.cols)
-      ) {
-        lastSizeRef.current = next;
-        void window.codexDesktop
-          .resizeTerminal({ tabId: activeTab.id, size: next })
-        .catch((error) => setLocalError(toTerminalError(error)));
-      }
-    };
-    syncTerminalSizeRef.current = sendSize;
-    const resizeObserver = new ResizeObserver(sendSize);
-    resizeObserver.observe(viewport);
-    queueMicrotask(() => {
-      sendSize();
-      terminal.focus();
-    });
-    const dataSubscription = terminal.onData((data) => {
-      if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
-        return;
-      }
-      void window.codexDesktop
-        .writeTerminal({
-          tabId: activeTab.id,
-          deltaBase64: encodeUtf8(data),
-        })
-        .catch((error) => setLocalError(toTerminalError(error)));
-    });
-    const binarySubscription = terminal.onBinary((data) => {
-      if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
-        return;
-      }
-      void window.codexDesktop
-        .writeTerminal({
-          tabId: activeTab.id,
-          deltaBase64: encodeBinary(data),
-        })
-        .catch((error) => setLocalError(toTerminalError(error)));
-    });
+    void import("@xterm/xterm")
+      .then(({ Terminal }) => {
+        if (disposed) {
+          return;
+        }
+        terminal = new Terminal({
+          allowProposedApi: false,
+          convertEol: false,
+          cursorBlink: isInteractive(activeTab.status),
+          cursorStyle: "bar",
+          fontFamily: terminalFontFamilyValue(displayPreferences.fontFamily),
+          fontSize: displayPreferences.fontSize,
+          lineHeight: displayPreferences.lineHeight,
+          scrollback: 10_000,
+          theme: {
+            background: "#111827",
+            foreground: "#e7e5e4",
+            cursor: "#f59e0b",
+            cursorAccent: "#111827",
+            selectionBackground: "#0f766e66",
+            black: "#1c1917",
+            red: "#f87171",
+            green: "#4ade80",
+            yellow: "#fbbf24",
+            blue: "#60a5fa",
+            magenta: "#c084fc",
+            cyan: "#2dd4bf",
+            white: "#e7e5e4",
+            brightBlack: "#78716c",
+          },
+        });
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        terminal.open(viewport);
+        terminalRef.current = terminal;
+        fitAddonRef.current = fitAddon;
+        if (activeTab.replayTruncated || activeTab.hasSequenceGap) {
+          terminal.writeln(
+            "\r\n\u001b[33m[Earlier terminal output is unavailable.]\u001b[0m",
+          );
+        }
+        if (activeTab.replayBase64) {
+          terminal.write(decodeBase64(activeTab.replayBase64));
+        }
+        if (activeTab.status === "lost") {
+          terminal.writeln(
+            "\r\n\u001b[31m[Session disconnected from the runtime.]\u001b[0m",
+          );
+        }
+        if (activeTab.status === "exited") {
+          terminal.writeln(
+            `\r\n\u001b[90m[Process exited${activeTab.exitCode == null ? "" : ` with code ${activeTab.exitCode}`}.]\u001b[0m`,
+          );
+        }
+
+        sendSize = () => {
+          if (!terminal) {
+            return;
+          }
+          try {
+            fitAddon.fit();
+          } catch {
+            return;
+          }
+          const next = { rows: terminal.rows, cols: terminal.cols };
+          const previous = lastSizeRef.current;
+          if (
+            activeTab.canResize &&
+            isInteractive(activeTab.status) &&
+            (previous?.rows !== next.rows || previous.cols !== next.cols)
+          ) {
+            lastSizeRef.current = next;
+            void window.codexDesktop
+              .resizeTerminal({ tabId: activeTab.id, size: next })
+              .catch((error) => setLocalError(toTerminalError(error)));
+          }
+        };
+        syncTerminalSizeRef.current = sendSize;
+        resizeObserver = new ResizeObserver(sendSize);
+        resizeObserver.observe(viewport);
+        queueMicrotask(() => {
+          if (disposed) {
+            return;
+          }
+          sendSize?.();
+          terminal?.focus();
+        });
+        dataSubscription = terminal.onData((data) => {
+          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+            return;
+          }
+          void window.codexDesktop
+            .writeTerminal({
+              tabId: activeTab.id,
+              deltaBase64: encodeUtf8(data),
+            })
+            .catch((error) => setLocalError(toTerminalError(error)));
+        });
+        binarySubscription = terminal.onBinary((data) => {
+          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+            return;
+          }
+          void window.codexDesktop
+            .writeTerminal({
+              tabId: activeTab.id,
+              deltaBase64: encodeBinary(data),
+            })
+            .catch((error) => setLocalError(toTerminalError(error)));
+        });
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setLocalError(toTerminalError(error));
+        }
+      });
 
     return () => {
-      dataSubscription.dispose();
-      binarySubscription.dispose();
-      resizeObserver.disconnect();
-      terminal.dispose();
-      terminalRef.current = null;
+      disposed = true;
+      dataSubscription?.dispose();
+      binarySubscription?.dispose();
+      resizeObserver?.disconnect();
+      terminal?.dispose();
+      if (terminalRef.current === terminal) {
+        terminalRef.current = null;
+      }
       fitAddonRef.current = null;
       if (syncTerminalSizeRef.current === sendSize) {
         syncTerminalSizeRef.current = null;
