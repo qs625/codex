@@ -42,6 +42,8 @@ use app_server_protocol::RequestId;
 use app_server_protocol::Result as JsonRpcResult;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::ServerRequest;
+#[cfg(test)]
+use base64::Engine as _;
 use codex_arg0::Arg0DispatchPaths;
 use config_service::LoaderOverrides;
 use config_service::NoopThreadConfigLoader;
@@ -1180,7 +1182,10 @@ mod tests {
                 thread_id: "thread".to_string(),
                 turn_id: "turn".to_string(),
                 item_id: "item".to_string(),
+                process_id: None,
+                sequence: None,
                 delta: delta.to_string(),
+                delta_base64: base64::engine::general_purpose::STANDARD.encode(delta),
             },
         )
     }
@@ -2159,7 +2164,10 @@ mod tests {
                         thread_id: "thread".to_string(),
                         turn_id: "turn".to_string(),
                         item_id: "item".to_string(),
+                        process_id: None,
+                        sequence: None,
                         delta: "stdout".to_string(),
+                        delta_base64: "c3Rkb3V0".to_string(),
                     }
                 )
             )

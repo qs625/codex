@@ -111,6 +111,20 @@ const {
   writePayloadFailureEvidence,
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
+const {
+  addUserTerminal,
+  appendTerminalOutput,
+  closeTerminalTab,
+  createTerminalPanelState,
+  markRunningTerminalsLost,
+  markTerminalExited,
+  mergeTerminalSessions,
+  reattachTerminalSessions,
+  isTerminalSessionDetached,
+  selectTerminalTab,
+  terminalPanelSnapshot,
+  terminalTabMetadata,
+} = require("./terminalPanel.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -155,6 +169,8 @@ const handleClientRelaunchNotification =
   });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
+const terminalPanelsByWindowId = new Map();
+const MAX_PENDING_TERMINAL_NOTIFICATIONS = 4096;
 let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
@@ -203,6 +219,7 @@ async function createWindow() {
   windows.add(window);
   window.on("closed", () => {
     destroyBrowserPanel(window);
+    terminalPanelsByWindowId.delete(window.id);
     windows.delete(window);
   });
 
@@ -259,6 +276,12 @@ appServerClient.on("notification", (notification) => {
     );
   }
   const normalizedNotification = normalizeNotification(notification);
+  routeTerminalNotification(normalizedNotification);
+  // The started event carries a server-generated resume capability. Keep it
+  // in Electron main-process state rather than exposing it to renderer IPC.
+  if (normalizedNotification.method === "command/exec/started") {
+    return;
+  }
   if (isClientRelaunchNotification(normalizedNotification)) {
     void getRuntimeRestartController().handle(normalizedNotification);
     return;
@@ -299,6 +322,16 @@ appServerClient.on("request", (request) => {
 });
 
 appServerClient.on("status", (status) => {
+  if (!status.connected) {
+    for (const panel of terminalPanelsByWindowId.values()) {
+      markRunningTerminalsLost(panel.state);
+      sendTerminalPanelState(panel);
+    }
+  } else {
+    for (const panel of terminalPanelsByWindowId.values()) {
+      void refreshTerminalPanelSessions(panel);
+    }
+  }
   broadcast("codex:status", status);
 });
 
@@ -669,6 +702,112 @@ ipcMain.handle("codex:browser:stop", async (event) => {
   return browserPanelState(panel);
 });
 
+ipcMain.handle("codex:terminal:getState", async (event, threadId) => {
+  const panel = terminalPanelForEvent(event);
+  panel.threadId = threadId || null;
+  await refreshTerminalPanelSessions(panel);
+  return terminalPanelState(panel);
+});
+
+ipcMain.handle("codex:terminal:create", async (event, payload = {}) => {
+  const panel = terminalPanelForEvent(event);
+  const processId = randomUUID();
+  const command = [resolveInteractiveShell()];
+  const descriptor = {
+    sessionId: `user:${processId}`,
+    generation: processId,
+    origin: "user",
+    threadId: null,
+    commandItemId: null,
+    processId,
+    title: path.basename(command[0]) || "Shell",
+    cwd: payload.cwd || defaultWorkspace,
+    replayBase64: null,
+    replayTruncated: false,
+    replayThroughSequence: 0,
+    canResize: true,
+    canWrite: true,
+    canTerminate: true,
+  };
+  const tab = addUserTerminal(panel.state, descriptor);
+  panel.error = null;
+  sendTerminalPanelState(panel);
+  void appServerClient
+    .request("command/exec", {
+      command,
+      processId,
+      tty: true,
+      disableTimeout: true,
+      disableOutputCap: true,
+      cwd: descriptor.cwd,
+      size: normalizeTerminalSize(payload.size),
+    })
+    .catch((error) => {
+      tab.status = "lost";
+      tab.error = error instanceof Error ? error.message : String(error);
+      sendTerminalPanelState(panel);
+    });
+  return terminalPanelState(panel);
+});
+
+ipcMain.handle("codex:terminal:select", async (event, tabId) => {
+  const panel = terminalPanelForEvent(event);
+  if (!selectTerminalTab(panel.state, tabId)) {
+    throw new Error("Terminal tab not found");
+  }
+  sendTerminalPanelState(panel);
+  return terminalPanelState(panel);
+});
+
+ipcMain.handle("codex:terminal:close", async (event, tabId) => {
+  const panel = terminalPanelForEvent(event);
+  if (!closeTerminalTab(panel.state, tabId)) {
+    throw new Error("Terminal tab not found");
+  }
+  sendTerminalPanelState(panel);
+  return terminalPanelState(panel);
+});
+
+ipcMain.handle("codex:terminal:reattach", async (event) => {
+  const panel = terminalPanelForEvent(event);
+  reattachTerminalSessions(panel.state);
+  await refreshTerminalPanelSessions(panel);
+  return terminalPanelState(panel);
+});
+
+ipcMain.handle("codex:terminal:write", async (event, payload) => {
+  const panel = terminalPanelForEvent(event);
+  const tab = requireTerminalTab(panel, payload.tabId);
+  await appServerClient.request("terminal/session/write", {
+    ...terminalControlTarget(panel, tab),
+    deltaBase64: payload.deltaBase64,
+  });
+  return { ok: true };
+});
+
+ipcMain.handle("codex:terminal:resize", async (event, payload) => {
+  const panel = terminalPanelForEvent(event);
+  const tab = requireTerminalTab(panel, payload.tabId);
+  if (!tab.canResize) {
+    throw new Error("Terminal resize is not supported by this execution environment");
+  }
+  await appServerClient.request("terminal/session/resize", {
+    ...terminalControlTarget(panel, tab),
+    size: normalizeTerminalSize(payload.size),
+  });
+  return { ok: true };
+});
+
+ipcMain.handle("codex:terminal:terminate", async (event, tabId) => {
+  const panel = terminalPanelForEvent(event);
+  const tab = requireTerminalTab(panel, tabId);
+  await appServerClient.request(
+    "terminal/session/terminate",
+    terminalControlTarget(panel, tab),
+  );
+  return { ok: true };
+});
+
 ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
 });
@@ -882,6 +1021,267 @@ function browserPanelForEvent(event) {
     throw new Error("Browser panel requires an active application window");
   }
   return browserPanelForWindow(window);
+}
+
+function terminalPanelForEvent(event) {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    throw new Error("Terminal panel requires an active application window");
+  }
+  const existing = terminalPanelsByWindowId.get(window.id);
+  if (existing) {
+    return existing;
+  }
+  const panel = {
+    window,
+    state: createTerminalPanelState(),
+    error: null,
+    threadId: null,
+    refreshPromise: null,
+    pendingNotifications: [],
+    userTerminalResumeTokens: new Map(),
+  };
+  terminalPanelsByWindowId.set(window.id, panel);
+  return panel;
+}
+
+function terminalPanelState(panel) {
+  return {
+    ...terminalPanelSnapshot(panel.state),
+    error: panel.error,
+  };
+}
+
+function sendTerminalPanelState(panel, event = { type: "snapshot" }) {
+  if (!panel.window.isDestroyed()) {
+    panel.window.webContents.send("codex:terminal:state", {
+      ...event,
+      state: terminalPanelState(panel),
+    });
+  }
+}
+
+function routeTerminalNotification(notification) {
+  for (const panel of terminalPanelsByWindowId.values()) {
+    if (panel.refreshPromise) {
+      panel.pendingNotifications.push(notification);
+      if (
+        panel.pendingNotifications.length >
+        MAX_PENDING_TERMINAL_NOTIFICATIONS
+      ) {
+        panel.pendingNotifications.splice(
+          0,
+          panel.pendingNotifications.length -
+            MAX_PENDING_TERMINAL_NOTIFICATIONS,
+        );
+      }
+    } else {
+      applyTerminalNotification(panel, notification, true);
+    }
+  }
+}
+
+function applyTerminalNotification(panel, notification, allowRefresh) {
+  const params = notification.params ?? {};
+  if (notification.method === "command/exec/started") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "user" &&
+        candidate.processId === params.processId &&
+        candidate.status === "starting",
+    );
+    if (tab) {
+      tab.generation = params.generation;
+      tab.status = "running";
+      panel.userTerminalResumeTokens.set(tab.processId, params.resumeToken);
+      sendTerminalPanelState(panel);
+    }
+    return;
+  }
+  if (
+    notification.method === "item/started" &&
+    params.item?.type === "commandExecution" &&
+    panel.threadId === params.threadId &&
+    allowRefresh
+  ) {
+    // A PTY is interactive as soon as the process starts, even before it
+    // writes output. Listing is the runtime fact that makes the tab available.
+    void refreshTerminalPanelSessions(panel);
+    return;
+  }
+  if (notification.method === "command/exec/outputDelta") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "user" &&
+        candidate.processId === params.processId &&
+        candidate.generation === params.generation,
+    );
+    if (
+      tab &&
+      appendTerminalOutput(tab, params.deltaBase64, params.sequence)
+    ) {
+      tab.backgroundActivity = panel.state.activeTabId !== tab.id;
+      sendTerminalPanelDelta(panel, {
+        type: "delta",
+        tabId: tab.id,
+        deltaBase64: params.deltaBase64,
+        tab: terminalTabMetadata(tab),
+      });
+      if (tab.hasSequenceGap && allowRefresh) {
+        void refreshTerminalPanelSessions(panel);
+      }
+    } else if (
+      !tab &&
+      allowRefresh &&
+      !isTerminalSessionDetached(panel.state, {
+        origin: "user",
+        threadId: null,
+        processId: params.processId,
+        generation: params.generation,
+      })
+    ) {
+      void refreshTerminalPanelSessions(panel);
+    }
+    return;
+  }
+  if (notification.method === "command/exec/exited") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "user" &&
+        candidate.processId === params.processId &&
+        candidate.generation === params.generation,
+    );
+    if (tab) {
+      markTerminalExited(tab, params.exitCode);
+      sendTerminalPanelState(panel);
+    }
+    return;
+  }
+  if (notification.method === "item/commandExecution/outputDelta") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "model" &&
+        candidate.threadId === params.threadId &&
+        candidate.commandItemId === params.itemId &&
+        candidate.processId === params.processId,
+    );
+    if (
+      tab &&
+      params.deltaBase64 &&
+      appendTerminalOutput(tab, params.deltaBase64, params.sequence)
+    ) {
+      tab.backgroundActivity = panel.state.activeTabId !== tab.id;
+      sendTerminalPanelDelta(panel, {
+        type: "delta",
+        tabId: tab.id,
+        deltaBase64: params.deltaBase64,
+        tab: terminalTabMetadata(tab),
+      });
+      if (tab.hasSequenceGap && allowRefresh) {
+        void refreshTerminalPanelSessions(panel);
+      }
+    } else if (
+      !tab &&
+      allowRefresh &&
+      panel.threadId === params.threadId &&
+      !isTerminalSessionDetached(panel.state, {
+        origin: "model",
+        threadId: params.threadId,
+        processId: params.processId,
+        generation: params.itemId,
+      })
+    ) {
+      void refreshTerminalPanelSessions(panel);
+    }
+    return;
+  }
+  if (
+    notification.method === "item/completed" &&
+    params.item?.type === "commandExecution"
+  ) {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "model" &&
+        candidate.threadId === params.threadId &&
+        candidate.commandItemId === params.item.id,
+    );
+    if (tab) {
+      markTerminalExited(tab, params.item.exitCode);
+      sendTerminalPanelState(panel);
+    }
+  }
+}
+
+function sendTerminalPanelDelta(panel, event) {
+  if (!panel.window.isDestroyed()) {
+    panel.window.webContents.send("codex:terminal:state", event);
+  }
+}
+
+async function refreshTerminalPanelSessions(panel) {
+  if (panel.refreshPromise) {
+    return panel.refreshPromise;
+  }
+  panel.refreshPromise = (async () => {
+    try {
+      const response = await appServerClient.request("terminal/session/list", {
+        threadId: panel.threadId,
+        userResumeTokens: [...panel.userTerminalResumeTokens.values()],
+      });
+      mergeTerminalSessions(panel.state, response.data ?? [], panel.threadId);
+      const pendingNotifications = panel.pendingNotifications.splice(0);
+      for (const notification of pendingNotifications) {
+        applyTerminalNotification(panel, notification, false);
+      }
+      panel.error = null;
+    } catch (error) {
+      panel.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      panel.refreshPromise = null;
+      sendTerminalPanelState(panel);
+    }
+  })();
+  return panel.refreshPromise;
+}
+
+function requireTerminalTab(panel, tabId) {
+  const tab = panel.state.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    throw new Error("Terminal tab not found");
+  }
+  if (tab.status !== "running" && tab.status !== "starting") {
+    throw new Error("Terminal session is no longer running");
+  }
+  return tab;
+}
+
+function terminalControlTarget(panel, tab) {
+  return {
+    sessionId: tab.sessionId,
+    generation: tab.generation,
+    origin: tab.origin,
+    threadId: tab.threadId,
+    commandItemId: tab.commandItemId,
+    processId: tab.processId,
+    resumeToken:
+      tab.origin === "user"
+        ? panel.userTerminalResumeTokens.get(tab.processId) ?? null
+        : null,
+  };
+}
+
+function normalizeTerminalSize(size) {
+  return {
+    rows: Math.max(1, Math.min(65535, Math.round(Number(size?.rows) || 24))),
+    cols: Math.max(1, Math.min(65535, Math.round(Number(size?.cols) || 80))),
+  };
+}
+
+function resolveInteractiveShell() {
+  if (process.platform === "win32") {
+    return process.env.COMSPEC || "cmd.exe";
+  }
+  return process.env.SHELL || "/bin/zsh";
 }
 
 function browserPanelForWindow(window) {

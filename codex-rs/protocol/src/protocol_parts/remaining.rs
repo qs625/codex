@@ -1676,11 +1676,13 @@ mod tests {
     fn vec_u8_as_base64_serialization_and_deserialization() -> Result<()> {
         let event = ExecCommandOutputDeltaEvent {
             call_id: "call21".to_string(),
+            process_id: None,
             sequence: None,
             generates_notification: false,
             created_at_ms: 0,
             stream: ExecOutputStream::Stdout,
             chunk: vec![1, 2, 3, 4, 5],
+            delta: None,
         };
         let serialized = serde_json::to_string(&event)?;
         assert_eq!(

@@ -59,6 +59,7 @@ use crate::unified_exec::generate_chunk_id;
 use codex_approval_service_api::ApprovalSessionCapability;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
+use codex_utils_pty::TerminalSize;
 use command_service_api::CommandSessionController;
 use command_service_api::CommandSessionError;
 use command_service_api::CommandSessionFuture;
@@ -892,6 +893,7 @@ impl UnifiedExecProcessManager {
         start_streaming_output(
             &process,
             context,
+            request.process_id,
             Arc::clone(&transcript),
             Arc::clone(&exit_notification_output),
             request.notify_on,
@@ -1128,6 +1130,76 @@ impl UnifiedExecProcessManager {
             call_id,
             bytes_written: request.input.len(),
         })
+    }
+
+    pub(crate) async fn write_terminal_bytes(
+        &self,
+        process_id: i32,
+        expected_call_id: &str,
+        input: Vec<u8>,
+    ) -> Result<(), UnifiedExecError> {
+        if input.is_empty() {
+            return Err(UnifiedExecError::EmptyStdin);
+        }
+        let process = {
+            let mut store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get_mut(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            if entry.call_id != expected_call_id {
+                return Err(UnifiedExecError::UnknownProcessId { process_id });
+            }
+            if !entry.tty {
+                return Err(UnifiedExecError::StdinClosed);
+            }
+            entry.last_used = Instant::now();
+            Arc::clone(&entry.process)
+        };
+        process.write(&input).await
+    }
+
+    pub(crate) async fn resize_terminal(
+        &self,
+        process_id: i32,
+        expected_call_id: &str,
+        size: TerminalSize,
+    ) -> Result<(), UnifiedExecError> {
+        let process = {
+            let mut store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get_mut(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            if entry.call_id != expected_call_id || !entry.tty {
+                return Err(UnifiedExecError::UnknownProcessId { process_id });
+            }
+            entry.last_used = Instant::now();
+            Arc::clone(&entry.process)
+        };
+        process.resize(size)
+    }
+
+    pub(crate) async fn terminate_terminal(
+        &self,
+        process_id: i32,
+        expected_call_id: &str,
+    ) -> Result<(), UnifiedExecError> {
+        let process = {
+            let store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            if entry.call_id != expected_call_id || !entry.tty {
+                return Err(UnifiedExecError::UnknownProcessId { process_id });
+            }
+            Arc::clone(&entry.process)
+        };
+        // Keep the entry registered until the existing exit watcher observes
+        // termination, emits ExecCommandEnd, and releases the matching entry.
+        process.terminate();
+        Ok(())
     }
 
     async fn refresh_process_state(&self, process_id: i32) -> ProcessStatus {

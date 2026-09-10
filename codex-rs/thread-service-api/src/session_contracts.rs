@@ -1373,6 +1373,16 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         event: EventMsg,
     ) -> SessionCapabilityFuture<'a, ()>;
 
+    /// Deliver one typed live event without appending it to durable rollout
+    /// history. Callers must provide a bounded runtime snapshot for reload.
+    fn emit_transient_event<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        event: EventMsg,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        self.emit_event(turn, event)
+    }
+
     /// Record model-visible items and emit display events for the active turn.
     fn record_model_items_and_emit_display_events<'a>(
         &'a self,

@@ -20,6 +20,7 @@ use crate::protocol::event_item_projection::project_event_msg_item;
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
 use crate::protocol::item_builders::convert_patch_changes;
+use base64::Engine as _;
 use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use protocol::protocol::EventMsg;
 use std::collections::HashMap;
@@ -554,13 +555,19 @@ pub fn item_event_to_server_notification(
         }
         EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event) => {
             let item_id = exec_command_output_delta_event.call_id;
-            let delta = String::from_utf8_lossy(&exec_command_output_delta_event.chunk).to_string();
+            let delta = exec_command_output_delta_event.delta.unwrap_or_else(|| {
+                String::from_utf8_lossy(&exec_command_output_delta_event.chunk).to_string()
+            });
             ServerNotification::CommandExecutionOutputDelta(
                 CommandExecutionOutputDeltaNotification {
                     thread_id,
                     turn_id,
                     item_id,
+                    process_id: exec_command_output_delta_event.process_id,
+                    sequence: exec_command_output_delta_event.sequence,
                     delta,
+                    delta_base64: base64::engine::general_purpose::STANDARD
+                        .encode(exec_command_output_delta_event.chunk),
                 },
             )
         }
@@ -1529,11 +1536,13 @@ mod tests {
         let notification = item_event_to_server_notification(
             EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
                 call_id: "call-1".to_string(),
+                process_id: Some("42".to_string()),
                 sequence: None,
                 generates_notification: false,
                 created_at_ms: 0,
                 stream: ExecOutputStream::Stdout,
                 chunk: b"hello".to_vec(),
+                delta: Some("hello".to_string()),
             }),
             "thread-1",
             "turn-1",
@@ -1545,7 +1554,10 @@ mod tests {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "call-1".to_string(),
+                process_id: Some("42".to_string()),
+                sequence: None,
                 delta: "hello".to_string(),
+                delta_base64: "aGVsbG8=".to_string(),
             },
         );
     }

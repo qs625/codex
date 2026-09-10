@@ -1,0 +1,230 @@
+const MAX_TERMINAL_REPLAY_BYTES = 1024 * 1024;
+
+function createTerminalPanelState() {
+  return {
+    activeTabId: null,
+    tabs: [],
+    detachedSessionKeys: new Set(),
+  };
+}
+
+function terminalPanelSnapshot(state) {
+  return {
+    activeTabId: state.activeTabId,
+    tabs: state.tabs.map(terminalTabSnapshot),
+    detachedCount: state.detachedSessionKeys.size,
+  };
+}
+
+function terminalTabSnapshot(tab) {
+  const { replay, ...metadata } = tab;
+  return {
+    ...metadata,
+    replayBase64: replay.toString("base64"),
+  };
+}
+
+function terminalTabMetadata(tab) {
+  const { replay, ...metadata } = tab;
+  return metadata;
+}
+
+function mergeTerminalSessions(state, sessions, threadId = null) {
+  const activeKeys = new Set();
+  for (const descriptor of sessions) {
+    const key = terminalSessionKey(descriptor);
+    activeKeys.add(key);
+    if (state.detachedSessionKeys.has(key)) {
+      continue;
+    }
+    const existing = state.tabs.find(
+      (tab) =>
+        terminalSessionKey(tab) === key ||
+        (tab.origin === "user" &&
+          tab.status === "starting" &&
+          tab.processId === descriptor.processId),
+    );
+    if (existing) {
+      const descriptorSequence = normalizeSequence(
+        descriptor.replayThroughSequence,
+      );
+      const shouldApplyReplay =
+        descriptor.replayBase64 &&
+        descriptorSequence >= (existing.lastSequence ?? 0);
+      Object.assign(existing, normalizeDescriptor(descriptor), { status: "running" });
+      if (shouldApplyReplay) {
+        existing.replay = Buffer.from(descriptor.replayBase64, "base64");
+        existing.lastSequence = descriptorSequence;
+        existing.hasSequenceGap = false;
+      }
+      continue;
+    }
+    state.tabs.push({
+      ...normalizeDescriptor(descriptor),
+      id: descriptor.sessionId,
+      status: "running",
+      replay: descriptor.replayBase64
+        ? Buffer.from(descriptor.replayBase64, "base64")
+        : Buffer.alloc(0),
+      lastSequence: normalizeSequence(descriptor.replayThroughSequence),
+      hasSequenceGap: false,
+      backgroundActivity: false,
+    });
+  }
+  for (const tab of state.tabs) {
+    const wasInListedScope =
+      tab.origin === "user" || (threadId && tab.threadId === threadId);
+    if (
+      wasInListedScope &&
+      tab.status === "running" &&
+      !activeKeys.has(terminalSessionKey(tab))
+    ) {
+      tab.status = "lost";
+    }
+  }
+  if (!state.activeTabId || !state.tabs.some((tab) => tab.id === state.activeTabId)) {
+    state.activeTabId = state.tabs[0]?.id ?? null;
+  }
+  return state;
+}
+
+function reattachTerminalSessions(state) {
+  const detachedCount = state.detachedSessionKeys.size;
+  state.detachedSessionKeys.clear();
+  return detachedCount;
+}
+
+function addUserTerminal(state, descriptor) {
+  const tab = {
+    ...normalizeDescriptor(descriptor),
+    id: descriptor.sessionId,
+    status: "starting",
+    replay: Buffer.alloc(0),
+    lastSequence: null,
+    hasSequenceGap: false,
+    backgroundActivity: false,
+  };
+  state.tabs.push(tab);
+  state.activeTabId = tab.id;
+  return tab;
+}
+
+function selectTerminalTab(state, tabId) {
+  const tab = state.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    return false;
+  }
+  state.activeTabId = tab.id;
+  tab.backgroundActivity = false;
+  return true;
+}
+
+function closeTerminalTab(state, tabId) {
+  const index = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (index === -1) {
+    return false;
+  }
+  const wasActive = state.activeTabId === tabId;
+  state.detachedSessionKeys.add(terminalSessionKey(state.tabs[index]));
+  state.tabs.splice(index, 1);
+  if (wasActive) {
+    state.activeTabId =
+      state.tabs[Math.min(index, state.tabs.length - 1)]?.id ?? null;
+  }
+  return true;
+}
+
+function appendTerminalOutput(tab, deltaBase64, sequence) {
+  if (Number.isInteger(sequence)) {
+    if (Number.isInteger(tab.lastSequence) && sequence <= tab.lastSequence) {
+      return false;
+    }
+    if (Number.isInteger(tab.lastSequence) && sequence > tab.lastSequence + 1) {
+      tab.hasSequenceGap = true;
+      tab.replayTruncated = true;
+    }
+    tab.lastSequence = sequence;
+  }
+  const delta = Buffer.from(deltaBase64, "base64");
+  if (delta.length === 0) {
+    return false;
+  }
+  tab.replay = Buffer.concat([tab.replay, delta]);
+  if (tab.replay.length > MAX_TERMINAL_REPLAY_BYTES) {
+    tab.replay = tab.replay.subarray(tab.replay.length - MAX_TERMINAL_REPLAY_BYTES);
+    tab.replayTruncated = true;
+  }
+  if (tab.status === "starting") {
+    tab.status = "running";
+  }
+  tab.backgroundActivity = true;
+  return true;
+}
+
+function markTerminalExited(tab, exitCode) {
+  tab.status = "exited";
+  tab.exitCode = Number.isInteger(exitCode) ? exitCode : null;
+}
+
+function markRunningTerminalsLost(state) {
+  for (const tab of state.tabs) {
+    if (tab.status === "running" || tab.status === "starting") {
+      tab.status = "lost";
+    }
+  }
+}
+
+function terminalSessionKey(value) {
+  return [
+    value.origin,
+    value.threadId ?? "",
+    value.processId,
+    value.generation,
+  ].join(":");
+}
+
+function isTerminalSessionDetached(state, value) {
+  return state.detachedSessionKeys.has(terminalSessionKey(value));
+}
+
+function normalizeDescriptor(descriptor) {
+  return {
+    sessionId: descriptor.sessionId,
+    generation: descriptor.generation,
+    origin: descriptor.origin,
+    threadId: descriptor.threadId ?? null,
+    commandItemId: descriptor.commandItemId ?? null,
+    processId: descriptor.processId,
+    title: descriptor.title || "Terminal",
+    cwd: descriptor.cwd || "",
+    replayTruncated: Boolean(descriptor.replayTruncated),
+    replayThroughSequence: normalizeSequence(
+      descriptor.replayThroughSequence,
+    ),
+    canResize: descriptor.canResize !== false,
+    canWrite: descriptor.canWrite !== false,
+    canTerminate: descriptor.canTerminate !== false,
+    exitCode: null,
+  };
+}
+
+function normalizeSequence(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+module.exports = {
+  MAX_TERMINAL_REPLAY_BYTES,
+  addUserTerminal,
+  appendTerminalOutput,
+  closeTerminalTab,
+  createTerminalPanelState,
+  markRunningTerminalsLost,
+  markTerminalExited,
+  mergeTerminalSessions,
+  reattachTerminalSessions,
+  isTerminalSessionDetached,
+  selectTerminalTab,
+  terminalPanelSnapshot,
+  terminalTabMetadata,
+  terminalSessionKey,
+};

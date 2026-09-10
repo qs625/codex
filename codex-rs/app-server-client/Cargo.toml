@@ -42,6 +42,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 rollout = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }

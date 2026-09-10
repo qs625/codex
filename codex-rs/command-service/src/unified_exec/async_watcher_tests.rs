@@ -3,11 +3,34 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::CommandNotificationFilter;
+use super::decode_utf8_incremental;
 use super::HeadTailBuffer;
 use super::MAX_OUTPUT_NOTIFICATION_BYTES;
 use super::OutputNotificationAggregator;
 use protocol::models::CommandExecutionNotificationKind;
 use protocol::models::ResponseItem;
+
+#[test]
+fn utf8_decoder_preserves_code_points_across_chunks() {
+    let mut pending = Vec::new();
+    let bytes = "终".as_bytes();
+
+    assert_eq!(decode_utf8_incremental(&mut pending, &bytes[..1]), "");
+    assert_eq!(decode_utf8_incremental(&mut pending, &bytes[1..2]), "");
+    assert_eq!(decode_utf8_incremental(&mut pending, &bytes[2..]), "终");
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn utf8_decoder_replaces_invalid_bytes_without_losing_following_text() {
+    let mut pending = Vec::new();
+
+    assert_eq!(
+        decode_utf8_incremental(&mut pending, &[0xff, b'o', b'k']),
+        "\u{fffd}ok",
+    );
+    assert!(pending.is_empty());
+}
 
 #[test]
 fn output_notification_aggregator_combines_fast_chunks() {

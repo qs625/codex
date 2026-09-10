@@ -18,6 +18,7 @@ use super::UnifiedExecManagerHandle;
 use super::UnifiedExecProcess;
 use super::bound_command_notification_output;
 use super::command_notification_filter_to_protocol;
+use super::decode_utf8_incremental;
 use super::events::command_exit_notification_message;
 use super::events::command_output_notification_message;
 use super::events::emit_unified_exec_end;
@@ -44,11 +45,11 @@ pub(crate) const OUTPUT_NOTIFICATION_FLUSH_INTERVAL: Duration = Duration::from_m
 pub(crate) const MAX_OUTPUT_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 /// Spawn a background task that continuously reads from the PTY, appends to the
-/// shared transcript, and emits ExecCommandOutputDelta events on UTF‑8
-/// boundaries.
+/// shared transcript, and emits byte-preserving ExecCommandOutputDelta events.
 pub(crate) fn start_streaming_output(
     process: &UnifiedExecProcess,
     context: &UnifiedExecContext,
+    process_id: i32,
     transcript: Arc<Mutex<HeadTailBuffer>>,
     exit_notification_output: Arc<Mutex<HeadTailBuffer>>,
     notify_on: CommandNotificationFilter,
@@ -63,9 +64,8 @@ pub(crate) fn start_streaming_output(
     let call_id = context.call_id.clone();
 
     tokio::spawn(async move {
-        use tokio::sync::broadcast::error::RecvError;
-
         let mut pending = Vec::<u8>::new();
+        let mut display_pending = Vec::<u8>::new();
         let mut emitted_deltas: usize = 0;
         let mut output_notification_aggregator = OutputNotificationAggregator::default();
 
@@ -111,12 +111,9 @@ pub(crate) fn start_streaming_output(
                 }
 
                 received = receiver.recv() => {
-                    let chunk = match received {
-                        Ok(chunk) => chunk,
-                        Err(RecvError::Lagged(_)) => {
-                            continue;
-                        },
-                        Err(RecvError::Closed) => {
+                    let output = match received {
+                        Ok(output) => output,
+                        Err(_) => {
                             flush_output_notification(
                                 &mut output_notification_aggregator,
                                 &exit_notification_output,
@@ -131,9 +128,11 @@ pub(crate) fn start_streaming_output(
 
                     process_chunk(
                         &mut pending,
+                        &mut display_pending,
                         &transcript,
                         &exit_notification_output,
                         &call_id,
+                        process_id,
                         &session_ref,
                         &turn_ref,
                         &mut emitted_deltas,
@@ -141,7 +140,8 @@ pub(crate) fn start_streaming_output(
                         &notification_state,
                         &mut output_notification_aggregator,
                         &mut output_notification_flush_sleep,
-                        chunk,
+                        output.sequence,
+                        output.bytes,
                     ).await;
                 }
             }
@@ -369,9 +369,11 @@ async fn resolve_exit_notification_output(
 #[allow(clippy::too_many_arguments)]
 async fn process_chunk(
     pending: &mut Vec<u8>,
+    display_pending: &mut Vec<u8>,
     transcript: &Arc<Mutex<HeadTailBuffer>>,
     exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
+    process_id: i32,
     session_ref: &Arc<dyn ThreadSessionCapability>,
     turn_ref: &Arc<dyn ThreadRuntimeCapability>,
     emitted_deltas: &mut usize,
@@ -379,57 +381,64 @@ async fn process_chunk(
     notification_state: &Arc<CommandNotificationState>,
     output_notification_aggregator: &mut OutputNotificationAggregator,
     output_notification_flush_sleep: &mut Option<Pin<Box<Sleep>>>,
+    sequence: u64,
     chunk: Vec<u8>,
 ) {
-    pending.extend_from_slice(&chunk);
-    while let Some(prefix) = split_valid_utf8_prefix(pending) {
-        let background_session_active = notification_state.is_background_session_active();
-        {
-            let mut guard = transcript.lock().await;
-            guard.push_chunk(prefix.to_vec());
-        }
-        if matches!(notify_on, CommandNotificationFilter::Output) && background_session_active {
-            let mut guard = exit_notification_output.lock().await;
-            guard.push_chunk(prefix.to_vec());
-        }
-
-        if *emitted_deltas >= MAX_EXEC_OUTPUT_DELTAS_PER_CALL {
-            continue;
-        }
-
-        let generates_notification =
-            matches!(notify_on, CommandNotificationFilter::Output) && background_session_active;
-        let sequence = *emitted_deltas as u64 + 1;
-        let event = ExecCommandOutputDeltaEvent {
-            call_id: call_id.to_string(),
-            sequence: Some(sequence),
-            generates_notification,
-            created_at_ms: now_unix_timestamp_ms(),
-            stream: ExecOutputStream::Stdout,
-            chunk: prefix.clone(),
-        };
+    {
+        let mut guard = transcript.lock().await;
+        guard.push_chunk(chunk.clone());
+    }
+    let background_session_active = notification_state.is_background_session_active();
+    let generates_notification =
+        matches!(notify_on, CommandNotificationFilter::Output) && background_session_active;
+    let delta = decode_utf8_incremental(display_pending, &chunk);
+    let event = ExecCommandOutputDeltaEvent {
+        call_id: call_id.to_string(),
+        process_id: Some(process_id.to_string()),
+        sequence: Some(sequence),
+        generates_notification,
+        created_at_ms: now_unix_timestamp_ms(),
+        stream: ExecOutputStream::Stdout,
+        chunk: chunk.clone(),
+        delta: Some(delta),
+    };
+    if *emitted_deltas < MAX_EXEC_OUTPUT_DELTAS_PER_CALL {
         session_ref
             .emit_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
             .await;
         *emitted_deltas += 1;
-        if generates_notification {
-            let output = String::from_utf8_lossy(&prefix).to_string();
-            output_notification_aggregator.push(sequence, output);
-            if output_notification_aggregator.should_flush_for_size() {
-                flush_output_notification(
-                    output_notification_aggregator,
-                    exit_notification_output,
-                    call_id,
-                    session_ref,
-                    notification_state,
-                )
-                .await;
-                *output_notification_flush_sleep = None;
-            } else if output_notification_flush_sleep.is_none() {
-                output_notification_flush_sleep.replace(Box::pin(tokio::time::sleep(
-                    OUTPUT_NOTIFICATION_FLUSH_INTERVAL,
-                )));
-            }
+    } else {
+        session_ref
+            .emit_transient_event(turn_ref.as_ref(), EventMsg::ExecCommandOutputDelta(event))
+            .await;
+    }
+
+    if !generates_notification {
+        return;
+    }
+
+    {
+        let mut guard = exit_notification_output.lock().await;
+        guard.push_chunk(chunk.clone());
+    }
+    pending.extend_from_slice(&chunk);
+    while let Some(prefix) = split_valid_utf8_prefix(pending) {
+        let output = String::from_utf8_lossy(&prefix).to_string();
+        output_notification_aggregator.push(sequence, output);
+        if output_notification_aggregator.should_flush_for_size() {
+            flush_output_notification(
+                output_notification_aggregator,
+                exit_notification_output,
+                call_id,
+                session_ref,
+                notification_state,
+            )
+            .await;
+            *output_notification_flush_sleep = None;
+        } else if output_notification_flush_sleep.is_none() {
+            output_notification_flush_sleep.replace(Box::pin(tokio::time::sleep(
+                OUTPUT_NOTIFICATION_FLUSH_INTERVAL,
+            )));
         }
     }
 }

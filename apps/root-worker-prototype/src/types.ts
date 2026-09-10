@@ -74,6 +74,8 @@ export type ThreadItem = ThreadItemTimestamps &
       id: string;
       command: string;
       cwd: string;
+      processId?: string | null;
+      source?: string | null;
       status: string;
       initialWaitMs?: number | null;
       notifyOn?: "output" | "exit" | string | null;
@@ -947,7 +949,13 @@ export type DraftSkill = {
   path: string;
 };
 
-export type RightPanelView = "preview" | "skills" | "git" | "browser" | "workflow";
+export type RightPanelView =
+  | "preview"
+  | "skills"
+  | "git"
+  | "browser"
+  | "terminal"
+  | "workflow";
 
 export type FilePanelView = "preview" | "tree";
 

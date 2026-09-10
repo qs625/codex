@@ -45,6 +45,7 @@ use protocol::models::PermissionProfile;
 use protocol::models::ResponseItem;
 use protocol::permissions::FileSystemSandboxPolicy;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::Event;
 use protocol::protocol::EventMsg;
 use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::ReviewDecision;
@@ -757,6 +758,25 @@ impl ThreadSessionCapability for Session {
                 return;
             };
             self.send_event(turn, event).await;
+        })
+    }
+
+    fn emit_transient_event<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        event: EventMsg,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("tool session capability received an unsupported turn context");
+                return;
+            };
+            self.deliver_event_raw(Event {
+                id: turn.sub_id.clone(),
+                msg: event,
+            })
+            .await;
         })
     }
 

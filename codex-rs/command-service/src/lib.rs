@@ -212,4 +212,50 @@ impl CommandServiceSessionState for CommandSessionState {
                 .await
         })
     }
+
+    fn write_terminal_bytes<'a>(
+        &'a self,
+        process_id: i32,
+        expected_call_id: &'a str,
+        input: Vec<u8>,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+        Box::pin(async move {
+            self.unified_exec_manager
+                .write_terminal_bytes(process_id, expected_call_id, input)
+                .await
+                .map_err(|err| CommandSessionError::new(err.to_string()))
+        })
+    }
+
+    fn resize_terminal<'a>(
+        &'a self,
+        process_id: i32,
+        expected_call_id: &'a str,
+        rows: u16,
+        cols: u16,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+        Box::pin(async move {
+            self.unified_exec_manager
+                .resize_terminal(
+                    process_id,
+                    expected_call_id,
+                    codex_utils_pty::TerminalSize { rows, cols },
+                )
+                .await
+                .map_err(|err| CommandSessionError::new(err.to_string()))
+        })
+    }
+
+    fn terminate_terminal<'a>(
+        &'a self,
+        process_id: i32,
+        expected_call_id: &'a str,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+        Box::pin(async move {
+            self.unified_exec_manager
+                .terminate_terminal(process_id, expected_call_id)
+                .await
+                .map_err(|err| CommandSessionError::new(err.to_string()))
+        })
+    }
 }

@@ -117,6 +117,62 @@ impl CodexThread {
         self.codex.session.services.session_telemetry.clone()
     }
 
+    pub async fn running_terminal_commands(
+        &self,
+    ) -> Vec<command_service_api::RunningCommandSnapshot> {
+        self.codex
+            .session
+            .services
+            .command_service_state
+            .running_processes_for_thread(self.codex.session.conversation_id)
+            .await
+            .into_iter()
+            .filter(|command| command.tty)
+            .collect()
+    }
+
+    pub async fn write_terminal_bytes(
+        &self,
+        process_id: i32,
+        expected_call_id: &str,
+        input: Vec<u8>,
+    ) -> Result<(), command_service_api::CommandSessionError> {
+        self.codex
+            .session
+            .services
+            .command_service_state
+            .write_terminal_bytes(process_id, expected_call_id, input)
+            .await
+    }
+
+    pub async fn resize_terminal(
+        &self,
+        process_id: i32,
+        expected_call_id: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<(), command_service_api::CommandSessionError> {
+        self.codex
+            .session
+            .services
+            .command_service_state
+            .resize_terminal(process_id, expected_call_id, rows, cols)
+            .await
+    }
+
+    pub async fn terminate_terminal(
+        &self,
+        process_id: i32,
+        expected_call_id: &str,
+    ) -> Result<(), command_service_api::CommandSessionError> {
+        self.codex
+            .session
+            .services
+            .command_service_state
+            .terminate_terminal(process_id, expected_call_id)
+            .await
+    }
+
     pub async fn shutdown_and_wait(&self) -> CodexResult<()> {
         self.codex.shutdown_and_wait().await
     }

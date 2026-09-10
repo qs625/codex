@@ -24,6 +24,16 @@ fn keeps_prefix_and_suffix_when_over_budget() {
 }
 
 #[test]
+fn terminal_replay_uses_only_contiguous_tail_after_omission() {
+    let mut buf = HeadTailBuffer::new(/*max_bytes*/ 10);
+    buf.push_chunk(b"0123456789".to_vec());
+    buf.push_chunk(b"abcdef".to_vec());
+
+    assert!(buf.omitted_bytes() > 0);
+    assert_eq!(buf.terminal_replay_bytes(), b"bcdef".to_vec());
+}
+
+#[test]
 fn max_bytes_zero_drops_everything() {
     let mut buf = HeadTailBuffer::new(/*max_bytes*/ 0);
     buf.push_chunk(b"abc".to_vec());
@@ -129,10 +139,12 @@ fn split_valid_utf8_prefix_makes_progress_on_invalid_utf8() {
 async fn output_runtime_pumps_broadcast_chunks_into_shared_buffer() {
     let runtime = CommandOutputRuntime::new();
     let handles = runtime.handles();
-    let (tx, rx) = tokio::sync::broadcast::channel(4);
-    let task = tokio::spawn(runtime.pump_broadcast_receiver(rx));
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let task = tokio::spawn(runtime.pump_output_receiver(rx));
 
-    tx.send(b"chunk".to_vec()).expect("receiver should be open");
+    tx.send(b"chunk".to_vec())
+        .await
+        .expect("receiver should be open");
     drop(tx);
     task.await.expect("pump should finish");
 
@@ -140,6 +152,27 @@ async fn output_runtime_pumps_broadcast_chunks_into_shared_buffer() {
         collect_output_until_deadline(&handles, None, Instant::now() + Duration::from_millis(1))
             .await;
     assert_eq!(collected, b"chunk".to_vec());
+}
+
+#[tokio::test]
+async fn output_runtime_sequences_live_chunks_and_snapshots_the_same_watermark() {
+    let runtime = CommandOutputRuntime::new();
+    let receiver = runtime.receiver();
+
+    runtime.push_chunk(b"one".to_vec()).await;
+    runtime.push_chunk(b"two".to_vec()).await;
+
+    let first = receiver.recv().await.expect("first output");
+    let second = receiver.recv().await.expect("second output");
+    let (replay, truncated, through_sequence) = runtime.terminal_replay_snapshot().await;
+
+    assert_eq!(first.sequence, 1);
+    assert_eq!(first.bytes, b"one");
+    assert_eq!(second.sequence, 2);
+    assert_eq!(second.bytes, b"two");
+    assert_eq!(replay, b"onetwo");
+    assert!(!truncated);
+    assert_eq!(through_sequence, 2);
 }
 
 #[test]

@@ -518,6 +518,7 @@ impl MessageProcessor {
             Arc::clone(&config),
             outgoing.clone(),
             Arc::new(codex_sandboxing::SandboxManager::new()),
+            Arc::clone(&thread_service),
         );
         let process_exec_processor = ProcessExecRequestProcessor::new(outgoing.clone());
         let feedback_processor = FeedbackRequestProcessor::new(
@@ -1607,6 +1608,26 @@ impl MessageProcessor {
             ClientRequest::CommandExecTerminate { params, .. } => {
                 self.command_exec_processor
                     .command_exec_terminate(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::TerminalSessionList { params, .. } => {
+                self.command_exec_processor
+                    .terminal_session_list(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::TerminalSessionWrite { params, .. } => {
+                self.command_exec_processor
+                    .terminal_session_write(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::TerminalSessionResize { params, .. } => {
+                self.command_exec_processor
+                    .terminal_session_resize(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::TerminalSessionTerminate { params, .. } => {
+                self.command_exec_processor
+                    .terminal_session_terminate(request_id.clone(), params)
                     .await
             }
             ClientRequest::ProcessSpawn { params, .. } => self

@@ -562,6 +562,8 @@ fn command_exec_resize_round_trips() {
 fn command_exec_output_delta_round_trips() {
     let notification = CommandExecOutputDeltaNotification {
         process_id: "proc-1".to_string(),
+        generation: "generation-1".to_string(),
+        sequence: 7,
         stream: CommandExecOutputStream::Stdout,
         delta_base64: "AQI=".to_string(),
         cap_reached: false,
@@ -573,6 +575,8 @@ fn command_exec_output_delta_round_trips() {
         value,
         json!({
             "processId": "proc-1",
+            "generation": "generation-1",
+            "sequence": 7,
             "stream": "stdout",
             "deltaBase64": "AQI=",
             "capReached": false,
@@ -694,7 +698,10 @@ fn command_execution_output_delta_round_trips() {
         thread_id: "thread-1".to_string(),
         turn_id: "turn-1".to_string(),
         item_id: "item-1".to_string(),
+        process_id: Some("42".to_string()),
+        sequence: Some(7),
         delta: "\u{fffd}a\n".to_string(),
+        delta_base64: "/2EK".to_string(),
     };
 
     let value = serde_json::to_value(&notification)
@@ -705,7 +712,10 @@ fn command_execution_output_delta_round_trips() {
             "threadId": "thread-1",
             "turnId": "turn-1",
             "itemId": "item-1",
+            "processId": "42",
+            "sequence": 7,
             "delta": "\u{fffd}a\n",
+            "deltaBase64": "/2EK",
         })
     );
 

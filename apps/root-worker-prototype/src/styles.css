@@ -5621,6 +5621,172 @@ svg {
   color: #57534e;
 }
 
+.terminal-panel {
+  min-height: 0;
+  background: rgba(252, 251, 249, 0.52);
+}
+
+.terminal-header {
+  align-items: center;
+}
+
+.terminal-header .panel-content-copy {
+  min-width: 0;
+}
+
+.terminal-header h2,
+.terminal-header p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-terminate {
+  flex: none;
+  color: #b91c1c;
+}
+
+.terminal-tab-strip {
+  background: rgba(250, 250, 249, 0.76);
+}
+
+.terminal-reattach-button {
+  width: auto;
+  min-width: max-content;
+  padding: 0 8px;
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.terminal-tab-shell.exited {
+  opacity: 0.74;
+}
+
+.terminal-tab-shell.lost {
+  border-color: rgba(185, 28, 28, 0.22);
+}
+
+.terminal-tab-dot.running,
+.terminal-tab-dot.starting {
+  background: #0f766e;
+}
+
+.terminal-tab-dot.activity {
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.15);
+}
+
+.terminal-tab-dot.exited {
+  background: #78716c;
+}
+
+.terminal-tab-dot.lost {
+  background: #dc2626;
+}
+
+.terminal-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 5px 11px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  color: #57534e;
+  font-size: 10px;
+}
+
+.terminal-status-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: #a8a29e;
+}
+
+.terminal-status-dot.running,
+.terminal-status-dot.starting {
+  background: #0f766e;
+}
+
+.terminal-status-dot.lost {
+  background: #dc2626;
+}
+
+.terminal-viewport-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #111827;
+}
+
+.terminal-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 6px 6px 9px;
+}
+
+.terminal-viewport .xterm,
+.terminal-viewport .xterm-screen {
+  height: 100%;
+}
+
+.terminal-viewport .xterm-viewport {
+  scrollbar-color: #57534e #111827;
+  scrollbar-width: thin;
+}
+
+.terminal-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 24px;
+  color: #a8a29e;
+  text-align: center;
+}
+
+.terminal-empty > span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: 10px;
+  color: #2dd4bf;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-weight: 700;
+}
+
+.terminal-empty p {
+  max-width: 250px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.terminal-empty button {
+  height: 28px;
+  border: 1px solid rgba(45, 212, 191, 0.38);
+  border-radius: 8px;
+  background: rgba(15, 118, 110, 0.16);
+  color: #ccfbf1;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 12px;
+}
+
 .preview-editor-shell {
   display: flex;
   flex: 1;

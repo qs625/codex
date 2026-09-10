@@ -522,6 +522,7 @@ version = "0.0.0"
 dependencies = [
  "app-server",
  "app-server-protocol",
+ "base64 0.22.1",
  "codex-arg0",
  "codex-exec-server",
  "codex-feedback",

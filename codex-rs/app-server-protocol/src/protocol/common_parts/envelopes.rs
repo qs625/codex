@@ -910,6 +910,30 @@ client_request_definitions! {
         serialization: command_process_id(params.process_id),
         response: v2::CommandExecResizeResponse,
     },
+    /// List terminal-capable sessions visible to this client.
+    TerminalSessionList => "terminal/session/list" {
+        params: v2::TerminalSessionListParams,
+        serialization: global_shared_read("terminal-sessions"),
+        response: v2::TerminalSessionListResponse,
+    },
+    /// Write raw bytes to a terminal session.
+    TerminalSessionWrite => "terminal/session/write" {
+        params: v2::TerminalSessionWriteParams,
+        serialization: global("terminal-sessions"),
+        response: v2::TerminalSessionWriteResponse,
+    },
+    /// Resize a terminal session.
+    TerminalSessionResize => "terminal/session/resize" {
+        params: v2::TerminalSessionResizeParams,
+        serialization: global("terminal-sessions"),
+        response: v2::TerminalSessionResizeResponse,
+    },
+    /// Explicitly terminate a terminal session.
+    TerminalSessionTerminate => "terminal/session/terminate" {
+        params: v2::TerminalSessionTerminateParams,
+        serialization: global("terminal-sessions"),
+        response: v2::TerminalSessionTerminateResponse,
+    },
     #[experimental("process/spawn")]
     /// Spawn a standalone process (argv vector) without a Codex sandbox.
     ProcessSpawn => "process/spawn" {

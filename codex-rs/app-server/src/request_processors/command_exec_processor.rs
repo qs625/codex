@@ -7,6 +7,7 @@ pub(crate) struct CommandExecRequestProcessor {
     outgoing: Arc<OutgoingMessageSender>,
     command_exec_manager: CommandExecManager,
     sandbox_runtime: codex_sandboxing_api::SharedSandboxRuntime,
+    thread_service: Arc<ThreadService>,
 }
 
 impl CommandExecRequestProcessor {
@@ -15,6 +16,7 @@ impl CommandExecRequestProcessor {
         config: Arc<Config>,
         outgoing: Arc<OutgoingMessageSender>,
         sandbox_runtime: codex_sandboxing_api::SharedSandboxRuntime,
+        thread_service: Arc<ThreadService>,
     ) -> Self {
         Self {
             arg0_paths,
@@ -22,6 +24,7 @@ impl CommandExecRequestProcessor {
             outgoing,
             command_exec_manager: CommandExecManager::default(),
             sandbox_runtime,
+            thread_service,
         }
     }
 
@@ -66,6 +69,116 @@ impl CommandExecRequestProcessor {
             .terminate(request_id, params)
             .await
             .map(|response| Some(response.into()))
+    }
+
+    pub(crate) async fn terminal_session_list(
+        &self,
+        request_id: ConnectionRequestId,
+        params: TerminalSessionListParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let mut data = self
+            .command_exec_manager
+            .list(request_id.connection_id, &params.user_resume_tokens)
+            .await
+            .into_iter()
+            .map(|session| TerminalSessionDescriptor {
+                session_id: format!("user:{}", session.process_id),
+                generation: session.generation,
+                origin: TerminalSessionOrigin::User,
+                thread_id: None,
+                command_item_id: None,
+                process_id: session.process_id,
+                title: session.command.join(" "),
+                cwd: session.cwd,
+                replay_base64: session.replay_base64,
+                replay_truncated: session.replay_truncated,
+                replay_through_sequence: session.replay_through_sequence,
+                can_resize: true,
+                can_write: true,
+                can_terminate: true,
+            })
+            .collect::<Vec<_>>();
+        if let Some(thread_id) = params.thread_id {
+            let parsed_thread_id = protocol::ThreadId::from_string(&thread_id)
+                .map_err(|err| invalid_params(format!("invalid threadId: {err}")))?;
+            let commands = self
+                .thread_service
+                .live_terminal_commands(parsed_thread_id)
+                .await
+                .map_err(|err| invalid_request(err.to_string()))?;
+            data.extend(commands.into_iter().map(|command| {
+                let process_id = command.process_id.to_string();
+                TerminalSessionDescriptor {
+                    session_id: format!(
+                        "model:{thread_id}:{}:{process_id}",
+                        command.call_id
+                    ),
+                    generation: command.call_id.clone(),
+                    origin: TerminalSessionOrigin::Model,
+                    thread_id: Some(thread_id.clone()),
+                    command_item_id: Some(command.call_id.clone()),
+                    process_id,
+                    title: command.command,
+                    cwd: command.cwd.as_path().to_path_buf(),
+                    replay_base64: (!command.latest_output_bytes.is_empty()).then(|| {
+                        base64::engine::general_purpose::STANDARD
+                            .encode(command.latest_output_bytes)
+                    }),
+                    replay_truncated: command.replay_truncated,
+                    replay_through_sequence: command.replay_through_sequence,
+                    can_resize: command.can_resize,
+                    can_write: true,
+                    can_terminate: true,
+                }
+            }));
+        }
+        Ok(Some(TerminalSessionListResponse { data }.into()))
+    }
+
+    pub(crate) async fn terminal_session_write(
+        &self,
+        request_id: ConnectionRequestId,
+        params: TerminalSessionWriteParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let delta = base64::engine::general_purpose::STANDARD
+            .decode(params.delta_base64)
+            .map_err(|err| invalid_params(format!("invalid deltaBase64: {err}")))?;
+        self.dispatch_terminal_control(
+            request_id.connection_id,
+            params.target,
+            TerminalControl::Write(delta),
+        )
+        .await?;
+        Ok(Some(TerminalSessionWriteResponse {}.into()))
+    }
+
+    pub(crate) async fn terminal_session_resize(
+        &self,
+        request_id: ConnectionRequestId,
+        params: TerminalSessionResizeParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let size = crate::command_exec::terminal_size_from_protocol(params.size)?;
+        self.dispatch_terminal_control(
+            request_id.connection_id,
+            params.target,
+            TerminalControl::Resize(size),
+        )
+        .await?;
+        Ok(Some(TerminalSessionResizeResponse {}.into()))
+    }
+
+    pub(crate) async fn terminal_session_terminate(
+        &self,
+        request_id: ConnectionRequestId,
+        params: TerminalSessionTerminateParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.dispatch_terminal_control(
+            request_id.connection_id,
+            params.target,
+            TerminalControl::Terminate,
+        )
+        .await?;
+        Ok(Some(TerminalSessionTerminateResponse {}.into()))
     }
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
@@ -312,6 +425,105 @@ impl CommandExecRequestProcessor {
             .await
     }
 
+    async fn dispatch_terminal_control(
+        &self,
+        connection_id: ConnectionId,
+        target: TerminalSessionRef,
+        control: TerminalControl,
+    ) -> Result<(), JSONRPCErrorError> {
+        match target.origin {
+            TerminalSessionOrigin::User => {
+                if target.session_id != format!("user:{}", target.process_id) {
+                    return Err(invalid_request("stale user terminal session identity"));
+                }
+                match control {
+                    TerminalControl::Write(delta) => {
+                        self.command_exec_manager
+                            .write_terminal(
+                                connection_id,
+                                target.process_id,
+                                &target.generation,
+                                target.resume_token.as_deref(),
+                                delta,
+                            )
+                            .await
+                    }
+                    TerminalControl::Resize(size) => {
+                        self.command_exec_manager
+                            .resize_terminal(
+                                connection_id,
+                                target.process_id,
+                                &target.generation,
+                                target.resume_token.as_deref(),
+                                size,
+                            )
+                            .await
+                    }
+                    TerminalControl::Terminate => {
+                        self.command_exec_manager
+                            .terminate_terminal(
+                                connection_id,
+                                target.process_id,
+                                &target.generation,
+                                target.resume_token.as_deref(),
+                            )
+                            .await
+                    }
+                }
+            }
+            TerminalSessionOrigin::Model => {
+                let thread_id = target
+                    .thread_id
+                    .ok_or_else(|| invalid_params("model terminal requires threadId"))?;
+                let command_item_id = target
+                    .command_item_id
+                    .ok_or_else(|| invalid_params("model terminal requires commandItemId"))?;
+                if target.generation != command_item_id {
+                    return Err(invalid_request("stale model terminal generation"));
+                }
+                let parsed_thread_id = protocol::ThreadId::from_string(&thread_id)
+                    .map_err(|err| invalid_params(format!("invalid threadId: {err}")))?;
+                let process_id = target
+                    .process_id
+                    .parse::<i32>()
+                    .map_err(|err| invalid_params(format!("invalid processId: {err}")))?;
+                let result = match control {
+                    TerminalControl::Write(delta) => {
+                        self.thread_service
+                            .write_live_terminal(
+                                parsed_thread_id,
+                                process_id,
+                                &command_item_id,
+                                delta,
+                            )
+                            .await
+                    }
+                    TerminalControl::Resize(size) => {
+                        self.thread_service
+                            .resize_live_terminal(
+                                parsed_thread_id,
+                                process_id,
+                                &command_item_id,
+                                size.rows,
+                                size.cols,
+                            )
+                            .await
+                    }
+                    TerminalControl::Terminate => {
+                        self.thread_service
+                            .terminate_live_terminal(
+                                parsed_thread_id,
+                                process_id,
+                                &command_item_id,
+                            )
+                            .await
+                    }
+                };
+                result.map_err(|err| invalid_request(err.to_string()))
+            }
+        }
+    }
+
     fn preserve_configured_deny_read_restrictions(
         file_system_sandbox_policy: &mut FileSystemSandboxPolicy,
         configured_file_system_sandbox_policy: &FileSystemSandboxPolicy,
@@ -319,6 +531,12 @@ impl CommandExecRequestProcessor {
         file_system_sandbox_policy
             .preserve_deny_read_restrictions_from(configured_file_system_sandbox_policy);
     }
+}
+
+enum TerminalControl {
+    Write(Vec<u8>),
+    Resize(codex_utils_pty::TerminalSize),
+    Terminate,
 }
 
 #[cfg(test)]

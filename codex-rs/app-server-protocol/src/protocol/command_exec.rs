@@ -209,8 +209,9 @@ pub enum CommandExecOutputStream {
 }
 /// Base64-encoded output chunk emitted for a streaming `command/exec` request.
 ///
-/// These notifications are connection-scoped. If the originating connection
-/// closes, the server terminates the process.
+/// These notifications are delivered to the session's currently attached
+/// connection. PTY sessions can rebind delivery through `terminal/session/list`
+/// after reconnect; other streaming commands remain connection-scoped.
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +220,10 @@ pub struct CommandExecOutputDeltaNotification {
     /// Client-supplied, connection-scoped `processId` from the original
     /// `command/exec` request.
     pub process_id: String,
+    /// Runtime generation for this process id.
+    pub generation: String,
+    /// Monotonic byte-chunk sequence within this generation.
+    pub sequence: u64,
     /// Output stream for this chunk.
     pub stream: CommandExecOutputStream,
     /// Base64-encoded output bytes.
@@ -227,3 +232,151 @@ pub struct CommandExecOutputDeltaNotification {
     /// truncated later output on that stream.
     pub cap_reached: bool,
 }
+
+/// PTY lifecycle notification emitted once a user-owned terminal has started.
+///
+/// `generation` is allocated by the server for this concrete process lifetime;
+/// clients must use it for subsequent terminal control requests.
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct CommandExecStartedNotification {
+    pub process_id: String,
+    pub generation: String,
+    /// Server-generated capability required to reattach this user PTY from a
+    /// different app-server connection.
+    pub resume_token: String,
+}
+
+/// Terminal lifecycle notification for a client-owned command session.
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct CommandExecExitedNotification {
+    pub process_id: String,
+    pub generation: String,
+    pub exit_code: i32,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum TerminalSessionOrigin {
+    User,
+    Model,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionDescriptor {
+    pub session_id: String,
+    pub generation: String,
+    pub origin: TerminalSessionOrigin,
+    pub thread_id: Option<String>,
+    pub command_item_id: Option<String>,
+    pub process_id: String,
+    pub title: String,
+    pub cwd: PathBuf,
+    pub replay_base64: Option<String>,
+    pub replay_truncated: bool,
+    /// Sequence of the newest chunk included in `replayBase64`.
+    pub replay_through_sequence: u64,
+    pub can_resize: bool,
+    pub can_write: bool,
+    pub can_terminate: bool,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionListParams {
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub thread_id: Option<String>,
+    /// Server-generated capabilities for user terminals this client is
+    /// authorized to reattach.
+    ///
+    /// A caller can always see terminals it originally created. A different
+    /// connection must explicitly prove knowledge of one of these tokens; listing
+    /// never claims every live user PTY.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_resume_tokens: Vec<String>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionListResponse {
+    pub data: Vec<TerminalSessionDescriptor>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionRef {
+    pub session_id: String,
+    pub generation: String,
+    pub origin: TerminalSessionOrigin,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub thread_id: Option<String>,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub command_item_id: Option<String>,
+    pub process_id: String,
+    /// Server-generated capability for a user terminal reattachment.
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub resume_token: Option<String>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionWriteParams {
+    #[serde(flatten)]
+    pub target: TerminalSessionRef,
+    pub delta_base64: String,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionResizeParams {
+    #[serde(flatten)]
+    pub target: TerminalSessionRef,
+    pub size: CommandExecTerminalSize,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionTerminateParams {
+    #[serde(flatten)]
+    pub target: TerminalSessionRef,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionWriteResponse {}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionResizeResponse {}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalSessionTerminateResponse {}

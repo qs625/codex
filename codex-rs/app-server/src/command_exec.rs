@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
@@ -6,6 +7,8 @@ use std::time::Duration;
 
 use app_server_protocol::CommandExecOutputDeltaNotification;
 use app_server_protocol::CommandExecOutputStream;
+use app_server_protocol::CommandExecExitedNotification;
+use app_server_protocol::CommandExecStartedNotification;
 use app_server_protocol::CommandExecResizeParams;
 use app_server_protocol::CommandExecResizeResponse;
 use app_server_protocol::CommandExecResponse;
@@ -34,6 +37,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
+use uuid::Uuid;
 
 use crate::error_code::internal_error;
 use crate::error_code::invalid_params;
@@ -44,6 +48,7 @@ use crate::outgoing_message::OutgoingMessageSender;
 
 const EXEC_TIMEOUT_EXIT_CODE: i32 = 124;
 const OUTPUT_CHUNK_SIZE_HINT: usize = 64 * 1024;
+const TERMINAL_REPLAY_BYTES_CAP: usize = 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct CommandExecManager {
@@ -70,8 +75,41 @@ struct ConnectionProcessId {
 enum CommandExecSession {
     Active {
         control_tx: mpsc::Sender<CommandControlRequest>,
+        info: UserTerminalSessionInfo,
     },
     UnsupportedWindowsSandbox,
+}
+
+#[derive(Clone)]
+pub(crate) struct UserTerminalSessionInfo {
+    pub(crate) process_id: String,
+    pub(crate) generation: String,
+    resume_token: String,
+    pub(crate) command: Vec<String>,
+    pub(crate) cwd: std::path::PathBuf,
+    pub(crate) tty: bool,
+    owner_connection_id: ConnectionId,
+    runtime: Arc<Mutex<UserTerminalRuntimeState>>,
+    delivery_lock: Arc<Mutex<()>>,
+}
+
+struct UserTerminalRuntimeState {
+    notification_connection_id: ConnectionId,
+    authorized_connection_ids: HashSet<ConnectionId>,
+    replay: Vec<u8>,
+    replay_truncated: bool,
+    replay_through_sequence: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct UserTerminalSessionSnapshot {
+    pub(crate) process_id: String,
+    pub(crate) generation: String,
+    pub(crate) command: Vec<String>,
+    pub(crate) cwd: std::path::PathBuf,
+    pub(crate) replay_base64: Option<String>,
+    pub(crate) replay_truncated: bool,
+    pub(crate) replay_through_sequence: u64,
 }
 
 enum CommandControl {
@@ -102,8 +140,12 @@ struct RunCommandParams {
     outgoing: Arc<OutgoingMessageSender>,
     request_id: ConnectionRequestId,
     process_id: Option<String>,
+    generation: Option<String>,
+    terminal_runtime: Arc<Mutex<UserTerminalRuntimeState>>,
+    terminal_delivery_lock: Arc<Mutex<()>>,
     spawned: SpawnedProcess,
     control_rx: mpsc::Receiver<CommandControlRequest>,
+    tty: bool,
     stream_stdin: bool,
     stream_stdout_stderr: bool,
     expiration: ExecExpiration,
@@ -111,8 +153,10 @@ struct RunCommandParams {
 }
 
 struct SpawnProcessOutputParams {
-    connection_id: ConnectionId,
     process_id: Option<String>,
+    generation: Option<String>,
+    terminal_runtime: Arc<Mutex<UserTerminalRuntimeState>>,
+    terminal_delivery_lock: Arc<Mutex<()>>,
     output_rx: mpsc::Receiver<Vec<u8>>,
     stdio_timeout_rx: watch::Receiver<bool>,
     outgoing: Arc<OutgoingMessageSender>,
@@ -250,6 +294,36 @@ impl CommandExecManager {
             InternalProcessId::Generated(_) => None,
             InternalProcessId::Client(process_id) => Some(process_id.clone()),
         };
+        let session_info = UserTerminalSessionInfo {
+            process_id: notification_process_id.clone().unwrap_or_default(),
+            generation: notification_process_id
+                .as_ref()
+                .map(|_| new_terminal_generation())
+                .unwrap_or_default(),
+            resume_token: notification_process_id
+                .as_ref()
+                .map(|_| new_terminal_resume_token())
+                .unwrap_or_default(),
+            command: command.clone(),
+            cwd: cwd.as_path().to_path_buf(),
+            tty,
+            owner_connection_id: request_id.connection_id,
+            runtime: Arc::new(Mutex::new(UserTerminalRuntimeState {
+                notification_connection_id: request_id.connection_id,
+                authorized_connection_ids: [request_id.connection_id].into_iter().collect(),
+                replay: Vec::new(),
+                replay_truncated: false,
+                replay_through_sequence: 0,
+            })),
+            delivery_lock: Arc::new(Mutex::new(())),
+        };
+        let generation = notification_process_id
+            .as_ref()
+            .map(|_| session_info.generation.clone());
+        let terminal_runtime = Arc::clone(&session_info.runtime);
+        let terminal_delivery_lock = Arc::clone(&session_info.delivery_lock);
+        let terminal_generation = session_info.generation.clone();
+        let terminal_resume_token = session_info.resume_token.clone();
 
         let sessions = Arc::clone(&self.sessions);
         let (program, args) = command
@@ -257,7 +331,17 @@ impl CommandExecManager {
             .ok_or_else(|| invalid_request("command must not be empty"))?;
         {
             let mut sessions = self.sessions.lock().await;
-            if sessions.contains_key(&process_key) {
+            let duplicate_terminal_id = tty
+                && sessions.iter().any(|(key, session)| {
+                    matches!(
+                        (&key.process_id, session),
+                        (
+                            InternalProcessId::Client(existing),
+                            CommandExecSession::Active { info, .. }
+                        ) if info.tty && existing == &session_info.process_id
+                    )
+                });
+            if sessions.contains_key(&process_key) || duplicate_terminal_id {
                 return Err(invalid_request(format!(
                     "duplicate active command/exec process id: {}",
                     process_key.process_id.error_repr(),
@@ -265,7 +349,10 @@ impl CommandExecManager {
             }
             sessions.insert(
                 process_key.clone(),
-                CommandExecSession::Active { control_tx },
+                CommandExecSession::Active {
+                    control_tx,
+                    info: session_info,
+                },
             );
         }
         let spawned = if tty {
@@ -291,14 +378,32 @@ impl CommandExecManager {
                 return Err(internal_error(format!("failed to spawn command: {err}")));
             }
         };
+        if tty
+            && let Some(process_id) = notification_process_id.as_ref()
+        {
+            outgoing
+                .send_server_notification_to_connection_and_wait(
+                    request_id.connection_id,
+                    ServerNotification::CommandExecStarted(CommandExecStartedNotification {
+                        process_id: process_id.clone(),
+                        generation: terminal_generation,
+                        resume_token: terminal_resume_token,
+                    }),
+                )
+                .await;
+        }
         tokio::spawn(async move {
             let _started_network_proxy = started_network_proxy;
             run_command(RunCommandParams {
                 outgoing,
                 request_id: request_id.clone(),
                 process_id: notification_process_id,
+                generation,
+                terminal_runtime,
+                terminal_delivery_lock,
                 spawned,
                 control_rx,
+                tty,
                 stream_stdin,
                 stream_stdout_stderr,
                 expiration,
@@ -334,6 +439,7 @@ impl CommandExecManager {
         };
         self.send_control(
             target_process_id,
+            None,
             CommandControl::Write {
                 delta,
                 close_stdin: params.close_stdin,
@@ -353,7 +459,11 @@ impl CommandExecManager {
             connection_id: request_id.connection_id,
             process_id: InternalProcessId::Client(params.process_id),
         };
-        self.send_control(target_process_id, CommandControl::Terminate)
+        self.send_control(
+            target_process_id,
+            None,
+            CommandControl::Terminate,
+        )
             .await?;
         Ok(CommandExecTerminateResponse {})
     }
@@ -369,6 +479,7 @@ impl CommandExecManager {
         };
         self.send_control(
             target_process_id,
+            None,
             CommandControl::Resize {
                 size: terminal_size_from_protocol(params.size)?,
             },
@@ -387,7 +498,15 @@ impl CommandExecManager {
                 .collect::<Vec<_>>();
             let mut controls = Vec::with_capacity(process_ids.len());
             for process_id in process_ids {
-                if let Some(control) = sessions.remove(&process_id) {
+                let keep_terminal = sessions.get(&process_id).is_some_and(|session| {
+                    matches!(
+                        session,
+                        CommandExecSession::Active { info, .. } if info.tty
+                    )
+                });
+                if !keep_terminal
+                    && let Some(control) = sessions.remove(&process_id)
+                {
                     controls.push(control);
                 }
             }
@@ -395,7 +514,7 @@ impl CommandExecManager {
         };
 
         for control in controls {
-            if let CommandExecSession::Active { control_tx } = control {
+            if let CommandExecSession::Active { control_tx, .. } = control {
                 let _ = control_tx
                     .send(CommandControlRequest {
                         control: CommandControl::Terminate,
@@ -409,6 +528,7 @@ impl CommandExecManager {
     async fn send_control(
         &self,
         process_id: ConnectionProcessId,
+        expected_generation: Option<&str>,
         control: CommandControl,
     ) -> Result<(), JSONRPCErrorError> {
         let session = {
@@ -424,11 +544,19 @@ impl CommandExecManager {
                     ))
                 })?
         };
-        let CommandExecSession::Active { control_tx } = session else {
+        let CommandExecSession::Active { control_tx, info } = session else {
             return Err(invalid_request(
                 "command/exec/write, command/exec/terminate, and command/exec/resize are not supported for windows sandbox processes",
             ));
         };
+        if let Some(expected_generation) = expected_generation
+            && info.generation != expected_generation
+        {
+            return Err(invalid_request(format!(
+                "stale command/exec generation for process id {}",
+                process_id.process_id.error_repr(),
+            )));
+        }
         let (response_tx, response_rx) = oneshot::channel();
         let request = CommandControlRequest {
             control,
@@ -442,6 +570,143 @@ impl CommandExecManager {
             .await
             .map_err(|_| command_no_longer_running_error(&process_id.process_id))?
     }
+
+    pub(crate) async fn list(
+        &self,
+        connection_id: ConnectionId,
+        reattach_tokens: &[String],
+    ) -> Vec<UserTerminalSessionSnapshot> {
+        let infos = {
+            let sessions = self.sessions.lock().await;
+            sessions
+            .values()
+            .filter_map(|session| {
+                match session {
+                    CommandExecSession::Active { info, .. }
+                        if info.tty
+                            && (info.owner_connection_id == connection_id
+                                || reattach_tokens.contains(&info.resume_token)) =>
+                    {
+                        Some(info.clone())
+                    }
+                    CommandExecSession::Active { .. }
+                    | CommandExecSession::UnsupportedWindowsSandbox => None,
+                }
+            })
+            .collect::<Vec<_>>()
+        };
+        let mut data = Vec::with_capacity(infos.len());
+        for info in infos {
+            let mut runtime = info.runtime.lock().await;
+            runtime.notification_connection_id = connection_id;
+            runtime.authorized_connection_ids.insert(connection_id);
+            data.push(UserTerminalSessionSnapshot {
+                process_id: info.process_id,
+                generation: info.generation,
+                command: info.command,
+                cwd: info.cwd,
+                replay_base64: (!runtime.replay.is_empty()).then(|| STANDARD.encode(&runtime.replay)),
+                replay_truncated: runtime.replay_truncated,
+                replay_through_sequence: runtime.replay_through_sequence,
+            });
+        }
+        data.sort_by(|left, right| left.process_id.cmp(&right.process_id));
+        data
+    }
+
+    pub(crate) async fn write_terminal(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+        resume_token: Option<&str>,
+        delta: Vec<u8>,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.send_terminal_control(
+            connection_id,
+            process_id,
+            generation,
+            resume_token,
+            CommandControl::Write {
+                delta,
+                close_stdin: false,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn resize_terminal(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+        resume_token: Option<&str>,
+        size: TerminalSize,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.send_terminal_control(
+            connection_id,
+            process_id,
+            generation,
+            resume_token,
+            CommandControl::Resize { size },
+        )
+        .await
+    }
+
+    pub(crate) async fn terminate_terminal(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+        resume_token: Option<&str>,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.send_terminal_control(
+            connection_id,
+            process_id,
+            generation,
+            resume_token,
+            CommandControl::Terminate,
+        )
+        .await
+    }
+
+    async fn send_terminal_control(
+        &self,
+        connection_id: ConnectionId,
+        process_id: String,
+        generation: &str,
+        resume_token: Option<&str>,
+        control: CommandControl,
+    ) -> Result<(), JSONRPCErrorError> {
+        let target = {
+            let sessions = self.sessions.lock().await;
+            sessions.iter().find_map(|(key, session)| match session {
+                CommandExecSession::Active { info, .. }
+                    if info.tty
+                        && info.process_id == process_id
+                        && info.generation == generation =>
+                {
+                    Some((key.clone(), info.clone()))
+                }
+                CommandExecSession::Active { .. }
+                | CommandExecSession::UnsupportedWindowsSandbox => None,
+            })
+        }
+        .ok_or_else(|| invalid_request("terminal session is no longer running"))?;
+        let (target, info) = target;
+        if info.owner_connection_id != connection_id
+            && (resume_token != Some(info.resume_token.as_str())
+                || !info
+                    .runtime
+                    .lock()
+                    .await
+                    .authorized_connection_ids
+                    .contains(&connection_id))
+        {
+            return Err(invalid_request("terminal session is not attached to this connection"));
+        }
+        self.send_control(target, Some(generation), control).await
+    }
 }
 
 async fn run_command(params: RunCommandParams) {
@@ -449,8 +714,12 @@ async fn run_command(params: RunCommandParams) {
         outgoing,
         request_id,
         process_id,
+        generation,
+        terminal_runtime,
+        terminal_delivery_lock,
         spawned,
         control_rx,
+        tty,
         stream_stdin,
         stream_stdout_stderr,
         expiration,
@@ -471,8 +740,10 @@ async fn run_command(params: RunCommandParams) {
     let (stdio_timeout_tx, stdio_timeout_rx) = watch::channel(false);
 
     let stdout_handle = spawn_process_output(SpawnProcessOutputParams {
-        connection_id: request_id.connection_id,
         process_id: process_id.clone(),
+        generation: generation.clone(),
+        terminal_runtime: Arc::clone(&terminal_runtime),
+        terminal_delivery_lock: Arc::clone(&terminal_delivery_lock),
         output_rx: stdout_rx,
         stdio_timeout_rx: stdio_timeout_rx.clone(),
         outgoing: Arc::clone(&outgoing),
@@ -481,8 +752,10 @@ async fn run_command(params: RunCommandParams) {
         output_bytes_cap,
     });
     let stderr_handle = spawn_process_output(SpawnProcessOutputParams {
-        connection_id: request_id.connection_id,
         process_id: process_id.clone(),
+        generation: generation.clone(),
+        terminal_runtime: Arc::clone(&terminal_runtime),
+        terminal_delivery_lock,
         output_rx: stderr_rx,
         stdio_timeout_rx,
         outgoing: Arc::clone(&outgoing),
@@ -546,6 +819,21 @@ async fn run_command(params: RunCommandParams) {
     let stderr = stderr_handle.await.unwrap_or_default();
     timeout_handle.abort();
 
+    if tty
+        && let Some(process_id) = process_id.as_ref()
+    {
+        outgoing
+            .send_server_notification_to_connection_and_wait(
+                terminal_notification_connection_id(&terminal_runtime).await,
+                ServerNotification::CommandExecExited(CommandExecExitedNotification {
+                    process_id: process_id.clone(),
+                    generation: generation.clone().unwrap_or_default(),
+                    exit_code,
+                }),
+            )
+            .await;
+    }
+
     outgoing
         .send_response(
             request_id,
@@ -560,8 +848,10 @@ async fn run_command(params: RunCommandParams) {
 
 fn spawn_process_output(params: SpawnProcessOutputParams) -> tokio::task::JoinHandle<String> {
     let SpawnProcessOutputParams {
-        connection_id,
         process_id,
+        generation,
+        terminal_runtime,
+        terminal_delivery_lock,
         mut output_rx,
         mut stdio_timeout_rx,
         outgoing,
@@ -598,12 +888,19 @@ fn spawn_process_output(params: SpawnProcessOutputParams) -> tokio::task::JoinHa
             };
             let cap_reached = Some(observed_num_bytes) == output_bytes_cap;
             if let (true, Some(process_id)) = (stream_output, process_id.as_ref()) {
+                // stdout and stderr readers run independently. Keep replay
+                // sequence allocation and delivery serialized so the list
+                // snapshot watermark always describes a prefix of deltas.
+                let _delivery_guard = terminal_delivery_lock.lock().await;
+                let sequence = append_user_terminal_replay(&terminal_runtime, capped_chunk).await;
                 outgoing
                     .send_server_notification_to_connection_and_wait(
-                        connection_id,
+                        terminal_notification_connection_id(&terminal_runtime).await,
                         ServerNotification::CommandExecOutputDelta(
                             CommandExecOutputDeltaNotification {
                                 process_id: process_id.clone(),
+                                generation: generation.clone().unwrap_or_default(),
+                                sequence,
                                 stream,
                                 delta_base64: STANDARD.encode(capped_chunk),
                                 cap_reached,
@@ -620,6 +917,29 @@ fn spawn_process_output(params: SpawnProcessOutputParams) -> tokio::task::JoinHa
         }
         bytes_to_string_smart(&buffer)
     })
+}
+
+async fn append_user_terminal_replay(
+    runtime: &Mutex<UserTerminalRuntimeState>,
+    chunk: &[u8],
+) -> u64 {
+    let mut runtime = runtime.lock().await;
+    runtime.replay_through_sequence = runtime.replay_through_sequence.saturating_add(1);
+    if !chunk.is_empty() {
+        runtime.replay.extend_from_slice(chunk);
+        if runtime.replay.len() > TERMINAL_REPLAY_BYTES_CAP {
+            let excess = runtime.replay.len() - TERMINAL_REPLAY_BYTES_CAP;
+            runtime.replay.drain(..excess);
+            runtime.replay_truncated = true;
+        }
+    }
+    runtime.replay_through_sequence
+}
+
+async fn terminal_notification_connection_id(
+    runtime: &Mutex<UserTerminalRuntimeState>,
+) -> ConnectionId {
+    runtime.lock().await.notification_connection_id
 }
 
 async fn handle_process_write(
@@ -674,6 +994,14 @@ fn command_no_longer_running_error(process_id: &InternalProcessId) -> JSONRPCErr
         "command/exec {} is no longer running",
         process_id.error_repr(),
     ))
+}
+
+fn new_terminal_generation() -> String {
+    Uuid::now_v7().to_string()
+}
+
+fn new_terminal_resume_token() -> String {
+    Uuid::now_v7().to_string()
 }
 
 #[cfg(test)]
@@ -1036,7 +1364,26 @@ mod tests {
                 connection_id: request_id.connection_id,
                 process_id: process_id.clone(),
             },
-            CommandExecSession::Active { control_tx },
+            CommandExecSession::Active {
+                control_tx,
+                info: UserTerminalSessionInfo {
+                    process_id: "proc-13".to_string(),
+                    generation: "proc-13".to_string(),
+                    resume_token: "resume-13".to_string(),
+                    command: vec!["sh".to_string()],
+                    cwd: std::path::PathBuf::from("/tmp"),
+                    tty: true,
+                    owner_connection_id: request_id.connection_id,
+                    runtime: Arc::new(Mutex::new(UserTerminalRuntimeState {
+                        notification_connection_id: request_id.connection_id,
+                        authorized_connection_ids: [request_id.connection_id].into_iter().collect(),
+                        replay: Vec::new(),
+                        replay_truncated: false,
+                        replay_through_sequence: 0,
+                    })),
+                    delivery_lock: Arc::new(Mutex::new(())),
+                },
+            },
         );
 
         tokio::spawn(async move {
@@ -1058,5 +1405,171 @@ mod tests {
 
         assert_eq!(err.code, INVALID_REQUEST_ERROR_CODE);
         assert_eq!(err.message, "command/exec \"proc-13\" is no longer running");
+    }
+
+    #[tokio::test]
+    async fn terminal_session_survives_disconnect_and_rebinds_notifications() {
+        let manager = CommandExecManager::default();
+        let original_connection = ConnectionId(14);
+        let reattached_connection = ConnectionId(15);
+        let runtime = Arc::new(Mutex::new(UserTerminalRuntimeState {
+            notification_connection_id: original_connection,
+            authorized_connection_ids: [original_connection].into_iter().collect(),
+            replay: b"ready".to_vec(),
+            replay_truncated: false,
+            replay_through_sequence: 1,
+        }));
+        let (control_tx, mut control_rx) = mpsc::channel(1);
+        manager.sessions.lock().await.insert(
+            ConnectionProcessId {
+                connection_id: original_connection,
+                process_id: InternalProcessId::Client("proc-14".to_string()),
+            },
+            CommandExecSession::Active {
+                control_tx,
+                info: UserTerminalSessionInfo {
+                    process_id: "proc-14".to_string(),
+                    generation: "generation-14".to_string(),
+                    resume_token: "resume-14".to_string(),
+                    command: vec!["sh".to_string()],
+                    cwd: std::path::PathBuf::from("/tmp"),
+                    tty: true,
+                    owner_connection_id: original_connection,
+                    runtime: Arc::clone(&runtime),
+                    delivery_lock: Arc::new(Mutex::new(())),
+                },
+            },
+        );
+
+        manager.connection_closed(original_connection).await;
+        assert!(
+            manager.list(reattached_connection, &[]).await.is_empty(),
+            "a different connection must not enumerate or claim a user PTY without its resume token",
+        );
+        let err = manager
+            .write_terminal(
+                reattached_connection,
+                "proc-14".to_string(),
+                "generation-14",
+                Some("resume-14"),
+                b"before-reattach".to_vec(),
+            )
+            .await
+            .expect_err("resume token must not authorize control before explicit reattach");
+        assert_eq!(err.message, "terminal session is not attached to this connection");
+        assert!(control_rx.try_recv().is_err());
+        let sessions = manager
+            .list(reattached_connection, &["resume-14".to_string()])
+            .await;
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].replay_base64.as_deref(), Some("cmVhZHk="));
+        assert_eq!(sessions[0].replay_through_sequence, 1);
+        assert_eq!(
+            runtime.lock().await.notification_connection_id,
+            reattached_connection,
+        );
+        tokio::spawn(async move {
+            let request = control_rx.recv().await.expect("expected terminal control");
+            let Some(response_tx) = request.response_tx else {
+                panic!("control request should expect a response");
+            };
+            response_tx.send(Ok(())).expect("response receiver should be open");
+        });
+        manager
+            .write_terminal(
+                reattached_connection,
+                "proc-14".to_string(),
+                "generation-14",
+                Some("resume-14"),
+                b"after-reattach".to_vec(),
+            )
+            .await
+            .expect("reattached connection should control its terminal");
+    }
+
+    #[tokio::test]
+    async fn terminal_replay_is_bounded_and_sequence_is_monotonic() {
+        let runtime = Mutex::new(UserTerminalRuntimeState {
+            notification_connection_id: ConnectionId(16),
+            authorized_connection_ids: [ConnectionId(16)].into_iter().collect(),
+            replay: Vec::new(),
+            replay_truncated: false,
+            replay_through_sequence: 0,
+        });
+
+        assert_eq!(append_user_terminal_replay(&runtime, b"first").await, 1);
+        assert_eq!(
+            append_user_terminal_replay(
+                &runtime,
+                &vec![b'x'; TERMINAL_REPLAY_BYTES_CAP + 32],
+            )
+            .await,
+            2,
+        );
+
+        let runtime = runtime.lock().await;
+        assert_eq!(runtime.replay.len(), TERMINAL_REPLAY_BYTES_CAP);
+        assert!(runtime.replay_truncated);
+        assert_eq!(runtime.replay_through_sequence, 2);
+    }
+
+    #[test]
+    fn terminal_generation_is_fresh_for_each_process_lifetime() {
+        let process_id = "reused-client-process-id";
+        let first = new_terminal_generation();
+        let second = new_terminal_generation();
+
+        assert_ne!(first, process_id);
+        assert_ne!(second, process_id);
+        assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn stale_terminal_generation_is_rejected_before_control_delivery() {
+        let manager = CommandExecManager::default();
+        let connection_id = ConnectionId(17);
+        let (control_tx, mut control_rx) = mpsc::channel(1);
+        manager.sessions.lock().await.insert(
+            ConnectionProcessId {
+                connection_id,
+                process_id: InternalProcessId::Client("proc-17".to_string()),
+            },
+            CommandExecSession::Active {
+                control_tx,
+                info: UserTerminalSessionInfo {
+                    process_id: "proc-17".to_string(),
+                    generation: "generation-17".to_string(),
+                    resume_token: "resume-17".to_string(),
+                    command: vec!["sh".to_string()],
+                    cwd: std::path::PathBuf::from("/tmp"),
+                    tty: true,
+                    owner_connection_id: connection_id,
+                    runtime: Arc::new(Mutex::new(UserTerminalRuntimeState {
+                        notification_connection_id: connection_id,
+                        authorized_connection_ids: [connection_id].into_iter().collect(),
+                        replay: Vec::new(),
+                        replay_truncated: false,
+                        replay_through_sequence: 0,
+                    })),
+                    delivery_lock: Arc::new(Mutex::new(())),
+                },
+            },
+        );
+
+        let err = manager
+            .write_terminal(
+                connection_id,
+                "proc-17".to_string(),
+                "stale-generation",
+                Some("resume-17"),
+                b"input".to_vec(),
+            )
+            .await
+            .expect_err("stale generation should fail");
+
+        assert_eq!(err.code, INVALID_REQUEST_ERROR_CODE);
+        assert_eq!(err.message, "terminal session is no longer running");
+        assert!(control_rx.try_recv().is_err());
     }
 }

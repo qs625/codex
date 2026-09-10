@@ -480,6 +480,33 @@ mod tests {
         ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
             Box::pin(async { unreachable!("list_commands does not write stdin") })
         }
+
+        fn write_terminal_bytes<'a>(
+            &'a self,
+            _process_id: i32,
+            _expected_call_id: &'a str,
+            _input: Vec<u8>,
+        ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+            Box::pin(async { unreachable!("list_commands does not write terminal bytes") })
+        }
+
+        fn resize_terminal<'a>(
+            &'a self,
+            _process_id: i32,
+            _expected_call_id: &'a str,
+            _rows: u16,
+            _cols: u16,
+        ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+            Box::pin(async { unreachable!("list_commands does not resize terminals") })
+        }
+
+        fn terminate_terminal<'a>(
+            &'a self,
+            _process_id: i32,
+            _expected_call_id: &'a str,
+        ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+            Box::pin(async { unreachable!("list_commands does not terminate terminals") })
+        }
     }
 
     #[tokio::test]
@@ -496,6 +523,10 @@ mod tests {
                 tty: false,
                 notify_on: CommandNotificationFilter::Output,
                 latest_output_tail: Some("secret recent output".to_string()),
+                latest_output_bytes: Vec::new(),
+                replay_truncated: false,
+                replay_through_sequence: 0,
+                can_resize: true,
             }],
         };
 

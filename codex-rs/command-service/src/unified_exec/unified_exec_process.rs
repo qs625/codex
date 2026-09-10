@@ -19,6 +19,7 @@ use codex_sandboxing_api::SandboxType;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::SpawnedPty;
+use codex_utils_pty::TerminalSize;
 use command_service_api::is_likely_sandbox_denied;
 
 use super::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS;
@@ -123,12 +124,33 @@ impl UnifiedExecProcess {
         }
     }
 
+    pub fn resize(&self, size: TerminalSize) -> Result<(), UnifiedExecError> {
+        match &self.process_handle {
+            ProcessHandle::Local(process_handle) => process_handle
+                .resize(size)
+                .map_err(|err| UnifiedExecError::process_failed(err.to_string())),
+            ProcessHandle::ExecServer(_) => Err(UnifiedExecError::process_failed(
+                "terminal resize is not supported by this execution environment".to_string(),
+            )),
+        }
+    }
+
+    pub fn supports_resize(&self) -> bool {
+        matches!(&self.process_handle, ProcessHandle::Local(_))
+    }
+
     pub fn output_handles(&self) -> OutputHandles {
         self.output_runtime.handles()
     }
 
-    pub fn output_receiver(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+    pub fn output_receiver(
+        &self,
+    ) -> async_channel::Receiver<super::output::SequencedCommandOutput> {
         self.output_runtime.receiver()
+    }
+
+    pub async fn terminal_replay_snapshot(&self) -> (Vec<u8>, bool, u64) {
+        self.output_runtime.terminal_replay_snapshot().await
     }
 
     pub fn cancellation_token(&self) -> CancellationToken {
@@ -256,7 +278,8 @@ impl UnifiedExecProcess {
             stderr_rx,
             mut exit_rx,
         } = spawned;
-        let output_rx = codex_utils_pty::combine_output_receivers(stdout_rx, stderr_rx);
+        let output_rx =
+            codex_utils_pty::combine_output_receivers_lossless(stdout_rx, stderr_rx);
         let mut managed = Self::new(
             ProcessHandle::Local(Box::new(process_handle)),
             sandbox_type,
@@ -266,7 +289,7 @@ impl UnifiedExecProcess {
             managed
                 .output_runtime
                 .clone()
-                .pump_broadcast_receiver(output_rx),
+                .pump_output_receiver(output_rx),
         ));
 
         match exit_rx.try_recv() {

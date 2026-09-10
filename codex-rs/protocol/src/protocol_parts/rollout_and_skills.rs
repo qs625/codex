@@ -388,6 +388,11 @@ pub enum ExecOutputStream {
 pub struct ExecCommandOutputDeltaEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
     pub call_id: String,
+    /// Identifier for the live PTY process, when the command remains
+    /// attachable after the initial tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub process_id: Option<String>,
     /// Monotonic output sequence for this command when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -405,6 +410,10 @@ pub struct ExecCommandOutputDeltaEvent {
     #[schemars(with = "String")]
     #[ts(type = "string")]
     pub chunk: Vec<u8>,
+    /// Incrementally decoded display text for this byte chunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delta: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

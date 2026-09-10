@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
-use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -16,6 +15,17 @@ use command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 pub const DEFAULT_COMMAND_OUTPUT_DELTA_MAX_BYTES: usize = 8192;
 pub(crate) const MAX_COMMAND_NOTIFICATION_OUTPUT_BYTES: usize = 16 * 1024;
 const DEFAULT_COMMAND_OUTPUT_BROADCAST_CAPACITY: usize = 64;
+
+#[derive(Clone, Debug)]
+pub struct SequencedCommandOutput {
+    pub sequence: u64,
+    pub bytes: Vec<u8>,
+}
+
+struct TerminalReplayBuffer {
+    buffer: HeadTailBuffer,
+    through_sequence: u64,
+}
 
 /// A capped buffer that preserves a stable prefix ("head") and suffix ("tail"),
 /// dropping the middle once it exceeds the configured maximum. The buffer is
@@ -65,7 +75,6 @@ impl HeadTailBuffer {
     }
 
     /// Total bytes that were dropped from the middle due to the size cap.
-    #[allow(dead_code)]
     pub fn omitted_bytes(&self) -> usize {
         self.omitted_bytes
     }
@@ -122,6 +131,22 @@ impl HeadTailBuffer {
             out.extend_from_slice(chunk);
         }
         for chunk in self.tail.iter() {
+            out.extend_from_slice(chunk);
+        }
+        out
+    }
+
+    /// Return a terminal-safe replay snapshot.
+    ///
+    /// Once the middle has been omitted, replay only the retained suffix
+    /// rather than concatenating a non-contiguous head and tail into one VT
+    /// stream.
+    pub fn terminal_replay_bytes(&self) -> Vec<u8> {
+        if self.omitted_bytes == 0 {
+            return self.to_bytes();
+        }
+        let mut out = Vec::with_capacity(self.tail_bytes);
+        for chunk in &self.tail {
             out.extend_from_slice(chunk);
         }
         out
@@ -201,8 +226,10 @@ pub struct CommandOutputHandles {
 
 #[derive(Clone)]
 pub struct CommandOutputRuntime {
-    output_tx: broadcast::Sender<Vec<u8>>,
+    output_tx: async_channel::Sender<SequencedCommandOutput>,
+    output_rx: async_channel::Receiver<SequencedCommandOutput>,
     output_buffer: CommandOutputBuffer,
+    terminal_replay_buffer: Arc<Mutex<TerminalReplayBuffer>>,
     output_notify: Arc<Notify>,
     output_closed: Arc<AtomicBool>,
     output_closed_notify: Arc<Notify>,
@@ -219,16 +246,23 @@ impl Default for CommandOutputRuntime {
 impl CommandOutputRuntime {
     pub fn new() -> Self {
         let output_buffer = Arc::new(Mutex::new(HeadTailBuffer::default()));
+        let terminal_replay_buffer = Arc::new(Mutex::new(TerminalReplayBuffer {
+            buffer: HeadTailBuffer::default(),
+            through_sequence: 0,
+        }));
         let output_notify = Arc::new(Notify::new());
         let output_closed = Arc::new(AtomicBool::new(false));
         let output_closed_notify = Arc::new(Notify::new());
         let cancellation_token = CancellationToken::new();
         let output_drained = Arc::new(Notify::new());
-        let (output_tx, _) = broadcast::channel(DEFAULT_COMMAND_OUTPUT_BROADCAST_CAPACITY);
+        let (output_tx, output_rx) =
+            async_channel::bounded(DEFAULT_COMMAND_OUTPUT_BROADCAST_CAPACITY);
 
         Self {
             output_tx,
+            output_rx,
             output_buffer,
+            terminal_replay_buffer,
             output_notify,
             output_closed,
             output_closed_notify,
@@ -247,8 +281,8 @@ impl CommandOutputRuntime {
         }
     }
 
-    pub fn receiver(&self) -> broadcast::Receiver<Vec<u8>> {
-        self.output_tx.subscribe()
+    pub fn receiver(&self) -> async_channel::Receiver<SequencedCommandOutput> {
+        self.output_rx.clone()
     }
 
     pub fn cancellation_token(&self) -> CancellationToken {
@@ -273,25 +307,39 @@ impl CommandOutputRuntime {
         guard.snapshot_chunks()
     }
 
+    pub async fn terminal_replay_snapshot(&self) -> (Vec<u8>, bool, u64) {
+        let guard = self.terminal_replay_buffer.lock().await;
+        (
+            guard.buffer.terminal_replay_bytes(),
+            guard.buffer.omitted_bytes() > 0,
+            guard.through_sequence,
+        )
+    }
+
     pub async fn push_chunk(&self, chunk: Vec<u8>) {
         let mut guard = self.output_buffer.lock().await;
         guard.push_chunk(chunk.clone());
         drop(guard);
-        let _ = self.output_tx.send(chunk);
+        let mut replay = self.terminal_replay_buffer.lock().await;
+        replay.buffer.push_chunk(chunk.clone());
+        replay.through_sequence = replay.through_sequence.saturating_add(1);
+        let sequence = replay.through_sequence;
+        drop(replay);
+        let _ = self
+            .output_tx
+            .send(SequencedCommandOutput {
+                sequence,
+                bytes: chunk,
+            })
+            .await;
         self.output_notify.notify_waiters();
     }
 
-    pub async fn pump_broadcast_receiver(self, mut receiver: broadcast::Receiver<Vec<u8>>) {
-        loop {
-            match receiver.recv().await {
-                Ok(chunk) => self.push_chunk(chunk).await,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => {
-                    self.close_output();
-                    break;
-                }
-            };
+    pub async fn pump_output_receiver(self, mut receiver: tokio::sync::mpsc::Receiver<Vec<u8>>) {
+        while let Some(chunk) = receiver.recv().await {
+            self.push_chunk(chunk).await;
         }
+        self.close_output();
     }
 }
 
@@ -415,6 +463,37 @@ async fn wait_for_pause_change(pause_state: Option<&watch::Receiver<bool>>) {
 
 pub fn split_valid_utf8_prefix(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     split_valid_utf8_prefix_with_max(buffer, DEFAULT_COMMAND_OUTPUT_DELTA_MAX_BYTES)
+}
+
+pub fn decode_utf8_incremental(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+    pending.extend_from_slice(chunk);
+    let mut decoded = String::new();
+    loop {
+        match std::str::from_utf8(pending) {
+            Ok(value) => {
+                decoded.push_str(value);
+                pending.clear();
+                break;
+            }
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                if valid_up_to > 0 {
+                    decoded.push_str(
+                        std::str::from_utf8(&pending[..valid_up_to])
+                            .expect("validated UTF-8 prefix"),
+                    );
+                    pending.drain(..valid_up_to);
+                    continue;
+                }
+                let Some(error_len) = error.error_len() else {
+                    break;
+                };
+                decoded.push('\u{fffd}');
+                pending.drain(..error_len);
+            }
+        }
+    }
+    decoded
 }
 
 pub fn split_valid_utf8_prefix_with_max(buffer: &mut Vec<u8>, max_bytes: usize) -> Option<Vec<u8>> {
