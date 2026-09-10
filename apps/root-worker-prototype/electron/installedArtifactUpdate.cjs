@@ -452,21 +452,28 @@ function materializeInstalledArtifactWorkerBundle(options = {}) {
   if (workerBundlePath) {
     return workerBundlePath;
   }
-  const fsOps = resolveInstalledArtifactFileSystem(options);
-  const bundlePath = (options.mkdtempSync ?? fsOps.mkdtempSync)(
+  const sourceFsOps = options.sourceFsOps ?? fs;
+  const destinationFsOps =
+    options.destinationFsOps ?? resolveInstalledArtifactFileSystem(options);
+  const sourceDirectory = options.workerSourceDirectory ?? __dirname;
+  const bundlePath = destinationFsOps.mkdtempSync(
     path.join(os.tmpdir(), "morpheus-artifact-worker-"),
   );
   try {
     for (const fileName of WORKER_FILES) {
-      (options.copyFileSync ?? fsOps.copyFileSync)(
-        path.join(__dirname, fileName),
+      const contents = sourceFsOps.readFileSync(
+        path.join(sourceDirectory, fileName),
+      );
+      destinationFsOps.writeFileSync(
         path.join(bundlePath, fileName),
+        contents,
+        { mode: 0o600 },
       );
     }
   } catch (error) {
     let failure = error;
     try {
-      (options.rmSync ?? fsOps.rmSync)(bundlePath, {
+      destinationFsOps.rmSync(bundlePath, {
         force: true,
         recursive: true,
       });
@@ -478,7 +485,7 @@ function materializeInstalledArtifactWorkerBundle(options = {}) {
   workerBundlePath = bundlePath;
   process.once("exit", () => {
     try {
-      fsOps.rmSync(bundlePath, { force: true, recursive: true });
+      destinationFsOps.rmSync(bundlePath, { force: true, recursive: true });
     } catch {}
   });
   return bundlePath;
