@@ -620,7 +620,14 @@ test("keeps live commands visible without output while rendering schedules", () 
       eventCount: 0,
       latestEvent: null,
     }),
-    { threadId: "thread-1", commandItemId: "command-1", processId: "pid-1" },
+    {
+      threadId: "thread-1",
+      commandItemId: "command-1",
+      processId: "pid-1",
+      command: "tail -f /tmp/out.log",
+      cwd: "/tmp",
+      status: "running",
+    },
   );
   assert.equal(
     resolveThreadAnalysisCommandFocus(thread, {

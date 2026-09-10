@@ -2,6 +2,9 @@ export type TerminalCommandFocusRequest = {
   threadId: string;
   commandItemId: string;
   processId?: string | null;
+  command?: string | null;
+  cwd?: string | null;
+  status?: string | null;
   token: number;
 };
 

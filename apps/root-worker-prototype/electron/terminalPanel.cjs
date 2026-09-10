@@ -65,6 +65,7 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
         descriptor.replayBase64 &&
         descriptorSequence >= (existing.lastSequence ?? 0);
       Object.assign(existing, normalizeDescriptor(descriptor), { status: "running" });
+      delete existing.readOnlyOutput;
       if (shouldApplyReplay) {
         existing.replay = Buffer.from(descriptor.replayBase64, "base64");
         existing.lastSequence = descriptorSequence;
@@ -231,9 +232,37 @@ function commandFocusDescriptorForTerminalFocus(
     return commandFocusDescriptor(command, activeCommand);
   }
   if (options.liveSessionRefreshed !== true || !liveSession) {
-    return null;
+    return commandFocusDescriptorFromRequest(command);
   }
   return commandFocusDescriptorFromLiveSession(command, liveSession);
+}
+
+function commandFocusDescriptorFromRequest(command) {
+  if (
+    typeof command.command !== "string" ||
+    command.command.length === 0 ||
+    typeof command.cwd !== "string" ||
+    typeof command.status !== "string" ||
+    !isRunningCommandStatus(command.status)
+  ) {
+    return null;
+  }
+  return {
+    sessionId: `command:${command.threadId}:${command.commandItemId}`,
+    generation: command.commandItemId,
+    origin: "model",
+    threadId: command.threadId,
+    commandItemId: command.commandItemId,
+    processId: command.processId || command.commandItemId,
+    title: command.command,
+    cwd: command.cwd,
+    replayBase64: null,
+    replayTruncated: false,
+    replayThroughSequence: 0,
+    canResize: false,
+    canWrite: false,
+    canTerminate: false,
+  };
 }
 
 function commandFocusDescriptorFromLiveSession(command, session) {
@@ -374,6 +403,7 @@ module.exports = {
   addUserTerminal,
   commandFocusDescriptor,
   commandFocusDescriptorForTerminalFocus,
+  commandFocusDescriptorFromRequest,
   commandFocusDescriptorFromLiveSession,
   focusCommandTerminal,
   appendTerminalOutput,

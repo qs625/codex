@@ -19,7 +19,9 @@ import {
   planFocusedItemScrollAttempt,
   shouldHandleFocusedItemRequest,
 } from "./ConversationVirtualList";
+import { buildConversationEntries } from "../lib/conversation";
 import type { ConversationEntry } from "../types";
+import type { Thread } from "../types";
 
 function artifactEntry(
   overrides: Partial<NonNullable<ConversationEntry["artifact"]>> = {},
@@ -143,6 +145,36 @@ test("tool row renders command summary without command output payload", () => {
   assert.match(markup, /tmp\/project/);
   assert.match(markup, /Status/);
   assert.doesNotMatch(markup, /SECRET_STDOUT/);
+  assert.doesNotMatch(markup, /tool-output-block/);
+});
+
+test("tool row renders live active command tail without output payload", () => {
+  const thread = {
+    id: "thread-1",
+    updatedAt: 1,
+    turns: [],
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "cmd-live",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        aggregatedOutput: "ACTIVE_STDOUT",
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } as Thread;
+  const entries = buildConversationEntries(thread);
+  const markup = renderToStaticMarkup(<ToolRow entries={entries} isOpen />);
+
+  assert.match(markup, /cargo test/);
+  assert.match(markup, /tmp\/project/);
+  assert.match(markup, /running/);
+  assert.doesNotMatch(markup, /ACTIVE_STDOUT/);
   assert.doesNotMatch(markup, /tool-output-block/);
 });
 
