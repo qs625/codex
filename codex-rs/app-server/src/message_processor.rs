@@ -373,7 +373,10 @@ impl MessageProcessor {
         let fs_watch_manager = FsWatchManager::new(outgoing.clone());
         let shared_file_watcher = fs_watch_manager.file_watcher();
         let thread_watch_manager =
-            crate::thread_status::ThreadWatchManager::new_with_outgoing(outgoing.clone());
+            crate::thread_status::ThreadWatchManager::new_with_outgoing_and_state_db(
+                outgoing.clone(),
+                state_db.clone(),
+            );
         let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
             config.codex_home.to_path_buf(),
             session_source.restriction_product(),
@@ -1375,7 +1378,9 @@ impl MessageProcessor {
                 self.thread_processor.thread_loaded_list(params).await
             }
             ClientRequest::ThreadRead { params, .. } => {
-                self.thread_processor.thread_read(params).await
+                self.thread_processor
+                    .thread_read(params, connection_id)
+                    .await
             }
             ClientRequest::ThreadTurnsList { params, .. } => {
                 self.thread_processor.thread_turns_list(params).await

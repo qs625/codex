@@ -171,6 +171,7 @@ const LEFT_PANEL_MAX_RATIO = 0.34;
 const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
 const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
+const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 5 * 60 * 1000;
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 type CompactHistoryViewState = {
@@ -290,6 +291,11 @@ function App() {
   const subscribeThreadPromisesRef = useRef<Map<string, Promise<boolean>>>(
     new Map(),
   );
+  const unsubscribeThreadTimersRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+  const previousSelectedThreadIdRef = useRef<string | null>(null);
+  const approvalRequestsByIdRef = useRef<Record<string, ApprovalRequest>>({});
   const loadingThreadIdsRef = useRef<Set<string>>(new Set());
   const loadThreadRequestIdsByThreadIdRef = useRef<Map<string, number>>(
     new Map(),
@@ -369,10 +375,44 @@ function App() {
   }
 
   useEffect(() => {
+    const previousSelectedThreadId = previousSelectedThreadIdRef.current;
+    previousSelectedThreadIdRef.current = selectedThreadId;
     selectedThreadIdRef.current = selectedThreadId;
     selectedThreadCwdRef.current = selectedThread?.cwd ?? null;
+    if (
+      previousSelectedThreadId &&
+      previousSelectedThreadId !== selectedThreadId
+    ) {
+      scheduleThreadIdleUnsubscribe(previousSelectedThreadId);
+    }
+    if (selectedThreadId) {
+      clearThreadUnsubscribeTimer(selectedThreadId);
+    }
     syncSelectedThreadLoading();
   }, [selectedThread?.cwd, selectedThreadId]);
+
+  useEffect(() => {
+    approvalRequestsByIdRef.current = approvalRequestsById;
+    for (const threadId of subscribedThreadIdsRef.current) {
+      if (threadId === selectedThreadIdRef.current) {
+        continue;
+      }
+      if (hasPendingApprovalRequestForThread(threadId)) {
+        clearThreadUnsubscribeTimer(threadId);
+      } else {
+        scheduleThreadIdleUnsubscribe(threadId);
+      }
+    }
+  }, [approvalRequestsById]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of unsubscribeThreadTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      unsubscribeThreadTimersRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -389,9 +429,6 @@ function App() {
     if (action === "readAndSubscribe") {
       void loadThread(selectedThreadId);
       return;
-    }
-    if (action === "subscribeOnly") {
-      void ensureThreadSubscribed(selectedThreadId);
     }
     syncSelectedThreadLoading();
   }, [selectedThreadId, threads]);
@@ -924,6 +961,63 @@ function App() {
 
   function markThreadSubscribed(threadId: string) {
     subscribedThreadIdsRef.current.add(threadId);
+    clearThreadUnsubscribeTimer(threadId);
+    if (threadId !== selectedThreadIdRef.current) {
+      scheduleThreadIdleUnsubscribe(threadId);
+    }
+  }
+
+  function hasPendingApprovalRequestForThread(threadId: string) {
+    return Object.values(approvalRequestsByIdRef.current).some(
+      (request) => request.threadId === threadId,
+    );
+  }
+
+  function clearThreadUnsubscribeTimer(threadId: string) {
+    const timer = unsubscribeThreadTimersRef.current.get(threadId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    unsubscribeThreadTimersRef.current.delete(threadId);
+  }
+
+  function clearAllThreadUnsubscribeTimers() {
+    for (const timer of unsubscribeThreadTimersRef.current.values()) {
+      clearTimeout(timer);
+    }
+    unsubscribeThreadTimersRef.current.clear();
+  }
+
+  function scheduleThreadIdleUnsubscribe(threadId: string) {
+    if (
+      threadId === selectedThreadIdRef.current ||
+      !subscribedThreadIdsRef.current.has(threadId) ||
+      hasPendingApprovalRequestForThread(threadId) ||
+      unsubscribeThreadTimersRef.current.has(threadId)
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      unsubscribeThreadTimersRef.current.delete(threadId);
+      if (
+        threadId === selectedThreadIdRef.current ||
+        !subscribedThreadIdsRef.current.has(threadId) ||
+        hasPendingApprovalRequestForThread(threadId)
+      ) {
+        return;
+      }
+      void window.codexDesktop
+        .unsubscribeThread(threadId)
+        .then(() => {
+          subscribedThreadIdsRef.current.delete(threadId);
+        })
+        .catch((unsubscribeError) => {
+          setError(toErrorMessage(unsubscribeError));
+          scheduleThreadIdleUnsubscribe(threadId);
+        });
+    }, THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS);
+    unsubscribeThreadTimersRef.current.set(threadId, timer);
   }
 
   async function ensureThreadSubscribed(threadId: string) {
@@ -1065,6 +1159,7 @@ function App() {
       subscribedThreadIdsRef.current.delete(threadId);
       liveThreadIdsRef.current.delete(threadId);
       subscribeThreadPromisesRef.current.delete(threadId);
+      clearThreadUnsubscribeTimer(threadId);
       loadingThreadIdsRef.current.delete(threadId);
       loadThreadRequestIdsByThreadIdRef.current.delete(threadId);
       runConfigOverrideByThreadIdRef.current.delete(threadId);
@@ -1387,12 +1482,10 @@ function App() {
     syncSelectedThreadLoading();
     setError(null);
     try {
-      if (!(await ensureThreadSubscribed(threadId))) {
-        return;
-      }
       const payload = (await window.codexDesktop.readThread(threadId)) as {
         thread: Thread;
       };
+      markThreadSubscribed(threadId);
       if (
         !shouldApplyThreadReadSnapshot({
           threadId,
@@ -1679,7 +1772,6 @@ function App() {
         draft: draftToSend,
         thread: threadForSend,
         threadId,
-        ensureSubscribed: ensureThreadSubscribed,
         sendMessage: async (payload) =>
           (await window.codexDesktop.sendMessage(payload)) as {
             turn?: Turn | null;
@@ -1689,8 +1781,8 @@ function App() {
             updateThreadTurnSnapshot(thread, turn),
           );
         },
-        revokeImage: revokeComposerImage,
         clearDraft: clearComposerDraftForThread,
+        revokeImage: revokeComposerImage,
       });
     } catch (sendError) {
       setError(toErrorMessage(sendError));
@@ -2355,6 +2447,7 @@ function App() {
           setError(lifecycleFailure);
         }
         if (!payload.status.connected) {
+          clearAllThreadUnsubscribeTimers();
           subscribedThreadIdsRef.current.clear();
           return;
         }
@@ -2371,8 +2464,6 @@ function App() {
         });
         if (action === "readAndSubscribe") {
           void loadThread(selectedThreadId);
-        } else if (action === "subscribeOnly") {
-          void ensureThreadSubscribed(selectedThreadId);
         }
         return;
       }

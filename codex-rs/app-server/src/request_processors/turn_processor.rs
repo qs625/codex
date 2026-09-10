@@ -1,7 +1,7 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadClientRecoveryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadClientRecoveryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
@@ -11,10 +11,20 @@ use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
+use crate::request_processors::thread_processor::apply_stored_agent_metadata_to_loaded_thread;
+use crate::request_processors::thread_processor::build_thread_from_snapshot;
+use crate::request_processors::thread_processor::merge_persisted_resume_metadata;
+use crate::request_processors::thread_processor::native_agent_role_for_resume;
+use crate::request_processors::thread_processor::restore_persisted_display_turns_from_rollout_items;
+use crate::request_processors::thread_processor::stored_thread_root_agent_metadata;
+use crate::request_processors::thread_processor::stored_thread_session_source_with_agent_metadata;
+use crate::request_processors::thread_processor::thread_processor_new_thread;
+use crate::request_processors::thread_processor::thread_store_resume_read_error;
 use crate::request_processors::thread_processor::unsupported_external_root_active_op;
 use model_service_api::SharedModelServiceApi;
 use thread_service::NativeDetachedReviewRuntime;
 use thread_service::NativeMemoryStartupConfigRuntime;
+use thread_service::NativeThreadCreationRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::ExternalRootThreadInputRoute;
@@ -25,6 +35,7 @@ use thread_service_api::ThreadLifecycleRuntime;
 pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
     detached_review_runtime: Arc<dyn NativeDetachedReviewRuntime>,
+    native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
     environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     memory_startup_config_runtime: Arc<dyn NativeMemoryStartupConfigRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
@@ -47,6 +58,7 @@ pub(crate) struct TurnRequestProcessor {
     arg0_paths: Arg0DispatchPaths,
     config: Arc<Config>,
     config_manager: ConfigManager,
+    thread_store: Arc<dyn ThreadStore>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
@@ -80,7 +92,7 @@ impl TurnRequestProcessor {
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
         config_manager: ConfigManager,
-        _thread_store: Arc<dyn ThreadStore>,
+        thread_store: Arc<dyn ThreadStore>,
         pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
@@ -91,6 +103,7 @@ impl TurnRequestProcessor {
         Self {
             auth_manager,
             detached_review_runtime: thread_service.clone(),
+            native_thread_creation: thread_service.clone(),
             environment_runtime: thread_service.clone(),
             memory_startup_config_runtime: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
@@ -113,6 +126,7 @@ impl TurnRequestProcessor {
             arg0_paths,
             config,
             config_manager,
+            thread_store,
             pending_thread_unloads,
             thread_state_manager,
             thread_watch_manager,
@@ -620,6 +634,15 @@ impl TurnRequestProcessor {
             ExternalRootThreadInputRoute::NativeRequired => {}
         }
 
+        self.ensure_persisted_native_thread_loaded(
+            thread_id,
+            self.request_trace_context(&request_id).await,
+        )
+        .await
+        .inspect_err(|error| {
+            self.track_error_response(&request_id, error, /*error_type*/ None);
+        })?;
+
         self.set_app_server_client_info(
             thread_id,
             app_server_client_name,
@@ -908,6 +931,129 @@ impl TurnRequestProcessor {
         })
     }
 
+    async fn ensure_persisted_native_thread_loaded(
+        &self,
+        thread_id: ThreadId,
+        parent_trace: Option<W3cTraceContext>,
+    ) -> Result<(), JSONRPCErrorError> {
+        if self
+            .pending_thread_unloads
+            .lock()
+            .await
+            .contains(&thread_id)
+        {
+            return Err(invalid_request(format!(
+                "thread {thread_id} is closing; retry after the thread is closed"
+            )));
+        }
+        if self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
+            return Ok(());
+        }
+
+        let stored_thread = self
+            .thread_store
+            .read_thread(StoreReadThreadParams {
+                thread_id,
+                include_archived: true,
+                include_history: true,
+            })
+            .await
+            .map_err(thread_store_resume_read_error)?;
+        if stored_thread.archived_at.is_some() {
+            return Err(invalid_request(format!("thread {thread_id} is archived")));
+        }
+        let thread_history = InitialHistory::Resumed(ResumedHistory {
+            conversation_id: thread_id,
+            history: stored_thread
+                .history
+                .as_ref()
+                .map(|history| history.items.clone())
+                .ok_or_else(|| {
+                    internal_error(format!(
+                        "thread {thread_id} did not include persisted history"
+                    ))
+                })?,
+            rollout_path: stored_thread.rollout_path.clone(),
+        });
+        let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
+        let agent_metadata = stored_thread_root_agent_metadata(&stored_thread);
+        let resume_agent_role =
+            native_agent_role_for_resume(Some(&session_source), agent_metadata.as_ref());
+        let stored_agent_path = stored_thread.agent_path.clone();
+        let stored_agent_role = stored_thread.agent_role.clone();
+        let history_cwd = thread_history.session_cwd();
+        let mut request_overrides = None;
+        let mut typesafe_overrides = ConfigOverrides::default();
+        if let Some(persisted_metadata) = match self.state_db.as_ref() {
+            Some(state_db) => state_db.get_thread(thread_id).await.ok().flatten(),
+            None => None,
+        } {
+            merge_persisted_resume_metadata(
+                &mut request_overrides,
+                &mut typesafe_overrides,
+                &persisted_metadata,
+            );
+        }
+
+        let mut config = self
+            .config_manager
+            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
+            .await
+            .map_err(|err| config_load_error(&err))?;
+        if let Some(agent_role) = resume_agent_role
+            && let Err(err) =
+                codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
+        {
+            return Err(invalid_request(err));
+        }
+        let new_thread = self
+            .native_thread_creation
+            .resume_thread_with_history_and_source(
+                config,
+                thread_history,
+                session_source,
+                agent_metadata,
+                parent_trace,
+            )
+            .await
+            .map_err(|err| internal_error(format!("error resuming thread: {err}")))?;
+        let new_thread = thread_processor_new_thread(new_thread);
+        let thread_id = new_thread.thread_id;
+        let session_configured = new_thread.session_configured;
+        let config_snapshot = self
+            .live_thread_inspection
+            .live_thread_config_snapshot(thread_id)
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to read live thread config snapshot: {err}"))
+            })?;
+        let mut loaded_thread = build_thread_from_snapshot(
+            thread_id,
+            session_configured.session_id.to_string(),
+            &config_snapshot,
+            session_configured.rollout_path,
+        );
+        if let Some(history) = stored_thread.history.as_ref() {
+            restore_persisted_display_turns_from_rollout_items(
+                &mut loaded_thread,
+                history.items.as_slice(),
+            );
+        }
+        apply_stored_agent_metadata_to_loaded_thread(
+            &mut loaded_thread,
+            stored_agent_path,
+            stored_agent_role,
+        );
+        self.thread_watch_manager
+            .upsert_thread_silently(loaded_thread)
+            .await;
+        Ok(())
+    }
+
     async fn thread_inject_items_response_inner(
         &self,
         params: ThreadInjectItemsParams,
@@ -971,12 +1117,17 @@ impl TurnRequestProcessor {
         }
         let stored_thread = self
             .live_thread_history
-            .read_live_thread(thread_id, /*include_archived*/ false, /*include_history*/ false)
+            .read_live_thread(
+                thread_id, /*include_archived*/ false, /*include_history*/ false,
+            )
             .await
             .map_err(|err| internal_error(format!("failed to inspect recovery thread: {err}")))?;
         if stored_thread.name.as_deref() != Some("/self")
             || stored_thread.forked_from_id.is_some()
-            || !matches!(stored_thread.source, protocol::protocol::SessionSource::VSCode)
+            || !matches!(
+                stored_thread.source,
+                protocol::protocol::SessionSource::VSCode
+            )
         {
             return Err(invalid_request(
                 "thread/clientRecovery/record target must be the system /self root thread",
@@ -991,12 +1142,8 @@ impl TurnRequestProcessor {
                 "thread/clientRecovery/record target does not match the registered system /self thread",
             ));
         }
-        self.reject_external_root_native_only_op(
-            None,
-            thread_id,
-            "thread/clientRecovery/record",
-        )
-        .await?;
+        self.reject_external_root_native_only_op(None, thread_id, "thread/clientRecovery/record")
+            .await?;
 
         let recorded = self
             .live_thread_client_recovery

@@ -1,6 +1,5 @@
 use super::*;
 #[cfg(test)]
-#[cfg(test)]
 use app_server_protocol::CommandExecutionStatus;
 #[cfg(test)]
 use app_server_protocol::DynamicToolCallStatus;
@@ -96,10 +95,13 @@ impl ThreadRequestProcessor {
             threads.push(thread);
         }
 
-        let statuses = self
-            .thread_watch_manager
-            .loaded_statuses_for_threads(status_ids)
-            .await;
+        let statuses = if use_state_db_only {
+            Default::default()
+        } else {
+            self.thread_watch_manager
+                .loaded_statuses_for_threads(status_ids)
+                .await
+        };
 
         let data: Vec<_> = threads
             .into_iter()
@@ -174,6 +176,7 @@ impl ThreadRequestProcessor {
     pub(super) async fn thread_read_response_inner(
         &self,
         params: ThreadReadParams,
+        connection_id: ConnectionId,
     ) -> Result<ThreadReadResponse, JSONRPCErrorError> {
         let ThreadReadParams {
             thread_id,
@@ -182,6 +185,17 @@ impl ThreadRequestProcessor {
 
         let thread_uuid = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        self.ensure_persisted_native_thread_loaded(thread_uuid, /*parent_trace*/ None)
+            .await?;
+        if self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_uuid)
+            .await
+        {
+            self.ensure_conversation_listener(thread_uuid, connection_id)
+                .await?;
+        }
 
         let thread = self
             .read_thread_view(thread_uuid, include_turns)
@@ -662,10 +676,10 @@ impl ThreadRequestProcessor {
 
     pub(super) async fn restore_persisted_active_threads_on_startup_inner(&self) {
         let thread_ids = self
-            .list_threads_with_persisted_subscriptions()
+            .list_threads_with_active_last_run_status()
             .await
             .unwrap_or_else(|err| {
-                warn!("failed to list threads with persisted subscriptions: {err:?}");
+                warn!("failed to list threads with active last-run status: {err:?}");
                 Vec::new()
             });
 
@@ -681,13 +695,20 @@ impl ThreadRequestProcessor {
         }
     }
 
-    pub(super) async fn list_threads_with_persisted_subscriptions(
+    pub(super) async fn list_threads_with_active_last_run_status(
         &self,
     ) -> Result<Vec<ThreadId>, JSONRPCErrorError> {
-        self.thread_store
-            .list_thread_ids_with_active_subscriptions()
+        let Some(state_db) = self.state_db.as_ref() else {
+            return Ok(Vec::new());
+        };
+        state_db
+            .list_thread_ids_with_active_last_run_status()
             .await
-            .map_err(thread_store_list_error)
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to list active last-run threads from state db: {err}"
+                ))
+            })
     }
 
     pub(super) async fn restore_persisted_active_thread(&self, thread_id: ThreadId) {
@@ -867,7 +888,7 @@ impl ThreadRequestProcessor {
     }
 }
 
-fn apply_stored_agent_metadata_to_loaded_thread(
+pub(crate) fn apply_stored_agent_metadata_to_loaded_thread(
     loaded_thread: &mut Thread,
     stored_agent_path: Option<String>,
     stored_agent_role: Option<String>,
@@ -884,7 +905,7 @@ fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]
     restore_persisted_injected_context_turns(thread, persisted_turns);
 }
 
-fn restore_persisted_display_turns_from_rollout_items(
+pub(crate) fn restore_persisted_display_turns_from_rollout_items(
     thread: &mut Thread,
     rollout_items: &[RolloutItem],
 ) {

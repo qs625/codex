@@ -14,6 +14,7 @@ use protocol::protocol::GitInfo;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadMemoryMode as MemoryMode;
 use protocol::protocol::ThreadSkill;
 use protocol::protocol::ThreadSource;
@@ -377,6 +378,8 @@ pub struct StoredThread {
     pub token_usage: Option<TokenUsage>,
     /// First user message observed for this thread, if any.
     pub first_user_message: Option<String>,
+    /// Last persisted run status, when available from current-state metadata.
+    pub last_run_status: Option<ThreadLifecycleStatus>,
     /// Aggregate thread-level skills observed for this thread.
     pub skills: Vec<ThreadSkill>,
     /// Persisted history, populated only when requested.
@@ -1157,6 +1160,7 @@ mod tests {
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             token_usage: None,
             first_user_message: None,
+            last_run_status: None,
             skills: Vec::new(),
             history: Some(StoredThreadHistory { thread_id, items }),
         }

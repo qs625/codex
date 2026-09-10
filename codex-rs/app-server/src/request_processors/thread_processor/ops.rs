@@ -143,8 +143,7 @@ fn thread_status_changed_lifecycle_status(
 
     let has_in_progress_turn =
         has_in_progress_turn || matches!(live_agent_status, Some(AgentStatus::Running));
-    let resolved_watch_status =
-        resolve_thread_status(watch_status, has_in_progress_turn);
+    let resolved_watch_status = resolve_thread_status(watch_status, has_in_progress_turn);
     if matches!(
         resolved_watch_status,
         ThreadLifecycleStatus::Active { .. }
@@ -594,9 +593,6 @@ impl ThreadRequestProcessor {
         authoritative_status: Option<AgentStatus>,
         connection_ids: &[ConnectionId],
     ) {
-        if connection_ids.is_empty() {
-            return;
-        }
         let thread_id_string = thread_id.to_string();
         let watch_status = self
             .thread_watch_manager
@@ -624,6 +620,16 @@ impl ThreadRequestProcessor {
             watch_status,
             has_in_progress_turn,
         );
+        self.persist_thread_last_run_status(thread_id, &lifecycle_status)
+            .await;
+        let Some(lifecycle_status) =
+            crate::thread_status::persistable_thread_lifecycle_status(&lifecycle_status).cloned()
+        else {
+            return;
+        };
+        if connection_ids.is_empty() {
+            return;
+        }
         self.outgoing
             .send_server_notification_to_connections(
                 connection_ids,
@@ -633,6 +639,27 @@ impl ThreadRequestProcessor {
                 }),
             )
             .await;
+    }
+
+    pub(crate) async fn persist_thread_last_run_status(
+        &self,
+        thread_id: ThreadId,
+        lifecycle_status: &ThreadLifecycleStatus,
+    ) {
+        let Some(lifecycle_status) =
+            crate::thread_status::persistable_thread_lifecycle_status(lifecycle_status)
+        else {
+            return;
+        };
+        let Some(state_db) = self.state_db.as_ref() else {
+            return;
+        };
+        if let Err(err) = state_db
+            .set_thread_last_run_status(thread_id, Some(lifecycle_status))
+            .await
+        {
+            warn!("failed to persist last run status for thread {thread_id}: {err}");
+        }
     }
 
     pub(super) async fn submit_core_op(
@@ -2046,6 +2073,46 @@ mod tests {
         assert_eq!(
             lifecycle_status,
             ThreadLifecycleStatus::errored(Some("failed".to_string()))
+        );
+    }
+
+    #[test]
+    fn persisted_last_run_status_keeps_externally_meaningful_statuses() {
+        let active = ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        };
+        let waiting = ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        };
+        let final_status = ThreadLifecycleStatus::completed(Some("done".to_string()));
+
+        assert_eq!(
+            crate::thread_status::persistable_thread_lifecycle_status(&active),
+            Some(&active)
+        );
+        assert_eq!(
+            crate::thread_status::persistable_thread_lifecycle_status(&waiting),
+            Some(&waiting)
+        );
+        assert_eq!(
+            crate::thread_status::persistable_thread_lifecycle_status(&final_status),
+            Some(&final_status)
+        );
+    }
+
+    #[test]
+    fn persisted_last_run_status_filters_loaded_cache_statuses() {
+        assert_eq!(
+            crate::thread_status::persistable_thread_lifecycle_status(
+                &ThreadLifecycleStatus::NotLoaded
+            ),
+            None
+        );
+        assert_eq!(
+            crate::thread_status::persistable_thread_lifecycle_status(
+                &ThreadLifecycleStatus::Initializing
+            ),
+            None
         );
     }
 }

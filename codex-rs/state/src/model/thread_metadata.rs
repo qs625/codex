@@ -3,6 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use protocol::ThreadId;
 use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::subscriptions::PersistedSubscription;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -44,6 +45,7 @@ pub(crate) struct ThreadRow {
     git_branch: Option<String>,
     git_origin_url: Option<String>,
     subscriptions: Option<String>,
+    last_run_status: Option<String>,
 }
 
 impl ThreadRow {
@@ -74,6 +76,7 @@ impl ThreadRow {
             git_branch: row.try_get("git_branch")?,
             git_origin_url: row.try_get("git_origin_url")?,
             subscriptions: row.try_get("subscriptions")?,
+            last_run_status: row.try_get("last_run_status")?,
         })
     }
 }
@@ -108,6 +111,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             git_branch,
             git_origin_url,
             subscriptions,
+            last_run_status,
         } = row;
         let thread_source = thread_source
             .map(|thread_source| thread_source.parse())
@@ -115,6 +119,9 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             .map_err(anyhow::Error::msg)?;
         let subscriptions = subscriptions
             .map(|subscriptions| serde_json::from_str::<Vec<PersistedSubscription>>(&subscriptions))
+            .transpose()?;
+        let last_run_status = last_run_status
+            .map(|status| serde_json::from_str::<ThreadLifecycleStatus>(&status))
             .transpose()?;
         Ok(Self {
             id: ThreadId::try_from(id)?,
@@ -143,6 +150,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             git_branch,
             git_origin_url,
             subscriptions,
+            last_run_status,
         })
     }
 }
@@ -211,6 +219,7 @@ mod tests {
             git_branch: None,
             git_origin_url: None,
             subscriptions: None,
+            last_run_status: None,
         }
     }
 
@@ -242,6 +251,7 @@ mod tests {
             git_branch: None,
             git_origin_url: None,
             subscriptions: None,
+            last_run_status: None,
         }
     }
 

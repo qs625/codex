@@ -1,10 +1,12 @@
 use anyhow::Result;
+use app_server_protocol::JSONRPCError;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadArchivedNotification;
 use app_server_protocol::ThreadLifecycleStatus;
+use app_server_protocol::ThreadReadParams;
 use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartParams;
@@ -93,6 +95,43 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
             .expect("thread/archived notification params"),
     )?;
     assert_eq!(archived_notification.thread_id, thread.id);
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let read_err: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    assert!(
+        read_err.error.message.contains("archived"),
+        "expected archived thread/read rejection, got: {read_err:?}"
+    );
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "continue".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let turn_start_err: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(turn_start_id)),
+    )
+    .await??;
+    assert!(
+        turn_start_err.error.message.contains("archived"),
+        "expected archived turn/start rejection, got: {turn_start_err:?}"
+    );
 
     // Verify file moved.
     let archived_directory = codex_home.path().join(ARCHIVED_SESSIONS_SUBDIR);
@@ -190,6 +229,7 @@ async fn thread_archive_missing_rollout_file_with_metadata_is_idempotent_success
             git_branch: None,
             git_origin_url: None,
             subscriptions: None,
+            last_run_status: None,
         })
         .await?;
     assert!(

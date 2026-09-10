@@ -355,7 +355,14 @@ mod root_thread_provider_route_tests {
                 None,
                 "approval reviewer",
             ),
-            (None, Some(vec![dynamic_tool]), None, None, None, "dynamic tools"),
+            (
+                None,
+                Some(vec![dynamic_tool]),
+                None,
+                None,
+                None,
+                "dynamic tools",
+            ),
             (
                 None,
                 None,
@@ -364,7 +371,14 @@ mod root_thread_provider_route_tests {
                 None,
                 "clear history",
             ),
-            (None, None, None, Some(vec![environment]), None, "environments"),
+            (
+                None,
+                None,
+                None,
+                Some(vec![environment]),
+                None,
+                "environments",
+            ),
             (
                 None,
                 None,
@@ -1171,6 +1185,137 @@ impl ThreadRequestProcessor {
             .stored_thread_to_initial_history(&stored_thread)
             .await?;
         Ok((history, stored_thread))
+    }
+
+    pub(super) async fn ensure_persisted_native_thread_loaded(
+        &self,
+        thread_id: ThreadId,
+        parent_trace: Option<W3cTraceContext>,
+    ) -> Result<(), JSONRPCErrorError> {
+        if self
+            .pending_thread_unloads
+            .lock()
+            .await
+            .contains(&thread_id)
+        {
+            return Err(invalid_request(format!(
+                "thread {thread_id} is closing; retry after the thread is closed"
+            )));
+        }
+        if self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
+            return Ok(());
+        }
+
+        let stored_thread = self
+            .read_stored_thread_for_resume(
+                &thread_id.to_string(),
+                /*path*/ None,
+                /*include_history*/ true,
+            )
+            .await?;
+        if stored_thread.archived_at.is_some() {
+            return Err(invalid_request(format!("thread {thread_id} is archived")));
+        }
+        if self
+            .persisted_external_root_thread_facts_for_source(&stored_thread, /*path*/ None)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        if let Err(error) = reject_unsupported_external_root_thread_provider(
+            self.thread_provider_catalog.as_ref(),
+            stored_thread.model_provider.as_str(),
+            thread_service_api::ThreadProviderRootCapability::RestoreThread,
+        ) {
+            return Err(error);
+        }
+
+        let thread_history = self
+            .stored_thread_to_initial_history(&stored_thread)
+            .await?;
+        let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
+        let agent_metadata = stored_thread_root_agent_metadata(&stored_thread);
+        let resume_agent_role =
+            native_agent_role_for_resume(Some(&session_source), agent_metadata.as_ref());
+        let stored_agent_path = stored_thread.agent_path.clone();
+        let stored_agent_role = stored_thread.agent_role.clone();
+        let history_cwd = thread_history.session_cwd();
+        let mut request_overrides = None;
+        let mut typesafe_overrides = self.build_thread_config_overrides(
+            /*model*/ None, /*model_provider*/ None, /*service_tier*/ None,
+            /*cwd*/ None, /*runtime_workspace_roots*/ None,
+            /*approval_policy*/ None, /*approvals_reviewer*/ None, /*sandbox*/ None,
+            /*permissions*/ None, /*base_instructions*/ None,
+            /*developer_instructions*/ None, /*personality*/ None,
+        );
+        self.load_and_apply_persisted_resume_metadata(
+            &thread_history,
+            &mut request_overrides,
+            &mut typesafe_overrides,
+        )
+        .await;
+
+        let mut config = self
+            .config_manager
+            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
+            .await
+            .map_err(|err| config_load_error(&err))?;
+        if let Some(agent_role) = resume_agent_role
+            && let Err(err) =
+                codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
+        {
+            return Err(invalid_request(err));
+        }
+
+        let new_thread = self
+            .native_thread_creation
+            .resume_thread_with_history_and_source(
+                config,
+                thread_history,
+                session_source,
+                agent_metadata,
+                parent_trace,
+            )
+            .await
+            .map_err(|err| internal_error(format!("error resuming thread: {err}")))?;
+        let ThreadProcessorNewThread {
+            thread_id,
+            session_configured,
+            ..
+        } = thread_processor_new_thread(new_thread);
+        let config_snapshot = self
+            .live_thread_inspection
+            .live_thread_config_snapshot(thread_id)
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to read live thread config snapshot: {err}"))
+            })?;
+        let mut loaded_thread = build_thread_from_snapshot(
+            thread_id,
+            session_configured.session_id.to_string(),
+            &config_snapshot,
+            session_configured.rollout_path,
+        );
+        if let Some(history) = stored_thread.history.as_ref() {
+            restore_persisted_display_turns_from_rollout_items(
+                &mut loaded_thread,
+                history.items.as_slice(),
+            );
+        }
+        apply_stored_agent_metadata_to_loaded_thread(
+            &mut loaded_thread,
+            stored_agent_path,
+            stored_agent_role,
+        );
+        self.thread_watch_manager
+            .upsert_thread_silently(loaded_thread)
+            .await;
+        Ok(())
     }
 
     pub(super) async fn read_stored_thread_for_resume(

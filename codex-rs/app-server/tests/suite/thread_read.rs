@@ -97,7 +97,6 @@ use protocol::subscriptions::PersistedSubscription;
 use protocol::subscriptions::ScheduleSpec;
 use protocol::user_input::ByteRange;
 use protocol::user_input::TextElement;
-use rollout::ARCHIVED_SESSIONS_SUBDIR;
 use serde_json::Value;
 use serde_json::json;
 use state::StateRuntime;
@@ -2488,54 +2487,6 @@ fn thread_read_includes_persisted_thread_skills_for_pathless_store_threads() -> 
         client.shutdown().await?;
         Ok(())
     })
-}
-
-#[tokio::test]
-async fn thread_read_can_return_archived_threads_by_id() -> Result<()> {
-    let server = create_mock_responses_server_repeating_assistant("Done").await;
-    let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
-
-    let filename_ts = "2025-01-05T12-00-00";
-    let preview = "Archived saved user message";
-    let conversation_id = create_fake_rollout_with_text_elements(
-        codex_home.path(),
-        filename_ts,
-        "2025-01-05T12:00:00Z",
-        preview,
-        vec![],
-        Some("mock_provider"),
-        /*git_info*/ None,
-    )?;
-    let active_rollout_path = rollout_path(codex_home.path(), filename_ts, &conversation_id);
-    let archived_dir = codex_home.path().join(ARCHIVED_SESSIONS_SUBDIR);
-    std::fs::create_dir_all(&archived_dir)?;
-    let archived_rollout_path =
-        archived_dir.join(active_rollout_path.file_name().expect("rollout file name"));
-    std::fs::rename(&active_rollout_path, &archived_rollout_path)?;
-
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let read_id = mcp
-        .send_thread_read_request(ThreadReadParams {
-            thread_id: conversation_id.clone(),
-            include_turns: false,
-        })
-        .await?;
-    let read_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
-    )
-    .await??;
-    let ThreadReadResponse { thread } = to_response::<ThreadReadResponse>(read_resp)?;
-
-    assert_eq!(thread.id, conversation_id);
-    assert_eq!(thread.preview, preview);
-    let path = thread.path.expect("thread path");
-    assert_eq!(path.canonicalize()?, archived_rollout_path.canonicalize()?);
-
-    Ok(())
 }
 
 #[tokio::test]

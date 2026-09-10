@@ -122,6 +122,7 @@
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             token_usage: None,
             first_user_message: Some("before rollback".to_string()),
+            last_run_status: None,
             skills: Vec::new(),
             history: Some(StoredThreadHistory {
                 thread_id,

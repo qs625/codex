@@ -12,15 +12,24 @@ use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use protocol::ThreadId;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 #[cfg(test)]
 use tokio::sync::mpsc;
 use tokio::sync::watch;
+use tracing::warn;
+
+type PersistThreadStatusFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+type PersistThreadStatusFn =
+    Arc<dyn Fn(ThreadId, ThreadLifecycleStatus) -> PersistThreadStatusFuture + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct ThreadWatchManager {
     state: Arc<Mutex<ThreadWatchState>>,
     outgoing: Option<Arc<OutgoingMessageSender>>,
+    persist_status: Option<PersistThreadStatusFn>,
     running_turn_count_tx: watch::Sender<usize>,
 }
 
@@ -77,15 +86,45 @@ impl ThreadWatchManager {
         Self {
             state: Arc::new(Mutex::new(ThreadWatchState::default())),
             outgoing: None,
+            persist_status: None,
             running_turn_count_tx,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with_outgoing(outgoing: Arc<OutgoingMessageSender>) -> Self {
+        Self::new_with_outgoing_and_persist_status(outgoing, None)
+    }
+
+    pub(crate) fn new_with_outgoing_and_state_db(
+        outgoing: Arc<OutgoingMessageSender>,
+        state_db: Option<rollout::StateDbHandle>,
+    ) -> Self {
+        let persist_status = state_db.map(|state_db| {
+            Arc::new(move |thread_id: ThreadId, lifecycle_status: ThreadLifecycleStatus| {
+                let state_db = state_db.clone();
+                Box::pin(async move {
+                    if let Err(err) = state_db
+                        .set_thread_last_run_status(thread_id, Some(&lifecycle_status))
+                        .await
+                    {
+                        warn!("failed to persist last run status for thread {thread_id}: {err}");
+                    }
+                }) as PersistThreadStatusFuture
+            }) as PersistThreadStatusFn
+        });
+        Self::new_with_outgoing_and_persist_status(outgoing, persist_status)
+    }
+
+    fn new_with_outgoing_and_persist_status(
+        outgoing: Arc<OutgoingMessageSender>,
+        persist_status: Option<PersistThreadStatusFn>,
+    ) -> Self {
         let (running_turn_count_tx, _running_turn_count_rx) = watch::channel(0);
         Self {
             state: Arc::new(Mutex::new(ThreadWatchState::default())),
             outgoing: Some(outgoing),
+            persist_status,
             running_turn_count_tx,
         }
     }
@@ -278,11 +317,33 @@ impl ThreadWatchManager {
         };
         let _ = self.running_turn_count_tx.send(running_turn_count);
 
-        if let Some(notification) = notification
-            && let Some(outgoing) = &self.outgoing
-        {
+        let Some(notification) = notification else {
+            return;
+        };
+        let Some(lifecycle_status) =
+            persistable_thread_lifecycle_status(&notification.lifecycle_status).cloned()
+        else {
+            return;
+        };
+
+        if let Some(persist_status) = &self.persist_status {
+            match ThreadId::from_string(&notification.thread_id) {
+                Ok(thread_id) => persist_status(thread_id, lifecycle_status.clone()).await,
+                Err(err) => warn!(
+                    "failed to persist last run status for invalid thread id {}: {err}",
+                    notification.thread_id
+                ),
+            }
+        }
+
+        if let Some(outgoing) = &self.outgoing {
             outgoing
-                .send_server_notification(ServerNotification::ThreadStatusChanged(notification))
+                .send_server_notification(ServerNotification::ThreadStatusChanged(
+                    ThreadStatusChangedNotification {
+                        lifecycle_status,
+                        ..notification
+                    },
+                ))
                 .await;
         }
     }
@@ -347,6 +408,15 @@ pub(crate) fn resolve_thread_status(
     }
 
     status
+}
+
+pub(crate) fn persistable_thread_lifecycle_status(
+    lifecycle_status: &ThreadLifecycleStatus,
+) -> Option<&ThreadLifecycleStatus> {
+    match lifecycle_status {
+        ThreadLifecycleStatus::NotLoaded | ThreadLifecycleStatus::Initializing => None,
+        status => Some(status),
+    }
 }
 
 #[derive(Default)]
@@ -989,12 +1059,69 @@ mod tests {
         );
 
         manager.remove_thread(INTERACTIVE_THREAD_ID).await;
+        assert!(
+            timeout(Duration::from_millis(100), outgoing_rx.recv())
+                .await
+                .is_err(),
+            "loaded-cache NotLoaded should not be emitted as a client status notification"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_change_persists_meaningful_statuses_and_filters_not_loaded() {
+        let (outgoing_tx, _outgoing_rx) = mpsc::channel(8);
+        let (persisted_tx, mut persisted_rx) = mpsc::channel(8);
+        let persist_status: PersistThreadStatusFn =
+            Arc::new(move |thread_id: ThreadId, lifecycle_status: ThreadLifecycleStatus| {
+                let persisted_tx = persisted_tx.clone();
+                Box::pin(async move {
+                    persisted_tx
+                        .send((thread_id, lifecycle_status))
+                        .await
+                        .expect("persisted status receiver should stay open");
+                })
+            });
+        let manager = ThreadWatchManager::new_with_outgoing_and_persist_status(
+            Arc::new(OutgoingMessageSender::new(
+                outgoing_tx,
+                codex_analytics::AnalyticsEventsClient::disabled(),
+            )),
+            Some(persist_status),
+        );
+
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
         assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                lifecycle_status: ThreadLifecycleStatus::NotLoaded,
-            },
+            recv_persisted_status(&mut persisted_rx).await,
+            (
+                ThreadId::from_string(INTERACTIVE_THREAD_ID)
+                    .expect("interactive thread id should parse"),
+                ThreadLifecycleStatus::completed(None),
+            ),
+        );
+
+        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
+        assert_eq!(
+            recv_persisted_status(&mut persisted_rx).await,
+            (
+                ThreadId::from_string(INTERACTIVE_THREAD_ID)
+                    .expect("interactive thread id should parse"),
+                ThreadLifecycleStatus::Active {
+                    active_flags: vec![ThreadLifecycleActiveFlag::Running],
+                },
+            ),
+        );
+
+        manager.remove_thread(INTERACTIVE_THREAD_ID).await;
+        assert!(
+            timeout(Duration::from_millis(100), persisted_rx.recv())
+                .await
+                .is_err(),
+            "loaded-cache NotLoaded should not be persisted as last_run_status"
         );
     }
 
@@ -1167,6 +1294,15 @@ mod tests {
             panic!("expected thread/status/changed notification");
         };
         notification
+    }
+
+    async fn recv_persisted_status(
+        persisted_rx: &mut mpsc::Receiver<(ThreadId, ThreadLifecycleStatus)>,
+    ) -> (ThreadId, ThreadLifecycleStatus) {
+        timeout(Duration::from_secs(1), persisted_rx.recv())
+            .await
+            .expect("timed out waiting for persisted status")
+            .expect("persisted status channel closed unexpectedly")
     }
 
     fn test_thread(thread_id: &str, source: app_server_protocol::SessionSource) -> Thread {

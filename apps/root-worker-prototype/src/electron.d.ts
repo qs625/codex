@@ -235,6 +235,9 @@ declare global {
       subscribeThread: (
         threadId: string,
       ) => Promise<{ thread?: unknown | null }>;
+      unsubscribeThread: (
+        threadId: string,
+      ) => Promise<{ status: "unsubscribed" | "notSubscribed" }>;
       getThreadGoal: (threadId: string) => Promise<{ goal: unknown | null }>;
       setThreadGoal: (payload: {
         threadId: string;

@@ -4,6 +4,7 @@ use chrono::Utc;
 use protocol::ThreadId;
 use protocol::dynamic_tools::DynamicToolSpec;
 use protocol::protocol::RolloutItem;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSkill;
 use serde_json::Value;
 use state_api::AgentJob;
@@ -151,6 +152,12 @@ impl ThreadStateRuntime for StateRuntime {
 
     fn list_thread_ids_with_active_subscriptions(&self) -> StateApiFuture<'_, Vec<ThreadId>> {
         Box::pin(async move { StateRuntime::list_thread_ids_with_active_subscriptions(self).await })
+    }
+
+    fn list_thread_ids_with_active_last_run_status(&self) -> StateApiFuture<'_, Vec<ThreadId>> {
+        Box::pin(
+            async move { StateRuntime::list_thread_ids_with_active_last_run_status(self).await },
+        )
     }
 
     fn mark_thread_memory_mode_polluted(&self, thread_id: ThreadId) -> StateApiFuture<'_, ()> {
@@ -392,6 +399,16 @@ impl ThreadStateRuntime for StateRuntime {
             )
             .await
         })
+    }
+
+    fn set_thread_last_run_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        status: Option<&'a ThreadLifecycleStatus>,
+    ) -> StateApiFuture<'a, bool> {
+        Box::pin(
+            async move { StateRuntime::set_thread_last_run_status(self, thread_id, status).await },
+        )
     }
 
     fn apply_rollout_items<'a>(

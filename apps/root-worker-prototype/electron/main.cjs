@@ -48,7 +48,6 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
-  buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { listThreads: listAllThreads } = require("./threadList.cjs");
 const {
@@ -564,6 +563,10 @@ ipcMain.handle("codex:setThreadRunConfig", async (_event, payload) => {
 
 ipcMain.handle("codex:subscribeThread", async (_event, threadId) => {
   return subscribeThread(threadId);
+});
+
+ipcMain.handle("codex:unsubscribeThread", async (_event, threadId) => {
+  return unsubscribeThread(threadId);
 });
 
 ipcMain.handle("codex:getThreadGoal", async (_event, threadId) => {
@@ -1995,18 +1998,26 @@ async function readThread(threadId, includeTurns, runtime = null, options = {}) 
 }
 
 async function subscribeThread(threadId) {
-  const resume = await appServerClient.request(
-    "thread/resume",
-    buildSubscribeThreadResumeParams(threadId),
-  );
+  const response = await appServerClient.request("thread/read", {
+    threadId,
+    includeTurns: false,
+  });
   const existingRuntime = threadRuntimeById.get(threadId) ?? null;
-  const runtime = resolveRuntimeForResume(existingRuntime, resume);
+  const runtime = resolveRuntimeForResume(existingRuntime, response.thread ?? response);
   rememberThreadRuntime(threadId, runtime);
   return {
-    thread: resume.thread
-      ? normalizeThread({ ...resume.thread, turns: [] }, runtime)
+    thread: response.thread
+      ? normalizeThread({ ...response.thread, turns: [] }, runtime)
       : null,
   };
+}
+
+async function unsubscribeThread(threadId) {
+  const response = await appServerClient.request("thread/unsubscribe", {
+    threadId,
+  });
+  const status = response.status === "unsubscribed" ? "unsubscribed" : "notSubscribed";
+  return { status };
 }
 
 async function ensureSelfProjectForCurrentApp() {

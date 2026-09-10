@@ -290,6 +290,7 @@ pub(super) fn stored_thread_from_rollout_item(
         sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: item.first_user_message,
+        last_run_status: None,
         skills: Vec::new(),
         history: None,
     })

@@ -18,11 +18,17 @@ mod runtime;
 mod start;
 mod support;
 
-pub(crate) use self::runtime::thread_processor_new_thread;
+pub(crate) use self::listing::apply_stored_agent_metadata_to_loaded_thread;
+pub(crate) use self::listing::restore_persisted_display_turns_from_rollout_items;
 pub(super) use self::ops::unsupported_external_root_active_op;
+pub(crate) use self::runtime::thread_processor_new_thread;
 use self::runtime::*;
+pub(crate) use self::support::build_thread_from_snapshot;
 pub(super) use self::support::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
+pub(crate) use self::support::stored_thread_root_agent_metadata;
+pub(crate) use self::support::stored_thread_session_source_with_agent_metadata;
 pub(crate) use self::support::thread_from_stored_thread;
+pub(crate) use self::support::thread_store_resume_read_error;
 use self::support::*;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
@@ -186,7 +192,7 @@ fn collect_resume_override_mismatches(
     mismatch_details
 }
 
-fn native_agent_role_for_resume<'a>(
+pub(super) fn native_agent_role_for_resume<'a>(
     session_source: Option<&'a protocol::protocol::SessionSource>,
     agent_metadata: Option<&'a codex_agent_runtime::AgentMetadata>,
 ) -> Option<&'a str> {
@@ -213,7 +219,7 @@ fn is_external_agent_provider_label(label: &str) -> bool {
     is_external_cli_thread_provider_id(label)
 }
 
-fn merge_persisted_resume_metadata(
+pub(super) fn merge_persisted_resume_metadata(
     request_overrides: &mut Option<HashMap<String, serde_json::Value>>,
     typesafe_overrides: &mut ConfigOverrides,
     persisted_metadata: &ThreadMetadata,
@@ -753,8 +759,9 @@ impl ThreadRequestProcessor {
     pub(crate) async fn thread_read(
         &self,
         params: ThreadReadParams,
+        connection_id: ConnectionId,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_read_response_inner(params)
+        self.thread_read_response_inner(params, connection_id)
             .await
             .map(|response| Some(response.into()))
     }

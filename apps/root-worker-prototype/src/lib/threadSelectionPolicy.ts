@@ -1,6 +1,5 @@
 export type ThreadSelectionAction =
   | "none"
-  | "subscribeOnly"
   | "readAndSubscribe";
 
 type ThreadSelectionPolicyInput = {
@@ -41,11 +40,11 @@ export function decideThreadSelectionAction({
   }
 
   if (hasLiveCache) {
-    return isSubscribed ? "none" : "subscribeOnly";
+    return isSubscribed ? "none" : "readAndSubscribe";
   }
 
   if (!isSubscribed) {
-    return "subscribeOnly";
+    return "readAndSubscribe";
   }
 
   return "none";

@@ -2,6 +2,7 @@ use super::*;
 use crate::SortDirection;
 use protocol::protocol::EventMsg;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSkill;
 use protocol::subscriptions::PersistedSubscription;
 use std::sync::atomic::Ordering;
@@ -35,7 +36,8 @@ SELECT
     threads.git_sha,
     threads.git_branch,
     threads.git_origin_url,
-    threads.subscriptions
+    threads.subscriptions,
+    threads.last_run_status
 FROM threads
 WHERE threads.id = ?
             "#,
@@ -80,6 +82,28 @@ FROM threads
 WHERE archived = 0
   AND subscriptions IS NOT NULL
   AND json_array_length(subscriptions) > 0
+ORDER BY updated_at_ms DESC
+            "#,
+        )
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let id: String = row.try_get("id")?;
+                Ok(ThreadId::try_from(id)?)
+            })
+            .collect()
+    }
+
+    pub async fn list_thread_ids_with_active_last_run_status(
+        &self,
+    ) -> anyhow::Result<Vec<ThreadId>> {
+        let rows = sqlx::query(
+            r#"
+SELECT id
+FROM threads
+WHERE archived = 0
+  AND json_extract(last_run_status, '$.type') IN ('active', 'waiting')
 ORDER BY updated_at_ms DESC
             "#,
         )
@@ -628,8 +652,9 @@ INSERT INTO threads (
     git_branch,
     git_origin_url,
     memory_mode,
-    subscriptions
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    subscriptions,
+    last_run_status
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO NOTHING
             "#,
         )
@@ -671,6 +696,9 @@ ON CONFLICT(id) DO NOTHING
         .bind(metadata.git_origin_url.as_deref())
         .bind("enabled")
         .bind(serialize_subscriptions(metadata.subscriptions.as_ref())?)
+        .bind(serialize_thread_lifecycle_status(
+            metadata.last_run_status.as_ref(),
+        )?)
         .execute(self.pool.as_ref())
         .await?;
         self.insert_thread_spawn_edge_from_source_if_absent(metadata.id, metadata.source.as_str())
@@ -795,6 +823,19 @@ WHERE id = ?
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn set_thread_last_run_status(
+        &self,
+        thread_id: ThreadId,
+        status: Option<&ThreadLifecycleStatus>,
+    ) -> anyhow::Result<bool> {
+        let result = sqlx::query("UPDATE threads SET last_run_status = ? WHERE id = ?")
+            .bind(serialize_thread_lifecycle_status(status)?)
+            .bind(thread_id.to_string())
+            .execute(self.pool.as_ref())
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn upsert_thread_with_creation_memory_mode(
         &self,
         metadata: &crate::ThreadMetadata,
@@ -836,8 +877,9 @@ INSERT INTO threads (
     git_branch,
     git_origin_url,
     memory_mode,
-    subscriptions
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    subscriptions,
+    last_run_status
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     rollout_path = excluded.rollout_path,
     created_at = excluded.created_at,
@@ -865,7 +907,8 @@ ON CONFLICT(id) DO UPDATE SET
     git_sha = COALESCE(threads.git_sha, excluded.git_sha),
     git_branch = COALESCE(threads.git_branch, excluded.git_branch),
     git_origin_url = COALESCE(threads.git_origin_url, excluded.git_origin_url),
-    subscriptions = COALESCE(excluded.subscriptions, threads.subscriptions)
+    subscriptions = COALESCE(excluded.subscriptions, threads.subscriptions),
+    last_run_status = COALESCE(excluded.last_run_status, threads.last_run_status)
             "#,
         )
         .bind(metadata.id.to_string())
@@ -906,6 +949,9 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(metadata.git_origin_url.as_deref())
         .bind(creation_memory_mode.unwrap_or("enabled"))
         .bind(serialize_subscriptions(metadata.subscriptions.as_ref())?)
+        .bind(serialize_thread_lifecycle_status(
+            metadata.last_run_status.as_ref(),
+        )?)
         .execute(self.pool.as_ref())
         .await?;
         self.insert_thread_spawn_edge_from_source_if_absent(metadata.id, metadata.source.as_str())
@@ -1178,7 +1224,8 @@ SELECT
     threads.git_sha,
     threads.git_branch,
     threads.git_origin_url,
-    threads.subscriptions
+    threads.subscriptions,
+    threads.last_run_status
 "#,
     );
 }
@@ -1232,6 +1279,21 @@ fn serialize_subscriptions(
     subscriptions: Option<&Vec<PersistedSubscription>>,
 ) -> anyhow::Result<Option<String>> {
     subscriptions
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(anyhow::Error::from)
+}
+
+fn serialize_thread_lifecycle_status(
+    status: Option<&ThreadLifecycleStatus>,
+) -> anyhow::Result<Option<String>> {
+    status
+        .filter(|status| {
+            !matches!(
+                status,
+                ThreadLifecycleStatus::NotLoaded | ThreadLifecycleStatus::Initializing
+            )
+        })
         .map(serde_json::to_string)
         .transpose()
         .map_err(anyhow::Error::from)
@@ -1637,12 +1699,9 @@ mod tests {
         let created_at =
             DateTime::<Utc>::from_timestamp(1_700_000_300, 0).expect("valid timestamp");
         let ids = [
-            ThreadId::from_string("00000000-0000-0000-0000-000000000201")
-                .expect("valid thread id"),
-            ThreadId::from_string("00000000-0000-0000-0000-000000000202")
-                .expect("valid thread id"),
-            ThreadId::from_string("00000000-0000-0000-0000-000000000203")
-                .expect("valid thread id"),
+            ThreadId::from_string("00000000-0000-0000-0000-000000000201").expect("valid thread id"),
+            ThreadId::from_string("00000000-0000-0000-0000-000000000202").expect("valid thread id"),
+            ThreadId::from_string("00000000-0000-0000-0000-000000000203").expect("valid thread id"),
         ];
         for thread_id in ids {
             let mut metadata = test_thread_metadata(&codex_home, thread_id, codex_home.clone());

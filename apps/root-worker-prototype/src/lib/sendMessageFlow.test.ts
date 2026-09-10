@@ -63,7 +63,7 @@ function makeTurn(): Turn {
   };
 }
 
-test("submitThreadMessage subscribes the selected thread before sending", async () => {
+test("submitThreadMessage sends to the selected thread without subscribing", async () => {
   const calls: string[] = [];
   const sentPayloads: SendMessagePayload[] = [];
   const appliedTurns: Array<{ threadId: string; turn: Turn }> = [];
@@ -75,10 +75,6 @@ test("submitThreadMessage subscribes the selected thread before sending", async 
     draft: makeDraft(),
     thread: makeThread(),
     threadId: "cp-http-api-root",
-    ensureSubscribed: async (threadId) => {
-      calls.push(`subscribe:${threadId}`);
-      return true;
-    },
     sendMessage: async (payload) => {
       calls.push(`send:${payload.threadId}`);
       sentPayloads.push(payload);
@@ -100,7 +96,6 @@ test("submitThreadMessage subscribes the selected thread before sending", async 
 
   assert.equal(result, true);
   assert.deepEqual(calls, [
-    "subscribe:cp-http-api-root",
     "send:cp-http-api-root",
     "apply:cp-http-api-root:turn-1",
     "revoke:image-1",
@@ -113,26 +108,24 @@ test("submitThreadMessage subscribes the selected thread before sending", async 
   assert.deepEqual(clearedDrafts, ["cp-http-api-root"]);
 });
 
-test("submitThreadMessage leaves draft and images intact when subscribe fails", async () => {
+test("submitThreadMessage leaves draft and images intact when send fails", async () => {
   const calls: string[] = [];
 
-  const result = await submitThreadMessage({
-    draft: makeDraft(),
-    thread: makeThread(),
-    threadId: "cp-http-api-root",
-    ensureSubscribed: async (threadId) => {
-      calls.push(`subscribe:${threadId}`);
-      return false;
-    },
-    sendMessage: async () => {
-      calls.push("send");
-      return { turn: makeTurn() };
-    },
-    applyTurn: () => calls.push("apply"),
-    revokeImage: () => calls.push("revoke"),
-    clearDraft: () => calls.push("clear"),
-  });
+  await assert.rejects(
+    submitThreadMessage({
+      draft: makeDraft(),
+      thread: makeThread(),
+      threadId: "cp-http-api-root",
+      sendMessage: async () => {
+        calls.push("send");
+        throw new Error("send failed");
+      },
+      applyTurn: () => calls.push("apply"),
+      revokeImage: () => calls.push("revoke"),
+      clearDraft: () => calls.push("clear"),
+    }),
+    /send failed/,
+  );
 
-  assert.equal(result, false);
-  assert.deepEqual(calls, ["subscribe:cp-http-api-root"]);
+  assert.deepEqual(calls, ["send"]);
 });

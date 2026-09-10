@@ -22,7 +22,7 @@ test("selection policy does nothing for a loaded and subscribed thread", () => {
   );
 });
 
-test("selection policy subscribes without reading loaded local threads", () => {
+test("selection policy reads to subscribe loaded local threads", () => {
   assert.equal(
     decideThreadSelectionAction({
       selectedThreadId: "thread-1",
@@ -32,7 +32,7 @@ test("selection policy subscribes without reading loaded local threads", () => {
       isLoading: false,
       hasLiveCache: false,
     }),
-    "subscribeOnly",
+    "readAndSubscribe",
   );
 });
 
@@ -103,7 +103,7 @@ test("selection policy reads local live cached threads before initialization", (
   );
 });
 
-test("selection policy subscribes initialized live cached threads without reading", () => {
+test("selection policy reads initialized live cached threads before subscribing", () => {
   assert.equal(
     decideThreadSelectionAction({
       selectedThreadId: "thread-1",
@@ -113,7 +113,7 @@ test("selection policy subscribes initialized live cached threads without readin
       isLoading: false,
       hasLiveCache: true,
     }),
-    "subscribeOnly",
+    "readAndSubscribe",
   );
 });
 

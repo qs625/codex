@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:setThreadRunConfig", payload),
   subscribeThread: (threadId) =>
     ipcRenderer.invoke("codex:subscribeThread", threadId),
+  unsubscribeThread: (threadId) =>
+    ipcRenderer.invoke("codex:unsubscribeThread", threadId),
   getThreadGoal: (threadId) => ipcRenderer.invoke("codex:getThreadGoal", threadId),
   setThreadGoal: (payload) => ipcRenderer.invoke("codex:setThreadGoal", payload),
   clearThreadGoal: (threadId) =>

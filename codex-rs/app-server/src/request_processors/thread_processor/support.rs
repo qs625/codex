@@ -503,7 +503,7 @@ pub(super) fn thread_store_list_error(err: ThreadStoreError) -> JSONRPCErrorErro
     }
 }
 
-pub(super) fn thread_store_resume_read_error(err: ThreadStoreError) -> JSONRPCErrorError {
+pub(crate) fn thread_store_resume_read_error(err: ThreadStoreError) -> JSONRPCErrorError {
     match err {
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
         ThreadStoreError::Unsupported { operation } => {
@@ -609,7 +609,7 @@ pub(super) fn apply_thread_usage_from_rollout_items(
         .map(Into::into);
 }
 
-pub(super) fn stored_thread_session_source_with_agent_metadata(
+pub(crate) fn stored_thread_session_source_with_agent_metadata(
     thread: &StoredThread,
 ) -> protocol::protocol::SessionSource {
     with_thread_spawn_agent_metadata(
@@ -620,7 +620,7 @@ pub(super) fn stored_thread_session_source_with_agent_metadata(
     )
 }
 
-pub(super) fn stored_thread_root_agent_metadata(thread: &StoredThread) -> Option<AgentMetadata> {
+pub(crate) fn stored_thread_root_agent_metadata(thread: &StoredThread) -> Option<AgentMetadata> {
     if thread.source.is_non_root_agent() {
         return None;
     }
@@ -677,7 +677,10 @@ pub(crate) fn thread_from_stored_thread(
         },
         created_at: thread.created_at.timestamp(),
         updated_at: thread.updated_at.timestamp(),
-        lifecycle_status: ThreadLifecycleStatus::NotLoaded,
+        lifecycle_status: thread
+            .last_run_status
+            .clone()
+            .unwrap_or_else(|| ThreadLifecycleStatus::completed(None)),
         path,
         cwd,
         cli_version: thread.cli_version,
@@ -912,7 +915,7 @@ pub(super) fn permission_profile_trusts_project(
     }
 }
 
-pub(super) fn build_thread_from_snapshot(
+pub(crate) fn build_thread_from_snapshot(
     thread_id: ThreadId,
     session_id: String,
     config_snapshot: &ThreadConfigSnapshot,
