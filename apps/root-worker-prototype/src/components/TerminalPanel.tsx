@@ -194,6 +194,28 @@ export function TerminalPanel({
         terminal.open(viewport);
         terminalRef.current = terminal;
         fitAddonRef.current = fitAddon;
+        dataSubscription = terminal.onData((data) => {
+          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+            return;
+          }
+          void window.codexDesktop
+            .writeTerminal({
+              tabId: activeTab.id,
+              deltaBase64: encodeUtf8(data),
+            })
+            .catch((error) => setLocalError(toTerminalError(error)));
+        });
+        binarySubscription = terminal.onBinary((data) => {
+          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+            return;
+          }
+          void window.codexDesktop
+            .writeTerminal({
+              tabId: activeTab.id,
+              deltaBase64: encodeBinary(data),
+            })
+            .catch((error) => setLocalError(toTerminalError(error)));
+        });
         if (activeTab.replayTruncated || activeTab.hasSequenceGap) {
           terminal.writeln(
             "\r\n\u001b[33m[Earlier terminal output is unavailable.]\u001b[0m",
@@ -244,28 +266,6 @@ export function TerminalPanel({
           }
           sendSize?.();
           terminal?.focus();
-        });
-        dataSubscription = terminal.onData((data) => {
-          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
-            return;
-          }
-          void window.codexDesktop
-            .writeTerminal({
-              tabId: activeTab.id,
-              deltaBase64: encodeUtf8(data),
-            })
-            .catch((error) => setLocalError(toTerminalError(error)));
-        });
-        binarySubscription = terminal.onBinary((data) => {
-          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
-            return;
-          }
-          void window.codexDesktop
-            .writeTerminal({
-              tabId: activeTab.id,
-              deltaBase64: encodeBinary(data),
-            })
-            .catch((error) => setLocalError(toTerminalError(error)));
         });
       })
       .catch((error) => {
