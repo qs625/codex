@@ -243,7 +243,6 @@ function updateInstalledArtifacts(plan, options = {}) {
       executable: PAYLOAD_EXECUTABLE_RELATIVE_PATH.split(path.sep).join("/"),
       metadata: { sourceCommit },
       os: "darwin",
-      readinessTimeoutMs: options.readinessTimeoutMs ?? 30_000,
       fsOps,
     });
     return {

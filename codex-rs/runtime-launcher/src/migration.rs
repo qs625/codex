@@ -17,11 +17,10 @@ use std::ffi::CString;
 
 pub const MIGRATION_SCHEMA_VERSION: u32 = 1;
 pub const LEGACY_LAUNCHER_SCHEMA_VERSIONS: [u32; 2] = [1, 2];
-pub const LEGACY_STATE_CHILDREN: [&str; 6] = [
+pub const LEGACY_STATE_CHILDREN: [&str; 5] = [
     "state.json",
     "transaction.json",
     "failure-evidence.json",
-    "ready.json",
     ".operation-lock",
     "artifacts",
 ];
@@ -510,7 +509,6 @@ mod tests {
         for child in [
             "transaction.json",
             "failure-evidence.json",
-            "ready.json",
             "unknown",
             "source",
             "config",
@@ -523,7 +521,6 @@ mod tests {
             "state.json",
             "transaction.json",
             "failure-evidence.json",
-            "ready.json",
         ] {
             assert!(!paths.root.join(child).exists());
             assert!(

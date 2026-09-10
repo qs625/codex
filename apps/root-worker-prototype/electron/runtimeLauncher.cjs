@@ -12,106 +12,42 @@ function createRuntimeLauncher({
   const launcherPath = resolveRuntimeLauncherPath({ env });
   const stateRoot = resolveRuntimeLauncherStateRoot(env);
   const invocationOptions = { env, spawnSync: spawn };
-  const invoke = (args) =>
-    invokeLauncher(launcherPath, ["--state-root", stateRoot, ...args], {
-      ...invocationOptions,
-    });
-  const invokeMutation = (command, activationId, reason) => {
-    const control = currentControl(invoke(["status"]));
-    return invokeLauncherRequest(
-      launcherPath,
-      stateRoot,
-      command,
-      {
-        activationId: requiredString(activationId),
-        expectedRevision: requiredInteger(control.revision, "revision"),
-        expectedExecutorEpoch: requiredInteger(
-          control.executorEpoch,
-          "executorEpoch",
-        ),
-        reason: normalizeString(reason) ?? "",
-      },
-      invocationOptions,
-    );
-  };
   return {
     supported: Boolean(launcherPath),
     launcherPath,
     stateRoot,
-    prepareActivation: ({ activationId, manifest, reason, releaseId }) => {
-      const control = currentControl(invoke(["status"]));
+    selectCandidate: ({ activationId, reason, target }) => {
       const response = invokeLauncherRequest(
         launcherPath,
         stateRoot,
-        "prepare-activation",
+        "select-candidate",
         {
           schemaVersion: 1,
           activationId: requiredString(activationId),
-          releaseId: requiredString(releaseId),
-          expectedRevision: requiredInteger(control.revision, "revision"),
-          expectedExecutorEpoch: requiredInteger(
-            control.executorEpoch,
-            "executorEpoch",
-          ),
-          target: manifest?.target,
+          target: requireTarget(target),
           reason: normalizeString(reason) ?? "",
         },
         invocationOptions,
       );
-      return normalizePrepareActivationResult(response, {
-        activationId,
-        releaseId,
-      });
+      return normalizeSelectionResult(response, activationId);
     },
-    cancelActivation: (activationId, reason = null) =>
-      invokeMutation("cancel-activation", activationId, reason),
-    requestRollback: (activationId, reason = null) =>
-      invokeMutation("request-rollback", activationId, reason),
-    ackFailure: (activationId, reason = null) =>
-      invokeMutation("ack-failure", activationId, reason),
-    status: () => invoke(["status"]),
+    status: () =>
+      invokeLauncher(launcherPath, ["--state-root", stateRoot, "status"], {
+        ...invocationOptions,
+      }),
   };
 }
 
-function currentControl(statusResult) {
-  const result = statusResult?.result ?? statusResult;
-  const control = result?.control ?? result?.state ?? result;
-  if (!control || typeof control !== "object") {
-    throw new Error("Runtime launcher status did not include control state");
-  }
-  return control;
-}
-
-function normalizePrepareActivationResult(
-  response,
-  { activationId, releaseId },
-) {
+function normalizeSelectionResult(response, activationId) {
   const result = response?.result ?? response;
   if (!result || typeof result !== "object") {
-    throw new Error("Runtime launcher prepare did not return a typed result");
+    throw new Error("Runtime launcher selection did not return a typed result");
   }
-  if (
-    result.activationId !== requiredString(activationId) ||
-    result.releaseId !== requiredString(releaseId)
-  ) {
-    throw new Error(
-      "Runtime launcher prepare result does not match the requested activation",
-    );
+  if (result.activationId !== requiredString(activationId)) {
+    throw new Error("Runtime launcher selection result does not match the request");
   }
-  if (
-    ![
-      "prepared",
-      "already_prepared",
-      "already_committed",
-      "terminal_failed",
-    ].includes(result.disposition)
-  ) {
-    throw new Error(
-      `Runtime launcher prepare returned unsupported disposition: ${String(result.disposition)}`,
-    );
-  }
-  if (!result.control || typeof result.control !== "object") {
-    throw new Error("Runtime launcher prepare result did not include control state");
+  if (!normalizeString(result.releaseId) || !result.control || typeof result.control !== "object") {
+    throw new Error("Runtime launcher selection result is incomplete");
   }
   return result;
 }
@@ -214,16 +150,21 @@ function assertLauncherAvailable(launcherPath) {
   }
 }
 
+function requireTarget(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !normalizeString(value.os) ||
+    !normalizeString(value.arch)
+  ) {
+    throw new Error("Runtime Capsule target must include os and arch");
+  }
+  return { os: value.os.trim(), arch: value.arch.trim() };
+}
+
 function requiredString(value) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("Runtime launcher argument must be a non-empty string");
-  }
-  return value;
-}
-
-function requiredInteger(value, label) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`Runtime launcher status has invalid ${label}`);
   }
   return value;
 }
@@ -234,10 +175,9 @@ function normalizeString(value) {
 
 module.exports = {
   createRuntimeLauncher,
-  currentControl,
   invokeLauncher,
   invokeLauncherRequest,
-  normalizePrepareActivationResult,
+  normalizeSelectionResult,
   resolveRuntimeLauncherPath,
   resolveRuntimeLauncherStateRoot,
 };

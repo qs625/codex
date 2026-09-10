@@ -1,7 +1,5 @@
 "use strict";
 
-const FULL_ACTIVATION_EXIT_CODE = 75;
-
 function createAppRelaunchAdapter({
   app,
   beforeExit,
@@ -212,7 +210,6 @@ async function observeClientRelaunchResult(
 
 function createInstalledArtifactUpdateLifecycleAdapter({
   appExit,
-  appServerStop,
   cleanupPreparedArtifact,
   resolvePlan,
   runtimeLauncher,
@@ -235,7 +232,6 @@ function createInstalledArtifactUpdateLifecycleAdapter({
       }
       inFlight = resolveAndRunInstalledArtifactUpdate({
         appExit,
-        appServerStop,
         cleanupPreparedArtifact,
         resolvePlan,
         runtimeLauncher,
@@ -254,7 +250,6 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 
 async function resolveAndRunInstalledArtifactUpdate({
   appExit,
-  appServerStop,
   cleanupPreparedArtifact,
   resolvePlan,
   runtimeLauncher,
@@ -296,7 +291,6 @@ async function resolveAndRunInstalledArtifactUpdate({
   }
   return runInstalledArtifactUpdate({
     appExit,
-    appServerStop,
     cleanupPreparedArtifact,
     plan,
     runtimeLauncher,
@@ -310,7 +304,6 @@ async function resolveAndRunInstalledArtifactUpdate({
 
 async function runInstalledArtifactUpdate({
   appExit,
-  appServerStop,
   cleanupPreparedArtifact,
   plan,
   runtimeLauncher,
@@ -339,7 +332,7 @@ async function runInstalledArtifactUpdate({
     },
   });
   let update = null;
-  let prepared = null;
+  let selected = null;
   try {
     update = await updateArtifacts(plan);
     if (!update?.ok || !update.activationId || !update.releaseId) {
@@ -350,95 +343,43 @@ async function runInstalledArtifactUpdate({
     if (!runtimeLauncher?.supported) {
       throw new Error("Runtime Capsule launcher is unavailable");
     }
-    prepared = await runtimeLauncher.prepareActivation({
+    selected = await runtimeLauncher.selectCandidate({
       activationId: update.activationId,
-      manifest: update.manifest,
       reason,
-      releaseId: update.releaseId,
+      target: update.manifest?.target,
     });
     if (
-      prepared?.activationId !== update.activationId ||
-      prepared?.releaseId !== update.releaseId
+      selected?.activationId !== update.activationId ||
+      selected?.releaseId !== update.releaseId
     ) {
       throw new Error(
-        "Runtime Capsule prepare result does not match the produced candidate",
-      );
-    }
-    if (prepared.disposition === "terminal_failed") {
-      const outcome = prepared.control?.activation?.receipt?.outcome;
-      throw new Error(
-        `Runtime Capsule activation is terminally unavailable${outcome ? ` (${outcome})` : ""}`,
-      );
-    }
-    if (prepared.disposition === "already_committed") {
-      if (update?.incomingRoot) {
-        await cleanupPreparedCandidate(
-          cleanupPreparedArtifact,
-          update.incomingRoot,
-          logger,
-        );
-      }
-      return {
-        ok: true,
-        activationId: update.activationId,
-        releaseId: update.releaseId,
-        inPlace: false,
-        relaunching: false,
-        reloaded: false,
-        updated: true,
-        alreadyCommitted: true,
-        prepared,
-        ...requestIdFields(requestId),
-        reason,
-      };
-    }
-    if (
-      prepared.disposition !== "prepared" &&
-      prepared.disposition !== "already_prepared"
-    ) {
-      throw new Error(
-        `Runtime Capsule prepare returned unsupported disposition: ${String(prepared.disposition)}`,
+        "Runtime Capsule selection result does not match the produced candidate",
       );
     }
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
-        phase: "prepared",
+        phase: "selected",
         activationId: update.activationId,
         releaseId: update.releaseId,
         ...requestIdFields(requestId),
         reason,
       },
     });
-    const backendStop = await stopUpdatedAppServer(appServerStop, reason);
-    if (!backendStop.ok) {
-      throw await cancelPreparedActivation(
-        backendStop.reason ??
-          "App-server stop failed before Runtime Capsule activation",
-        runtimeLauncher,
-        update.activationId,
-        { backendStop },
-      );
-    }
     if (typeof appExit !== "function") {
-      throw await cancelPreparedActivation(
-        "Application exit is unavailable after Runtime Capsule preparation",
-        runtimeLauncher,
-        update.activationId,
-        { backendStop },
-      );
+      throw new Error("Application exit is unavailable after Runtime Capsule selection");
     }
-    appExit(FULL_ACTIVATION_EXIT_CODE);
+    appExit(0);
     const relaunch = {
       ok: true,
       relaunching: true,
       supervised: true,
-      exitCode: FULL_ACTIVATION_EXIT_CODE,
+      exitCode: 0,
     };
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
-        phase: "relaunching",
+      phase: "exiting",
         activationId: update.activationId,
         releaseId: update.releaseId,
         ...requestIdFields(requestId),
@@ -454,15 +395,14 @@ async function runInstalledArtifactUpdate({
       relaunching: true,
       reloaded: false,
       updated: true,
-      backendStop,
-      prepared,
+      selected,
       relaunch,
       ...requestIdFields(requestId),
       reason,
     };
   } catch (error) {
-    if (update?.incomingRoot) {
-      await cleanupPreparedCandidate(
+    if (update?.incomingRoot && !selected) {
+      await cleanupUnselectedCandidate(
         cleanupPreparedArtifact,
         update.incomingRoot,
         logger,
@@ -471,7 +411,7 @@ async function runInstalledArtifactUpdate({
     return installedUpdateFailure(error, {
       broadcastStatus,
       logger,
-      phase: prepared ? "prepared" : "preparing",
+      phase: selected ? "selected" : "preparing",
       reason,
       requestId,
       update,
@@ -479,41 +419,12 @@ async function runInstalledArtifactUpdate({
   }
 }
 
-async function cancelPreparedActivation(
-  message,
-  runtimeLauncher,
-  activationId,
-  details,
-) {
-  let cancellation;
-  try {
-    cancellation = await runtimeLauncher.cancelActivation(
-      activationId,
-      message,
-    );
-  } catch (error) {
-    cancellation = {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
-  const suffix =
-    cancellation?.ok === false
-      ? `; activation cancellation also failed: ${cancellation.reason ?? "unknown failure"}`
-      : "";
-  return Object.assign(new Error(`${message}${suffix}`), {
-    ...details,
-    cancellation,
-    updated: false,
-  });
-}
-
-async function cleanupPreparedCandidate(cleanup, preparedRoot, logger) {
-  if (!preparedRoot || typeof cleanup !== "function") {
+async function cleanupUnselectedCandidate(cleanup, incomingRoot, logger) {
+  if (!incomingRoot || typeof cleanup !== "function") {
     return;
   }
   try {
-    await cleanup(preparedRoot);
+    await cleanup(incomingRoot);
   } catch (error) {
     logger?.warn?.(
       "[prototype] Runtime Capsule cleanup failed",
@@ -521,28 +432,6 @@ async function cleanupPreparedCandidate(cleanup, preparedRoot, logger) {
         reason: error instanceof Error ? error.message : String(error),
       }),
     );
-  }
-}
-
-async function stopUpdatedAppServer(appServerStop, reason) {
-  if (!appServerStop || typeof appServerStop.requestStop !== "function") {
-    return {
-      ok: false,
-      reason: "App-server stop adapter is unavailable",
-    };
-  }
-  try {
-    const result = await appServerStop.requestStop(
-      reason ?? "Runtime Capsule activation",
-    );
-    return result?.ok === false
-      ? result
-      : { ...(result ?? {}), ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
   }
 }
 
@@ -574,8 +463,6 @@ function installedUpdateFailure(
     relaunching: false,
     reloaded: false,
     updated: Boolean(error?.updated),
-    backendStop: error?.backendStop,
-    cancellation: error?.cancellation,
     ...requestIdFields(requestId),
     reason: message,
   };

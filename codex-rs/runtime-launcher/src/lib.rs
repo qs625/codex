@@ -4,33 +4,25 @@ mod capsule;
 mod control;
 mod migration;
 mod process;
-mod readiness;
 mod seed;
 mod supervisor;
 
 pub use capsule::CapsuleEntry;
 pub use capsule::CapsuleLaunch;
 pub use capsule::CapsuleManifest;
-pub use capsule::CapsuleReadiness;
 pub use capsule::CapsuleRecord;
 pub use capsule::CapsuleTarget;
 pub use capsule::ImportRequest;
 pub use capsule::compute_release_id;
 pub use capsule::compute_release_preimage;
-pub use control::ActivationOutcome;
-pub use control::ActivationPhase;
-pub use control::ActivationReceipt;
 pub use control::CapsuleRef;
 pub use control::ControlState;
 pub use control::FailureProjection;
 pub use control::SelectedRuntime;
 pub use control::TrustedSeed;
-pub use readiness::ReadyMarker;
-pub use readiness::write_ready_marker;
 pub use supervisor::LauncherPaths;
-pub use supervisor::PrepareActivationDisposition;
-pub use supervisor::PrepareActivationResult;
 pub use supervisor::RunOutcome;
+pub use supervisor::SelectCandidateResult;
 pub use supervisor::Status;
 
 use serde::Deserialize;
@@ -82,23 +74,10 @@ pub(crate) fn json_error(context: impl Into<String>, source: serde_json::Error) 
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PrepareActivationRequest {
+pub struct SelectCandidateRequest {
     pub schema_version: u32,
     pub activation_id: String,
-    pub release_id: String,
-    pub expected_revision: u64,
-    pub expected_executor_epoch: u64,
     pub target: CapsuleTarget,
-    #[serde(default)]
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MutationRequest {
-    pub activation_id: String,
-    pub expected_revision: u64,
-    pub expected_executor_epoch: u64,
     #[serde(default)]
     pub reason: String,
 }
@@ -110,19 +89,11 @@ pub fn read_request<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
         .map_err(|error| json_error(format!("parse {}", path.display()), error))
 }
 
-pub fn prepare_activation(
+pub fn select_candidate(
     paths: &LauncherPaths,
     request_path: &Path,
-) -> Result<PrepareActivationResult> {
-    supervisor::prepare_activation(paths, read_request(request_path)?)
-}
-
-pub fn cancel_activation(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
-    supervisor::cancel_activation(paths, request)
-}
-
-pub fn request_rollback(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
-    supervisor::request_rollback(paths, request)
+) -> Result<SelectCandidateResult> {
+    supervisor::select_candidate(paths, read_request(request_path)?)
 }
 
 pub fn status(paths: &LauncherPaths) -> Result<Status> {

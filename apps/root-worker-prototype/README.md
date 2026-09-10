@@ -65,37 +65,28 @@ candidate is reported as unsupported.
 When a valid source workspace exists, the packaged app maintains
 `~/.morpheus/instructions/morpheus-source-workspace.md` with its path and a
 reminder to run relevant tests before calling `request_runtime_restart`.
-That request has no mode: it builds and signs one complete Runtime Capsule,
-asks the stable Launcher to prepare it, stops the current `app-server`, and
-exits with the coordinated restart code. The Launcher directly owns the
-payload child, gives it a dedicated process group, and waits for its exit
-before returning. Candidate activation starts only after the old payload has
-exited. Runtime Capsule v1 is a cooperative best-effort contract, not a hostile
-same-UID sandbox: manifests prohibit daemonizing, double-forking, `setsid`, and
-process-group escape, but the Launcher does not claim kernel-contained proof.
-Capsules produced before this contract extension, which declared the original
-three prohibitions, remain readable with their original release identity so an
-installed `current` or `previous` generation can still recover or roll back.
-If a Launcher dies unexpectedly, the next launch uses the last known
-payload PID, start identity, and process group for one best-effort cleanup.
-An identity mismatch is never signalled (protecting against PID reuse) and the
-stale record is discarded so a later restart can proceed. Cleanup failures are
-reported for that attempt, never stored as a permanent restart gate.
-There is one deliberately narrow best-effort residual: if the Launcher is
-SIGKILLed after `spawn()` succeeds but before it can durably record the new
-payload identity, that payload can remain without an exact recovery record.
-The user may close that residual process manually; the Launcher does not add a
-sidecar, parent-death helper, or hidden monitor to eliminate this window.
-Likewise, if a recorded root PID has been reused, the Launcher never signals
-the old PGID because it may now belong to another process; it discards that
-stale record and proceeds. An unidentifiable leftover from that case may also
-need manual closure. If a recorded process group contains an untracked member,
-the Launcher similarly records a warning, releases the stale launch record,
-and permits a later start; it does not signal that group by number.
-Readiness or attributable-worker observation failure rolls back to the previous external Capsule, or to the
-read-only Seed when no previous external Capsule exists. Launcher recovery
-evidence is recorded on the durable `/self` thread before it is acknowledged.
-Preparation failures leave the selected Runtime unchanged.
+Runtime Capsule 更新模型（中文说明）：
+
+- Electron 完整产出候选 Capsule 后，只调用一次 Launcher
+  `select-candidate`。Launcher 在 state lock 内导入、验证并原子更新
+  `external_previous <- external_current` 与
+  `external_current/selected <- candidate`。
+- 选择成功后旧 Runtime 以普通退出码 `0` 退出；不再存在 ready marker、
+  token、ack、payload self-registration、prepare/cancel/rollback 等多阶段
+  握手。Launcher 直接监督 payload child，并在其退出后按最新 `selected`
+  循环启动。
+- 已选择的 external Capsule 无法加载或 spawn 时，Launcher 在本地回退到
+  `external_previous`；没有 previous 时回退只读 Seed，并持久化 failure
+  evidence。Capsule schema v2 是唯一支持的 Capsule 格式，旧 v1
+  Capsule 不再兼容。
+- Runtime Capsule 是 cooperative best-effort contract，不是 hostile
+  same-UID sandbox：manifest 禁止 daemonize、double-fork、`setsid` 和
+  process-group escape，但 Launcher 不宣称 kernel-contained proof。若
+  Launcher 异常退出，下一次启动会只在 PID、start identity 与 process
+  group 都可精确归属时清理残留；身份不符、未跟踪 group member 或其他
+  归属歧义绝不发信号，只记录诊断并释放旧记录，必要时由用户手工关闭残留。
+  `spawn()` 成功但 identity 尚未来得及持久化时仍有一个有界的 best-effort
+  残留窗口；不会用 sidecar、parent-death helper 或隐藏监控器扩大协议。
 That generated instruction file is updated only while it still carries the
 Morpheus managed marker; user-managed replacement content is left intact.
 It also maintains `~/.morpheus/self-project.json` as a system `/self` project

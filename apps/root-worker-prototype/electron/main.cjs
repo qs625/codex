@@ -96,7 +96,6 @@ const {
 } = require("./runtimeRestartIntent.cjs");
 const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
 const {
-  createRuntimeLaunchReadiness,
   recordLauncherRecoveryIfPresent,
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
@@ -106,7 +105,6 @@ const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
 const runtimeLauncher = createRuntimeLauncher();
-const runtimeLaunchReadiness = createRuntimeLaunchReadiness({ fs });
 const appRelaunch = createAppRelaunchAdapter({
   app,
   beforeExit: (reason) =>
@@ -124,10 +122,7 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
 });
 const installedArtifactUpdateLifecycle =
   createInstalledArtifactUpdateLifecycleAdapter({
-    appExit: (code) => app.exit(code),
-    appServerStop: {
-      requestStop: (reason) => appServerClient.stop(reason),
-    },
+    appExit: () => app.quit(),
     cleanupPreparedArtifact: (preparedRoot) =>
       removeInstalledArtifactTree(preparedRoot),
     resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
@@ -203,8 +198,6 @@ async function createWindow() {
     await ensureBuiltRenderer();
     await window.loadFile(builtRendererPath());
   }
-  await runtimeLaunchReadiness.markRendererReady();
-
   return window;
 }
 
@@ -789,17 +782,18 @@ app.whenReady().then(() => {
   void ensureDefaultWorkspace()
     .then(async () => {
       await appServerClient.ready();
-      await runtimeLaunchReadiness.markAppServerReady();
       await recordLauncherRecoveryIfPresent({
         appServerClient,
         evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
         fs,
         listThreads: () => listThreads(defaultWorkspace),
-        runtimeLauncher,
         subscribeThread,
       });
-      await primeMicrophoneAccessPrompt();
-      return createWindow();
+      const window = await createWindow();
+      // Keep the first window visible before a system permission prompt can
+      // wait for user input.
+      void primeMicrophoneAccessPrompt();
+      return window;
     })
     .catch(handleStartupError);
   app.on("activate", () => {

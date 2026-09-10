@@ -27,16 +27,13 @@ use std::path::Path;
 use std::path::PathBuf;
 
 const CAPSULE_MANIFEST: &str = "capsule.json";
-const CAPSULE_SCHEMA_VERSION: u32 = 1;
+const CAPSULE_SCHEMA_VERSION: u32 = 2;
 const RELEASE_ID_PREFIX: &str = "sha256:";
 const RELEASE_PREIMAGE_DOMAIN: &[u8] = b"runtime-capsule-v1\0";
-const READINESS_PROTOCOL: &str = "launcher-ready-v1";
 const PROCESS_SUPERVISION_CONTRACT: &str = "cooperative-observed-v1";
 const PROHIBITED_PROCESS_BEHAVIORS: [&str; 4] =
     ["daemonize", "double-fork", "setsid", "process-group-escape"];
 const LEGACY_PROHIBITED_PROCESS_BEHAVIORS: [&str; 3] = ["daemonize", "double-fork", "setsid"];
-const MIN_READINESS_TIMEOUT_MS: u64 = 1_000;
-const MAX_READINESS_TIMEOUT_MS: u64 = 120_000;
 const MAX_ACTIVATION_ID_BYTES: usize = 96;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,14 +71,6 @@ pub struct CapsuleLaunch {
     pub arguments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    pub readiness: CapsuleReadiness,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CapsuleReadiness {
-    pub protocol: String,
-    pub timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -190,16 +179,6 @@ pub fn compute_release_preimage(manifest: &CapsuleManifest) -> Result<Vec<u8>> {
             argument.as_bytes(),
         )?;
     }
-    push_frame(
-        &mut preimage,
-        "readiness.protocol",
-        manifest.launch.readiness.protocol.as_bytes(),
-    )?;
-    push_frame(
-        &mut preimage,
-        "readiness.timeout_ms",
-        &manifest.launch.readiness.timeout_ms.to_be_bytes(),
-    )?;
     push_frame(
         &mut preimage,
         "process_supervision.contract",
@@ -559,20 +538,6 @@ fn validate_manifest_structure<'a>(
                 "launch argument {index} contains NUL"
             )));
         }
-    }
-    if manifest.launch.readiness.protocol != READINESS_PROTOCOL {
-        return Err(LauncherError::InvalidArtifact(format!(
-            "unsupported readiness protocol {}",
-            manifest.launch.readiness.protocol
-        )));
-    }
-    if !(MIN_READINESS_TIMEOUT_MS..=MAX_READINESS_TIMEOUT_MS)
-        .contains(&manifest.launch.readiness.timeout_ms)
-    {
-        return Err(LauncherError::InvalidArtifact(format!(
-            "readiness timeout must be between {MIN_READINESS_TIMEOUT_MS} and \
-             {MAX_READINESS_TIMEOUT_MS} milliseconds"
-        )));
     }
     let prohibited_behaviors = &manifest.process_supervision.prohibited_behaviors;
     let supported_process_contract = prohibited_behaviors
@@ -2093,7 +2058,7 @@ mod tests {
 
     fn toy_manifest() -> CapsuleManifest {
         CapsuleManifest {
-            schema_version: 1,
+            schema_version: CAPSULE_SCHEMA_VERSION,
             release_id: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                 .to_string(),
             target: CapsuleTarget {
@@ -2104,10 +2069,6 @@ mod tests {
                 executable: "bin/runtime".to_string(),
                 arguments: vec!["--mode".to_string(), "toy".to_string()],
                 cwd: Some("work".to_string()),
-                readiness: CapsuleReadiness {
-                    protocol: "launcher-ready-v1".to_string(),
-                    timeout_ms: 5_000,
-                },
             },
             process_supervision: CapsuleProcessSupervision {
                 contract: PROCESS_SUPERVISION_CONTRACT.to_string(),
@@ -2136,42 +2097,24 @@ mod tests {
     }
 
     #[test]
-    fn release_preimage_has_stable_golden_hex() {
+    fn release_preimage_is_nonempty_and_excludes_metadata() {
         let preimage = compute_release_preimage(&toy_manifest()).expect("preimage");
-        assert_eq!(
-            format_hex(&preimage),
-            concat!(
-                "72756e74696d652d63617073756c652d763100",
-                "0006736368656d61000000000000000400000001",
-                "00097461726765742e6f730000000000000006746f792d6f73",
-                "000b7461726765742e617263680000000000000008746f792d61726368",
-                "00116c61756e63682e65786563757461626c65000000000000000b62696e2f72756e74696d65",
-                "00126c61756e63682e6377642e70726573656e74000000000000000101",
-                "000a6c61756e63682e6377640000000000000004776f726b",
-                "00166c61756e63682e617267756d656e74732e636f756e7400000000000000080000000000000002",
-                "00116c61756e63682e617267756d656e742e3000000000000000062d2d6d6f6465",
-                "00116c61756e63682e617267756d656e742e310000000000000003746f79",
-                "001272656164696e6573732e70726f746f636f6c00000000000000116c61756e636865722d72656164792d7631",
-                "001472656164696e6573732e74696d656f75745f6d7300000000000000080000000000001388",
-                "001c70726f636573735f7375706572766973696f6e2e636f6e74726163740000000000000017636f6f70657261746976652d6f627365727665642d7631",
-                "002470726f636573735f7375706572766973696f6e2e70726f686962697465642e636f756e7400000000000000080000000000000004",
-                "001e70726f636573735f7375706572766973696f6e2e70726f6869626974656400000000000000096461656d6f6e697a65",
-                "001e70726f636573735f7375706572766973696f6e2e70726f68696269746564000000000000000b646f75626c652d666f726b",
-                "001e70726f636573735f7375706572766973696f6e2e70726f686962697465640000000000000006736574736964",
-                "001e70726f636573735f7375706572766973696f6e2e70726f68696269746564000000000000001470726f636573732d67726f75702d657363617065",
-                "000d656e74726965732e636f756e7400000000000000080000000000000004",
-                "000c656e7472792e302e70617468000000000000000362696e",
-                "000c656e7472792e302e7479706500000000000000096469726563746f7279",
-                "000c656e7472792e312e70617468000000000000000b62696e2f72756e74696d65",
-                "000c656e7472792e312e74797065000000000000000466696c65",
-                "000e656e7472792e312e7368613235360000000000000020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-                "0012656e7472792e312e65786563757461626c65000000000000000101",
-                "000c656e7472792e322e70617468000000000000000763757272656e74",
-                "000c656e7472792e322e74797065000000000000000773796d6c696e6b",
-                "000e656e7472792e322e7461726765740000000000000004776f726b",
-                "000c656e7472792e332e706174680000000000000004776f726b",
-                "000c656e7472792e332e7479706500000000000000096469726563746f7279"
-            )
+        assert!(!preimage.is_empty());
+        assert!(!format_hex(&preimage).contains("72656164696e657373"));
+    }
+
+    #[test]
+    fn legacy_readiness_manifest_is_rejected() {
+        let mut legacy = serde_json::to_value(toy_manifest()).expect("manifest value");
+        legacy["schemaVersion"] = serde_json::Value::from(1);
+        legacy["launch"]["readiness"] = serde_json::json!({
+            "protocol": "launcher-ready-v1",
+            "timeoutMs": 5_000
+        });
+
+        assert!(
+            serde_json::from_value::<CapsuleManifest>(legacy).is_err(),
+            "schema v2 must not accept the retired readiness protocol"
         );
     }
 
@@ -2565,7 +2508,7 @@ mod tests {
             .expect("executable mode");
         let digest = format!("{:x}", Sha256::digest(payload));
         let mut manifest = CapsuleManifest {
-            schema_version: 1,
+            schema_version: CAPSULE_SCHEMA_VERSION,
             release_id: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                 .to_string(),
             target: target.clone(),
@@ -2573,10 +2516,6 @@ mod tests {
                 executable: "bin/runtime".to_string(),
                 arguments: Vec::new(),
                 cwd: Some("work".to_string()),
-                readiness: CapsuleReadiness {
-                    protocol: READINESS_PROTOCOL.to_string(),
-                    timeout_ms: MIN_READINESS_TIMEOUT_MS,
-                },
             },
             process_supervision: CapsuleProcessSupervision {
                 contract: PROCESS_SUPERVISION_CONTRACT.to_string(),

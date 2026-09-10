@@ -4,7 +4,6 @@ mod supported {
     use clap::Subcommand;
     use runtime_launcher::CapsuleTarget;
     use runtime_launcher::LauncherPaths;
-    use runtime_launcher::MutationRequest;
     use runtime_launcher::RunOutcome;
     use serde::Serialize;
     use serde_json::json;
@@ -29,15 +28,7 @@ mod supported {
             #[arg(long)]
             target_arch: String,
         },
-        PrepareActivation {
-            #[arg(long)]
-            request: PathBuf,
-        },
-        CancelActivation {
-            #[arg(long)]
-            request: PathBuf,
-        },
-        RequestRollback {
+        SelectCandidate {
             #[arg(long)]
             request: PathBuf,
         },
@@ -105,18 +96,8 @@ mod supported {
             )? {
                 RunOutcome::Exited(code) => Ok(Some(code)),
             },
-            Some(Command::PrepareActivation { request }) => {
-                print_success(runtime_launcher::prepare_activation(&paths, &request)?)?;
-                Ok(None)
-            }
-            Some(Command::CancelActivation { request }) => {
-                let request: MutationRequest = runtime_launcher::read_request(&request)?;
-                print_success(runtime_launcher::cancel_activation(&paths, request)?)?;
-                Ok(None)
-            }
-            Some(Command::RequestRollback { request }) => {
-                let request: MutationRequest = runtime_launcher::read_request(&request)?;
-                print_success(runtime_launcher::request_rollback(&paths, request)?)?;
+            Some(Command::SelectCandidate { request }) => {
+                print_success(runtime_launcher::select_candidate(&paths, &request)?)?;
                 Ok(None)
             }
             Some(Command::Status) => {

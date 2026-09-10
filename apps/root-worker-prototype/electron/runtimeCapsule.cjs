@@ -5,10 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const CAPSULE_MANIFEST_FILE = "capsule.json";
-const CAPSULE_SCHEMA_VERSION = 1;
+const CAPSULE_SCHEMA_VERSION = 2;
 const RELEASE_ID_PREFIX = "sha256:";
 const RELEASE_PREIMAGE_DOMAIN = Buffer.from("runtime-capsule-v1\0", "ascii");
-const READINESS_PROTOCOL = "launcher-ready-v1";
 const PROCESS_SUPERVISION_CONTRACT = "cooperative-observed-v1";
 const PROHIBITED_PROCESS_BEHAVIORS = Object.freeze([
   "daemonize",
@@ -21,8 +20,6 @@ const LEGACY_PROHIBITED_PROCESS_BEHAVIORS = Object.freeze([
   "double-fork",
   "setsid",
 ]);
-const MIN_READINESS_TIMEOUT_MS = 1_000;
-const MAX_READINESS_TIMEOUT_MS = 120_000;
 const MAX_SYMLINK_HOPS = 64;
 
 function createRuntimeCapsule(
@@ -34,7 +31,6 @@ function createRuntimeCapsule(
     executable,
     metadata = {},
     os = process.platform,
-    readinessTimeoutMs = 30_000,
     fsOps = fs,
   } = {},
 ) {
@@ -43,10 +39,6 @@ function createRuntimeCapsule(
     arguments: launchArguments.map((argument, index) =>
       requireLaunchArgument(argument, index),
     ),
-    readiness: {
-      protocol: READINESS_PROTOCOL,
-      timeoutMs: requireReadinessTimeout(readinessTimeoutMs),
-    },
   };
   if (cwd !== null && cwd !== undefined) {
     launch.cwd = requirePortablePath(cwd, "launch cwd");
@@ -149,10 +141,6 @@ function validateRuntimeCapsuleManifest(manifest) {
     throw new Error("Capsule launch arguments must be an array");
   }
   manifest.launch.arguments.forEach(requireLaunchArgument);
-  if (manifest.launch?.readiness?.protocol !== READINESS_PROTOCOL) {
-    throw new Error("Unsupported Capsule readiness protocol");
-  }
-  requireReadinessTimeout(manifest.launch.readiness.timeoutMs);
   const prohibitedBehaviors =
     manifest.processSupervision?.prohibitedBehaviors;
   const hasSupportedProhibitedBehaviors =
@@ -333,16 +321,6 @@ function computeRuntimeCapsulePreimage(manifest) {
   });
   pushFrame(
     chunks,
-    "readiness.protocol",
-    Buffer.from(manifest.launch.readiness.protocol, "ascii"),
-  );
-  pushFrame(
-    chunks,
-    "readiness.timeout_ms",
-    encodeU64(manifest.launch.readiness.timeoutMs),
-  );
-  pushFrame(
-    chunks,
     "process_supervision.contract",
     Buffer.from(manifest.processSupervision.contract, "ascii"),
   );
@@ -509,19 +487,6 @@ function requireLaunchArgument(value, index) {
   return value;
 }
 
-function requireReadinessTimeout(value) {
-  if (
-    !Number.isSafeInteger(value) ||
-    value < MIN_READINESS_TIMEOUT_MS ||
-    value > MAX_READINESS_TIMEOUT_MS
-  ) {
-    throw new Error(
-      `Capsule readiness timeout must be between ${MIN_READINESS_TIMEOUT_MS} and ${MAX_READINESS_TIMEOUT_MS} milliseconds`,
-    );
-  }
-  return value;
-}
-
 function requireTargetComponent(value, label) {
   if (
     typeof value !== "string" ||
@@ -573,7 +538,6 @@ module.exports = {
   LEGACY_PROHIBITED_PROCESS_BEHAVIORS,
   PROCESS_SUPERVISION_CONTRACT,
   PROHIBITED_PROCESS_BEHAVIORS,
-  READINESS_PROTOCOL,
   collectRuntimeCapsuleEntries,
   computeRuntimeCapsulePreimage,
   computeRuntimeCapsuleReleaseId,

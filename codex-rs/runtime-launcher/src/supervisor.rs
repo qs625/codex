@@ -1,28 +1,24 @@
 use crate::LauncherError;
-use crate::MutationRequest;
-use crate::PrepareActivationRequest;
+use crate::SelectCandidateRequest;
 use crate::Result;
 use crate::capsule::CapsuleRecord;
 use crate::capsule::CapsuleTarget;
 use crate::capsule::import_incoming;
 use crate::capsule::load_and_verify_capsule;
 use crate::capsule::verify_record_for_spawn;
-use crate::control::ActivationOutcome;
-use crate::control::ActivationPhase;
-use crate::control::ActivationReceipt;
 use crate::control::ActiveLaunchPhase;
 use crate::control::ActiveLaunchRecord;
-use crate::control::AttemptRecord;
 use crate::control::CapsuleRef;
-use crate::control::CleanupRecord;
 use crate::control::ControlPaths;
 use crate::control::ControlState;
 use crate::control::ExecutorEpoch;
 use crate::control::FailureProjection;
 use crate::control::PayloadRegistration;
 use crate::control::SelectedRuntime;
-use crate::control::WinnerRecord;
 use crate::control::cas_update;
+use crate::control::load_unlocked;
+use crate::control::update_locked;
+use crate::control::StateLock;
 use crate::migration::migrate_legacy_state;
 use crate::process::ProcessCleanupError;
 use crate::process::ProcessGroupRecord;
@@ -31,8 +27,6 @@ use crate::process::TerminationPolicy;
 use crate::process::TerminationTarget;
 use crate::process::signal_identity_if_exact;
 use crate::process::terminate_and_observe_empty_with_reporter;
-use crate::readiness;
-use crate::readiness::ReadyBearer;
 use crate::seed::discover_seed;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -48,9 +42,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use std::time::Instant;
 
-pub const EXIT_COORDINATED_RESTART: i32 = 75;
 const REQUEST_SCHEMA_VERSION: u32 = 1;
-const OBSERVATION_WINDOW: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub struct LauncherPaths {
@@ -92,19 +84,9 @@ pub struct Status {
     pub failure: Option<FailureProjection>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrepareActivationDisposition {
-    Prepared,
-    AlreadyPrepared,
-    AlreadyCommitted,
-    TerminalFailed,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PrepareActivationResult {
-    pub disposition: PrepareActivationDisposition,
+pub struct SelectCandidateResult {
     pub activation_id: String,
     pub release_id: String,
     pub control: ControlState,
@@ -112,8 +94,11 @@ pub struct PrepareActivationResult {
 
 struct LaunchOutcome {
     status: ExitStatus,
-    ready: bool,
-    committed: bool,
+}
+
+enum ExternalFallback {
+    Restored,
+    SelectionChanged,
 }
 
 struct ExecutorLease {
@@ -147,116 +132,38 @@ impl ExecutorLease {
     }
 }
 
-pub fn prepare_activation(
+pub fn select_candidate(
     paths: &LauncherPaths,
-    request: PrepareActivationRequest,
-) -> Result<PrepareActivationResult> {
-    validate_prepare(&request)?;
-    let existing = ControlState::load(&paths.control)?.ok_or_else(|| {
-        LauncherError::Conflict("run must initialize the trusted Seed before prepare".to_string())
+    request: SelectCandidateRequest,
+) -> Result<SelectCandidateResult> {
+    validate_select_candidate(&request)?;
+    let _lock = StateLock::acquire(&paths.control)?;
+    load_unlocked(&paths.control)?.ok_or_else(|| {
+        LauncherError::Conflict("run must initialize the trusted Seed before selecting a candidate".to_string())
     })?;
-    if existing.revision != request.expected_revision
-        || existing.executor_epoch != request.expected_executor_epoch
-    {
-        return Err(LauncherError::Conflict(
-            "prepare control revision or executor epoch is stale".to_string(),
-        ));
-    }
-    if existing.activation.phase != ActivationPhase::Idle {
-        return Err(LauncherError::Conflict(
-            "prepare requires an idle activation".to_string(),
-        ));
-    }
     let candidate = import_incoming(&paths.root, &request.activation_id, &request.target)?;
-    if candidate.release_id != request.release_id {
-        return Err(LauncherError::InvalidRequest(
-            "requested releaseId does not match imported capsule".to_string(),
-        ));
-    }
     let candidate = capsule_ref(&candidate);
-    let control = cas_update(
-        &paths.control,
-        request.expected_revision,
-        request.expected_executor_epoch,
-        |state| {
-            state.activation.phase = ActivationPhase::Prepared;
-            state.activation.attempt = Some(AttemptRecord {
-                attempt_id: request.activation_id.clone(),
-                candidate,
-                previous: state.selected.clone(),
-                previous_external_current: state.external_current.clone(),
-                previous_external_previous: state.external_previous.clone(),
-                started_at_unix_ms: unix_time_ms(),
-                launch_instance_id: None,
-                spawn_attempt_id: None,
-                payload_registration: None,
-                ready_expectation: None,
-                known_descendants: Vec::new(),
-                observation_deadline_unix_ms: None,
-                annotations: BTreeMap::from([("reason".to_string(), request.reason.clone())]),
-            });
-            state.activation.winner = None;
-            state.activation.cleanup = CleanupRecord::default();
-            state.activation.receipt = None;
-            Ok(())
-        },
-    )?;
-    Ok(PrepareActivationResult {
-        disposition: PrepareActivationDisposition::Prepared,
+    let release_id = candidate.release_id.clone();
+    let current = load_unlocked(&paths.control)?.ok_or_else(|| {
+        LauncherError::Conflict("control state disappeared during candidate import".to_string())
+    })?;
+    if selection_is_already_current(&current, &candidate) {
+        return Ok(SelectCandidateResult {
+            activation_id: request.activation_id,
+            release_id,
+            control: current,
+        });
+    }
+    let control = update_locked(&paths.control, |state| {
+        state.external_previous = state.external_current.clone();
+        state.external_current = Some(candidate.clone());
+        state.selected = SelectedRuntime::external(candidate.clone());
+        Ok(())
+    })?;
+    Ok(SelectCandidateResult {
         activation_id: request.activation_id,
-        release_id: request.release_id,
+        release_id,
         control,
-    })
-}
-
-pub fn cancel_activation(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
-    mutate_attempt(paths, request, |state, attempt, reason| {
-        if state.activation.phase != ActivationPhase::Prepared {
-            return Err(LauncherError::Conflict(
-                "only a prepared activation can be cancelled".to_string(),
-            ));
-        }
-        state.activation.receipt = Some(ActivationReceipt {
-            attempt_id: attempt.attempt_id,
-            candidate_release_id: attempt.candidate.release_id,
-            outcome: ActivationOutcome::RolledBack,
-            selected: state.selected.clone(),
-            completed_at_unix_ms: unix_time_ms(),
-            reason: Some(if reason.is_empty() {
-                "activation cancelled".to_string()
-            } else {
-                reason
-            }),
-        });
-        state.activation.phase = ActivationPhase::Idle;
-        state.activation.attempt = None;
-        Ok(())
-    })
-}
-
-pub fn request_rollback(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
-    mutate_attempt(paths, request, |state, attempt, reason| {
-        if matches!(
-            state.activation.phase,
-            ActivationPhase::CommitDecided
-                | ActivationPhase::CommitRelaunch
-                | ActivationPhase::CommitCleanup
-        ) {
-            return Err(LauncherError::Conflict(
-                "activation winner is already committed".to_string(),
-            ));
-        }
-        state.activation.phase = ActivationPhase::RollbackDecided;
-        state.activation.winner = Some(WinnerRecord {
-            selected: attempt.previous,
-            decided_at_unix_ms: unix_time_ms(),
-            reason: if reason.is_empty() {
-                "rollback requested".to_string()
-            } else {
-                reason
-            },
-        });
-        Ok(())
     })
 }
 
@@ -281,63 +188,45 @@ pub fn run(
     ExecutorEpoch::acquire_and_bump_epoch(&paths.control, seed.clone())?;
     let state = ControlState::load(&paths.control)?
         .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
-    let mut state = reconcile_active_launch(paths, state)?;
-    state = rebind_seed(paths, state.revision, state.executor_epoch, seed)?;
-    reconcile_interrupted(paths, &mut state)?;
+    let state = reconcile_active_launch(paths, state)?;
+    rebind_seed(paths, state.revision, state.executor_epoch, seed)?;
 
     loop {
         let state = ControlState::load(&paths.control)?
             .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
-        if state.activation.phase == ActivationPhase::RollbackDecided {
-            execute_rollback(paths, state)?;
-            continue;
-        }
-        let selected = load_selected(&state, &target)?;
-        let candidate = state.activation.phase == ActivationPhase::SpawnPlanned
-            && state
-                .activation
-                .attempt
-                .as_ref()
-                .is_some_and(|attempt| attempt.candidate.release_id == selected.release_id);
-        let outcome = match launch_selected(paths, &state, &selected, &target, launcher_path) {
-            Ok(outcome) => outcome,
-            Err(error) if candidate => {
-                let latest = ControlState::load(&paths.control)?.ok_or_else(|| {
-                    LauncherError::Conflict("control state disappeared".to_string())
-                })?;
-                if latest.active_launch.is_some() {
-                    return Err(error);
-                }
-                if !has_uncommitted_candidate_for(&latest, &selected.release_id) {
-                    return Err(error);
-                }
-                rollback_failed_candidate(paths, latest, error.to_string())?;
+        let selected = match load_selected(&state, &target) {
+            Ok(selected) => selected,
+            Err(error) if matches!(state.selected, SelectedRuntime::External { .. }) => {
+                let _ = restore_failed_external(paths, &state, error.to_string())?;
                 continue;
             }
             Err(error) => return Err(error),
         };
+        let outcome = match launch_selected(paths, &state, &selected, &target, launcher_path) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let latest = ControlState::load(&paths.control)?.ok_or_else(|| {
+                    LauncherError::Conflict("control state disappeared".to_string())
+                })?;
+                if latest.active_launch.is_none()
+                    && latest.selected.capsule().release_id != selected.release_id
+                {
+                    continue;
+                }
+                if latest.active_launch.is_some() {
+                    return Err(error);
+                }
+                if matches!(latest.selected, SelectedRuntime::External { .. }) {
+                    let _ = restore_failed_external(paths, &latest, error.to_string())?;
+                    continue;
+                }
+                return Err(error);
+            }
+        };
         let code = outcome.status.code().unwrap_or(1);
-        if candidate && (!outcome.ready || !outcome.committed) {
-            let latest = ControlState::load(&paths.control)?
-                .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
-            rollback_failed_candidate(
-                paths,
-                latest,
-                format!("candidate exited before it became active (code {code})"),
-            )?;
-            continue;
-        }
-        let latest = ControlState::load(&paths.control)?
-            .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
-        if latest.activation.phase == ActivationPhase::Prepared && code == EXIT_COORDINATED_RESTART
-        {
-            authorize_candidate_after_old_stopped(paths, latest)?;
-            continue;
-        }
         if code != 0 {
             write_runtime_diagnostic(paths, &selected.release_id, code, "payload exited")?;
         }
-        return Ok(RunOutcome::Exited(code));
     }
 }
 
@@ -409,14 +298,8 @@ fn launch_selected(
     launcher_path: &Path,
 ) -> Result<LaunchOutcome> {
     let verified = verify_record_for_spawn(selected, target)?;
-    let (candidate, launch_instance_id, spawn_attempt_id) =
-        launch_identity(state, &verified.release_id)?;
+    let (launch_instance_id, spawn_attempt_id) = launch_identity();
     let _reserved = reserve_active_launch(paths, state, &launch_instance_id, &spawn_attempt_id)?;
-    let ready_path = paths
-        .attempts
-        .join(&spawn_attempt_id)
-        .with_extension("ready.json");
-    let token = readiness::issue_ready_token()?;
     let mut command = std::process::Command::new(&verified.executable);
     command
         .args(&verified.manifest.launch.arguments)
@@ -424,11 +307,6 @@ fn launch_selected(
         .envs(build_payload_environment(
             paths,
             launcher_path,
-            &ready_path,
-            &token,
-            &verified.release_id,
-            &launch_instance_id,
-            &spawn_attempt_id,
         ))
         .stdin(Stdio::null());
     if let Some(cwd) = &verified.cwd {
@@ -461,11 +339,7 @@ fn launch_selected(
             .wait()
             .map_err(|error| crate::io_error("wait for early payload exit", error))?;
         clear_active_launch(paths, &launch_instance_id)?;
-        return Ok(LaunchOutcome {
-            status,
-            ready: false,
-            committed: false,
-        });
+        return Ok(LaunchOutcome { status });
     };
     let process_group = match process_group.require_dedicated() {
         Ok(process_group) => process_group,
@@ -484,27 +358,13 @@ fn launch_selected(
         payload: process_group.leader,
         process_group,
     };
-    let bearer = ReadyBearer::bind(
-        verified.release_id.clone(),
-        launch_instance_id.clone(),
-        spawn_attempt_id.clone(),
-        payload.payload,
-        token,
-    )?;
     if let Err(error) = persist_active_launch(
         paths,
-        candidate,
         &launch_instance_id,
         &spawn_attempt_id,
         payload.clone(),
-        bearer.expectation.clone(),
     ) {
-        let durable_target = record_cleanup_target(
-            paths,
-            &launch_instance_id,
-            payload.clone(),
-            bearer.expectation.clone(),
-        );
+        let durable_target = record_cleanup_target(paths, &launch_instance_id, payload.clone());
         return match (
             durable_target,
             terminate_direct_child(paths, &launch_instance_id, &mut child, &payload),
@@ -546,10 +406,6 @@ fn launch_selected(
         };
     }
 
-    let deadline =
-        Instant::now() + Duration::from_millis(verified.manifest.launch.readiness.timeout_ms);
-    let mut ready = false;
-    let mut committed = false;
     let mut observed_descendants = BTreeSet::new();
     loop {
         let snapshot = crate::process::snapshot_processes().map_err(|error| {
@@ -557,25 +413,6 @@ fn launch_selected(
         })?;
         observed_descendants.extend(crate::process::descendants_of(payload.payload, &snapshot));
         record_observed_descendants(paths, &launch_instance_id, &observed_descendants)?;
-        if candidate
-            && ControlState::load(&paths.control)?
-                .is_some_and(|control| control.activation.phase == ActivationPhase::RollbackDecided)
-        {
-            let cleanup = terminate_direct_child(paths, &launch_instance_id, &mut child, &payload);
-            return match cleanup {
-                Ok(()) => {
-                    clear_active_launch(paths, &launch_instance_id)?;
-                    Err(LauncherError::Launch("rollback requested".to_string()))
-                }
-                Err(error) => Err(handle_direct_cleanup_failure(
-                    paths,
-                    &selected.release_id,
-                    &launch_instance_id,
-                    "candidate rollback cleanup",
-                    error,
-                )?),
-            };
-        }
         if let Some(status) = child
             .try_wait()
             .map_err(|error| crate::io_error("observe payload exit", error))?
@@ -605,39 +442,7 @@ fn launch_selected(
                 return Err(LauncherError::Launch(message));
             }
             clear_active_launch(paths, &launch_instance_id)?;
-            return Ok(LaunchOutcome {
-                status,
-                ready,
-                committed,
-            });
-        }
-        if !ready && readiness::consume_ready_marker(&ready_path, &bearer.expectation)? {
-            ready = true;
-            if candidate {
-                let latest = ControlState::load(&paths.control)?.ok_or_else(|| {
-                    LauncherError::Conflict("control state disappeared".to_string())
-                })?;
-                commit_candidate(paths, mark_candidate_observing(paths, latest)?)?;
-                committed = true;
-            }
-        }
-        if !ready && Instant::now() >= deadline {
-            let cleanup = terminate_direct_child(paths, &launch_instance_id, &mut child, &payload);
-            return match cleanup {
-                Ok(()) => {
-                    clear_active_launch(paths, &launch_instance_id)?;
-                    Err(LauncherError::Launch(
-                        "payload readiness timed out".to_string(),
-                    ))
-                }
-                Err(error) => Err(handle_direct_cleanup_failure(
-                    paths,
-                    &selected.release_id,
-                    &launch_instance_id,
-                    "payload readiness timeout cleanup",
-                    error,
-                )?),
-            };
+            return Ok(LaunchOutcome { status });
         }
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -745,13 +550,17 @@ fn reserve_active_launch(
                     "an earlier payload launch is still recorded".to_string(),
                 ));
             }
+            if next.selected.capsule().release_id != state.selected.capsule().release_id {
+                return Err(LauncherError::Conflict(
+                    "selected runtime changed before payload launch".to_string(),
+                ));
+            }
             next.active_launch = Some(ActiveLaunchRecord {
                 selected: next.selected.clone(),
                 launch_instance_id: launch_instance_id.to_string(),
                 spawn_attempt_id: spawn_attempt_id.to_string(),
                 phase: ActiveLaunchPhase::SpawnPlanned,
                 payload_registration: None,
-                ready_expectation: None,
                 known_descendants: Vec::new(),
             });
             Ok(())
@@ -761,11 +570,9 @@ fn reserve_active_launch(
 
 fn persist_active_launch(
     paths: &LauncherPaths,
-    candidate: bool,
     launch_instance_id: &str,
     spawn_attempt_id: &str,
     payload: PayloadRegistration,
-    expectation: readiness::ReadyExpectation,
 ) -> Result<()> {
     let current = ControlState::load(&paths.control)?
         .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
@@ -789,18 +596,8 @@ fn persist_active_launch(
                 spawn_attempt_id: spawn_attempt_id.to_string(),
                 phase: ActiveLaunchPhase::Running,
                 payload_registration: Some(payload.clone()),
-                ready_expectation: Some(expectation.clone()),
                 known_descendants: Vec::new(),
             });
-            if candidate {
-                let attempt = next.activation.attempt.as_mut().ok_or_else(|| {
-                    LauncherError::Conflict("candidate activation disappeared".to_string())
-                })?;
-                attempt.payload_registration = Some(payload);
-                attempt.ready_expectation = Some(expectation);
-                attempt.known_descendants.clear();
-                next.activation.phase = ActivationPhase::RuntimeStarted;
-            }
             Ok(())
         },
     )?;
@@ -811,7 +608,6 @@ fn record_cleanup_target(
     paths: &LauncherPaths,
     launch_instance_id: &str,
     payload: PayloadRegistration,
-    expectation: readiness::ReadyExpectation,
 ) -> Result<()> {
     loop {
         let current = ControlState::load(&paths.control)?
@@ -842,7 +638,6 @@ fn record_cleanup_target(
                 }
                 active.phase = ActiveLaunchPhase::Running;
                 active.payload_registration = Some(payload.clone());
-                active.ready_expectation = Some(expectation.clone());
                 active.known_descendants.clear();
                 Ok(())
             },
@@ -911,45 +706,14 @@ fn record_observed_descendants(
     }
 }
 
-fn launch_identity(state: &ControlState, release_id: &str) -> Result<(bool, String, String)> {
-    let candidate = state.activation.phase == ActivationPhase::SpawnPlanned
-        && state
-            .activation
-            .attempt
-            .as_ref()
-            .is_some_and(|attempt| attempt.candidate.release_id == release_id);
-    if candidate {
-        let attempt = state.activation.attempt.as_ref().expect("checked above");
-        return Ok((
-            true,
-            attempt.launch_instance_id.clone().ok_or_else(|| {
-                LauncherError::Conflict("candidate launch has no launchInstanceId".to_string())
-            })?,
-            attempt.spawn_attempt_id.clone().ok_or_else(|| {
-                LauncherError::Conflict("candidate launch has no spawnAttemptId".to_string())
-            })?,
-        ));
-    }
+fn launch_identity() -> (String, String) {
     let launch = format!("{}-{}", std::process::id(), unix_time_ms());
-    Ok((false, launch.clone(), format!("runtime-{launch}")))
-}
-
-fn has_uncommitted_candidate_for(state: &ControlState, release_id: &str) -> bool {
-    state
-        .activation
-        .attempt
-        .as_ref()
-        .is_some_and(|attempt| attempt.candidate.release_id == release_id)
+    (launch.clone(), format!("runtime-{launch}"))
 }
 
 fn build_payload_environment(
     paths: &LauncherPaths,
     launcher_path: &Path,
-    ready_path: &Path,
-    token: &str,
-    release_id: &str,
-    launch_instance_id: &str,
-    spawn_attempt_id: &str,
 ) -> BTreeMap<String, String> {
     const ALLOWLIST: [&str; 17] = [
         "HOME",
@@ -979,25 +743,7 @@ fn build_payload_environment(
                 .map(|value| (name.to_string(), value.clone()))
         })
         .collect::<BTreeMap<_, _>>();
-    environment.insert(
-        "RUNTIME_CAPSULE_READY_PROTOCOL".to_string(),
-        readiness::READY_PROTOCOL_VERSION.to_string(),
-    );
     for (key, value) in [
-        (
-            "RUNTIME_CAPSULE_READY_PATH",
-            ready_path.display().to_string(),
-        ),
-        ("RUNTIME_CAPSULE_READY_TOKEN", token.to_string()),
-        ("RUNTIME_CAPSULE_RELEASE_ID", release_id.to_string()),
-        (
-            "RUNTIME_CAPSULE_LAUNCH_INSTANCE_ID",
-            launch_instance_id.to_string(),
-        ),
-        (
-            "RUNTIME_CAPSULE_SPAWN_ATTEMPT_ID",
-            spawn_attempt_id.to_string(),
-        ),
         (
             "RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH",
             paths.failure_evidence.display().to_string(),
@@ -1043,196 +789,69 @@ fn clear_active_launch(paths: &LauncherPaths, launch_instance_id: &str) -> Resul
     )
 }
 
-fn authorize_candidate_after_old_stopped(
+fn restore_failed_external(
     paths: &LauncherPaths,
-    state: ControlState,
-) -> Result<ControlState> {
-    let stopping = cas_update(
-        &paths.control,
-        state.revision,
-        state.executor_epoch,
-        |next| {
-            next.activation.phase = ActivationPhase::StoppingOld;
-            Ok(())
-        },
-    )?;
-    let stopped = cas_update(
-        &paths.control,
-        stopping.revision,
-        stopping.executor_epoch,
-        |next| {
-            next.activation.phase = ActivationPhase::OldStopped;
-            Ok(())
-        },
-    )?;
-    cas_update(
-        &paths.control,
-        stopped.revision,
-        stopped.executor_epoch,
-        |next| {
-            let revision = next.revision;
-            let attempt = next.activation.attempt.as_mut().ok_or_else(|| {
-                LauncherError::Conflict("prepared activation has no attempt".to_string())
-            })?;
-            attempt.launch_instance_id = Some(format!("{}-{}", std::process::id(), unix_time_ms()));
-            attempt.spawn_attempt_id = Some(format!("{}-{revision}", attempt.attempt_id));
-            let candidate = attempt.candidate.clone();
-            let current = next.external_current.clone();
-            next.external_current = Some(candidate.clone());
-            next.external_previous = current;
-            next.selected = SelectedRuntime::external(candidate);
-            next.activation.phase = ActivationPhase::SpawnPlanned;
-            Ok(())
-        },
-    )
-}
-
-fn commit_candidate(paths: &LauncherPaths, state: ControlState) -> Result<ControlState> {
-    let decided = cas_update(
-        &paths.control,
-        state.revision,
-        state.executor_epoch,
-        |next| {
-            let attempt = next.activation.attempt.clone().ok_or_else(|| {
-                LauncherError::Conflict("candidate commit has no attempt".to_string())
-            })?;
-            next.activation.phase = ActivationPhase::CommitDecided;
-            next.activation.winner = Some(WinnerRecord {
-                selected: next.selected.clone(),
-                decided_at_unix_ms: unix_time_ms(),
-                reason: "candidate reported readiness".to_string(),
-            });
-            next.activation.receipt = Some(ActivationReceipt {
-                attempt_id: attempt.attempt_id,
-                candidate_release_id: attempt.candidate.release_id,
-                outcome: ActivationOutcome::Committed,
-                selected: next.selected.clone(),
-                completed_at_unix_ms: unix_time_ms(),
-                reason: None,
-            });
-            Ok(())
-        },
-    )?;
-    cas_update(
-        &paths.control,
-        decided.revision,
-        decided.executor_epoch,
-        |next| {
-            next.activation.phase = ActivationPhase::Idle;
-            next.activation.attempt = None;
-            Ok(())
-        },
-    )
-}
-
-fn mark_candidate_observing(paths: &LauncherPaths, state: ControlState) -> Result<ControlState> {
-    cas_update(
-        &paths.control,
-        state.revision,
-        state.executor_epoch,
-        |next| {
-            next.activation.phase = ActivationPhase::Observing;
-            let attempt = next.activation.attempt.as_mut().ok_or_else(|| {
-                LauncherError::Conflict("candidate observation has no attempt".to_string())
-            })?;
-            attempt.observation_deadline_unix_ms =
-                Some(unix_time_ms() + OBSERVATION_WINDOW.as_millis() as u64);
-            Ok(())
-        },
-    )
-}
-
-fn rollback_failed_candidate(
-    paths: &LauncherPaths,
-    state: ControlState,
+    state: &ControlState,
     reason: String,
-) -> Result<ControlState> {
-    if state.activation.phase == ActivationPhase::RollbackDecided {
-        return execute_rollback(paths, state);
-    }
-    let decided = cas_update(
+) -> Result<ExternalFallback> {
+    let failed = match &state.selected {
+        SelectedRuntime::External { capsule } => capsule.clone(),
+        SelectedRuntime::Seed { .. } => {
+            return Err(LauncherError::Conflict(
+                "only an external selection can fall back".to_string(),
+            ));
+        }
+    };
+    let restored = match cas_update(
         &paths.control,
         state.revision,
         state.executor_epoch,
         |next| {
-            let attempt = next.activation.attempt.clone().ok_or_else(|| {
-                LauncherError::Conflict("candidate rollback has no attempt".to_string())
-            })?;
-            next.activation.phase = ActivationPhase::RollbackDecided;
-            next.activation.winner = Some(WinnerRecord {
-                selected: attempt.previous,
-                decided_at_unix_ms: unix_time_ms(),
-                reason,
-            });
+            if next.selected.capsule().release_id != failed.release_id {
+                return Err(LauncherError::Conflict(
+                    "selected runtime changed before fallback".to_string(),
+                ));
+            }
+            if let Some(previous) = next.external_previous.take() {
+                next.external_current = Some(previous.clone());
+                next.selected = SelectedRuntime::external(previous);
+            } else {
+                next.external_current = None;
+                next.selected = SelectedRuntime::seed(next.trusted_seed.capsule.clone());
+            }
             Ok(())
         },
-    )?;
-    execute_rollback(paths, decided)
-}
-
-fn execute_rollback(paths: &LauncherPaths, state: ControlState) -> Result<ControlState> {
-    let attempt =
-        state.activation.attempt.clone().ok_or_else(|| {
-            LauncherError::Conflict("rollback has no activation attempt".to_string())
-        })?;
-    let restoring = cas_update(
-        &paths.control,
-        state.revision,
-        state.executor_epoch,
-        |next| {
-            next.activation.phase = ActivationPhase::Restoring;
-            next.external_current = attempt.previous_external_current.clone();
-            next.external_previous = attempt.previous_external_previous.clone();
-            next.selected = attempt.previous.clone();
-            next.activation.receipt = Some(ActivationReceipt {
-                attempt_id: attempt.attempt_id.clone(),
-                candidate_release_id: attempt.candidate.release_id.clone(),
-                outcome: ActivationOutcome::RolledBack,
-                selected: next.selected.clone(),
-                completed_at_unix_ms: unix_time_ms(),
-                reason: next
-                    .activation
-                    .winner
-                    .as_ref()
-                    .map(|winner| winner.reason.clone()),
-            });
-            Ok(())
-        },
-    )?;
-    write_failure_projection(paths, &restoring, "activation_rolled_back")?;
-    cas_update(
-        &paths.control,
-        restoring.revision,
-        restoring.executor_epoch,
-        |next| {
-            next.activation.phase = ActivationPhase::Idle;
-            next.activation.attempt = None;
-            Ok(())
-        },
-    )
-}
-
-fn reconcile_interrupted(paths: &LauncherPaths, state: &mut ControlState) -> Result<()> {
-    if matches!(
-        state.activation.phase,
-        ActivationPhase::StoppingOld
-            | ActivationPhase::OldStopped
-            | ActivationPhase::SpawnPlanned
-            | ActivationPhase::RuntimeStarted
-            | ActivationPhase::AwaitingReady
-            | ActivationPhase::Observing
-            | ActivationPhase::RollbackDecided
-            | ActivationPhase::StoppingCandidate
-            | ActivationPhase::CandidateStopped
-            | ActivationPhase::Restoring
     ) {
-        *state = rollback_failed_candidate(
-            paths,
-            state.clone(),
-            "recovered interrupted activation".to_string(),
-        )?;
-    }
-    Ok(())
+        Ok(restored) => restored,
+        Err(LauncherError::Conflict(_)) => {
+            let latest = ControlState::load(&paths.control)?.ok_or_else(|| {
+                LauncherError::Conflict("control state disappeared during fallback".to_string())
+            })?;
+            if latest.revision != state.revision || latest.executor_epoch != state.executor_epoch {
+                return Ok(ExternalFallback::SelectionChanged);
+            }
+            return Err(LauncherError::Conflict(
+                "external fallback conflicted without a newer selection".to_string(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    crate::control::write_json_atomic(
+        &paths.failure_evidence,
+        &FailureProjection {
+            activation_id: format!("select-{}", unix_time_ms()),
+            release_id: failed.release_id.clone(),
+            occurred_at: rfc3339_now(),
+            fallback_release_id: Some(restored.selected.capsule().release_id.clone()),
+            code: "selected_runtime_spawn_failed".to_string(),
+            message: reason,
+            failed: Some(failed),
+            fallback: Some(restored.selected.clone()),
+            evidence_path: Some(paths.failure_evidence.clone()),
+            details: BTreeMap::new(),
+        },
+    )?;
+    Ok(ExternalFallback::Restored)
 }
 
 fn rebind_seed(
@@ -1261,32 +880,6 @@ fn rebind_seed(
     })
 }
 
-fn mutate_attempt<F>(
-    paths: &LauncherPaths,
-    request: MutationRequest,
-    update: F,
-) -> Result<ControlState>
-where
-    F: FnOnce(&mut ControlState, AttemptRecord, String) -> Result<()>,
-{
-    cas_update(
-        &paths.control,
-        request.expected_revision,
-        request.expected_executor_epoch,
-        |state| {
-            let attempt = state.activation.attempt.clone().ok_or_else(|| {
-                LauncherError::Conflict("there is no active activation".to_string())
-            })?;
-            if attempt.attempt_id != request.activation_id {
-                return Err(LauncherError::Conflict(
-                    "activationId does not match active activation".to_string(),
-                ));
-            }
-            update(state, attempt, request.reason)
-        },
-    )
-}
-
 fn load_selected(state: &ControlState, target: &CapsuleTarget) -> Result<CapsuleRecord> {
     let capsule = state.selected.capsule();
     load_and_verify_capsule(&capsule.root, target)
@@ -1301,13 +894,20 @@ fn capsule_ref(record: &CapsuleRecord) -> CapsuleRef {
     }
 }
 
-fn validate_prepare(request: &PrepareActivationRequest) -> Result<()> {
+fn selection_is_already_current(state: &ControlState, candidate: &CapsuleRef) -> bool {
+    state.external_current.as_ref() == Some(candidate)
+        && matches!(
+            &state.selected,
+            SelectedRuntime::External { capsule } if capsule == candidate
+        )
+}
+
+fn validate_select_candidate(request: &SelectCandidateRequest) -> Result<()> {
     if request.schema_version != REQUEST_SCHEMA_VERSION
         || request.activation_id.trim().is_empty()
-        || request.release_id.trim().is_empty()
     {
         return Err(LauncherError::InvalidRequest(
-            "prepare request has invalid schemaVersion, activationId, or releaseId".to_string(),
+            "select-candidate request has invalid schemaVersion or activationId".to_string(),
         ));
     }
     Ok(())
@@ -1331,32 +931,6 @@ fn write_runtime_diagnostic(
             failed: None,
             fallback: None,
             evidence_path: None,
-            details: BTreeMap::new(),
-        },
-    )
-}
-
-fn write_failure_projection(paths: &LauncherPaths, state: &ControlState, code: &str) -> Result<()> {
-    let Some(attempt) = state.activation.attempt.as_ref() else {
-        return Ok(());
-    };
-    crate::control::write_json_atomic(
-        &paths.failure_evidence,
-        &FailureProjection {
-            activation_id: attempt.attempt_id.clone(),
-            release_id: attempt.candidate.release_id.clone(),
-            occurred_at: rfc3339_now(),
-            fallback_release_id: Some(state.selected.capsule().release_id.clone()),
-            code: code.to_string(),
-            message: state
-                .activation
-                .winner
-                .as_ref()
-                .map(|winner| winner.reason.clone())
-                .unwrap_or_else(|| "activation rolled back".to_string()),
-            failed: Some(attempt.candidate.clone()),
-            fallback: Some(state.selected.clone()),
-            evidence_path: Some(paths.failure_evidence.clone()),
             details: BTreeMap::new(),
         },
     )
@@ -1413,17 +987,123 @@ mod tests {
                     pgid: payload.pid,
                 },
             }),
-            ready_expectation: Some(readiness::ReadyExpectation {
-                protocol_version: readiness::READY_PROTOCOL_VERSION,
-                release_id: seed_capsule.release_id,
-                launch_instance_id: "launch-1".to_string(),
-                spawn_attempt_id: "spawn-1".to_string(),
-                payload,
-                token_verifier: "a".repeat(64),
-            }),
             known_descendants: Vec::new(),
         });
         state
+    }
+
+    fn external_state(root: &Path, with_previous: bool) -> ControlState {
+        let current = capsule(root, "current");
+        let previous = capsule(root, "previous");
+        let mut state = ControlState::initialize(TrustedSeed {
+            capsule: capsule(root, "seed"),
+            trust_anchor: root.join("seed-anchor"),
+            metadata: serde_json::Value::Null,
+        });
+        state.external_current = Some(current.clone());
+        state.external_previous = with_previous.then_some(previous);
+        state.selected = SelectedRuntime::external(current);
+        state
+    }
+
+    #[test]
+    fn repeat_selection_of_current_capsule_is_a_control_no_op() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = external_state(temp.path(), true);
+        let current = state
+            .external_current
+            .as_ref()
+            .expect("current external capsule");
+
+        assert!(selection_is_already_current(&state, current));
+    }
+
+    #[test]
+    fn failed_external_selection_restores_previous_generation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), true);
+        let failed = state.selected.capsule().clone();
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+
+        match restore_failed_external(&paths, &state, "load failed".to_string())
+            .expect("restore previous")
+        {
+            ExternalFallback::Restored => {}
+            ExternalFallback::SelectionChanged => panic!("selection did not change"),
+        }
+        let restored = ControlState::load(&paths.control)
+            .expect("load restored state")
+            .expect("restored state");
+        assert_eq!(restored.selected.capsule().release_id, "release-previous");
+        assert_eq!(
+            restored
+                .external_current
+                .as_ref()
+                .map(|capsule| capsule.release_id.as_str()),
+            Some("release-previous")
+        );
+        assert!(restored.external_previous.is_none());
+
+        let evidence =
+            crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+                .expect("read fallback evidence")
+                .expect("fallback evidence");
+        assert_eq!(evidence.release_id, failed.release_id);
+        assert_eq!(evidence.fallback_release_id.as_deref(), Some("release-previous"));
+    }
+
+    #[test]
+    fn failed_only_external_selection_restores_seed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), false);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+
+        match restore_failed_external(&paths, &state, "spawn failed".to_string())
+            .expect("restore Seed")
+        {
+            ExternalFallback::Restored => {}
+            ExternalFallback::SelectionChanged => panic!("selection did not change"),
+        }
+        let restored = ControlState::load(&paths.control)
+            .expect("load restored state")
+            .expect("restored state");
+        assert!(matches!(restored.selected, SelectedRuntime::Seed { .. }));
+        assert!(restored.external_current.is_none());
+        assert!(restored.external_previous.is_none());
+    }
+
+    #[test]
+    fn fallback_drops_a_stale_failure_after_a_new_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), false);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+
+        let replacement = capsule(temp.path(), "replacement");
+        let mut selected_after_failure = state.clone();
+        selected_after_failure.revision += 1;
+        selected_after_failure.external_previous = selected_after_failure.external_current.clone();
+        selected_after_failure.external_current = Some(replacement.clone());
+        selected_after_failure.selected = SelectedRuntime::external(replacement);
+        crate::control::write_json_atomic(&paths.control.control, &selected_after_failure)
+            .expect("write newer selection");
+
+        assert!(matches!(
+            restore_failed_external(&paths, &state, "stale load failure".to_string())
+                .expect("detect newer selection"),
+            ExternalFallback::SelectionChanged
+        ));
+        assert!(crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+            .expect("read fallback evidence")
+            .is_none());
     }
 
     #[test]
@@ -1459,28 +1139,6 @@ mod tests {
                 .expect("read diagnostic")
                 .expect("stale launch diagnostic");
         assert!(diagnostic.message.contains("different start identity"));
-    }
-
-    #[test]
-    fn committed_candidate_is_not_rolled_back_after_its_attempt_is_cleared() {
-        let candidate = capsule(Path::new("/tmp/runtime-launcher-tests"), "candidate");
-        let mut state = ControlState::initialize(TrustedSeed {
-            capsule: capsule(Path::new("/tmp/runtime-launcher-tests"), "seed"),
-            trust_anchor: PathBuf::from("/tmp/runtime-launcher-tests/seed-anchor"),
-            metadata: serde_json::Value::Null,
-        });
-        state.activation.receipt = Some(ActivationReceipt {
-            attempt_id: "activation-1".to_string(),
-            candidate_release_id: candidate.release_id.clone(),
-            outcome: ActivationOutcome::Committed,
-            selected: state.selected.clone(),
-            completed_at_unix_ms: 1,
-            reason: None,
-        });
-        assert!(
-            !has_uncommitted_candidate_for(&state, &candidate.release_id),
-            "a committed idle state has no remaining candidate attempt to roll back"
-        );
     }
 
     #[test]
