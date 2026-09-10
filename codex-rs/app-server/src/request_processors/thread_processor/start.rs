@@ -1313,7 +1313,10 @@ impl ThreadRequestProcessor {
             stored_agent_role,
         );
         self.thread_watch_manager
-            .upsert_thread_silently(loaded_thread)
+            .upsert_thread_silently_with_lifecycle_status(
+                loaded_thread,
+                stored_thread.last_run_status.clone(),
+            )
             .await;
         Ok(())
     }

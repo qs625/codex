@@ -143,6 +143,21 @@ impl ThreadWatchManager {
         .await;
     }
 
+    pub(crate) async fn upsert_thread_silently_with_lifecycle_status(
+        &self,
+        thread: Thread,
+        lifecycle_status: Option<ThreadLifecycleStatus>,
+    ) {
+        self.mutate_and_publish(move |state| {
+            state.upsert_thread_with_lifecycle_status(
+                thread.id,
+                lifecycle_status,
+                /*emit_notification*/ false,
+            )
+        })
+        .await;
+    }
+
     pub(crate) async fn remove_thread(&self, thread_id: &str) {
         let thread_id = thread_id.to_string();
         self.mutate_and_publish(move |state| state.remove_thread(&thread_id))
@@ -431,12 +446,24 @@ impl ThreadWatchState {
         thread_id: String,
         emit_notification: bool,
     ) -> Option<ThreadStatusChangedNotification> {
+        self.upsert_thread_with_lifecycle_status(thread_id, None, emit_notification)
+    }
+
+    fn upsert_thread_with_lifecycle_status(
+        &mut self,
+        thread_id: String,
+        lifecycle_status: Option<ThreadLifecycleStatus>,
+        emit_notification: bool,
+    ) -> Option<ThreadStatusChangedNotification> {
         let previous_status = self.status_for(&thread_id);
         let runtime = self
             .runtime_by_thread_id
             .entry(thread_id.clone())
             .or_default();
         runtime.is_loaded = true;
+        if let Some(lifecycle_status) = lifecycle_status.as_ref() {
+            runtime.apply_lifecycle_status(lifecycle_status);
+        }
         self.update_status_watcher_for_thread(&thread_id);
         if emit_notification {
             self.status_changed_notification(thread_id, previous_status)
@@ -554,6 +581,53 @@ struct RuntimeFacts {
     has_system_error: bool,
 }
 
+impl RuntimeFacts {
+    fn apply_lifecycle_status(&mut self, lifecycle_status: &ThreadLifecycleStatus) {
+        *self = Self::default();
+        match lifecycle_status {
+            ThreadLifecycleStatus::NotLoaded => {}
+            ThreadLifecycleStatus::Initializing => {
+                self.is_loaded = true;
+            }
+            ThreadLifecycleStatus::Active { active_flags } => {
+                self.is_loaded = true;
+                self.running = active_flags.contains(&ThreadLifecycleActiveFlag::Running);
+                self.pending_permission_requests = if active_flags
+                    .contains(&ThreadLifecycleActiveFlag::WaitingOnApproval)
+                {
+                    1
+                } else {
+                    0
+                };
+                self.pending_user_input_requests = if active_flags
+                    .contains(&ThreadLifecycleActiveFlag::WaitingOnUserInput)
+                {
+                    1
+                } else {
+                    0
+                };
+            }
+            ThreadLifecycleStatus::Waiting { reason } => {
+                self.is_loaded = true;
+                match reason {
+                    ThreadLifecycleWaitReason::Child => self.post_turn_wait_child = true,
+                    ThreadLifecycleWaitReason::Command => self.post_turn_wait_command = true,
+                    ThreadLifecycleWaitReason::EventSubscription => {
+                        self.post_turn_wait_event_subscription = true
+                    }
+                }
+            }
+            ThreadLifecycleStatus::Final { .. } => {
+                self.is_loaded = true;
+            }
+            ThreadLifecycleStatus::SystemError { .. } => {
+                self.is_loaded = true;
+                self.has_system_error = true;
+            }
+        }
+    }
+}
+
 fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadLifecycleStatus {
     if !runtime.is_loaded {
         return ThreadLifecycleStatus::NotLoaded;
@@ -645,6 +719,32 @@ mod tests {
                 active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
+    }
+
+    #[tokio::test]
+    async fn persisted_active_status_initializes_loaded_thread_as_active() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread_silently_with_lifecycle_status(
+                test_thread(
+                    INTERACTIVE_THREAD_ID,
+                    app_server_protocol::SessionSource::Cli,
+                ),
+                Some(ThreadLifecycleStatus::Active {
+                    active_flags: vec![ThreadLifecycleActiveFlag::Running],
+                }),
+            )
+            .await;
+
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+        );
+        assert_eq!(manager.running_turn_count().await, 1);
     }
 
     #[tokio::test]

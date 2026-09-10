@@ -196,16 +196,15 @@ pub(crate) async fn apply_bespoke_event_handling(
                     ThreadRuntimeStatus::Complete
                 }
             };
+            let (active, wait_child, wait_command, wait_event_subscription) =
+                post_turn_runtime_status_flags(runtime_status);
             thread_watch_manager
                 .note_post_turn_runtime_status(
                     &conversation_id.to_string(),
-                    matches!(runtime_status, ThreadRuntimeStatus::Active),
-                    matches!(runtime_status, ThreadRuntimeStatus::IdleWaitChild),
-                    matches!(runtime_status, ThreadRuntimeStatus::IdleWaitCommand),
-                    matches!(
-                        runtime_status,
-                        ThreadRuntimeStatus::IdleWaitEventSubscription
-                    ),
+                    active,
+                    wait_child,
+                    wait_command,
+                    wait_event_subscription,
                 )
                 .await;
             handle_turn_complete(
@@ -933,6 +932,24 @@ pub(crate) async fn apply_bespoke_event_handling(
 
         _ => {}
     }
+}
+
+fn post_turn_runtime_status_flags(
+    runtime_status: ThreadRuntimeStatus,
+) -> (bool, bool, bool, bool) {
+    // A TurnComplete event is authoritative that the model turn ended. The
+    // live runtime can still report Active briefly while the completion event
+    // is being handled; do not let that stale in-turn snapshot overwrite the
+    // completed last_run_status. Post-turn waiting states remain meaningful.
+    (
+        false,
+        matches!(runtime_status, ThreadRuntimeStatus::IdleWaitChild),
+        matches!(runtime_status, ThreadRuntimeStatus::IdleWaitCommand),
+        matches!(
+            runtime_status,
+            ThreadRuntimeStatus::IdleWaitEventSubscription
+        ),
+    )
 }
 
 mod helpers;

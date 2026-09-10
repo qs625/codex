@@ -260,6 +260,27 @@
     }
 
 
+    #[test]
+    fn post_turn_runtime_status_flags_discard_stale_active_after_turn_complete() {
+        assert_eq!(
+            post_turn_runtime_status_flags(ThreadRuntimeStatus::Active),
+            (false, false, false, false)
+        );
+        assert_eq!(
+            post_turn_runtime_status_flags(ThreadRuntimeStatus::IdleWaitChild),
+            (false, true, false, false)
+        );
+        assert_eq!(
+            post_turn_runtime_status_flags(ThreadRuntimeStatus::IdleWaitCommand),
+            (false, false, true, false)
+        );
+        assert_eq!(
+            post_turn_runtime_status_flags(ThreadRuntimeStatus::IdleWaitEventSubscription),
+            (false, false, false, true)
+        );
+    }
+
+
 mod guardian;
 mod permissions;
 mod runtime_events;

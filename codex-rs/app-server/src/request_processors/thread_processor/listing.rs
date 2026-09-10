@@ -3,7 +3,12 @@ use super::*;
 use app_server_protocol::CommandExecutionStatus;
 #[cfg(test)]
 use app_server_protocol::DynamicToolCallStatus;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+#[cfg(test)]
+use app_server_protocol::ThreadLifecycleWaitReason;
 use thread_store_api::ExternalLiveRestoreEligibility;
+
+const STARTUP_ACTIVE_THREAD_CONTINUATION_PROMPT: &str = "Morpheus 在客户端重启后发现这个 thread 重启前仍处于 Active/Running。请基于当前持久化上下文继续处理中断前的任务；如果无法安全继续，请简要说明中断影响和需要用户确认的事项。";
 
 fn external_root_startup_restore_skip_reason(
     eligibility: ExternalLiveRestoreEligibility,
@@ -724,6 +729,7 @@ impl ThreadRequestProcessor {
             }
         };
 
+        let last_run_status = stored_thread.last_run_status.clone();
         let persisted_subscription_count = self
             .thread_store
             .read_thread_subscriptions(thread_id, /*include_archived*/ true)
@@ -734,9 +740,6 @@ impl ThreadRequestProcessor {
                 || persisted_subscription_count(&stored_thread),
                 |subscriptions| subscriptions.len(),
             );
-        if persisted_subscription_count == 0 {
-            return;
-        }
         match self
             .persisted_thread_provider_facts_runtime
             .persisted_external_root_thread_facts(
@@ -841,7 +844,10 @@ impl ThreadRequestProcessor {
                     stored_agent_role,
                 );
                 self.thread_watch_manager
-                    .upsert_thread_silently(loaded_thread)
+                    .upsert_thread_silently_with_lifecycle_status(
+                        loaded_thread,
+                        last_run_status.clone(),
+                    )
                     .await;
                 let active_event_subscriptions =
                     self.thread_lifecycle_runtime.active_event_subscriptions();
@@ -852,6 +858,25 @@ impl ThreadRequestProcessor {
                     persisted_subscription_count,
                 )
                 .await;
+                if should_submit_startup_continuation(last_run_status.as_ref())
+                    && let Err(err) = self
+                        .live_thread_command
+                        .submit_live_thread_op(
+                            thread_id,
+                            Op::UserInput {
+                                items: vec![CoreInputItem::Text {
+                                    text: STARTUP_ACTIVE_THREAD_CONTINUATION_PROMPT.to_string(),
+                                    text_elements: Vec::new(),
+                                }],
+                                environments: None,
+                                final_output_json_schema: None,
+                                responsesapi_client_metadata: None,
+                            },
+                        )
+                        .await
+                {
+                    warn!("failed to submit startup continuation for thread {thread_id}: {err}");
+                }
             }
             Err(err) => {
                 warn!("failed to restore persisted active thread {thread_id}: {err}");
@@ -886,6 +911,14 @@ impl ThreadRequestProcessor {
             );
         }
     }
+}
+
+fn should_submit_startup_continuation(lifecycle_status: Option<&ThreadLifecycleStatus>) -> bool {
+    matches!(
+        lifecycle_status,
+        Some(ThreadLifecycleStatus::Active { active_flags })
+            if active_flags.contains(&ThreadLifecycleActiveFlag::Running)
+    )
 }
 
 pub(crate) fn apply_stored_agent_metadata_to_loaded_thread(
@@ -1479,5 +1512,28 @@ mod restore_persisted_injected_context_turns_tests {
         );
 
         assert_eq!(thread.agent_path.as_deref(), Some("/root/from_metadata"));
+    }
+
+    #[test]
+    fn startup_continuation_only_runs_for_active_running_status() {
+        assert!(should_submit_startup_continuation(Some(
+            &ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+        )));
+        assert!(!should_submit_startup_continuation(Some(
+            &ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::WaitingOnApproval],
+            },
+        )));
+        assert!(!should_submit_startup_continuation(Some(
+            &ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            },
+        )));
+        assert!(!should_submit_startup_continuation(Some(
+            &ThreadLifecycleStatus::completed(None),
+        )));
+        assert!(!should_submit_startup_continuation(None));
     }
 }
