@@ -177,6 +177,29 @@ function activeCommandForTerminalFocus(thread, command) {
   );
 }
 
+function liveCommandSessionForTerminalFocus(state, command) {
+  if (!state || !Array.isArray(state.tabs)) {
+    return null;
+  }
+  const requestedProcessId =
+    typeof command.processId === "string" && command.processId.length > 0
+      ? command.processId
+      : null;
+  return (
+    state.tabs.find(
+      (tab) =>
+        tab &&
+        tab.origin === "model" &&
+        tab.threadId === command.threadId &&
+        isLivePtyTerminalTab(tab) &&
+        (tab.commandItemId === command.commandItemId ||
+          (tab.commandItemId == null &&
+            requestedProcessId !== null &&
+            tab.processId === requestedProcessId)),
+    ) ?? null
+  );
+}
+
 function commandFocusDescriptor(command, activeCommand) {
   return {
     sessionId: `command:${command.threadId}:${command.commandItemId}`,
@@ -195,6 +218,42 @@ function commandFocusDescriptor(command, activeCommand) {
     canResize: false,
     canWrite: false,
     canTerminate: false,
+  };
+}
+
+function commandFocusDescriptorForTerminalFocus(
+  command,
+  activeCommand,
+  liveSession,
+  options = {},
+) {
+  if (activeCommand) {
+    return commandFocusDescriptor(command, activeCommand);
+  }
+  if (options.liveSessionRefreshed !== true || !liveSession) {
+    return null;
+  }
+  return commandFocusDescriptorFromLiveSession(command, liveSession);
+}
+
+function commandFocusDescriptorFromLiveSession(command, session) {
+  return {
+    sessionId: session.sessionId || session.id,
+    generation: session.generation || command.commandItemId,
+    origin: "model",
+    threadId: command.threadId,
+    commandItemId: command.commandItemId,
+    processId: session.processId || command.processId || command.commandItemId,
+    title: session.title || command.commandItemId,
+    cwd: session.cwd || "",
+    replayBase64: Buffer.isBuffer(session.replay)
+      ? session.replay.toString("base64")
+      : null,
+    replayTruncated: Boolean(session.replayTruncated),
+    replayThroughSequence: session.lastSequence ?? session.replayThroughSequence ?? 0,
+    canResize: session.canResize !== false,
+    canWrite: session.canWrite !== false,
+    canTerminate: session.canTerminate !== false,
   };
 }
 
@@ -314,6 +373,8 @@ module.exports = {
   activeCommandForTerminalFocus,
   addUserTerminal,
   commandFocusDescriptor,
+  commandFocusDescriptorForTerminalFocus,
+  commandFocusDescriptorFromLiveSession,
   focusCommandTerminal,
   appendTerminalOutput,
   closeTerminalTab,
@@ -321,6 +382,7 @@ module.exports = {
   markRunningTerminalsLost,
   markTerminalExited,
   mergeTerminalSessions,
+  liveCommandSessionForTerminalFocus,
   reattachTerminalSessions,
   isTerminalSessionDetached,
   isRunningCommandStatus,

@@ -5031,6 +5031,83 @@ test("mergeThreadSnapshot clears stale active command state when snapshot has no
   );
 });
 
+test("mergeThreadSnapshot preserves live active command items from thread read", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const existing = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    activeCommandItems: [],
+  } satisfies Thread;
+  const next = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    updatedAt: 2,
+    activeCommandItems: [commandStart],
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, next);
+
+  assert.deepEqual(merged.activeCommandItems, [commandStart]);
+  assert.deepEqual(buildThreadAnalysis(merged, 0).monitors.sections[0]?.monitors, [
+    {
+      id: "cmd-1",
+      subscriptionId: "cmd-1",
+      kind: "command",
+      label: "rtk sleep 100",
+      detail: "/repo",
+      status: "Running",
+      eventCount: 0,
+      latestEvent: null,
+    },
+  ]);
+});
+
+test("upsertThreadMetadataPreservingTurns applies live active command metadata", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const existing = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    turns: [makeTurn("turn-1", [{ type: "userMessage", id: "msg-1", content: [] }])],
+    activeCommandItems: [],
+  } satisfies Thread;
+  const metadata = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    updatedAt: 2,
+    turns: [],
+    activeCommandItems: [commandStart],
+  } satisfies Thread;
+
+  const [merged] = upsertThreadMetadataPreservingTurns([existing], metadata);
+
+  assert.deepEqual(merged?.turns, existing.turns);
+  assert.deepEqual(merged?.activeCommandItems, [commandStart]);
+  assert.deepEqual(
+    buildThreadAnalysis(merged!, 0).monitors.sections[0]?.monitors.map(
+      (monitor) => monitor.label,
+    ),
+    ["rtk sleep 100"],
+  );
+});
+
 test("compact-pruned late command start does not create active command monitor state", () => {
   const compact = {
     ...makeCompactItem("compact-1"),
@@ -5143,8 +5220,8 @@ test("live command delta before start creates one monitor and merges start", () 
       label: "rtk printf hello",
       detail: "/tmp",
       status: "Running",
-      eventCount: 1,
-      latestEvent: "hello",
+      eventCount: 0,
+      latestEvent: null,
     },
   ]);
 });

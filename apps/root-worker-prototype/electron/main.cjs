@@ -116,9 +116,10 @@ const {
   addUserTerminal,
   appendTerminalOutput,
   closeTerminalTab,
-  commandFocusDescriptor,
+  commandFocusDescriptorForTerminalFocus,
   focusCommandTerminal,
   createTerminalPanelState,
+  liveCommandSessionForTerminalFocus,
   markRunningTerminalsLost,
   markTerminalExited,
   mergeTerminalSessions,
@@ -777,15 +778,21 @@ ipcMain.handle("codex:terminal:focusCommand", async (event, command) => {
   }
   const { thread } = await readThread(command.threadId, true);
   const activeCommand = activeCommandForTerminalFocus(thread, command);
-  if (!activeCommand || activeCommand.type !== "commandExecution") {
+  panel.threadId = command.threadId;
+  const refreshed = await refreshTerminalPanelSessions(panel, command.threadId);
+  const liveSession = refreshed
+    ? liveCommandSessionForTerminalFocus(panel.state, command)
+    : null;
+  const focusDescriptor = commandFocusDescriptorForTerminalFocus(
+    command,
+    activeCommand,
+    liveSession,
+    { liveSessionRefreshed: refreshed },
+  );
+  if (!focusDescriptor) {
     throw new Error("Live command is no longer available");
   }
-  panel.threadId = command.threadId;
-  await refreshTerminalPanelSessions(panel, command.threadId);
-  const tab = focusCommandTerminal(
-    panel.state,
-    commandFocusDescriptor(command, activeCommand),
-  );
+  const tab = focusCommandTerminal(panel.state, focusDescriptor);
   panel.error = null;
   sendTerminalPanelState(panel);
   return { state: terminalPanelState(panel), tabId: tab.id };
@@ -1280,10 +1287,12 @@ async function refreshTerminalPanelSessions(panel, threadId = panel.threadId) {
         applyTerminalNotification(panel, notification, false);
       }
       panel.error = null;
+      return true;
     } catch (error) {
       if (panel.threadId === threadId) {
         panel.error = error instanceof Error ? error.message : String(error);
       }
+      return false;
     } finally {
       if (panel.refreshToken === refreshToken) {
         panel.refreshPromise = null;

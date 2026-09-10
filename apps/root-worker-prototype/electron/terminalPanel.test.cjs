@@ -8,8 +8,11 @@ const {
   appendTerminalOutput,
   closeTerminalTab,
   commandFocusDescriptor,
+  commandFocusDescriptorForTerminalFocus,
+  commandFocusDescriptorFromLiveSession,
   createTerminalPanelState,
   focusCommandTerminal,
+  liveCommandSessionForTerminalFocus,
   markTerminalExited,
   mergeTerminalSessions,
   reattachTerminalSessions,
@@ -274,6 +277,171 @@ test("focus descriptor rejects truly stale command items", () => {
       },
       command,
     ),
+    null,
+  );
+});
+
+test("live command session keeps focus available when active snapshot is stale", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        commandItemId: "call",
+        processId: "42",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: "stale-renderer-process",
+  };
+
+  const session = liveCommandSessionForTerminalFocus(state, command);
+  assert.equal(session, state.tabs[0]);
+  assert.deepEqual(
+    commandFocusDescriptorForTerminalFocus(command, null, session, {
+      liveSessionRefreshed: true,
+    }),
+    commandFocusDescriptorFromLiveSession(command, session),
+  );
+  const tab = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromLiveSession(command, session),
+  );
+
+  assert.equal(tab, state.tabs[0]);
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.activeTabId, tab.id);
+  assert.equal(tab.readOnlyOutput, undefined);
+});
+
+test("live command session cannot prove focus when session refresh failed", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(state, [descriptor()], "thread");
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: "42",
+  };
+  const session = liveCommandSessionForTerminalFocus(state, command);
+
+  assert.equal(session, state.tabs[0]);
+  assert.equal(
+    commandFocusDescriptorForTerminalFocus(command, null, session, {
+      liveSessionRefreshed: false,
+    }),
+    null,
+  );
+});
+
+test("active command item proves focus even when session refresh failed", () => {
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: "stale-renderer-process",
+  };
+  const activeCommand = {
+    type: "commandExecution",
+    id: "call",
+    command: "npm test",
+    cwd: "/repo",
+    processId: "runtime-process",
+    status: "running",
+    aggregatedOutput: null,
+  };
+
+  assert.deepEqual(
+    commandFocusDescriptorForTerminalFocus(command, activeCommand, null, {
+      liveSessionRefreshed: false,
+    }),
+    commandFocusDescriptor(command, activeCommand),
+  );
+});
+
+test("live command session can match process id when descriptor lacks command item id", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:missing-id:42",
+        commandItemId: null,
+        processId: "42",
+      }),
+    ],
+    "thread",
+  );
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: "42",
+  };
+
+  const session = liveCommandSessionForTerminalFocus(state, command);
+  assert.equal(session, state.tabs[0]);
+  const tab = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromLiveSession(command, session),
+  );
+
+  assert.equal(tab, state.tabs[0]);
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.activeTabId, tab.id);
+});
+
+test("live command session does not match without command item or process proof", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:missing-id:42",
+        commandItemId: null,
+        processId: "42",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(
+    liveCommandSessionForTerminalFocus(state, {
+      threadId: "thread",
+      commandItemId: "call",
+    }),
+    null,
+  );
+});
+
+test("completed or lost sessions do not bypass stale focus guard", () => {
+  const exitedState = createTerminalPanelState();
+  mergeTerminalSessions(exitedState, [descriptor()], "thread");
+  markTerminalExited(exitedState.tabs[0], 0);
+
+  assert.equal(
+    liveCommandSessionForTerminalFocus(exitedState, {
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+    }),
+    null,
+  );
+
+  const lostState = createTerminalPanelState();
+  mergeTerminalSessions(lostState, [descriptor()], "thread");
+  mergeTerminalSessions(lostState, [], "thread");
+
+  assert.equal(
+    liveCommandSessionForTerminalFocus(lostState, {
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+    }),
     null,
   );
 });
