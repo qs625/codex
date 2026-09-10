@@ -470,6 +470,76 @@ pub fn remove_external_capsule(state_root: &Path, record: &CapsuleRecord) -> Res
             record.root.display()
         )));
     }
+    remove_external_artifact_by_digest(&artifacts, &record.digest)
+}
+
+pub fn gc_unreferenced_external_artifacts(
+    state_root: &Path,
+    protected_digests: &BTreeSet<String>,
+) -> Result<usize> {
+    let artifacts = ensure_real_directory(&state_root.join("artifacts"))?;
+    gc_unreferenced_external_artifacts_in(&artifacts, protected_digests)
+}
+
+fn gc_unreferenced_external_artifacts_in(
+    artifacts: &Path,
+    protected_digests: &BTreeSet<String>,
+) -> Result<usize> {
+    gc_unreferenced_external_artifacts_with(artifacts, protected_digests, |artifacts, digest| {
+        remove_external_artifact_by_digest(artifacts, digest)
+    })
+}
+
+fn gc_unreferenced_external_artifacts_with<F>(
+    artifacts: &Path,
+    protected_digests: &BTreeSet<String>,
+    mut remove: F,
+) -> Result<usize>
+where
+    F: FnMut(&Path, &str) -> Result<bool>,
+{
+    let candidates = unreferenced_artifact_digests(&artifacts, protected_digests)?;
+    let mut removed = 0;
+    for digest in candidates {
+        removed += usize::from(remove(artifacts, &digest)?);
+    }
+    Ok(removed)
+}
+
+fn unreferenced_artifact_digests(
+    artifacts: &Path,
+    protected_digests: &BTreeSet<String>,
+) -> Result<Vec<String>> {
+    let entries = std::fs::read_dir(artifacts)
+        .map_err(|error| io_error(format!("read {}", artifacts.display()), error))?;
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| io_error(format!("read {}", artifacts.display()), error))?;
+        let file_name = entry.file_name();
+        let Some(digest) = file_name.to_str().filter(|name| is_artifact_digest(name)) else {
+            continue;
+        };
+        if protected_digests.contains(digest) {
+            continue;
+        }
+        let metadata = entry
+            .file_type()
+            .map_err(|error| io_error(format!("inspect {}", entry.path().display()), error))?;
+        if metadata.is_dir() && !metadata.is_symlink() {
+            candidates.push(digest.to_string());
+        }
+    }
+    Ok(candidates)
+}
+
+fn remove_external_artifact_by_digest(artifacts: &Path, digest: &str) -> Result<bool> {
+    if !is_artifact_digest(digest) {
+        return Err(LauncherError::Conflict(format!(
+            "external capsule cleanup digest is not content-addressed: {digest:?}"
+        )));
+    }
+    let expected = artifacts.join(digest);
     let metadata = match std::fs::symlink_metadata(&expected) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -485,6 +555,13 @@ pub fn remove_external_capsule(state_root: &Path, record: &CapsuleRecord) -> Res
         .map_err(|error| io_error(format!("remove {}", expected.display()), error))?;
     sync_directory(&artifacts)?;
     Ok(true)
+}
+
+fn is_artifact_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn finish_idempotent_import(
@@ -2416,8 +2493,66 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("launch executable must name a declared executable file")
+            .contains("launch executable must name a declared executable file")
         );
+    }
+
+    #[test]
+    fn gc_retains_protected_generations_and_skips_noncanonical_entries() {
+        let state = tempfile::tempdir().expect("state");
+        let artifacts = state.path().join("artifacts");
+        let protected = "a".repeat(64);
+        let retired = "b".repeat(64);
+        let retained = "c".repeat(64);
+        let symlink_digest = "d".repeat(64);
+        for digest in [&protected, &retired, &retained] {
+            std::fs::create_dir_all(artifacts.join(digest)).expect("artifact");
+        }
+        std::fs::create_dir_all(artifacts.join(".temp").join("in-flight")).expect("temp");
+        std::fs::write(artifacts.join("notes.txt"), "keep").expect("unknown file");
+        #[cfg(unix)]
+        {
+            let outside = state.path().join("outside");
+            std::fs::create_dir_all(&outside).expect("outside");
+            std::os::unix::fs::symlink(&outside, artifacts.join(&symlink_digest))
+                .expect("canonical-name symlink");
+        }
+
+        let protected_digests = BTreeSet::from([protected.clone(), retained.clone()]);
+        assert_eq!(
+            gc_unreferenced_external_artifacts(state.path(), &protected_digests).expect("gc"),
+            1
+        );
+        assert!(artifacts.join(&protected).is_dir());
+        assert!(!artifacts.join(&retired).exists());
+        assert!(artifacts.join(&retained).is_dir());
+        assert!(artifacts.join(".temp/in-flight").is_dir());
+        assert!(artifacts.join("notes.txt").is_file());
+        #[cfg(unix)]
+        assert!(artifacts.join(&symlink_digest).is_symlink());
+    }
+
+    #[test]
+    fn gc_failure_leaves_artifact_for_a_later_retry() {
+        let state = tempfile::tempdir().expect("state");
+        let artifacts = state.path().join("artifacts");
+        let retired = "d".repeat(64);
+        std::fs::create_dir_all(artifacts.join(&retired)).expect("artifact");
+
+        let error = gc_unreferenced_external_artifacts_with(
+            &artifacts,
+            &BTreeSet::new(),
+            |_, _| Err(LauncherError::Launch("simulated cleanup IO failure".to_string())),
+        )
+        .expect_err("cleanup failure");
+        assert!(error.to_string().contains("simulated cleanup IO failure"));
+        assert!(artifacts.join(&retired).is_dir());
+
+        assert_eq!(
+            gc_unreferenced_external_artifacts(state.path(), &BTreeSet::new()).expect("retry gc"),
+            1
+        );
+        assert!(!artifacts.join(retired).exists());
     }
 
     #[cfg(unix)]
