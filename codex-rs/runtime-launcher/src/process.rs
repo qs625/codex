@@ -61,7 +61,7 @@ pub struct ProcessRecord {
 pub struct TerminationTarget {
     pub root: ProcessIdentity,
     pub process_group: ProcessGroupRecord,
-    pub guard: Option<ProcessIdentity>,
+    pub additional_root: Option<ProcessIdentity>,
     pub known_descendants: BTreeSet<ProcessIdentity>,
 }
 
@@ -104,7 +104,10 @@ impl fmt::Display for ProcessCleanupError {
             Self::Blocked(message) => write!(formatter, "process cleanup blocked: {message}"),
             Self::TimedOut(message) => write!(formatter, "process cleanup timed out: {message}"),
             Self::Unsupported(message) => {
-                write!(formatter, "cooperative process cleanup is unsupported: {message}")
+                write!(
+                    formatter,
+                    "cooperative process cleanup is unsupported: {message}"
+                )
             }
         }
     }
@@ -159,10 +162,7 @@ pub fn descendants_of(
     let by_parent = processes.iter().fold(
         BTreeMap::<i32, Vec<&ProcessRecord>>::new(),
         |mut index, process| {
-            index
-                .entry(process.parent_pid)
-                .or_default()
-                .push(process);
+            index.entry(process.parent_pid).or_default().push(process);
             index
         },
     );
@@ -185,6 +185,17 @@ pub fn terminate_and_observe_empty(
     target: &TerminationTarget,
     policy: TerminationPolicy,
 ) -> Result<CooperativeCleanupEvidence, ProcessCleanupError> {
+    terminate_and_observe_empty_with_reporter(target, policy, |_| Ok(()))
+}
+
+pub fn terminate_and_observe_empty_with_reporter<F>(
+    target: &TerminationTarget,
+    policy: TerminationPolicy,
+    mut report_tracked: F,
+) -> Result<CooperativeCleanupEvidence, ProcessCleanupError>
+where
+    F: FnMut(&BTreeSet<ProcessIdentity>) -> Result<(), ProcessCleanupError>,
+{
     target.process_group.require_dedicated()?;
     if target.process_group.leader != target.root {
         return Err(ProcessCleanupError::Blocked(
@@ -195,20 +206,21 @@ pub fn terminate_and_observe_empty(
     let before = snapshot_processes()?;
     let mut tracked = target.known_descendants.clone();
     tracked.insert(target.root);
-    if let Some(guard) = target.guard {
-        tracked.insert(guard);
+    if let Some(additional_root) = target.additional_root {
+        tracked.insert(additional_root);
     }
     extend_observed_descendants(&mut tracked, &before);
+    report_tracked(&tracked)?;
     require_cooperative_group(target, &tracked, &before)?;
 
-    let term_was_sent =
-        signal_supervised_processes(target, &tracked, &before, libc::SIGTERM)?;
+    let term_was_sent = signal_supervised_processes(target, &tracked, &before, libc::SIGTERM)?;
     if wait_for_exit(
         target,
         &mut tracked,
         policy.term_timeout,
         policy.poll_interval,
         libc::SIGTERM,
+        &mut report_tracked,
     )? {
         return Ok(CooperativeCleanupEvidence {
             term_was_sent,
@@ -218,14 +230,17 @@ pub fn terminate_and_observe_empty(
     }
 
     let before_kill = snapshot_processes()?;
-    let kill_was_sent =
-        signal_supervised_processes(target, &tracked, &before_kill, libc::SIGKILL)?;
+    extend_observed_descendants(&mut tracked, &before_kill);
+    report_tracked(&tracked)?;
+    require_cooperative_group(target, &tracked, &before_kill)?;
+    let kill_was_sent = signal_supervised_processes(target, &tracked, &before_kill, libc::SIGKILL)?;
     if wait_for_exit(
         target,
         &mut tracked,
         policy.kill_timeout,
         policy.poll_interval,
         libc::SIGKILL,
+        &mut report_tracked,
     )? {
         return Ok(CooperativeCleanupEvidence {
             term_was_sent,
@@ -299,7 +314,7 @@ pub fn terminate_identity_tree_and_observe_empty(
     loop {
         if Instant::now() >= freeze_deadline {
             return Err(ProcessCleanupError::TimedOut(format!(
-                "guard tree rooted at {}/{} did not converge while freezing descendants",
+                "tracked tree rooted at {}/{} did not converge while freezing descendants",
                 root.pid, root.start_identity
             )));
         }
@@ -332,7 +347,7 @@ pub fn terminate_identity_tree_and_observe_empty(
         }
         if Instant::now() >= deadline {
             return Err(ProcessCleanupError::TimedOut(format!(
-                "guard tree identities still alive after SIGKILL: {survivors:?}"
+                "tracked tree identities still alive after SIGKILL: {survivors:?}"
             )));
         }
         std::thread::sleep(
@@ -359,9 +374,7 @@ fn require_cooperative_group(
         if !tracked.contains(&record.identity) {
             return Err(ProcessCleanupError::Blocked(format!(
                 "pgid {} contains an untracked process {}/{}",
-                target.process_group.pgid,
-                record.identity.pid,
-                record.identity.start_identity
+                target.process_group.pgid, record.identity.pid, record.identity.start_identity
             )));
         }
     }
@@ -384,11 +397,9 @@ fn tracked_identities_requiring_direct_signal(
         .iter()
         .copied()
         .filter(|identity| {
-            process_groups
-                .get(identity)
-                .is_some_and(|pgid| {
-                    !registered_group_is_owned || *pgid != target.process_group.pgid
-                })
+            process_groups.get(identity).is_some_and(|pgid| {
+                !registered_group_is_owned || *pgid != target.process_group.pgid
+            })
         })
         .collect()
 }
@@ -400,8 +411,7 @@ fn signal_supervised_processes(
     signal: i32,
 ) -> io::Result<bool> {
     let registered_group_is_owned = processes.iter().any(|process| {
-        process.identity == target.process_group.leader
-            && process.pgid == target.process_group.pgid
+        process.identity == target.process_group.leader && process.pgid == target.process_group.pgid
     });
     let mut sent = if registered_group_is_owned {
         signal_group(target.process_group.pgid, signal)?
@@ -424,17 +434,22 @@ fn extend_observed_descendants(
     }
 }
 
-fn wait_for_exit(
+fn wait_for_exit<F>(
     target: &TerminationTarget,
     tracked: &mut BTreeSet<ProcessIdentity>,
     timeout: Duration,
     poll_interval: Duration,
     signal: i32,
-) -> Result<bool, ProcessCleanupError> {
+    report_tracked: &mut F,
+) -> Result<bool, ProcessCleanupError>
+where
+    F: FnMut(&BTreeSet<ProcessIdentity>) -> Result<(), ProcessCleanupError>,
+{
     let deadline = Instant::now() + timeout;
     loop {
         let processes = snapshot_processes()?;
         extend_observed_descendants(tracked, &processes);
+        report_tracked(tracked)?;
         require_cooperative_group(target, tracked, &processes)?;
         signal_supervised_processes(target, tracked, &processes, signal)?;
         let group_alive = processes
@@ -495,6 +510,13 @@ fn signal_identity(identity: ProcessIdentity, signal: i32) -> io::Result<bool> {
     } else {
         Err(error)
     }
+}
+
+pub fn signal_identity_if_exact(
+    identity: ProcessIdentity,
+    signal: i32,
+) -> Result<bool, ProcessCleanupError> {
+    Ok(signal_identity(identity, signal)?)
 }
 
 #[cfg(target_os = "linux")]
@@ -752,12 +774,7 @@ mod tests {
     #[test]
     fn descendant_walk_is_transitive_and_excludes_unrelated_processes() {
         let root = record(10, 1).identity;
-        let processes = vec![
-            record(10, 1),
-            record(11, 10),
-            record(12, 11),
-            record(20, 1),
-        ];
+        let processes = vec![record(10, 1), record(11, 10), record(12, 11), record(20, 1)];
         assert_eq!(
             descendants_of(root, &processes),
             BTreeSet::from([record(11, 10).identity, record(12, 11).identity])
@@ -801,7 +818,7 @@ mod tests {
                 leader: root,
                 pgid: 10,
             },
-            guard: None,
+            additional_root: None,
             known_descendants: BTreeSet::from([escaped]),
         };
         let processes = vec![
@@ -817,12 +834,8 @@ mod tests {
             },
         ];
 
-        require_cooperative_group(
-            &target,
-            &BTreeSet::from([root, escaped]),
-            &processes,
-        )
-        .expect("an observed handoff remains safely trackable by identity");
+        require_cooperative_group(&target, &BTreeSet::from([root, escaped]), &processes)
+            .expect("an observed handoff remains safely trackable by identity");
         assert_eq!(
             tracked_identities_requiring_direct_signal(
                 &target,
@@ -842,10 +855,7 @@ mod tests {
             pgid: escaped.pid,
         };
         let mut tracked = BTreeSet::from([root, escaped]);
-        extend_observed_descendants(
-            &mut tracked,
-            &[processes[0], processes[1], late_child],
-        );
+        extend_observed_descendants(&mut tracked, &[processes[0], processes[1], late_child]);
         assert!(tracked.contains(&late_child.identity));
     }
 
@@ -865,7 +875,7 @@ mod tests {
                 leader: root,
                 pgid: root.pid,
             },
-            guard: None,
+            additional_root: None,
             known_descendants: BTreeSet::from([descendant]),
         };
         let processes = [ProcessRecord {
@@ -881,6 +891,49 @@ mod tests {
             ),
             BTreeSet::from([descendant]),
             "a vanished group leader makes the stale PGID ineligible for killpg",
+        );
+    }
+
+    #[test]
+    fn untracked_group_member_blocks_cleanup_before_any_group_signal() {
+        let root = ProcessIdentity {
+            pid: 10,
+            start_identity: 100,
+        };
+        let target = TerminationTarget {
+            root,
+            process_group: ProcessGroupRecord {
+                leader: root,
+                pgid: root.pid,
+            },
+            additional_root: None,
+            known_descendants: BTreeSet::new(),
+        };
+        let untracked = ProcessRecord {
+            identity: ProcessIdentity {
+                pid: 12,
+                start_identity: 120,
+            },
+            parent_pid: 1,
+            pgid: root.pid,
+        };
+        let error = require_cooperative_group(
+            &target,
+            &BTreeSet::from([root]),
+            &[
+                ProcessRecord {
+                    identity: root,
+                    parent_pid: 1,
+                    pgid: root.pid,
+                },
+                untracked,
+            ],
+        )
+        .expect_err("an untracked member makes numeric group signaling unsafe");
+        assert!(
+            error
+                .to_string()
+                .contains("pgid 10 contains an untracked process 12/120")
         );
     }
 }

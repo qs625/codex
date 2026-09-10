@@ -8,23 +8,23 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::fs::File;
-use std::fs::Metadata;
-use std::fs::OpenOptions;
-use std::io::Read;
-use std::path::Component;
-use std::path::Path;
-use std::path::PathBuf;
 #[cfg(unix)]
 use std::ffi::CStr;
 #[cfg(unix)]
 use std::ffi::CString;
+use std::fs::File;
+use std::fs::Metadata;
+use std::fs::OpenOptions;
+use std::io::Read;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::fd::FromRawFd;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+use std::path::Component;
+use std::path::Path;
+use std::path::PathBuf;
 
 const CAPSULE_MANIFEST: &str = "capsule.json";
 const CAPSULE_SCHEMA_VERSION: u32 = 1;
@@ -105,9 +105,7 @@ pub enum CapsuleEntry {
 impl CapsuleEntry {
     pub fn path(&self) -> &str {
         match self {
-            Self::Directory { path }
-            | Self::File { path, .. }
-            | Self::Symlink { path, .. } => path,
+            Self::Directory { path } | Self::File { path, .. } | Self::Symlink { path, .. } => path,
         }
     }
 
@@ -155,7 +153,11 @@ impl ImportRequest {
 pub fn compute_release_preimage(manifest: &CapsuleManifest) -> Result<Vec<u8>> {
     let entries = validate_manifest_structure(manifest, None)?;
     let mut preimage = RELEASE_PREIMAGE_DOMAIN.to_vec();
-    push_frame(&mut preimage, "schema", &manifest.schema_version.to_be_bytes())?;
+    push_frame(
+        &mut preimage,
+        "schema",
+        &manifest.schema_version.to_be_bytes(),
+    )?;
     push_frame(&mut preimage, "target.os", manifest.target.os.as_bytes())?;
     push_frame(
         &mut preimage,
@@ -234,9 +236,7 @@ pub fn compute_release_preimage(manifest: &CapsuleManifest) -> Result<Vec<u8>> {
         match entry {
             CapsuleEntry::Directory { .. } => {}
             CapsuleEntry::File {
-                sha256,
-                executable,
-                ..
+                sha256, executable, ..
             } => {
                 push_frame(
                     &mut preimage,
@@ -263,10 +263,7 @@ pub fn compute_release_preimage(manifest: &CapsuleManifest) -> Result<Vec<u8>> {
 
 pub fn compute_release_id(manifest: &CapsuleManifest) -> Result<String> {
     let preimage = compute_release_preimage(manifest)?;
-    Ok(format!(
-        "{RELEASE_ID_PREFIX}{:x}",
-        Sha256::digest(preimage)
-    ))
+    Ok(format!("{RELEASE_ID_PREFIX}{:x}", Sha256::digest(preimage)))
 }
 
 pub fn load_and_verify_capsule(root: &Path, target: &CapsuleTarget) -> Result<CapsuleRecord> {
@@ -518,9 +515,7 @@ fn finish_idempotent_import(
     target: &CapsuleTarget,
 ) -> Result<CapsuleRecord> {
     let existing = load_and_verify_capsule(destination, target)?;
-    if candidate.release_id != existing.release_id
-        || candidate.digest != existing.digest
-    {
+    if candidate.release_id != existing.release_id || candidate.digest != existing.digest {
         return Err(LauncherError::Conflict(format!(
             "artifact store entry {} does not match the incoming capsule identity",
             destination.display()
@@ -730,9 +725,7 @@ fn validate_filesystem_tree(
                     visit(root, &path, entries, seen)?;
                 }
                 CapsuleEntry::File {
-                    sha256,
-                    executable,
-                    ..
+                    sha256, executable, ..
                 } => {
                     require_regular_file(&path, &metadata, *executable)?;
                     let bytes = read_stable_regular_file(&path, *executable)?;
@@ -839,9 +832,7 @@ fn validate_filesystem_tree_fd_bound(
                     visit(root, &child, &relative, entries, seen)?;
                 }
                 CapsuleEntry::File {
-                    sha256,
-                    executable,
-                    ..
+                    sha256, executable, ..
                 } => {
                     let bytes = read_stable_regular_file_in_directory(
                         directory,
@@ -1204,9 +1195,8 @@ fn push_frame(output: &mut Vec<u8>, tag: &str, value: &[u8]) -> Result<()> {
 }
 
 fn usize_as_u64(value: usize) -> Result<u64> {
-    u64::try_from(value).map_err(|_| {
-        LauncherError::InvalidArtifact("capsule collection is too large".to_string())
-    })
+    u64::try_from(value)
+        .map_err(|_| LauncherError::InvalidArtifact("capsule collection is too large".to_string()))
 }
 
 fn path_to_portable_string(path: &Path) -> Result<String> {
@@ -1509,11 +1499,7 @@ fn verify_symlink_at(
 }
 
 #[cfg(unix)]
-fn symlink_stat_at(
-    directory: &File,
-    name: &CString,
-    display_path: &Path,
-) -> Result<libc::stat> {
+fn symlink_stat_at(directory: &File, name: &CString, display_path: &Path) -> Result<libc::stat> {
     // SAFETY: zero is a valid initial byte representation for stat before fstatat fills it.
     let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
     // SAFETY: directory and name are valid and stat points to writable storage.
@@ -1535,11 +1521,7 @@ fn symlink_stat_at(
 }
 
 #[cfg(target_os = "linux")]
-fn reject_symlink_xattrs_at(
-    directory: &File,
-    name: &CString,
-    display_path: &Path,
-) -> Result<()> {
+fn reject_symlink_xattrs_at(directory: &File, name: &CString, display_path: &Path) -> Result<()> {
     let proc_path = CString::new(format!(
         "/proc/self/fd/{}/{}",
         directory.as_raw_fd(),
@@ -1554,11 +1536,7 @@ fn reject_symlink_xattrs_at(
 }
 
 #[cfg(target_os = "macos")]
-fn reject_symlink_xattrs_at(
-    directory: &File,
-    name: &CString,
-    display_path: &Path,
-) -> Result<()> {
+fn reject_symlink_xattrs_at(directory: &File, name: &CString, display_path: &Path) -> Result<()> {
     // SAFETY: directory and name are valid; the returned descriptor is transferred to File.
     let fd = unsafe {
         libc::openat(
@@ -1856,12 +1834,7 @@ fn reject_path_xattrs(path: &Path) -> Result<()> {
     };
     read_and_reject_macos_xattrs(path, count, |names, size| unsafe {
         // SAFETY: names points to size writable bytes and path_bytes remains NUL-terminated.
-        libc::listxattr(
-            path_bytes.as_ptr(),
-            names,
-            size,
-            libc::XATTR_NOFOLLOW,
-        )
+        libc::listxattr(path_bytes.as_ptr(), names, size, libc::XATTR_NOFOLLOW)
     })
 }
 
@@ -1985,8 +1958,9 @@ fn path_exists_without_following(path: &Path) -> Result<bool> {
 fn rename_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
-    let source = CString::new(source.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "source contains NUL"))?;
+    let source = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "source contains NUL")
+    })?;
     let destination = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "destination contains NUL")
     })?;
@@ -2012,8 +1986,9 @@ fn rename_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
 fn rename_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
-    let source = CString::new(source.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "source contains NUL"))?;
+    let source = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "source contains NUL")
+    })?;
     let destination = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "destination contains NUL")
     })?;
@@ -2119,9 +2094,8 @@ mod tests {
     fn toy_manifest() -> CapsuleManifest {
         CapsuleManifest {
             schema_version: 1,
-            release_id:
-                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                    .to_string(),
+            release_id: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
             target: CapsuleTarget {
                 os: "toy-os".to_string(),
                 arch: "toy-arch".to_string(),
@@ -2146,9 +2120,8 @@ mod tests {
                 },
                 CapsuleEntry::File {
                     path: "bin/runtime".to_string(),
-                    sha256:
-                        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-                            .to_string(),
+                    sha256: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+                        .to_string(),
                     executable: true,
                 },
                 CapsuleEntry::Directory {
@@ -2217,10 +2190,9 @@ mod tests {
     #[test]
     fn legacy_three_behavior_manifest_keeps_its_original_release_identity() {
         let mut legacy = toy_manifest();
-        legacy.process_supervision.prohibited_behaviors =
-            LEGACY_PROHIBITED_PROCESS_BEHAVIORS
-                .map(str::to_string)
-                .to_vec();
+        legacy.process_supervision.prohibited_behaviors = LEGACY_PROHIBITED_PROCESS_BEHAVIORS
+            .map(str::to_string)
+            .to_vec();
         let legacy_release_id = compute_release_id(&legacy).expect("legacy release id");
         validate_manifest_structure(&legacy, None).expect("legacy manifest remains supported");
 
@@ -2241,26 +2213,21 @@ mod tests {
         write_test_capsule(&destination, &target, b"same payload");
         write_test_capsule(&owned, &target, b"same payload");
         let manifest_path = owned.join(CAPSULE_MANIFEST);
-        let mut owned_manifest: CapsuleManifest = serde_json::from_slice(
-            &std::fs::read(&manifest_path).expect("owned manifest"),
-        )
-        .expect("parse owned manifest");
+        let mut owned_manifest: CapsuleManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path).expect("owned manifest"))
+                .expect("parse owned manifest");
         owned_manifest.metadata = serde_json::json!({"sourceCommit": "different"});
         std::fs::write(
             &manifest_path,
             serde_json::to_vec_pretty(&owned_manifest).expect("manifest json"),
         )
         .expect("rewrite metadata");
-        std::fs::set_permissions(
-            &manifest_path,
-            std::fs::Permissions::from_mode(0o644),
-        )
-        .expect("manifest mode");
+        std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o644))
+            .expect("manifest mode");
 
         let candidate = load_and_verify_capsule(&owned, &target).expect("candidate");
-        let existing =
-            finish_idempotent_import(candidate, &owned, &destination, &target)
-                .expect("idempotent import");
+        let existing = finish_idempotent_import(candidate, &owned, &destination, &target)
+            .expect("idempotent import");
         assert_eq!(
             existing.release_id,
             load_and_verify_capsule(&destination, &target)
@@ -2285,8 +2252,7 @@ mod tests {
             sha256: "0".repeat(64),
             executable: false,
         });
-        let error =
-            validate_manifest_structure(&manifest, None).expect_err("nested sidecar");
+        let error = validate_manifest_structure(&manifest, None).expect_err("nested sidecar");
         assert!(
             error
                 .to_string()
@@ -2316,9 +2282,8 @@ mod tests {
             CapsuleEntry::File {
                 path: "Frameworks/Versioned Framework.framework/Versions/A/Resources/Info.plist"
                     .to_string(),
-                sha256:
-                    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-                        .to_string(),
+                sha256: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+                    .to_string(),
                 executable: false,
             },
             CapsuleEntry::Symlink {
@@ -2327,8 +2292,9 @@ mod tests {
             },
             CapsuleEntry::Symlink {
                 path: "framework-resource-leaf".to_string(),
-                target: "Frameworks/Versioned Framework.framework/Versions/Current/Resources/Info.plist"
-                    .to_string(),
+                target:
+                    "Frameworks/Versioned Framework.framework/Versions/Current/Resources/Info.plist"
+                        .to_string(),
             },
         ]);
         let entries = validate_manifest_structure(&manifest, None).expect("manifest");
@@ -2362,9 +2328,8 @@ mod tests {
             },
             CapsuleEntry::File {
                 path: "Framework/Versions/A/Resources/runtime.json".to_string(),
-                sha256:
-                    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-                        .to_string(),
+                sha256: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+                    .to_string(),
                 executable: false,
             },
             CapsuleEntry::Directory {
@@ -2372,9 +2337,8 @@ mod tests {
             },
             CapsuleEntry::File {
                 path: "Framework/Versions/A/Helpers/helper".to_string(),
-                sha256:
-                    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-                        .to_string(),
+                sha256: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+                    .to_string(),
                 executable: true,
             },
             CapsuleEntry::Symlink {
@@ -2578,10 +2542,12 @@ mod tests {
 
         import_incoming(state.path(), "invalid", &target).expect_err("invalid capsule");
         assert!(!state.path().join("artifacts/.temp/invalid").exists());
-        assert!(!state
-            .path()
-            .join("artifacts/.temp/invalid.import.json")
-            .exists());
+        assert!(
+            !state
+                .path()
+                .join("artifacts/.temp/invalid.import.json")
+                .exists()
+        );
     }
 
     #[cfg(unix)]
@@ -2600,9 +2566,8 @@ mod tests {
         let digest = format!("{:x}", Sha256::digest(payload));
         let mut manifest = CapsuleManifest {
             schema_version: 1,
-            release_id:
-                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                    .to_string(),
+            release_id: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
             target: target.clone(),
             launch: CapsuleLaunch {
                 executable: "bin/runtime".to_string(),

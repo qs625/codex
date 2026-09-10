@@ -2,9 +2,9 @@
 
 mod capsule;
 mod control;
-mod guard;
 mod migration;
 mod process;
+mod readiness;
 mod seed;
 mod supervisor;
 
@@ -20,14 +20,13 @@ pub use capsule::compute_release_preimage;
 pub use control::ActivationOutcome;
 pub use control::ActivationPhase;
 pub use control::ActivationReceipt;
-pub use control::BlockedRecord;
 pub use control::CapsuleRef;
 pub use control::ControlState;
 pub use control::FailureProjection;
 pub use control::SelectedRuntime;
 pub use control::TrustedSeed;
-pub use guard::ReadyMarker;
-pub use guard::write_ready_marker;
+pub use readiness::ReadyMarker;
+pub use readiness::write_ready_marker;
 pub use supervisor::LauncherPaths;
 pub use supervisor::PrepareActivationDisposition;
 pub use supervisor::PrepareActivationResult;
@@ -36,7 +35,6 @@ pub use supervisor::Status;
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -75,10 +73,7 @@ pub(crate) fn io_error(context: impl Into<String>, source: std::io::Error) -> La
     }
 }
 
-pub(crate) fn json_error(
-    context: impl Into<String>,
-    source: serde_json::Error,
-) -> LauncherError {
+pub(crate) fn json_error(context: impl Into<String>, source: serde_json::Error) -> LauncherError {
     LauncherError::Json {
         context: context.into(),
         source,
@@ -130,10 +125,6 @@ pub fn request_rollback(paths: &LauncherPaths, request: MutationRequest) -> Resu
     supervisor::request_rollback(paths, request)
 }
 
-pub fn ack_failure(paths: &LauncherPaths, request: MutationRequest) -> Result<ControlState> {
-    supervisor::ack_failure(paths, request)
-}
-
 pub fn status(paths: &LauncherPaths) -> Result<Status> {
     supervisor::status(paths)
 }
@@ -145,14 +136,6 @@ pub fn run(
     launcher_path: &Path,
 ) -> Result<RunOutcome> {
     supervisor::run(paths, outer_bundle, target, launcher_path)
-}
-
-pub fn run_hidden_guard_mode<I>(arguments: I) -> Result<bool>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    guard::guard_hidden_mode_entrypoint(arguments, guard::run_hidden_guard)
-        .map_err(|error| LauncherError::Launch(error.to_string()))
 }
 
 pub fn state_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
@@ -215,8 +198,7 @@ mod tests {
             PathBuf::from("/morpheus/runtime-launcher")
         );
         assert_eq!(
-            resolve_state_root(None, None, None, Some(PathBuf::from("/home")))
-                .expect("user home"),
+            resolve_state_root(None, None, None, Some(PathBuf::from("/home"))).expect("user home"),
             PathBuf::from("/home/.morpheus/runtime-launcher")
         );
     }

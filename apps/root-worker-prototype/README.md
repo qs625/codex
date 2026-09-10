@@ -67,21 +67,32 @@ When a valid source workspace exists, the packaged app maintains
 reminder to run relevant tests before calling `request_runtime_restart`.
 That request has no mode: it builds and signs one complete Runtime Capsule,
 asks the stable Launcher to prepare it, stops the current `app-server`, and
-exits with the coordinated restart code. The Launcher proves the old Runtime
-tree has stopped before selecting and starting the candidate. Runtime Capsule
-v1 is a trusted cooperative supervision contract, not a hostile same-UID
-sandbox: every manifest prohibits daemonizing, double-forking, `setsid`, and
-process-group escape. A process-group handoff by an already-observed descendant
-remains supervised by stable process identity and is not treated as an escape.
+exits with the coordinated restart code. The Launcher directly owns the
+payload child, gives it a dedicated process group, and waits for its exit
+before returning. Candidate activation starts only after the old payload has
+exited. Runtime Capsule v1 is a cooperative best-effort contract, not a hostile
+same-UID sandbox: manifests prohibit daemonizing, double-forking, `setsid`, and
+process-group escape, but the Launcher does not claim kernel-contained proof.
 Capsules produced before this contract extension, which declared the original
 three prohibitions, remain readable with their original release identity so an
 installed `current` or `previous` generation can still recover or roll back.
-The typed completion evidence is `CooperativeObservedEmpty`; any unobserved
-escape, identity mismatch, timeout, ambiguous ownership, or residual process
-durably blocks selection, fallback,
-commit, and further spawn. It does not claim kernel-contained proof for an
-unobserved malicious escape. Readiness or
-observation failure rolls back to the previous external Capsule, or to the
+If a Launcher dies unexpectedly, the next launch uses the last known
+payload PID, start identity, and process group for one best-effort cleanup.
+An identity mismatch is never signalled (protecting against PID reuse) and the
+stale record is discarded so a later restart can proceed. Cleanup failures are
+reported for that attempt, never stored as a permanent restart gate.
+There is one deliberately narrow best-effort residual: if the Launcher is
+SIGKILLed after `spawn()` succeeds but before it can durably record the new
+payload identity, that payload can remain without an exact recovery record.
+The user may close that residual process manually; the Launcher does not add a
+sidecar, parent-death helper, or hidden monitor to eliminate this window.
+Likewise, if a recorded root PID has been reused, the Launcher never signals
+the old PGID because it may now belong to another process; it discards that
+stale record and proceeds. An unidentifiable leftover from that case may also
+need manual closure. If a recorded process group contains an untracked member,
+the Launcher similarly records a warning, releases the stale launch record,
+and permits a later start; it does not signal that group by number.
+Readiness or attributable-worker observation failure rolls back to the previous external Capsule, or to the
 read-only Seed when no previous external Capsule exists. Launcher recovery
 evidence is recorded on the durable `/self` thread before it is acknowledged.
 Preparation failures leave the selected Runtime unchanged.

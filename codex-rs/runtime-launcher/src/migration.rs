@@ -130,9 +130,7 @@ fn migrate_legacy_state_locked(paths: &ControlPaths) -> Result<MigrationOutcome>
     })
 }
 
-fn find_incomplete_journal(
-    paths: &ControlPaths,
-) -> Result<Option<(PathBuf, MigrationJournal)>> {
+fn find_incomplete_journal(paths: &ControlPaths) -> Result<Option<(PathBuf, MigrationJournal)>> {
     let metadata = match std::fs::symlink_metadata(&paths.legacy) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -155,12 +153,13 @@ fn find_incomplete_journal(
     {
         let entry =
             entry.map_err(|error| io_error(format!("read {}", paths.legacy.display()), error))?;
-        let metadata = entry.metadata().map_err(|error| {
-            io_error(format!("inspect {}", entry.path().display()), error)
-        })?;
-        if entry.file_type().map_err(|error| {
-            io_error(format!("inspect {}", entry.path().display()), error)
-        })?.is_symlink()
+        let metadata = entry
+            .metadata()
+            .map_err(|error| io_error(format!("inspect {}", entry.path().display()), error))?;
+        if entry
+            .file_type()
+            .map_err(|error| io_error(format!("inspect {}", entry.path().display()), error))?
+            .is_symlink()
             || !metadata.is_dir()
         {
             return Err(LauncherError::Conflict(format!(
@@ -191,9 +190,9 @@ fn resume_journal(
     journal: &mut MigrationJournal,
 ) -> Result<()> {
     validate_journal(journal)?;
-    let migration_dir = journal_path.parent().ok_or_else(|| {
-        LauncherError::Conflict("migration journal has no parent".to_string())
-    })?;
+    let migration_dir = journal_path
+        .parent()
+        .ok_or_else(|| LauncherError::Conflict("migration journal has no parent".to_string()))?;
     let payload_dir = migration_dir.join(MIGRATION_PAYLOAD_DIR);
     ensure_real_directory(migration_dir)?;
     ensure_real_directory(&payload_dir)?;
@@ -201,11 +200,7 @@ fn resume_journal(
         let child = journal.items[index].child.clone();
         let source = paths.root.join(&child);
         let destination = payload_dir.join(&child);
-        reconcile_item(
-            &source,
-            &destination,
-            journal.items[index].status,
-        )?;
+        reconcile_item(&source, &destination, journal.items[index].status)?;
         if journal.items[index].status != MigrationItemStatus::MovedDurable {
             journal.items[index].status = MigrationItemStatus::MovedDurable;
             write_json_atomic(journal_path, journal)?;
@@ -215,11 +210,7 @@ fn resume_journal(
     write_json_atomic(journal_path, journal)
 }
 
-fn reconcile_item(
-    source: &Path,
-    destination: &Path,
-    status: MigrationItemStatus,
-) -> Result<()> {
+fn reconcile_item(source: &Path, destination: &Path, status: MigrationItemStatus) -> Result<()> {
     let source_exists = path_exists(source)?;
     let destination_exists = path_exists(destination)?;
     match (source_exists, destination_exists) {
@@ -250,9 +241,7 @@ fn read_legacy_schema(value: &serde_json::Value) -> Result<u32> {
         .and_then(serde_json::Value::as_u64)
         .and_then(|version| u32::try_from(version).ok())
         .ok_or_else(|| {
-            LauncherError::Conflict(
-                "legacy launcher state has no valid schemaVersion".to_string(),
-            )
+            LauncherError::Conflict("legacy launcher state has no valid schemaVersion".to_string())
         })?;
     if LEGACY_LAUNCHER_SCHEMA_VERSIONS.contains(&schema) {
         return Ok(schema);
@@ -385,13 +374,12 @@ fn rename_no_replace(source: &Path, destination: &Path) -> Result<()> {
     let source_c = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
         LauncherError::Conflict(format!("source path contains NUL: {}", source.display()))
     })?;
-    let destination_c =
-        CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
-            LauncherError::Conflict(format!(
-                "destination path contains NUL: {}",
-                destination.display()
-            ))
-        })?;
+    let destination_c = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        LauncherError::Conflict(format!(
+            "destination path contains NUL: {}",
+            destination.display()
+        ))
+    })?;
     let result = unsafe {
         libc::renameat2(
             libc::AT_FDCWD,
@@ -421,20 +409,14 @@ fn rename_no_replace(source: &Path, destination: &Path) -> Result<()> {
     let source_c = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
         LauncherError::Conflict(format!("source path contains NUL: {}", source.display()))
     })?;
-    let destination_c =
-        CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
-            LauncherError::Conflict(format!(
-                "destination path contains NUL: {}",
-                destination.display()
-            ))
-        })?;
-    let result = unsafe {
-        libc::renamex_np(
-            source_c.as_ptr(),
-            destination_c.as_ptr(),
-            libc::RENAME_EXCL,
-        )
-    };
+    let destination_c = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        LauncherError::Conflict(format!(
+            "destination path contains NUL: {}",
+            destination.display()
+        ))
+    })?;
+    let result =
+        unsafe { libc::renamex_np(source_c.as_ptr(), destination_c.as_ptr(), libc::RENAME_EXCL) };
     if result == 0 {
         Ok(())
     } else {
@@ -464,13 +446,7 @@ fn rename_no_replace(source: &Path, destination: &Path) -> Result<()> {
     source_wide.push(0);
     let mut destination_wide = destination.as_os_str().encode_wide().collect::<Vec<_>>();
     destination_wide.push(0);
-    let result = unsafe {
-        MoveFileExW(
-            source_wide.as_ptr(),
-            destination_wide.as_ptr(),
-            0,
-        )
-    };
+    let result = unsafe { MoveFileExW(source_wide.as_ptr(), destination_wide.as_ptr(), 0) };
     if result != 0 {
         Ok(())
     } else {
@@ -570,8 +546,7 @@ mod tests {
         let destination = temp.path().join("destination");
 
         std::fs::write(&source, b"source").expect("source");
-        reconcile_item(&source, &destination, MigrationItemStatus::Planned)
-            .expect("source only");
+        reconcile_item(&source, &destination, MigrationItemStatus::Planned).expect("source only");
         assert!(!source.exists());
         assert!(destination.exists());
 
@@ -579,22 +554,14 @@ mod tests {
             .expect("destination only");
 
         std::fs::write(&source, b"collision").expect("collision");
-        let both = reconcile_item(
-            &source,
-            &destination,
-            MigrationItemStatus::Planned,
-        )
-        .expect_err("both exist");
+        let both = reconcile_item(&source, &destination, MigrationItemStatus::Planned)
+            .expect_err("both exist");
         assert!(both.to_string().contains("collision"));
 
         std::fs::remove_file(&source).expect("remove source");
         std::fs::remove_file(&destination).expect("remove destination");
-        let neither = reconcile_item(
-            &source,
-            &destination,
-            MigrationItemStatus::Planned,
-        )
-        .expect_err("neither exists");
+        let neither = reconcile_item(&source, &destination, MigrationItemStatus::Planned)
+            .expect_err("neither exists");
         assert!(neither.to_string().contains("lost"));
     }
 
@@ -604,20 +571,12 @@ mod tests {
         let source = temp.path().join("source");
         let destination = temp.path().join("destination");
         std::fs::write(&destination, b"destination").expect("destination");
-        reconcile_item(
-            &source,
-            &destination,
-            MigrationItemStatus::MovedDurable,
-        )
-        .expect("durable destination");
+        reconcile_item(&source, &destination, MigrationItemStatus::MovedDurable)
+            .expect("durable destination");
 
         std::fs::write(&source, b"source").expect("source");
-        let both = reconcile_item(
-            &source,
-            &destination,
-            MigrationItemStatus::MovedDurable,
-        )
-        .expect_err("both");
+        let both = reconcile_item(&source, &destination, MigrationItemStatus::MovedDurable)
+            .expect_err("both");
         assert!(both.to_string().contains("collision"));
     }
 
@@ -643,10 +602,7 @@ mod tests {
             .expect("load journal")
             .expect("journal");
         assert_eq!(completed.status, MigrationStatus::Complete);
-        assert_eq!(
-            completed.items[0].status,
-            MigrationItemStatus::MovedDurable
-        );
+        assert_eq!(completed.items[0].status, MigrationItemStatus::MovedDurable);
     }
 
     #[test]
@@ -672,18 +628,20 @@ mod tests {
         std::fs::create_dir_all(&outside).expect("outside");
         write_legacy_state(&paths, 2);
         std::fs::create_dir_all(&paths.legacy).expect("legacy");
-        std::os::unix::fs::symlink(
-            &outside,
-            paths.legacy.join("launcher-state-v2"),
-        )
-        .expect("migration symlink");
+        std::os::unix::fs::symlink(&outside, paths.legacy.join("launcher-state-v2"))
+            .expect("migration symlink");
 
         let error = migrate_legacy_state(&paths).expect_err("symlink rejected");
         assert!(
             error.to_string().contains("create new")
                 || error.to_string().contains("not a real directory")
         );
-        assert!(std::fs::read_dir(&outside).expect("outside listing").next().is_none());
+        assert!(
+            std::fs::read_dir(&outside)
+                .expect("outside listing")
+                .next()
+                .is_none()
+        );
         assert!(paths.root.join("state.json").exists());
     }
 }

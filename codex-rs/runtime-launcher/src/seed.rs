@@ -10,7 +10,10 @@ use std::path::Path;
 
 pub const SEED_RELATIVE_PATH: &str = "Contents/Resources/seed-capsule";
 
-pub fn discover_seed(outer_bundle: &Path, target: &CapsuleTarget) -> Result<(TrustedSeed, CapsuleRecord)> {
+pub fn discover_seed(
+    outer_bundle: &Path,
+    target: &CapsuleTarget,
+) -> Result<(TrustedSeed, CapsuleRecord)> {
     let expected_release = option_env!("RUNTIME_CAPSULE_SEED_RELEASE_ID").ok_or_else(|| {
         LauncherError::Conflict(
             "RUNTIME_CAPSULE_SEED_RELEASE_ID was not embedded at build time".to_string(),
@@ -87,9 +90,7 @@ fn verify_outer_bundle(path: &Path) -> Result<()> {
         .lines()
         .find_map(|line| line.strip_prefix("Identifier="))
         .ok_or_else(|| {
-            LauncherError::InvalidArtifact(
-                "outer bundle signature has no Identifier".to_string(),
-            )
+            LauncherError::InvalidArtifact("outer bundle signature has no Identifier".to_string())
         })?;
     if actual != expected_identifier {
         return Err(LauncherError::InvalidArtifact(format!(

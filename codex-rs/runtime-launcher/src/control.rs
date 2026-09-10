@@ -1,12 +1,10 @@
 use crate::LauncherError;
 use crate::Result;
-use crate::guard::GuardRegistration;
-use crate::guard::PayloadRegistration;
-use crate::guard::ReadyExpectation;
-use crate::guard::StartAuthorization;
 use crate::io_error;
 use crate::json_error;
+use crate::process::ProcessGroupRecord;
 use crate::process::ProcessIdentity;
+use crate::readiness::ReadyExpectation;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -17,7 +15,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-pub const CONTROL_SCHEMA_VERSION: u32 = 1;
+pub const CONTROL_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug)]
 pub struct ControlPaths {
@@ -92,8 +90,6 @@ pub enum ActivationPhase {
     StoppingOld,
     OldStopped,
     SpawnPlanned,
-    GuardRegistered,
-    StartAuthorized,
     RuntimeStarted,
     AwaitingReady,
     Observing,
@@ -106,9 +102,18 @@ pub enum ActivationPhase {
     Restoring,
     EvidencePending,
     EvidenceCleanup,
-    Blocked,
     #[default]
     Idle,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PayloadRegistration {
+    pub release_id: String,
+    pub launch_instance_id: String,
+    pub spawn_attempt_id: String,
+    pub payload: ProcessIdentity,
+    pub process_group: ProcessGroupRecord,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -127,11 +132,7 @@ pub struct AttemptRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn_attempt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub guard_registration: Option<GuardRegistration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_registration: Option<PayloadRegistration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_authorization: Option<StartAuthorization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_expectation: Option<ReadyExpectation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -164,7 +165,6 @@ pub struct CleanupRecord {
 pub enum ActivationOutcome {
     Committed,
     RolledBack,
-    Blocked,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -199,19 +199,10 @@ pub struct FailureProjection {
     pub details: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BlockedRecord {
-    pub since_unix_ms: u64,
-    pub failure: FailureProjection,
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActiveLaunchPhase {
     SpawnPlanned,
-    GuardRegistered,
-    StartAuthorized,
     Running,
 }
 
@@ -223,13 +214,11 @@ pub struct ActiveLaunchRecord {
     pub spawn_attempt_id: String,
     pub phase: ActiveLaunchPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub guard_registration: Option<GuardRegistration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_registration: Option<PayloadRegistration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_authorization: Option<StartAuthorization>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_expectation: Option<ReadyExpectation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_descendants: Vec<ProcessIdentity>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -244,8 +233,6 @@ pub struct ActivationRecord {
     pub cleanup: CleanupRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<ActivationReceipt>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocked: Option<BlockedRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -315,7 +302,10 @@ impl ControlState {
         if let Some(previous) = &self.external_previous {
             validate_capsule("external previous", previous)?;
         }
-        if self.external_current.as_ref().map(|capsule| &capsule.release_id)
+        if self
+            .external_current
+            .as_ref()
+            .map(|capsule| &capsule.release_id)
             == self
                 .external_previous
                 .as_ref()
@@ -349,34 +339,13 @@ impl ControlState {
         if let Some(active_launch) = &self.active_launch {
             validate_active_launch(active_launch)?;
         }
-        if self.activation.phase == ActivationPhase::Blocked
-            && self.activation.blocked.is_none()
-        {
-            return Err(LauncherError::Conflict(
-                "blocked activation phase requires blocked evidence".to_string(),
-            ));
-        }
-        if self.activation.phase != ActivationPhase::Blocked
-            && self.activation.blocked.is_some()
-        {
-            return Err(LauncherError::Conflict(
-                "blocked evidence requires blocked activation phase".to_string(),
-            ));
-        }
-        if let Some(blocked) = &self.activation.blocked {
-            validate_failure_projection(
-                &blocked.failure,
-                self.activation.attempt.as_ref(),
-            )?;
-        }
         self.validate_activation()?;
         Ok(())
     }
 
     fn validate_activation(&self) -> Result<()> {
         let activation = &self.activation;
-        let attempt_required =
-            !matches!(activation.phase, ActivationPhase::Idle | ActivationPhase::Blocked);
+        let attempt_required = activation.phase != ActivationPhase::Idle;
         if attempt_required && activation.attempt.is_none() {
             return Err(LauncherError::Conflict(format!(
                 "activation phase {:?} requires an activation attempt",
@@ -407,8 +376,6 @@ impl ControlState {
                 | ActivationPhase::StoppingOld
                 | ActivationPhase::OldStopped
                 | ActivationPhase::SpawnPlanned
-                | ActivationPhase::GuardRegistered
-                | ActivationPhase::StartAuthorized
                 | ActivationPhase::RuntimeStarted
                 | ActivationPhase::AwaitingReady
                 | ActivationPhase::Observing
@@ -441,8 +408,6 @@ impl ControlState {
                 | ActivationPhase::StoppingOld
                 | ActivationPhase::OldStopped
                 | ActivationPhase::SpawnPlanned
-                | ActivationPhase::GuardRegistered
-                | ActivationPhase::StartAuthorized
                 | ActivationPhase::RuntimeStarted
                 | ActivationPhase::AwaitingReady
                 | ActivationPhase::Observing
@@ -479,13 +444,8 @@ impl ControlState {
             ActivationPhase::SpawnPlanned => {
                 require_attempt_fact_level(attempt, AttemptFactLevel::SpawnPlanned)?;
             }
-            ActivationPhase::GuardRegistered => {
-                require_attempt_fact_level(attempt, AttemptFactLevel::GuardRegistered)?;
-            }
-            ActivationPhase::StartAuthorized
-            | ActivationPhase::RuntimeStarted
-            | ActivationPhase::AwaitingReady => {
-                require_attempt_fact_level(attempt, AttemptFactLevel::StartAuthorized)?;
+            ActivationPhase::RuntimeStarted | ActivationPhase::AwaitingReady => {
+                require_attempt_fact_level(attempt, AttemptFactLevel::PayloadRegistered)?;
             }
             ActivationPhase::Observing
             | ActivationPhase::CommitDecided
@@ -499,7 +459,6 @@ impl ControlState {
             | ActivationPhase::Restoring
             | ActivationPhase::EvidencePending
             | ActivationPhase::EvidenceCleanup => {}
-            ActivationPhase::Blocked => {}
             ActivationPhase::Idle => unreachable!(),
         }
 
@@ -538,14 +497,10 @@ impl ControlState {
             let expected_outcome = match activation.phase {
                 ActivationPhase::CommitDecided
                 | ActivationPhase::CommitRelaunch
-                | ActivationPhase::CommitCleanup => {
-                    ActivationOutcome::Committed
-                }
+                | ActivationPhase::CommitCleanup => ActivationOutcome::Committed,
                 ActivationPhase::Restoring
                 | ActivationPhase::EvidencePending
-                | ActivationPhase::EvidenceCleanup => {
-                    ActivationOutcome::RolledBack
-                }
+                | ActivationPhase::EvidenceCleanup => ActivationOutcome::RolledBack,
                 _ => receipt.outcome,
             };
             if receipt.outcome != expected_outcome {
@@ -598,8 +553,7 @@ fn validate_cleanup_disjoint(state: &ControlState) -> Result<()> {
 enum AttemptFactLevel {
     Prepared,
     SpawnPlanned,
-    GuardRegistered,
-    StartAuthorized,
+    PayloadRegistered,
     Observing,
 }
 
@@ -614,26 +568,11 @@ fn validate_attempt_facts(attempt: &AttemptRecord) -> Result<()> {
             "launchInstanceId and spawnAttemptId must appear together".to_string(),
         ));
     }
-    if attempt.guard_registration.is_some()
+    if attempt.payload_registration.is_some()
         && (attempt.launch_instance_id.is_none() || attempt.spawn_attempt_id.is_none())
     {
         return Err(LauncherError::Conflict(
-            "guard registration requires launch and spawn identities".to_string(),
-        ));
-    }
-    if attempt.payload_registration.is_some() && attempt.guard_registration.is_none() {
-        return Err(LauncherError::Conflict(
-            "payload registration requires a guard registration".to_string(),
-        ));
-    }
-    if attempt.start_authorization.is_some() && attempt.payload_registration.is_none() {
-        return Err(LauncherError::Conflict(
-            "StartAuthorized requires a payload registration".to_string(),
-        ));
-    }
-    if attempt.ready_expectation.is_some() && attempt.start_authorization.is_none() {
-        return Err(LauncherError::Conflict(
-            "ready expectation requires StartAuthorized".to_string(),
+            "payload registration requires launch and spawn identities".to_string(),
         ));
     }
     if attempt.observation_deadline_unix_ms.is_some() && attempt.ready_expectation.is_none() {
@@ -671,46 +610,24 @@ fn validate_attempt_facts(attempt: &AttemptRecord) -> Result<()> {
 
     let launch_instance_id = attempt.launch_instance_id.as_deref();
     let spawn_attempt_id = attempt.spawn_attempt_id.as_deref();
-    if let Some(guard) = &attempt.guard_registration {
-        guard
-            .validate()
-            .map_err(|error| LauncherError::Conflict(error.to_string()))?;
-        if guard.release_id != attempt.candidate.release_id
-            || Some(guard.launch_instance_id.as_str()) != launch_instance_id
-            || Some(guard.spawn_attempt_id.as_str()) != spawn_attempt_id
-        {
-            return Err(LauncherError::Conflict(
-                "guard registration does not match its activation attempt".to_string(),
-            ));
-        }
-    }
     if let Some(payload) = &attempt.payload_registration {
-        let guard = attempt.guard_registration.as_ref().expect("checked above");
         if payload.release_id != attempt.candidate.release_id
             || Some(payload.launch_instance_id.as_str()) != launch_instance_id
             || Some(payload.spawn_attempt_id.as_str()) != spawn_attempt_id
             || payload.process_group.leader != payload.payload
             || payload.process_group.pgid != payload.payload.pid
-            || payload.guard_registration_digest
-                != guard
-                    .digest()
-                    .map_err(|error| LauncherError::Conflict(error.to_string()))?
         {
             return Err(LauncherError::Conflict(
                 "payload registration does not match its activation attempt".to_string(),
             ));
         }
     }
-    if let Some(authorization) = &attempt.start_authorization {
-        let payload = attempt.payload_registration.as_ref().expect("checked above");
-        authorization
-            .validate(payload)
-            .map_err(|error| LauncherError::Conflict(error.to_string()))?;
-    }
     if let Some(expectation) = &attempt.ready_expectation {
-        let payload = attempt.payload_registration.as_ref().expect("checked above");
-        if expectation.protocol_version != crate::guard::GUARD_PROTOCOL_VERSION
-            || expectation.release_id != attempt.candidate.release_id
+        let payload = attempt
+            .payload_registration
+            .as_ref()
+            .expect("checked above");
+        if expectation.release_id != attempt.candidate.release_id
             || Some(expectation.launch_instance_id.as_str()) != launch_instance_id
             || Some(expectation.spawn_attempt_id.as_str()) != spawn_attempt_id
             || expectation.payload != payload.payload
@@ -759,8 +676,7 @@ fn validate_failure_projection(
         && fallback_release_id != &fallback.capsule().release_id
     {
         return Err(LauncherError::Conflict(
-            "failure projection fallbackReleaseId does not match fallback runtime"
-                .to_string(),
+            "failure projection fallbackReleaseId does not match fallback runtime".to_string(),
         ));
     }
     Ok(())
@@ -773,17 +689,12 @@ fn validate_active_launch(active: &ActiveLaunchRecord) -> Result<()> {
         ));
     }
     let facts = (
-        active.guard_registration.is_some(),
         active.payload_registration.is_some(),
-        active.start_authorization.is_some(),
         active.ready_expectation.is_some(),
     );
     let expected = match active.phase {
-        ActiveLaunchPhase::SpawnPlanned => (false, false, false, false),
-        ActiveLaunchPhase::GuardRegistered => (true, false, false, false),
-        ActiveLaunchPhase::StartAuthorized | ActiveLaunchPhase::Running => {
-            (true, true, true, true)
-        }
+        ActiveLaunchPhase::SpawnPlanned => (false, false),
+        ActiveLaunchPhase::Running => (true, true),
     };
     if facts != expected {
         return Err(LauncherError::Conflict(format!(
@@ -791,45 +702,26 @@ fn validate_active_launch(active: &ActiveLaunchRecord) -> Result<()> {
             active.phase, expected, facts
         )));
     }
-    if let Some(guard) = &active.guard_registration {
-        guard
-            .validate()
-            .map_err(|error| LauncherError::Conflict(error.to_string()))?;
-        if guard.release_id != active.selected.capsule().release_id
-            || guard.launch_instance_id != active.launch_instance_id
-            || guard.spawn_attempt_id != active.spawn_attempt_id
-        {
-            return Err(LauncherError::Conflict(
-                "active launch guard registration does not match selection".to_string(),
-            ));
-        }
+    if active.phase == ActiveLaunchPhase::SpawnPlanned && !active.known_descendants.is_empty() {
+        return Err(LauncherError::Conflict(
+            "a spawn-planned launch must not retain observed descendants".to_string(),
+        ));
     }
     if let Some(payload) = &active.payload_registration {
-        let guard = active.guard_registration.as_ref().expect("fact prefix checked");
-        if payload.release_id != guard.release_id
-            || payload.launch_instance_id != guard.launch_instance_id
-            || payload.spawn_attempt_id != guard.spawn_attempt_id
+        if payload.release_id != active.selected.capsule().release_id
+            || payload.launch_instance_id != active.launch_instance_id
+            || payload.spawn_attempt_id != active.spawn_attempt_id
             || payload.process_group.leader != payload.payload
             || payload.process_group.pgid != payload.payload.pid
-            || payload.guard_registration_digest
-                != guard
-                    .digest()
-                    .map_err(|error| LauncherError::Conflict(error.to_string()))?
+            || active
+                .known_descendants
+                .iter()
+                .any(|identity| *identity == payload.payload)
         {
             return Err(LauncherError::Conflict(
-                "active launch payload registration does not match guard".to_string(),
+                "active launch payload registration does not match selection".to_string(),
             ));
         }
-    }
-    if let Some(authorization) = &active.start_authorization {
-        authorization
-            .validate(
-                active
-                    .payload_registration
-                    .as_ref()
-                    .expect("fact prefix checked"),
-            )
-            .map_err(|error| LauncherError::Conflict(error.to_string()))?;
     }
     if let Some(expectation) = &active.ready_expectation {
         let payload = active
@@ -851,17 +743,15 @@ fn validate_active_launch(active: &ActiveLaunchRecord) -> Result<()> {
 
 fn require_attempt_fact_level(attempt: &AttemptRecord, level: AttemptFactLevel) -> Result<()> {
     let expected = match level {
-        AttemptFactLevel::Prepared => (false, false, false, false, false),
-        AttemptFactLevel::SpawnPlanned => (true, false, false, false, false),
-        AttemptFactLevel::GuardRegistered => (true, true, false, false, false),
-        AttemptFactLevel::StartAuthorized => (true, true, true, true, false),
-        AttemptFactLevel::Observing => (true, true, true, true, true),
+        AttemptFactLevel::Prepared => (false, false, false, false),
+        AttemptFactLevel::SpawnPlanned => (true, false, false, false),
+        AttemptFactLevel::PayloadRegistered => (true, true, true, false),
+        AttemptFactLevel::Observing => (true, true, true, true),
     };
     let actual = (
         attempt.launch_instance_id.is_some(),
-        attempt.guard_registration.is_some(),
         attempt.payload_registration.is_some(),
-        attempt.start_authorization.is_some() && attempt.ready_expectation.is_some(),
+        attempt.ready_expectation.is_some(),
         attempt.observation_deadline_unix_ms.is_some(),
     );
     if actual != expected {
@@ -891,9 +781,7 @@ impl StateLock {
                 .write(true)
                 .create(true)
                 .open(&paths.state_lock)
-                .map_err(|error| {
-                    io_error(format!("open {}", paths.state_lock.display()), error)
-                })?;
+                .map_err(|error| io_error(format!("open {}", paths.state_lock.display()), error))?;
             let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
             if result != 0 {
                 return Err(io_error(
@@ -909,11 +797,9 @@ impl StateLock {
                 Ok(()) => Ok(Self {
                     path: paths.state_lock.clone(),
                 }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    Err(LauncherError::Conflict(
-                        "another control state mutation is active".to_string(),
-                    ))
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(
+                    LauncherError::Conflict("another control state mutation is active".to_string()),
+                ),
                 Err(error) => Err(io_error(
                     format!("create {}", paths.state_lock.display()),
                     error,
@@ -937,16 +823,14 @@ pub struct ExecutorEpoch {
 }
 
 impl ExecutorEpoch {
-    pub fn acquire_and_bump_epoch(
-        paths: &ControlPaths,
-        trusted_seed: TrustedSeed,
-    ) -> Result<Self> {
+    pub fn acquire_and_bump_epoch(paths: &ControlPaths, trusted_seed: TrustedSeed) -> Result<Self> {
         let _lock = StateLock::acquire(paths)?;
-        let mut state = load_unlocked(paths)?
-            .unwrap_or_else(|| ControlState::initialize(trusted_seed));
-        state.executor_epoch = state.executor_epoch.checked_add(1).ok_or_else(|| {
-            LauncherError::Conflict("executor epoch exhausted".to_string())
-        })?;
+        let mut state =
+            load_unlocked(paths)?.unwrap_or_else(|| ControlState::initialize(trusted_seed));
+        state.executor_epoch = state
+            .executor_epoch
+            .checked_add(1)
+            .ok_or_else(|| LauncherError::Conflict("executor epoch exhausted".to_string()))?;
         state.revision = state
             .revision
             .checked_add(1)
@@ -970,9 +854,8 @@ where
     F: FnOnce(&mut ControlState) -> Result<()>,
 {
     let _lock = StateLock::acquire(paths)?;
-    let mut state = load_unlocked(paths)?.ok_or_else(|| {
-        LauncherError::Conflict("control state is not initialized".to_string())
-    })?;
+    let mut state = load_unlocked(paths)?
+        .ok_or_else(|| LauncherError::Conflict("control state is not initialized".to_string()))?;
     if state.revision != expected_revision || state.executor_epoch != expected_epoch {
         return Err(LauncherError::Conflict(format!(
             "control CAS mismatch: expected revision {expected_revision} epoch \
@@ -1001,7 +884,7 @@ where
 }
 
 fn load_unlocked(paths: &ControlPaths) -> Result<Option<ControlState>> {
-    let Some(value) = read_json_if_exists::<serde_json::Value>(&paths.control)? else {
+    let Some(mut value) = read_json_if_exists::<serde_json::Value>(&paths.control)? else {
         return Ok(None);
     };
     let schema_version = value
@@ -1011,7 +894,9 @@ fn load_unlocked(paths: &ControlPaths) -> Result<Option<ControlState>> {
         .ok_or_else(|| {
             LauncherError::Conflict("control state has no valid schemaVersion".to_string())
         })?;
-    if schema_version != CONTROL_SCHEMA_VERSION {
+    if schema_version == 1 {
+        migrate_guard_control_shape(&mut value);
+    } else if schema_version != CONTROL_SCHEMA_VERSION {
         return Err(LauncherError::Conflict(format!(
             "unsupported control schema {schema_version}"
         )));
@@ -1020,6 +905,87 @@ fn load_unlocked(paths: &ControlPaths) -> Result<Option<ControlState>> {
         .map_err(|error| json_error(format!("parse {}", paths.control.display()), error))?;
     state.validate()?;
     Ok(Some(state))
+}
+
+fn migrate_guard_control_shape(value: &mut serde_json::Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+    root.insert(
+        "schemaVersion".to_string(),
+        serde_json::Value::from(CONTROL_SCHEMA_VERSION),
+    );
+    if let Some(active) = root
+        .get_mut("activeLaunch")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        active.remove("guardRegistration");
+        active.remove("startAuthorization");
+        if active.get("phase").and_then(serde_json::Value::as_str) == Some("guard_registered") {
+            active.insert(
+                "phase".to_string(),
+                serde_json::Value::from("spawn_planned"),
+            );
+        } else if active.get("phase").and_then(serde_json::Value::as_str)
+            == Some("start_authorized")
+        {
+            active.insert("phase".to_string(), serde_json::Value::from("running"));
+        }
+        if let Some(payload) = active
+            .get_mut("payloadRegistration")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.remove("protocolVersion");
+            payload.remove("guardRegistrationDigest");
+        }
+    }
+    if let Some(activation) = root
+        .get_mut("activation")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        activation.remove("blocked");
+        if activation.get("phase").and_then(serde_json::Value::as_str) == Some("blocked") {
+            activation.insert("phase".to_string(), serde_json::Value::from("idle"));
+            activation.remove("attempt");
+            if let Some(receipt) = activation
+                .get_mut("receipt")
+                .and_then(serde_json::Value::as_object_mut)
+                && receipt.get("outcome").and_then(serde_json::Value::as_str) == Some("blocked")
+            {
+                receipt.insert(
+                    "outcome".to_string(),
+                    serde_json::Value::from("rolled_back"),
+                );
+            }
+        }
+        if let Some(attempt) = activation
+            .get_mut("attempt")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            attempt.remove("guardRegistration");
+            attempt.remove("startAuthorization");
+            if let Some(payload) = attempt
+                .get_mut("payloadRegistration")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                payload.remove("protocolVersion");
+                payload.remove("guardRegistrationDigest");
+            }
+        }
+        if activation.get("phase").and_then(serde_json::Value::as_str) == Some("guard_registered") {
+            activation.insert(
+                "phase".to_string(),
+                serde_json::Value::from("spawn_planned"),
+            );
+        } else if activation.get("phase").and_then(serde_json::Value::as_str)
+            == Some("start_authorized")
+        {
+            activation.insert(
+                "phase".to_string(),
+                serde_json::Value::from("runtime_started"),
+            );
+        }
+    }
 }
 
 fn validate_capsule(label: &str, capsule: &CapsuleRef) -> Result<()> {
@@ -1061,8 +1027,8 @@ pub(crate) fn read_json_if_exists<T: serde::de::DeserializeOwned>(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(io_error(format!("inspect {}", path.display()), error)),
     }
-    let bytes = std::fs::read(path)
-        .map_err(|error| io_error(format!("read {}", path.display()), error))?;
+    let bytes =
+        std::fs::read(path).map_err(|error| io_error(format!("read {}", path.display()), error))?;
     serde_json::from_slice(&bytes)
         .map(Some)
         .map_err(|error| json_error(format!("parse {}", path.display()), error))
@@ -1074,18 +1040,17 @@ pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<
     })?;
     std::fs::create_dir_all(parent)
         .map_err(|error| io_error(format!("create {}", parent.display()), error))?;
-    let file_name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
-        LauncherError::InvalidRequest(format!("invalid control path {}", path.display()))
-    })?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            LauncherError::InvalidRequest(format!("invalid control path {}", path.display()))
+        })?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let temporary = parent.join(format!(
-        ".{file_name}.{}.{}.tmp",
-        std::process::id(),
-        nonce
-    ));
+    let temporary = parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), nonce));
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| json_error("serialize control state", error))?;
     let mut options = std::fs::OpenOptions::new();
@@ -1120,7 +1085,6 @@ pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::guard::GUARD_PROTOCOL_VERSION;
 
     fn capsule(id: &str) -> CapsuleRef {
         let root = std::env::temp_dir().join("runtime-control-tests").join(id);
@@ -1153,9 +1117,7 @@ mod tests {
             started_at_unix_ms: 1,
             launch_instance_id: None,
             spawn_attempt_id: None,
-            guard_registration: None,
             payload_registration: None,
-            start_authorization: None,
             ready_expectation: None,
             known_descendants: Vec::new(),
             observation_deadline_unix_ms: None,
@@ -1198,47 +1160,50 @@ mod tests {
             fallback: None,
             ..projection
         };
-        let value =
-            serde_json::to_value(&without_fallback).expect("serialize without fallback");
+        let value = serde_json::to_value(&without_fallback).expect("serialize without fallback");
         assert!(value.get("fallbackReleaseId").is_none());
         assert!(value.get("fallback").is_none());
     }
 
     #[test]
-    fn activation_phase_rejects_missing_or_early_gate_facts() {
+    fn activation_phase_requires_payload_identity_before_runtime_started() {
         let mut state = prepared_state();
-        state.activation.phase = ActivationPhase::SpawnPlanned;
-        let error = state.validate().expect_err("spawn plan needs durable ids");
-        assert!(error.to_string().contains("SpawnPlanned"));
+        state.activation.phase = ActivationPhase::RuntimeStarted;
+        let error = state
+            .validate()
+            .expect_err("runtime start needs payload facts");
+        assert!(error.to_string().contains("PayloadRegistered"));
 
         let attempt = state.activation.attempt.as_mut().expect("attempt");
         attempt.launch_instance_id = Some("launch-1".to_string());
         attempt.spawn_attempt_id = Some("spawn-1".to_string());
-        attempt.guard_registration = Some(GuardRegistration {
-            protocol_version: GUARD_PROTOCOL_VERSION,
+        let payload = ProcessIdentity {
+            pid: 101,
+            start_identity: 1001,
+        };
+        attempt.payload_registration = Some(PayloadRegistration {
             release_id: attempt.candidate.release_id.clone(),
             launch_instance_id: "launch-1".to_string(),
             spawn_attempt_id: "spawn-1".to_string(),
-            guard: ProcessIdentity {
-                pid: 101,
-                start_identity: 1001,
-            },
-            parent: ProcessIdentity {
-                pid: 100,
-                start_identity: 1000,
+            payload,
+            process_group: crate::process::ProcessGroupRecord {
+                leader: payload,
+                pgid: payload.pid,
             },
         });
-        let error = state
-            .validate()
-            .expect_err("guard fact cannot precede GuardRegistered");
-        assert!(error.to_string().contains("SpawnPlanned"));
-
-        state.activation.phase = ActivationPhase::GuardRegistered;
-        state.validate().expect("guard acknowledgement is complete");
+        attempt.ready_expectation = Some(ReadyExpectation {
+            protocol_version: crate::readiness::READY_PROTOCOL_VERSION,
+            release_id: attempt.candidate.release_id.clone(),
+            launch_instance_id: "launch-1".to_string(),
+            spawn_attempt_id: "spawn-1".to_string(),
+            payload,
+            token_verifier: "a".repeat(64),
+        });
+        state.validate().expect("direct payload facts are complete");
     }
 
     #[test]
-    fn activation_attempt_rejects_payload_without_guard() {
+    fn activation_attempt_rejects_payload_with_wrong_group() {
         let mut state = prepared_state();
         state.activation.phase = ActivationPhase::RollbackDecided;
         let attempt = state.activation.attempt.as_mut().expect("attempt");
@@ -1249,16 +1214,14 @@ mod tests {
             start_identity: 1002,
         };
         attempt.payload_registration = Some(PayloadRegistration {
-            protocol_version: GUARD_PROTOCOL_VERSION,
             release_id: attempt.candidate.release_id.clone(),
             launch_instance_id: "launch-1".to_string(),
             spawn_attempt_id: "spawn-1".to_string(),
             payload,
             process_group: crate::process::ProcessGroupRecord {
                 leader: payload,
-                pgid: payload.pid,
+                pgid: payload.pid + 1,
             },
-            guard_registration_digest: "untrusted".to_string(),
         });
         state.activation.winner = Some(WinnerRecord {
             selected: attempt.previous.clone(),
@@ -1268,11 +1231,11 @@ mod tests {
 
         let error = state
             .validate()
-            .expect_err("payload cannot exist before guard registration");
+            .expect_err("payload needs a dedicated process group");
         assert!(
             error
                 .to_string()
-                .contains("payload registration requires a guard")
+                .contains("payload registration does not match")
         );
     }
 
@@ -1295,31 +1258,21 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths = ControlPaths::new(temp.path().join("state"));
         let lease =
-            ExecutorEpoch::acquire_and_bump_epoch(&paths, trusted_seed("seed"))
-                .expect("lease");
-        let updated = cas_update(
-            &paths,
-            lease.revision,
-            lease.executor_epoch,
-            |state| {
-                let external = capsule("external");
-                state.external_current = Some(external.clone());
-                state.selected = SelectedRuntime::external(external);
-                Ok(())
-            },
-        )
+            ExecutorEpoch::acquire_and_bump_epoch(&paths, trusted_seed("seed")).expect("lease");
+        let updated = cas_update(&paths, lease.revision, lease.executor_epoch, |state| {
+            let external = capsule("external");
+            state.external_current = Some(external.clone());
+            state.selected = SelectedRuntime::external(external);
+            Ok(())
+        })
         .expect("CAS update");
-        let stale_revision = cas_update(
-            &paths,
-            lease.revision,
-            lease.executor_epoch,
-            |_| Ok(()),
-        )
-        .expect_err("stale revision");
+        let stale_revision = cas_update(&paths, lease.revision, lease.executor_epoch, |_| Ok(()))
+            .expect_err("stale revision");
         assert!(stale_revision.to_string().contains("CAS mismatch"));
-        let stale_epoch =
-            cas_update(&paths, updated.revision, lease.executor_epoch + 1, |_| Ok(()))
-                .expect_err("stale epoch");
+        let stale_epoch = cas_update(&paths, updated.revision, lease.executor_epoch + 1, |_| {
+            Ok(())
+        })
+        .expect_err("stale epoch");
         assert!(stale_epoch.to_string().contains("CAS mismatch"));
         assert_eq!(
             ControlState::load(&paths).expect("load").expect("state"),
@@ -1332,11 +1285,9 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths = ControlPaths::new(temp.path().join("state"));
         let first =
-            ExecutorEpoch::acquire_and_bump_epoch(&paths, trusted_seed("seed"))
-                .expect("first");
+            ExecutorEpoch::acquire_and_bump_epoch(&paths, trusted_seed("seed")).expect("first");
         let second =
-            ExecutorEpoch::acquire_and_bump_epoch(&paths, trusted_seed("ignored"))
-                .expect("second");
+            ExecutorEpoch::acquire_and_bump_epoch(&paths, trusted_seed("ignored")).expect("second");
         assert_eq!(second.executor_epoch, first.executor_epoch + 1);
         let error = cas_update(&paths, second.revision, first.executor_epoch, |_| Ok(()))
             .expect_err("old executor fenced");
