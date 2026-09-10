@@ -6,9 +6,10 @@ const test = require("node:test");
 
 const {
   buildLauncherRecoveryRecordParams,
+  recoverLauncherStateAtStartup,
   recoverPayloadRuntimeFailureIfPresent,
   recordLauncherRecovery,
-  shouldRecordLauncherRecovery,
+  recordLauncherRecoveryIfPresent,
   writePayloadFailureEvidence,
 } = require("./runtimeLaunchState.cjs");
 const {
@@ -222,7 +223,7 @@ test("payload recovery does not send twice when evidence cleanup fails", async (
   });
 });
 
-test("generic launcher evidence remains eligible for legacy display recovery", async () => {
+test("generic launcher evidence is not consumed by the payload adapter", async () => {
   await withPayloadRecoveryEvidence(
     {
       code: "payload_guard_blocked",
@@ -242,10 +243,135 @@ test("generic launcher evidence remains eligible for legacy display recovery", a
         payloadEvidence: false,
         recovered: false,
       });
-      assert.equal(shouldRecordLauncherRecovery(result), true);
-      assert.equal(shouldRecordLauncherRecovery({ payloadEvidence: true }), false);
     },
   );
+});
+
+test("startup records generic recovery before sending a payload /self prompt", async () => {
+  await withPayloadRecoveryEvidence({}, async ({ evidencePath }) => {
+    const requests = [];
+    const sent = [];
+    const result = await recoverLauncherStateAtStartup({
+      recordLauncherRecovery: () =>
+        recordLauncherRecoveryIfPresent({
+          appServerClient: {
+            async request(method, params) {
+              requests.push({ method, params });
+              return { recorded: true };
+            },
+          },
+          evidencePath,
+          fs,
+          listThreads: async () => ({
+            materializedSelfThreadId: "self",
+            selfProjectThreadId: "self",
+          }),
+          subscribeThread: async () => {
+            throw new Error("already materialized");
+          },
+        }),
+      recoverPayloadFailure: () =>
+        recoverPayloadRuntimeFailureIfPresent({
+          evidencePath,
+          formatPayloadRuntimeRecoveryPrompt,
+          fs,
+          async sendSelfCommand(text) {
+            sent.push(text);
+          },
+        }),
+    });
+
+    assert.deepEqual(requests.map(({ method }) => method), [
+      "thread/clientRecovery/record",
+    ]);
+    assert.equal(sent.length, 1);
+    assert.equal(await fileExists(evidencePath), false);
+    assert.deepEqual(result, {
+      recorded: { evidence: true, recorded: true },
+      payloadRecovery: {
+        delivery: "sent",
+        evidence: true,
+        payloadEvidence: true,
+        recovered: true,
+      },
+    });
+  });
+});
+
+test("startup has zero recovery sends when no evidence exists", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "payload-cold-start-"));
+  const evidencePath = path.join(root, "failure-evidence.json");
+  const calls = [];
+  try {
+    const result = await recoverLauncherStateAtStartup({
+      recordLauncherRecovery: () =>
+        recordLauncherRecoveryIfPresent({
+          appServerClient: {
+            async request() {
+              calls.push("generic-send");
+            },
+          },
+          evidencePath,
+          fs,
+          listThreads: async () => {
+            calls.push("list-threads");
+          },
+          subscribeThread: async () => {
+            calls.push("subscribe");
+          },
+        }),
+      recoverPayloadFailure: () =>
+        recoverPayloadRuntimeFailureIfPresent({
+          evidencePath,
+          formatPayloadRuntimeRecoveryPrompt,
+          fs,
+          async sendSelfCommand() {
+            calls.push("self-send");
+          },
+        }),
+    });
+
+    assert.deepEqual(calls, []);
+    assert.deepEqual(result, {
+      recorded: { evidence: false, recorded: false },
+      payloadRecovery: {
+        evidence: false,
+        payloadEvidence: false,
+        recovered: false,
+      },
+    });
+  } finally {
+    await fs.rm(root, { force: true, recursive: true });
+  }
+});
+
+test("startup still sends a payload /self prompt when generic recovery is complete", async () => {
+  const calls = [];
+  const result = await recoverLauncherStateAtStartup({
+    logger: {
+      error() {
+        calls.push("payload-error");
+      },
+    },
+    async recoverPayloadFailure() {
+      calls.push("payload-self");
+      throw new Error("self turn unavailable");
+    },
+    async recordLauncherRecovery() {
+      calls.push("generic-fanout");
+      return { recorded: true };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "generic-fanout",
+    "payload-self",
+    "payload-error",
+  ]);
+  assert.deepEqual(result, {
+    payloadRecovery: null,
+    recorded: { recorded: true },
+  });
 });
 
 test("concurrent payload recovery leaves an in-flight claim alone", async () => {

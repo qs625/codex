@@ -105,9 +105,9 @@ const {
 } = require("./restartRecoverySelfNotice.cjs");
 const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
 const {
+  recoverLauncherStateAtStartup,
   recoverPayloadRuntimeFailureIfPresent,
   recordLauncherRecoveryIfPresent,
-  shouldRecordLauncherRecovery,
   writePayloadFailureEvidence,
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
@@ -800,44 +800,36 @@ app.whenReady().then(() => {
   void ensureDefaultWorkspace()
     .then(async () => {
       await appServerClient.ready();
-      const payloadRecovery = await recoverPayloadRuntimeFailureIfPresent({
-        evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
-        formatPayloadRuntimeRecoveryPrompt,
-        fs,
-        sendSelfCommand: async (text) =>
-          sendSelfCommandToThread({
+      await recoverLauncherStateAtStartup({
+        recordLauncherRecovery: () =>
+          recordLauncherRecoveryIfPresent({
             appServerClient,
-            buildTurnInput,
-            loadThreadForTurn: async (threadId) =>
-              (await subscribeThread(threadId)).thread ?? null,
-            normalizeThread,
-            persistSystemThreadId: persistCurrentSystemSelfThreadId,
-            project: await ensureSelfProjectForCurrentApp(),
-            rememberThreadRuntime,
-            startThreadTurn,
-            text,
-            threads: await listAllThreads(appServerClient, normalizeThread),
+            evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
+            fs,
+            listThreads: () => listThreads(defaultWorkspace),
+            subscribeThread,
           }),
-      }).catch((error) => {
-        console.error(
-          "[prototype] payload recovery input failed; evidence retained",
-          error,
-        );
-        return {
-          evidence: true,
-          payloadEvidence: error?.payloadEvidence === true,
-          recovered: false,
-        };
+        recoverPayloadFailure: () =>
+          recoverPayloadRuntimeFailureIfPresent({
+            evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
+            formatPayloadRuntimeRecoveryPrompt,
+            fs,
+            sendSelfCommand: async (text) =>
+              sendSelfCommandToThread({
+                appServerClient,
+                buildTurnInput,
+                loadThreadForTurn: async (threadId) =>
+                  (await subscribeThread(threadId)).thread ?? null,
+                normalizeThread,
+                persistSystemThreadId: persistCurrentSystemSelfThreadId,
+                project: await ensureSelfProjectForCurrentApp(),
+                rememberThreadRuntime,
+                startThreadTurn,
+                text,
+                threads: await listAllThreads(appServerClient, normalizeThread),
+              }),
+          }),
       });
-      if (shouldRecordLauncherRecovery(payloadRecovery)) {
-        await recordLauncherRecoveryIfPresent({
-          appServerClient,
-          evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
-          fs,
-          listThreads: () => listThreads(defaultWorkspace),
-          subscribeThread,
-        });
-      }
       const window = await createWindow();
       // Keep the first window visible before a system permission prompt can
       // wait for user input.

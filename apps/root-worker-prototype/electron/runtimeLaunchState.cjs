@@ -335,10 +335,6 @@ function payloadRecoveryEventId(evidence) {
   return activationId && releaseId ? `${activationId}:${releaseId}` : null;
 }
 
-function shouldRecordLauncherRecovery(payloadRecovery) {
-  return payloadRecovery?.payloadEvidence !== true;
-}
-
 async function recordLauncherRecoveryIfPresent({
   appServerClient,
   evidencePath,
@@ -374,6 +370,24 @@ async function recordLauncherRecoveryIfPresent({
       evidence: Boolean(normalizeString(evidencePath)),
     };
   }
+}
+
+async function recoverLauncherStateAtStartup({
+  logger = console,
+  recordLauncherRecovery,
+  recoverPayloadFailure,
+}) {
+  const recorded = await recordLauncherRecovery();
+  let payloadRecovery = null;
+  try {
+    payloadRecovery = await recoverPayloadFailure();
+  } catch (error) {
+    logger.error?.(
+      "[prototype] payload recovery input failed; evidence retained",
+      error,
+    );
+  }
+  return { payloadRecovery, recorded };
 }
 
 function isPayloadRuntimeRecoveryEvidence(evidence) {
@@ -423,10 +437,10 @@ function normalizeString(value) {
 
 module.exports = {
   buildLauncherRecoveryRecordParams,
+  recoverLauncherStateAtStartup,
   recoverPayloadRuntimeFailureIfPresent,
   readLauncherFailureEvidence,
   recordLauncherRecovery,
   recordLauncherRecoveryIfPresent,
-  shouldRecordLauncherRecovery,
   writePayloadFailureEvidence,
 };
