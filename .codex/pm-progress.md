@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `889b416d` / `sha256:47441f97e5eb0167715bc3f3ae39962932f0f63513f8665cc5204a0ca13eb7af`; `/Applications/Root Worker Prototype.app` has also been replaced with a seed capsule from `889b416d`. The exact `/self` restart request `call_rhfVTwIj9jzmfVPHrjumdX27` was durably accepted and caused the expected client interruption/recovery; active payload PID `99822` is running from the new external artifact path. Follow-up Conversation display regression fix is merged on main at `2f5483b78` but is not yet installed/effective; build a new complete Runtime Capsule from canonical main and restart before claiming user-visible resolution.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `fb6ca7c23` / `sha256:ec6d9b770c491a349095986fb9f5d5ab22aa987b646d0bb2be256371d6544552`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has the Conversation command display fix installed. Follow-up Terminal live PTY focus fix is merged on main at `5784edb8d` but is not yet installed/effective; build a new complete Runtime Capsule from canonical main and restart before claiming the Terminal fixed-size/wrapping issue is user-visible.
 
 ## Active Work
 - id: conversation-command-item-display-regression
@@ -20,13 +20,29 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
   files: apps/root-worker-prototype/src/lib/conversationPresentation.ts; apps/root-worker-prototype/src/lib/conversationPresentation.test.ts; apps/root-worker-prototype/src/lib/thread.test.ts
   base_commit: 82e21644a
   pending_sync_from_main: none
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   objective: Restore Conversation display of command/tool item cards for model-run commands while continuing to hide command stdout/stderr/output payload and command notification noise.
-  last_update: 2026-09-11 CST root cause confirmed: backend still emits `ExecCommandBegin`/`ExecCommandEnd` and `conversation.ts` still builds `command` entries, but `filterConversationCellsForDisplay` filtered both `command` and `commandNotification`, deleting the real command card at the final display layer. Fixed dev-2 owner delivered `d2923ab74`; reviewer passed; PM merged to canonical main as `2f5483b78`.
-  next_action: build and install a complete Runtime Capsule from canonical main `2f5483b78`, perform exact `/self` restart, then run a small command and ask the user to confirm Conversation shows the command card without output.
-  blockers: not installed/effective yet; current active payload remains `889b416d`.
+  last_update: 2026-09-11 CST root cause confirmed: backend still emits `ExecCommandBegin`/`ExecCommandEnd` and `conversation.ts` still builds `command` entries, but `filterConversationCellsForDisplay` filtered both `command` and `commandNotification`, deleting the real command card at the final display layer. Fixed dev-2 owner delivered `d2923ab74`; reviewer passed; PM merged to canonical main as `2f5483b78`, recorded as `fb6ca7c23`, built a complete Runtime Capsule, and restarted into active external release `sha256:ec6d9b770c491a349095986fb9f5d5ab22aa987b646d0bb2be256371d6544552` with payload PID `16028` and app-server PID `16032`; failure evidence absent.
+  next_action: ask the user to confirm the post-restart `pwd` command appears as a Conversation command item without stdout output.
+  blockers: none
   validation: owner and PM reran `pnpm --dir apps/root-worker-prototype test src/lib/conversationPresentation.test.ts src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/thread.test.ts` -> 299/299 passed; `git diff --check` passed; owner Vite build passed with only existing chunk-size warning.
   commit: d2923ab74, 2f5483b78
+- id: terminal-live-command-fixed-size-output
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: feature/full-terminal-panel
+  task_type: bugfix/ui-terminal-live-pty-focus
+  depends_on: installed runtime `fb6ca7c23` / user screenshot showing Terminal `Running · fixed size` with miswrapped cargo/docker output
+  files: apps/root-worker-prototype/electron/terminalPanel.cjs; apps/root-worker-prototype/electron/terminalPanel.test.cjs
+  base_commit: fb6ca7c23
+  pending_sync_from_main: none
+  status: merged_pending_capsule_delivery
+  objective: Prefer real live Model PTY terminal tabs for running command focus so FitAddon resize reaches app-server; keep read-only fixed-size output as fallback only when no live PTY can be proven.
+  last_update: 2026-09-11 CST root cause confirmed from screenshot and code: `commandFocusDescriptorForTerminalFocus` selected activeCommand fallback before refreshed liveSession, and request fallback could use commandItemId as placeholder processId so later live descriptors with the real processId failed to merge. Fixed dev-2 owner delivered `2e7c8e80`; reviewer passed; PM merged to canonical main as `5784edb8d`.
+  next_action: build/install a complete Runtime Capsule from canonical main `5784edb8d`, restart, then verify a running command focus shows Model PTY/canResize rather than `fixed size`.
+  blockers: not installed/effective yet; current active payload remains `fb6ca7c23`.
+  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` -> 26/26, `git diff --check`, and Vite build passed. PM reran Electron terminal panel tests 26/26 and `git diff --check`; all passed.
+  commit: 2e7c8e80, 5784edb8d
 - id: thread-analysis-command-monitor-restoration
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
