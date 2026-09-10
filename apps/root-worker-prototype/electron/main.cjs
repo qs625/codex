@@ -97,6 +97,7 @@ const {
 } = require("./runtimeRestartIntent.cjs");
 const {
   expectedRuntimeRestartRecoveryPrompt,
+  formatPayloadRuntimeRecoveryPrompt,
   shouldNotifyRuntimeRestartErrorOnSelf,
 } = require("./restartRecoveryPrompts.cjs");
 const {
@@ -104,7 +105,10 @@ const {
 } = require("./restartRecoverySelfNotice.cjs");
 const { createRuntimeLauncher } = require("./runtimeLauncher.cjs");
 const {
+  recoverPayloadRuntimeFailureIfPresent,
   recordLauncherRecoveryIfPresent,
+  shouldRecordLauncherRecovery,
+  writePayloadFailureEvidence,
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 
@@ -158,11 +162,15 @@ let autoResumeCoordinator = null;
 let runtimeRestartController = null;
 let runtimeRestartIntentStore = null;
 let quittingAfterAppServerStop = false;
+let fatalPayloadExitRequested = false;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 
 applyRemoteDebuggingConfig(app, process.env, console);
+
+process.on("uncaughtException", requestFatalPayloadExit);
+process.on("unhandledRejection", requestFatalPayloadExit);
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -792,13 +800,44 @@ app.whenReady().then(() => {
   void ensureDefaultWorkspace()
     .then(async () => {
       await appServerClient.ready();
-      await recordLauncherRecoveryIfPresent({
-        appServerClient,
+      const payloadRecovery = await recoverPayloadRuntimeFailureIfPresent({
         evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
+        formatPayloadRuntimeRecoveryPrompt,
         fs,
-        listThreads: () => listThreads(defaultWorkspace),
-        subscribeThread,
+        sendSelfCommand: async (text) =>
+          sendSelfCommandToThread({
+            appServerClient,
+            buildTurnInput,
+            loadThreadForTurn: async (threadId) =>
+              (await subscribeThread(threadId)).thread ?? null,
+            normalizeThread,
+            persistSystemThreadId: persistCurrentSystemSelfThreadId,
+            project: await ensureSelfProjectForCurrentApp(),
+            rememberThreadRuntime,
+            startThreadTurn,
+            text,
+            threads: await listAllThreads(appServerClient, normalizeThread),
+          }),
+      }).catch((error) => {
+        console.error(
+          "[prototype] payload recovery input failed; evidence retained",
+          error,
+        );
+        return {
+          evidence: true,
+          payloadEvidence: error?.payloadEvidence === true,
+          recovered: false,
+        };
       });
+      if (shouldRecordLauncherRecovery(payloadRecovery)) {
+        await recordLauncherRecoveryIfPresent({
+          appServerClient,
+          evidencePath: process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
+          fs,
+          listThreads: () => listThreads(defaultWorkspace),
+          subscribeThread,
+        });
+      }
       const window = await createWindow();
       // Keep the first window visible before a system permission prompt can
       // wait for user input.
@@ -1256,9 +1295,26 @@ function builtRendererPath() {
   return path.join(__dirname, "../dist/index.html");
 }
 
-function handleStartupError(error) {
+async function handleStartupError(error) {
   console.error("[prototype] failed to start renderer", error);
+  await writePayloadFailureEvidence({
+    fs,
+    reason: error instanceof Error ? error.message : String(error),
+  }).catch((evidenceError) => {
+    console.error(
+      "[prototype] failed to write payload failure evidence",
+      evidenceError,
+    );
+  });
   app.exit(1);
+}
+
+function requestFatalPayloadExit(error) {
+  if (fatalPayloadExitRequested) {
+    return;
+  }
+  fatalPayloadExitRequested = true;
+  void handleStartupError(error);
 }
 
 function requestClientRelaunch(reason) {

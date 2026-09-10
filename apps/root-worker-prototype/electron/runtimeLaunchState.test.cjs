@@ -8,8 +8,15 @@ const {
   buildLauncherRecoveryRecordParams,
   recoverPayloadRuntimeFailureIfPresent,
   recordLauncherRecovery,
+  shouldRecordLauncherRecovery,
   writePayloadFailureEvidence,
 } = require("./runtimeLaunchState.cjs");
+const {
+  formatPayloadRuntimeRecoveryPrompt,
+} = require("./restartRecoveryPrompts.cjs");
+const {
+  sendSelfCommandToThread,
+} = require("./selfProjectThread.cjs");
 
 test("launcher recovery records durable failure evidence without mutating launcher state", async () => {
   const requests = [];
@@ -87,153 +94,274 @@ test("payload writes a release-scoped failure reason atomically", async () => {
   }
 });
 
-test("payload recovery sends exact /self input, then consumes its evidence", async () => {
-  const sent = [];
-  const removals = [];
-  const evidencePath = "/tmp/failure-evidence.json";
-  const result = await recoverPayloadRuntimeFailureIfPresent({
-    evidencePath,
-    formatPayloadRuntimeRecoveryPrompt(params) {
-      assert.deepEqual(params, {
-        failedReleaseId: "release-current",
-        reason: "renderer initialization failed",
-        exitCode: null,
-        signal: null,
+test("payload recovery sends formatter output through the exact /self turn path", async () => {
+  await withPayloadRecoveryEvidence(
+    {
+      code: "payload_exit_signal",
+      details: { signal: "SIGTERM" },
+      message: "payload terminated by signal SIGTERM",
+    },
+    async ({ evidencePath }) => {
+      const requests = [];
+      const selfThread = {
+        cwd: "/workspace",
+        id: "self-thread",
+        name: "/self",
+      };
+      const result = await recoverPayloadRuntimeFailureIfPresent({
+        evidencePath,
+        formatPayloadRuntimeRecoveryPrompt,
+        fs,
+        sendSelfCommand: (text) =>
+          sendSelfCommandToThread({
+            appServerClient: {},
+            buildTurnInput: (payload) => [{ type: "text", text: payload.text }],
+            loadThreadForTurn: async () => selfThread,
+            normalizeThread: (thread) => thread,
+            persistSystemThreadId: async () => {},
+            project: {
+              id: "/self",
+              managedBy: "morpheus",
+              path: "/self",
+              system: true,
+              systemThreadId: "self-thread",
+              workspace: "/workspace",
+            },
+            rememberThreadRuntime: () => {},
+            startThreadTurn: async (payload, input) => {
+              requests.push({ input, payload });
+              return { turn: { id: "turn-1" } };
+            },
+            text,
+            threads: [selfThread],
+          }),
       });
-      return "运行时回退后恢复：请检查 release-current。";
-    },
-    fs: {
-      async readFile() {
-        return JSON.stringify({
-          activationId: "payload-123",
-          releaseId: "release-current",
-          occurredAt: "2026-09-10T00:00:00.000Z",
-          fallbackReleaseId: "release-seed",
-          code: "payload_reported_error",
-          message: "renderer initialization failed",
-          details: { payloadPid: "123", source: "payload" },
-        });
-      },
-      async rm(targetPath, options) {
-        removals.push({ targetPath, options });
-      },
-    },
-    async sendSelfCommand(text) {
-      sent.push(text);
-    },
-  });
 
-  assert.deepEqual(result, { recovered: true, evidence: true });
-  assert.deepEqual(sent, ["运行时回退后恢复：请检查 release-current。"]);
-  assert.deepEqual(removals, [
-    { targetPath: evidencePath, options: { force: true } },
-  ]);
+      assert.deepEqual(result, {
+        delivery: "sent",
+        evidence: true,
+        payloadEvidence: true,
+        recovered: true,
+      });
+      assert.equal(requests.length, 1);
+      assert.match(requests[0].payload.text, /signal SIGTERM/);
+      assert.equal(await fileExists(evidencePath), false);
+    },
+  );
 });
 
-test("payload recovery consumes evidence after exact /self input succeeds", async () => {
-  let sent = 0;
-  let removed = 0;
-  const result = await recoverPayloadRuntimeFailureIfPresent({
-    evidencePath: "/tmp/failure-evidence.json",
-    formatPayloadRuntimeRecoveryPrompt() {
-      return "运行时异常终止，请检查。";
-    },
-    fs: {
-      async readFile() {
-        return JSON.stringify({
-          activationId: "runtime-1",
-          releaseId: "release-current",
-          occurredAt: "2026-09-10T00:00:00.000Z",
-          fallbackReleaseId: "release-seed",
-          code: "payload_exit_signal",
-          message: "payload terminated by signal 15",
-          details: { signal: "15" },
-        });
-      },
-      async rm() {
-        removed += 1;
-      },
-    },
-    async sendSelfCommand() {
-      sent += 1;
-    },
-  });
-
-  assert.deepEqual(result, { recovered: true, evidence: true });
-  assert.equal(sent, 1);
-  assert.equal(removed, 1);
-});
-
-test("payload recovery retains evidence when /self input fails", async () => {
-  let removed = 0;
-  await assert.rejects(
-    () =>
-      recoverPayloadRuntimeFailureIfPresent({
-        evidencePath: "/tmp/failure-evidence.json",
-        formatPayloadRuntimeRecoveryPrompt() {
-          return "运行时异常终止，请检查。";
-        },
-        fs: {
-          async readFile() {
-            return JSON.stringify({
-              activationId: "runtime-1",
-              releaseId: "release-current",
-              occurredAt: "2026-09-10T00:00:00.000Z",
-              fallbackReleaseId: "release-seed",
-              code: "payload_exit_code",
-              message: "payload exited with code 9",
-              details: { exitCode: "9" },
-            });
+test("payload recovery retains evidence and releases its claim when /self input fails", async () => {
+  await withPayloadRecoveryEvidence({}, async ({ evidencePath }) => {
+    let sent = 0;
+    await assert.rejects(
+      () =>
+        recoverPayloadRuntimeFailureIfPresent({
+          evidencePath,
+          formatPayloadRuntimeRecoveryPrompt,
+          fs,
+          async sendSelfCommand() {
+            throw new Error("turn start failed");
           },
-          async rm() {
-            removed += 1;
-          },
-        },
+        }),
+      /turn start failed/,
+    );
+    assert.equal(await fileExists(evidencePath), true);
+    assert.deepEqual(
+      await recoverPayloadRuntimeFailureIfPresent({
+        evidencePath,
+        formatPayloadRuntimeRecoveryPrompt,
+        fs,
         async sendSelfCommand() {
-          throw new Error("turn start failed");
+          sent += 1;
         },
       }),
-    /turn start failed/,
-  );
-  assert.equal(removed, 0);
+      {
+        delivery: "sent",
+        evidence: true,
+        payloadEvidence: true,
+        recovered: true,
+      },
+    );
+    assert.equal(sent, 1);
+  });
 });
 
-test("payload recovery retries after evidence consumption fails", async () => {
-  let removals = 0;
-  const sent = [];
-  const fsOps = {
-    async readFile() {
-      return JSON.stringify({
-        activationId: "runtime-1",
-        releaseId: "release-current",
-        occurredAt: "2026-09-10T00:00:00.000Z",
-        fallbackReleaseId: "release-seed",
-        code: "payload_exit_code",
-        message: "payload exited with code 9",
-        details: { exitCode: "9" },
-      });
-    },
-    async rm() {
-      removals += 1;
-      if (removals === 1) {
-        throw new Error("consume failed");
-      }
-    },
-  };
-  const recover = () =>
-    recoverPayloadRuntimeFailureIfPresent({
-      evidencePath: "/tmp/failure-evidence.json",
-      formatPayloadRuntimeRecoveryPrompt() {
-        return "运行时异常终止，请检查。";
+test("payload recovery does not send twice when evidence cleanup fails", async () => {
+  await withPayloadRecoveryEvidence({}, async ({ evidencePath }) => {
+    let failEvidenceRemoval = true;
+    const fsWithFailedFirstCleanup = {
+      ...fs,
+      async rm(targetPath, options) {
+        if (targetPath === evidencePath && failEvidenceRemoval) {
+          failEvidenceRemoval = false;
+          throw new Error("consume failed");
+        }
+        return fs.rm(targetPath, options);
       },
-      fs: fsOps,
-      async sendSelfCommand(text) {
-        sent.push(text);
+    };
+    const sent = [];
+    const recover = () =>
+      recoverPayloadRuntimeFailureIfPresent({
+        evidencePath,
+        formatPayloadRuntimeRecoveryPrompt,
+        fs: fsWithFailedFirstCleanup,
+        async sendSelfCommand(text) {
+          sent.push(text);
+        },
+      });
+
+    await assert.rejects(recover, /consume failed/);
+    assert.deepEqual(await recover(), {
+      delivery: "already_sent",
+      evidence: true,
+      payloadEvidence: true,
+      recovered: true,
+    });
+    assert.equal(sent.length, 1);
+    assert.equal(await fileExists(evidencePath), false);
+  });
+});
+
+test("generic launcher evidence remains eligible for legacy display recovery", async () => {
+  await withPayloadRecoveryEvidence(
+    {
+      code: "payload_guard_blocked",
+      fallbackReleaseId: undefined,
+    },
+    async ({ evidencePath }) => {
+      const result = await recoverPayloadRuntimeFailureIfPresent({
+        evidencePath,
+        formatPayloadRuntimeRecoveryPrompt,
+        fs,
+        async sendSelfCommand() {
+          throw new Error("must not send");
+        },
+      });
+      assert.deepEqual(result, {
+        evidence: true,
+        payloadEvidence: false,
+        recovered: false,
+      });
+      assert.equal(shouldRecordLauncherRecovery(result), true);
+      assert.equal(shouldRecordLauncherRecovery({ payloadEvidence: true }), false);
+    },
+  );
+});
+
+test("concurrent payload recovery leaves an in-flight claim alone", async () => {
+  await withPayloadRecoveryEvidence({}, async ({ evidencePath }) => {
+    let releaseSend;
+    const waitForSendRelease = new Promise((resolve) => {
+      releaseSend = resolve;
+    });
+    let notifySendStarted;
+    const sendStarted = new Promise((resolve) => {
+      notifySendStarted = resolve;
+    });
+    let sent = 0;
+    const first = recoverPayloadRuntimeFailureIfPresent({
+      evidencePath,
+      formatPayloadRuntimeRecoveryPrompt,
+      fs,
+      async sendSelfCommand() {
+        sent += 1;
+        notifySendStarted();
+        await waitForSendRelease;
+      },
+    });
+    await sendStarted;
+    const second = await recoverPayloadRuntimeFailureIfPresent({
+      evidencePath,
+      formatPayloadRuntimeRecoveryPrompt,
+      fs,
+      async sendSelfCommand() {
+        sent += 1;
       },
     });
 
-  await assert.rejects(recover, /consume failed/);
-  assert.deepEqual(await recover(), { recovered: true, evidence: true });
-  assert.deepEqual(sent, ["运行时异常终止，请检查。", "运行时异常终止，请检查。"]);
-  assert.equal(removals, 2);
+    assert.deepEqual(second, {
+      delivery: "in_flight",
+      evidence: true,
+      payloadEvidence: true,
+      recovered: false,
+    });
+    assert.equal(await fileExists(evidencePath), true);
+    releaseSend();
+    await first;
+    assert.equal(sent, 1);
+    assert.equal(await fileExists(evidencePath), false);
+  });
 });
+
+test("payload cleanup does not remove a newer failure event", async () => {
+  await withPayloadRecoveryEvidence({}, async ({ evidencePath }) => {
+    let releaseSend;
+    const waitForSendRelease = new Promise((resolve) => {
+      releaseSend = resolve;
+    });
+    let notifySendStarted;
+    const sendStarted = new Promise((resolve) => {
+      notifySendStarted = resolve;
+    });
+    const first = recoverPayloadRuntimeFailureIfPresent({
+      evidencePath,
+      formatPayloadRuntimeRecoveryPrompt,
+      fs,
+      async sendSelfCommand() {
+        notifySendStarted();
+        await waitForSendRelease;
+      },
+    });
+    await sendStarted;
+    const newer = {
+      activationId: "runtime-2",
+      releaseId: "release-newer",
+      occurredAt: "2026-09-10T00:00:01.000Z",
+      fallbackReleaseId: "release-seed",
+      code: "payload_reported_error",
+      message: "newer failure",
+      details: { payloadPid: "2", source: "payload" },
+    };
+    await fs.writeFile(evidencePath, `${JSON.stringify(newer)}\n`);
+    releaseSend();
+    await first;
+
+    assert.deepEqual(
+      JSON.parse(await fs.readFile(evidencePath, "utf8")),
+      newer,
+    );
+  });
+});
+
+async function withPayloadRecoveryEvidence(overrides, run) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "payload-recovery-"));
+  const evidencePath = path.join(root, "failure-evidence.json");
+  const evidence = {
+    activationId: "runtime-1",
+    releaseId: "release-current",
+    occurredAt: "2026-09-10T00:00:00.000Z",
+    fallbackReleaseId: "release-seed",
+    code: "payload_exit_code",
+    message: "payload exited with code 9",
+    details: { exitCode: "9" },
+    ...overrides,
+  };
+  try {
+    await fs.writeFile(evidencePath, `${JSON.stringify(evidence)}\n`);
+    await run({ evidencePath });
+  } finally {
+    await fs.rm(root, { force: true, recursive: true });
+  }
+}
+
+async function fileExists(targetPath) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}

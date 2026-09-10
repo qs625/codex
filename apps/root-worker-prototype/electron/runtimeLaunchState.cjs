@@ -1,5 +1,5 @@
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 
 async function readLauncherFailureEvidence(
   evidencePath = process.env.RUNTIME_CAPSULE_FAILURE_EVIDENCE_PATH,
@@ -131,28 +131,212 @@ async function recoverPayloadRuntimeFailureIfPresent({
   fs,
   sendSelfCommand,
 }) {
-  const evidence = await readLauncherFailureEvidence(evidencePath, fs);
+  let evidence;
+  try {
+    evidence = await readLauncherFailureEvidence(evidencePath, fs);
+  } catch (error) {
+    error.payloadEvidence = false;
+    throw error;
+  }
   if (!isPayloadRuntimeRecoveryEvidence(evidence)) {
-    return { recovered: false, evidence: Boolean(evidence) };
+    return {
+      evidence: Boolean(evidence),
+      payloadEvidence: false,
+      recovered: false,
+    };
   }
-  if (typeof formatPayloadRuntimeRecoveryPrompt !== "function") {
-    throw new Error("Payload recovery prompt formatter is unavailable");
+  try {
+    if (typeof formatPayloadRuntimeRecoveryPrompt !== "function") {
+      throw new Error("Payload recovery prompt formatter is unavailable");
+    }
+    if (typeof sendSelfCommand !== "function") {
+      throw new Error("Payload recovery requires the /self input path");
+    }
+    const delivery = await claimPayloadRecoveryDelivery({
+      evidence,
+      evidencePath,
+      fs,
+    });
+    if (delivery.inFlight) {
+      return {
+        delivery: "in_flight",
+        evidence: true,
+        payloadEvidence: true,
+        recovered: false,
+      };
+    }
+    if (delivery.alreadyDelivered) {
+      await consumePayloadRecoveryEvidence({
+        evidence,
+        evidencePath,
+        fs,
+        markerPath: delivery.markerPath,
+      });
+      return {
+        delivery: "already_sent",
+        evidence: true,
+        payloadEvidence: true,
+        recovered: true,
+      };
+    }
+    const text = formatPayloadRuntimeRecoveryPrompt({
+      failedReleaseId: evidence.releaseId,
+      reason: normalizeString(evidence.message),
+      exitCode: numericDetail(evidence.details?.exitCode),
+      signal: normalizeString(evidence.details?.signal),
+    });
+    if (!normalizeString(text)) {
+      throw new Error("Payload recovery prompt formatter returned no input");
+    }
+    try {
+      await sendSelfCommand(text);
+    } catch (error) {
+      await releasePayloadRecoveryDelivery(delivery, fs);
+      throw error;
+    }
+    await markPayloadRecoveryDeliveryDelivered(delivery, fs);
+    await consumePayloadRecoveryEvidence({
+      evidence,
+      evidencePath,
+      fs,
+      markerPath: delivery.markerPath,
+    });
+    return {
+      delivery: "sent",
+      evidence: true,
+      payloadEvidence: true,
+      recovered: true,
+    };
+  } catch (error) {
+    error.payloadEvidence = true;
+    throw error;
   }
-  if (typeof sendSelfCommand !== "function") {
-    throw new Error("Payload recovery requires the /self input path");
+}
+
+async function claimPayloadRecoveryDelivery({ evidence, evidencePath, fs }) {
+  const eventId = payloadRecoveryEventId(evidence);
+  const markerPath = `${evidencePath}.${createHash("sha256")
+    .update(eventId)
+    .digest("hex")}.self-delivery`;
+  const existing = await readPayloadRecoveryDeliveryMarker(markerPath, fs);
+  if (existing) {
+    if (existing.eventId !== eventId) {
+      throw new Error("Payload recovery delivery marker has the wrong event");
+    }
+    return {
+      alreadyDelivered: existing.state === "delivered",
+      inFlight: existing.state === "claimed",
+      markerPath,
+    };
   }
-  const text = formatPayloadRuntimeRecoveryPrompt({
-    failedReleaseId: evidence.releaseId,
-    reason: normalizeString(evidence.message),
-    exitCode: numericDetail(evidence.details?.exitCode),
-    signal: numericDetail(evidence.details?.signal),
-  });
-  if (!normalizeString(text)) {
-    throw new Error("Payload recovery prompt formatter returned no input");
+  const claimId = randomUUID();
+  try {
+    await fs.writeFile(
+      markerPath,
+      `${JSON.stringify({ claimId, eventId, state: "claimed" })}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    return { claimId, eventId, markerPath };
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      return claimPayloadRecoveryDelivery({ evidence, evidencePath, fs });
+    }
+    throw error;
   }
-  await sendSelfCommand(text);
+}
+
+async function markPayloadRecoveryDeliveryDelivered(delivery, fs) {
+  const marker = await readPayloadRecoveryDeliveryMarker(delivery.markerPath, fs);
+  if (
+    marker?.eventId !== delivery.eventId ||
+    marker?.claimId !== delivery.claimId ||
+    marker?.state !== "claimed"
+  ) {
+    return false;
+  }
+  await writePayloadRecoveryDeliveryMarker(
+    delivery.markerPath,
+    {
+      claimId: delivery.claimId,
+      eventId: delivery.eventId,
+      state: "delivered",
+    },
+    fs,
+  );
+  return true;
+}
+
+async function releasePayloadRecoveryDelivery(delivery, fs) {
+  const marker = await readPayloadRecoveryDeliveryMarker(delivery.markerPath, fs);
+  if (
+    marker?.eventId === delivery.eventId &&
+    marker?.claimId === delivery.claimId &&
+    marker?.state === "claimed"
+  ) {
+    await fs.rm(delivery.markerPath, { force: true }).catch(() => {});
+  }
+}
+
+async function consumePayloadRecoveryEvidence({
+  evidence,
+  evidencePath,
+  fs,
+  markerPath,
+}) {
+  const current = await readLauncherFailureEvidence(evidencePath, fs);
+  if (payloadRecoveryEventId(current) !== payloadRecoveryEventId(evidence)) {
+    return false;
+  }
   await fs.rm(evidencePath, { force: true });
-  return { recovered: true, evidence: true };
+  await fs.rm(markerPath, { force: true }).catch(() => {});
+  return true;
+}
+
+async function readPayloadRecoveryDeliveryMarker(markerPath, fs) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(markerPath, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Payload recovery delivery marker has an invalid payload");
+    }
+    if (
+      !normalizeString(parsed.eventId) ||
+      !normalizeString(parsed.state) ||
+      (parsed.state !== "claimed" && parsed.state !== "delivered")
+    ) {
+      throw new Error("Payload recovery delivery marker has invalid fields");
+    }
+    return parsed;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writePayloadRecoveryDeliveryMarker(markerPath, marker, fs) {
+  const temporaryPath = `${markerPath}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(
+      temporaryPath,
+      `${JSON.stringify(marker)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    await fs.rename(temporaryPath, markerPath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function payloadRecoveryEventId(evidence) {
+  const activationId = normalizeString(evidence?.activationId);
+  const releaseId = normalizeString(evidence?.releaseId);
+  return activationId && releaseId ? `${activationId}:${releaseId}` : null;
+}
+
+function shouldRecordLauncherRecovery(payloadRecovery) {
+  return payloadRecovery?.payloadEvidence !== true;
 }
 
 async function recordLauncherRecoveryIfPresent({
@@ -243,5 +427,6 @@ module.exports = {
   readLauncherFailureEvidence,
   recordLauncherRecovery,
   recordLauncherRecoveryIfPresent,
+  shouldRecordLauncherRecovery,
   writePayloadFailureEvidence,
 };
