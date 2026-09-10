@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and then deliver all pending Launcher/runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `5942c54e3` / `sha256:f84b08c2f03691cc8cc48d855d25527fefc46ffb68963d5ecde01ec0c10c0c19`; the `/Applications` app bundle has also been replaced with a seed capsule from `5942c54e3`, but the currently supervising Launcher process remains the pre-existing PID `79797` until the outer app/launcher is fully quit and relaunched.
 
 ## Active Work
 - id: thread-analysis-command-monitor-restoration
@@ -39,9 +39,9 @@ Complete the Terminal-first PTY improvements and then deliver all pending Launch
   status: merged
   objective: Fix `codex:terminal:focusCommand` so clicking a visible live command summary reliably opens/focuses the Terminal tab without exposing command output in Thread Analysis.
   last_update: 2026-09-11 CST fixed dev-2 owner delivered `b849ddd44`, reviewer passed after tightening missing-commandItemId PTY reuse to live tabs only, and PM merged it to canonical main. The IPC now validates live command by active `commandItemId` + running status instead of renderer `processId`; Terminal descriptor matching still uses the runtime process id when available.
-  next_action: include in next installed Runtime Capsule delivery after the Launcher exit 75 fix is merged.
+  next_action: installed runtime delivery completed; no further action unless a new regression is reported.
   blockers: none
-  validation: owner `git diff --check`, Electron terminal panel tests 14/14, focused frontend tests 72/72, and Vite production build passed.
+  validation: owner `git diff --check`, Electron terminal panel tests 14/14, focused frontend tests 72/72, and Vite production build passed. Installed runtime delivery verified active artifact `sha256:f84b08c2f03691cc8cc48d855d25527fefc46ffb68963d5ecde01ec0c10c0c19` with source commit `5942c54e3`.
   commit: b849ddd44
 - id: runtime-launcher-capsule-switch-same-release
   owner: /self/owner_dev_3
@@ -55,9 +55,9 @@ Complete the Terminal-first PTY improvements and then deliver all pending Launch
   status: merged
   objective: Treat payload exit 75 as an unconditional supervised capsule restart signal; do not compare releaseId, sourceCommit, metadata, or capsule identity before continuing the Launcher supervise loop.
   last_update: 2026-09-11 CST fixed dev-3 owner delivered `469369135`, reviewer passed, and PM merged it to canonical main. Runtime Launcher now treats payload exit 75 as an unconditional supervise-loop restart signal and no longer compares releaseId/sourceCommit/metadata/capsule identity before continuing.
-  next_action: include in the next installed Runtime Capsule delivery only after explicit user authorization to build and restart; do not auto-invoke `request_runtime_restart`.
+  next_action: runtime payload delivery completed after explicit user reinstall request. The updated Launcher binary is present on disk in `/Applications`, but the running Launcher process is still the pre-existing PID `79797`; verify the Launcher fix only after a full outer app/launcher quit and relaunch.
   blockers: none
-  validation: owner `cargo test -p runtime-launcher` and `git diff --check` passed. PM reran `cargo test -p runtime-launcher` on merged main: 50 lib + 2 bin tests passed; `git diff --check` passed.
+  validation: owner `cargo test -p runtime-launcher` and `git diff --check` passed. PM reran `cargo test -p runtime-launcher` on merged main: 50 lib + 2 bin tests passed; `git diff --check` passed. Installed app bundle on disk has seed capsule `sha256:f84b08c2f03691cc8cc48d855d25527fefc46ffb68963d5ecde01ec0c10c0c19` from source commit `5942c54e3`; active runtime payload also runs from that artifact and failure evidence is absent. Running Launcher process replacement is not proven because `request_runtime_restart` does not restart the outer Launcher process.
   commit: 469369135
 - id: project-thread-restart-prompt-fanout
   owner: /self/owner_main
