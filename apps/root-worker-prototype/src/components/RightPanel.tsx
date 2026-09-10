@@ -71,6 +71,9 @@ export type ThreadAnalysisCommandFocusTarget = {
   threadId: string;
   commandItemId: string;
   processId?: string | null;
+  command?: string | null;
+  cwd?: string | null;
+  status?: string | null;
 };
 
 type BrowserPanelTabState = {
@@ -478,6 +481,11 @@ export function resolveThreadAnalysisCommandFocus(
     commandItemId: monitor.id,
     processId:
       command && command.type === "commandExecution" ? command.processId : null,
+    command:
+      command && command.type === "commandExecution" ? command.command : null,
+    cwd: command && command.type === "commandExecution" ? command.cwd : null,
+    status:
+      command && command.type === "commandExecution" ? command.status : null,
   };
 }
 

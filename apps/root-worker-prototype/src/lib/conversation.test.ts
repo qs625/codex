@@ -884,7 +884,7 @@ test("keeps command notifications separated across replacement history boundarie
   );
 });
 
-test("does not render active command current state items as conversation tail", () => {
+test("renders live active command current state as a transient conversation tail", () => {
   const thread = {
     ...makeThread([
       {
@@ -892,8 +892,38 @@ test("does not render active command current state items as conversation tail", 
         id: "compact-1",
         replacementHistory: [],
       },
+      {
+        type: "commandExecution",
+        id: "exec-existing",
+        command: "pnpm lint",
+        cwd: "/tmp/project",
+        processId: "process-existing",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm lint" }],
+        aggregatedOutput: "TURN_STDOUT",
+        exitCode: null,
+        durationMs: null,
+      },
     ]),
     activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-existing",
+        command: "pnpm lint",
+        cwd: "/tmp/project",
+        processId: "process-existing",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm lint" }],
+        aggregatedOutput: "DUPLICATE_ACTIVE_STDOUT",
+        exitCode: null,
+        durationMs: null,
+      },
       {
         type: "commandExecution",
         id: "exec-1",
@@ -905,7 +935,22 @@ test("does not render active command current state items as conversation tail", 
         initialWaitMs: 1000,
         notifyOn: "exit",
         commandActions: [{ type: "unknown", command: "cargo test" }],
-        aggregatedOutput: null,
+        aggregatedOutput: "ACTIVE_STDOUT",
+        exitCode: null,
+        durationMs: null,
+      },
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test" }],
+        aggregatedOutput: "DUPLICATE_STDOUT",
         exitCode: null,
         durationMs: null,
       },
@@ -936,8 +981,13 @@ test("does not render active command current state items as conversation tail", 
       entry.kind,
       entry.toolName,
       entry.turnId,
+      entry.toolDetails?.includes("STDOUT") ?? false,
     ]),
-    [["compact-1", "compact", undefined, "turn-1"]],
+    [
+      ["compact-1", "compact", undefined, "turn-1", false],
+      ["exec-existing", "tool", "pnpm lint", "turn-1", false],
+      ["exec-1", "tool", "cargo test", "active-commands", false],
+    ],
   );
   assert.deepEqual(
     cells.map((cell) => ({
@@ -951,7 +1001,57 @@ test("does not render active command current state items as conversation tail", 
         kind: "compact",
         entries: ["compact-1"],
       },
+      {
+        id: "exec-existing",
+        kind: "tool",
+        entries: ["exec-existing"],
+      },
+      {
+        id: "exec-1",
+        kind: "tool",
+        entries: ["exec-1"],
+      },
     ],
+  );
+});
+
+test("active command tail reuse follows active item ids after previous state changes", () => {
+  const activeCommand = (
+    id: string,
+    command: string,
+  ): NonNullable<Thread["activeCommandItems"]>[number] => ({
+    type: "commandExecution",
+    id,
+    command,
+    cwd: "/tmp/project",
+    processId: id,
+    source: "agent",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    commandActions: [{ type: "unknown", command }],
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  });
+  const firstThread = {
+    ...makeThread([]),
+    activeCommandItems: [
+      activeCommand("exec-1", "cargo test"),
+      activeCommand("exec-2", "pnpm test"),
+    ],
+  } satisfies Thread;
+  const firstState = buildConversationState(firstThread);
+  const secondThread = {
+    ...makeThread([]),
+    activeCommandItems: [activeCommand("exec-2", "pnpm test")],
+  } satisfies Thread;
+
+  const secondState = buildConversationState(secondThread, firstState);
+
+  assert.deepEqual(
+    secondState.entries.map((entry) => [entry.id, entry.toolName]),
+    [["exec-2", "pnpm test"]],
   );
 });
 

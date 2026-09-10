@@ -117,6 +117,9 @@ export function TerminalPanel({
         threadId: focusCommandRequest.threadId,
         commandItemId: focusCommandRequest.commandItemId,
         processId: focusCommandRequest.processId,
+        command: focusCommandRequest.command,
+        cwd: focusCommandRequest.cwd,
+        status: focusCommandRequest.status,
       })
       .then(({ state: nextState }) => {
         if (terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
@@ -131,7 +134,10 @@ export function TerminalPanel({
       });
   }, [
     focusCommandRequest?.commandItemId,
+    focusCommandRequest?.command,
+    focusCommandRequest?.cwd,
     focusCommandRequest?.processId,
+    focusCommandRequest?.status,
     focusCommandRequest?.threadId,
     focusCommandRequest?.token,
     thread?.id,
@@ -343,6 +349,9 @@ export function TerminalPanel({
         threadId: thread.id,
         commandItemId: command.id,
         processId: command.processId,
+        command: command.command,
+        cwd: command.cwd,
+        status: command.status,
       })
       .then(({ state: nextState }) => {
         setState(nextState);

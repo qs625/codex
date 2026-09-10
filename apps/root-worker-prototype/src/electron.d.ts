@@ -410,6 +410,9 @@ declare global {
         threadId: string;
         commandItemId: string;
         processId?: string | null;
+        command?: string | null;
+        cwd?: string | null;
+        status?: string | null;
       }) => Promise<{ state: TerminalPanelState; tabId: string }>;
       closeTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
       reattachTerminalTabs: () => Promise<TerminalPanelState>;

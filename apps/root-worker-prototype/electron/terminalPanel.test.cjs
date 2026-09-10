@@ -9,6 +9,7 @@ const {
   closeTerminalTab,
   commandFocusDescriptor,
   commandFocusDescriptorForTerminalFocus,
+  commandFocusDescriptorFromRequest,
   commandFocusDescriptorFromLiveSession,
   createTerminalPanelState,
   focusCommandTerminal,
@@ -361,6 +362,88 @@ test("active command item proves focus even when session refresh failed", () => 
       liveSessionRefreshed: false,
     }),
     commandFocusDescriptor(command, activeCommand),
+  );
+});
+
+test("renderer live command summary proves focus without process id or live session", () => {
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: null,
+    command: "npm test",
+    cwd: "/repo",
+    status: "inProgress",
+  };
+
+  assert.deepEqual(
+    commandFocusDescriptorForTerminalFocus(command, null, null, {
+      liveSessionRefreshed: true,
+    }),
+    commandFocusDescriptorFromRequest(command),
+  );
+});
+
+test("renderer completed command summary does not prove focus", () => {
+  assert.equal(
+    commandFocusDescriptorForTerminalFocus(
+      {
+        threadId: "thread",
+        commandItemId: "call",
+        processId: null,
+        command: "npm test",
+        cwd: "/repo",
+        status: "completed",
+      },
+      null,
+      null,
+      { liveSessionRefreshed: true },
+    ),
+    null,
+  );
+});
+
+test("live session merge upgrades a read-only request fallback", () => {
+  const state = createTerminalPanelState();
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: "42",
+    command: "npm test",
+    cwd: "/repo",
+    status: "running",
+  };
+  const fallback = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest(command),
+  );
+
+  assert.equal(fallback.readOnlyOutput, true);
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        commandItemId: "call",
+        processId: "42",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs[0], fallback);
+  assert.equal(fallback.readOnlyOutput, undefined);
+  assert.equal(fallback.canWrite, true);
+  assert.equal(
+    liveCommandSessionForTerminalFocus(state, {
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+    }),
+    fallback,
   );
 });
 
