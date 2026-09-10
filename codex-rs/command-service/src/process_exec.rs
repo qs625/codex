@@ -14,6 +14,7 @@ use crate::process_capture::CapturedStreamOutput;
 use crate::process_capture::ProcessOutputChunk;
 use crate::process_capture::ProcessOutputSender;
 use crate::process_capture::ProcessOutputStream;
+use crate::unified_exec::decode_utf8_incremental;
 #[cfg(target_os = "windows")]
 use crate::process_capture::aggregate_output;
 use crate::process_capture::consume_process_output;
@@ -498,7 +499,14 @@ impl OutputDeltaForwarder {
 fn spawn_output_delta_forwarder(stdout_stream: StdoutStream) -> OutputDeltaForwarder {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ProcessOutputChunk>();
     let task = tokio::spawn(async move {
+        let mut stdout_pending = Vec::new();
+        let mut stderr_pending = Vec::new();
         while let Some(chunk) = rx.recv().await {
+            let pending = match chunk.stream {
+                ProcessOutputStream::Stdout => &mut stdout_pending,
+                ProcessOutputStream::Stderr => &mut stderr_pending,
+            };
+            let delta = decode_utf8_incremental(pending, &chunk.chunk);
             let msg = EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
                 call_id: stdout_stream.call_id.clone(),
                 process_id: None,
@@ -510,6 +518,7 @@ fn spawn_output_delta_forwarder(stdout_stream: StdoutStream) -> OutputDeltaForwa
                     ProcessOutputStream::Stderr => ExecOutputStream::Stderr,
                 },
                 chunk: chunk.chunk,
+                delta: Some(delta),
             });
             let event = Event {
                 id: stdout_stream.sub_id.clone(),

@@ -562,6 +562,8 @@ fn command_exec_resize_round_trips() {
 fn command_exec_output_delta_round_trips() {
     let notification = CommandExecOutputDeltaNotification {
         process_id: "proc-1".to_string(),
+        generation: "generation-1".to_string(),
+        sequence: 7,
         stream: CommandExecOutputStream::Stdout,
         delta_base64: "AQI=".to_string(),
         cap_reached: false,
@@ -573,6 +575,8 @@ fn command_exec_output_delta_round_trips() {
         value,
         json!({
             "processId": "proc-1",
+            "generation": "generation-1",
+            "sequence": 7,
             "stream": "stdout",
             "deltaBase64": "AQI=",
             "capReached": false,

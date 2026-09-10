@@ -77,6 +77,7 @@ pub(crate) use output::bound_command_notification_output;
 pub(crate) use output::collect_output_until_deadline;
 pub(crate) use output::resolve_aggregated_output;
 pub(crate) use output::split_valid_utf8_prefix;
+pub(crate) use output::decode_utf8_incremental;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
@@ -284,13 +285,8 @@ struct ProcessEntry {
 
 impl ProcessEntry {
     async fn as_running_snapshot(&self) -> RunningCommandSnapshot {
-        let (latest_output_bytes, replay_truncated) = {
-            let guard = self.transcript.lock().await;
-            (
-                guard.terminal_replay_bytes(),
-                guard.omitted_bytes() > 0,
-            )
-        };
+        let (latest_output_bytes, replay_truncated, replay_through_sequence) =
+            self.process.terminal_replay_snapshot().await;
         RunningCommandSnapshot {
             process_id: self.process_id,
             call_id: self.call_id.clone(),
@@ -301,6 +297,7 @@ impl ProcessEntry {
             latest_output_tail: latest_output_tail_from_bytes(&latest_output_bytes),
             latest_output_bytes,
             replay_truncated,
+            replay_through_sequence,
             can_resize: self.process.supports_resize(),
         }
     }

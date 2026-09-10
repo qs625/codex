@@ -90,6 +90,7 @@ pub struct RunningCommandSnapshot {
     pub latest_output_tail: Option<String>,
     pub latest_output_bytes: Vec<u8>,
     pub replay_truncated: bool,
+    pub replay_through_sequence: u64,
     pub can_resize: bool,
 }
 
@@ -105,26 +106,6 @@ pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
         request: WriteStdinRequest<'a>,
     ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>>;
 
-    fn write_terminal_bytes<'a>(
-        &'a self,
-        process_id: i32,
-        expected_call_id: &'a str,
-        input: Vec<u8>,
-    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>>;
-
-    fn resize_terminal<'a>(
-        &'a self,
-        process_id: i32,
-        expected_call_id: &'a str,
-        rows: u16,
-        cols: u16,
-    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>>;
-
-    fn terminate_terminal<'a>(
-        &'a self,
-        process_id: i32,
-        expected_call_id: &'a str,
-    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>>;
 }
 
 /// Per-session command runtime state owned by command-service.
@@ -163,6 +144,33 @@ pub trait CommandServiceSessionState: Send + Sync + 'static {
         &'a self,
         request: WriteStdinRequest<'a>,
     ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>>;
+
+    fn write_terminal_bytes<'a>(
+        &'a self,
+        _process_id: i32,
+        _expected_call_id: &'a str,
+        _input: Vec<u8>,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+        Box::pin(async { Err(CommandSessionError::new("terminal control is unavailable")) })
+    }
+
+    fn resize_terminal<'a>(
+        &'a self,
+        _process_id: i32,
+        _expected_call_id: &'a str,
+        _rows: u16,
+        _cols: u16,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+        Box::pin(async { Err(CommandSessionError::new("terminal control is unavailable")) })
+    }
+
+    fn terminate_terminal<'a>(
+        &'a self,
+        _process_id: i32,
+        _expected_call_id: &'a str,
+    ) -> CommandServiceFuture<'a, Result<(), CommandSessionError>> {
+        Box::pin(async { Err(CommandSessionError::new("terminal control is unavailable")) })
+    }
 }
 
 #[derive(Clone)]

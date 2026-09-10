@@ -20,6 +20,7 @@ type TerminalPanelState = Awaited<
 const EMPTY_STATE: TerminalPanelState = {
   activeTabId: null,
   tabs: [],
+  detachedCount: 0,
   error: null,
 };
 
@@ -89,7 +90,7 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
     const terminal = new Terminal({
       allowProposedApi: false,
       convertEol: false,
-      cursorBlink: activeTab.status === "running",
+      cursorBlink: isInteractive(activeTab.status),
       cursorStyle: "bar",
       fontFamily:
         '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
@@ -146,7 +147,7 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
       const previous = lastSizeRef.current;
       if (
         activeTab.canResize &&
-        activeTab.status === "running" &&
+        isInteractive(activeTab.status) &&
         (previous?.rows !== next.rows || previous.cols !== next.cols)
       ) {
         lastSizeRef.current = next;
@@ -162,7 +163,7 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
       terminal.focus();
     });
     const dataSubscription = terminal.onData((data) => {
-      if (!activeTab.canWrite || activeTab.status !== "running") {
+      if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
         return;
       }
       void window.codexDesktop
@@ -172,15 +173,32 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
         })
         .catch((error) => setLocalError(toTerminalError(error)));
     });
+    const binarySubscription = terminal.onBinary((data) => {
+      if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+        return;
+      }
+      void window.codexDesktop
+        .writeTerminal({
+          tabId: activeTab.id,
+          deltaBase64: encodeBinary(data),
+        })
+        .catch((error) => setLocalError(toTerminalError(error)));
+    });
 
     return () => {
       dataSubscription.dispose();
+      binarySubscription.dispose();
       resizeObserver.disconnect();
       terminal.dispose();
       terminalRef.current = null;
       lastSizeRef.current = null;
     };
-  }, [activeTab?.id, activeTab?.generation, activeTab?.status]);
+  }, [
+    activeTab?.id,
+    activeTab?.generation,
+    activeTab?.replayThroughSequence,
+    activeTab?.status,
+  ]);
 
   const applyState = (promise: Promise<TerminalPanelState>) => {
     void promise
@@ -217,7 +235,9 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
           className="panel-inline-action terminal-terminate"
           aria-label="Terminate active terminal"
           title="Terminate process"
-          disabled={!activeTab?.canTerminate || activeTab.status !== "running"}
+          disabled={
+            !activeTab?.canTerminate || !isInteractive(activeTab.status)
+          }
           onClick={() => {
             if (
               activeTab &&
@@ -282,6 +302,15 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
         >
           <PlusIcon />
         </button>
+        {state.detachedCount > 0 ? (
+          <button
+            type="button"
+            className="browser-icon-button terminal-reattach-button"
+            onClick={() => applyState(window.codexDesktop.reattachTerminalTabs())}
+          >
+            Reattach {state.detachedCount}
+          </button>
+        ) : null}
       </div>
 
       <div className="terminal-status-row" role="status">
@@ -328,6 +357,20 @@ function encodeUtf8(value: string): string {
     binary += String.fromCharCode(byte);
   }
   return window.btoa(binary);
+}
+
+function encodeBinary(value: string): string {
+  let binary = "";
+  for (let index = 0; index < value.length; index += 1) {
+    binary += String.fromCharCode(value.charCodeAt(index) & 0xff);
+  }
+  return window.btoa(binary);
+}
+
+function isInteractive(
+  status: "starting" | "running" | "exited" | "lost",
+): boolean {
+  return status === "running";
 }
 
 function toTerminalError(error: unknown): string {

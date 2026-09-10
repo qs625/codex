@@ -5650,6 +5650,15 @@ svg {
   background: rgba(250, 250, 249, 0.76);
 }
 
+.terminal-reattach-button {
+  width: auto;
+  min-width: max-content;
+  padding: 0 8px;
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 650;
+}
+
 .terminal-tab-shell.exited {
   opacity: 0.74;
 }

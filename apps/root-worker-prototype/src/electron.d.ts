@@ -28,6 +28,8 @@ type TerminalPanelTabState = {
   status: "starting" | "running" | "exited" | "lost";
   replayBase64: string;
   replayTruncated: boolean;
+  replayThroughSequence: number;
+  lastSequence: number | null;
   hasSequenceGap: boolean;
   backgroundActivity: boolean;
   canResize: boolean;
@@ -40,6 +42,7 @@ type TerminalPanelTabState = {
 type TerminalPanelState = {
   activeTabId: string | null;
   tabs: TerminalPanelTabState[];
+  detachedCount: number;
   error: string | null;
 };
 
@@ -403,6 +406,7 @@ declare global {
       }) => Promise<TerminalPanelState>;
       selectTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
       closeTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
+      reattachTerminalTabs: () => Promise<TerminalPanelState>;
       writeTerminal: (payload: {
         tabId: string;
         deltaBase64: string;

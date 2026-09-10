@@ -78,7 +78,7 @@ impl CommandExecRequestProcessor {
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         let mut data = self
             .command_exec_manager
-            .list(request_id.connection_id)
+            .list(request_id.connection_id, &params.user_resume_tokens)
             .await
             .into_iter()
             .map(|session| TerminalSessionDescriptor {
@@ -90,8 +90,9 @@ impl CommandExecRequestProcessor {
                 process_id: session.process_id,
                 title: session.command.join(" "),
                 cwd: session.cwd,
-                replay_base64: None,
-                replay_truncated: false,
+                replay_base64: session.replay_base64,
+                replay_truncated: session.replay_truncated,
+                replay_through_sequence: session.replay_through_sequence,
                 can_resize: true,
                 can_write: true,
                 can_terminate: true,
@@ -124,6 +125,7 @@ impl CommandExecRequestProcessor {
                             .encode(command.latest_output_bytes)
                     }),
                     replay_truncated: command.replay_truncated,
+                    replay_through_sequence: command.replay_through_sequence,
                     can_resize: command.can_resize,
                     can_write: true,
                     can_terminate: true,
@@ -147,7 +149,7 @@ impl CommandExecRequestProcessor {
             TerminalControl::Write(delta),
         )
         .await?;
-        Ok(Some(TerminalSessionControlResponse {}.into()))
+        Ok(Some(TerminalSessionWriteResponse {}.into()))
     }
 
     pub(crate) async fn terminal_session_resize(
@@ -162,7 +164,7 @@ impl CommandExecRequestProcessor {
             TerminalControl::Resize(size),
         )
         .await?;
-        Ok(Some(TerminalSessionControlResponse {}.into()))
+        Ok(Some(TerminalSessionResizeResponse {}.into()))
     }
 
     pub(crate) async fn terminal_session_terminate(
@@ -176,7 +178,7 @@ impl CommandExecRequestProcessor {
             TerminalControl::Terminate,
         )
         .await?;
-        Ok(Some(TerminalSessionControlResponse {}.into()))
+        Ok(Some(TerminalSessionTerminateResponse {}.into()))
     }
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
@@ -431,9 +433,7 @@ impl CommandExecRequestProcessor {
     ) -> Result<(), JSONRPCErrorError> {
         match target.origin {
             TerminalSessionOrigin::User => {
-                if target.session_id != format!("user:{}", target.process_id)
-                    || target.generation != target.process_id
-                {
+                if target.session_id != format!("user:{}", target.process_id) {
                     return Err(invalid_request("stale user terminal session identity"));
                 }
                 match control {
@@ -443,6 +443,7 @@ impl CommandExecRequestProcessor {
                                 connection_id,
                                 target.process_id,
                                 &target.generation,
+                                target.resume_token.as_deref(),
                                 delta,
                             )
                             .await
@@ -453,6 +454,7 @@ impl CommandExecRequestProcessor {
                                 connection_id,
                                 target.process_id,
                                 &target.generation,
+                                target.resume_token.as_deref(),
                                 size,
                             )
                             .await
@@ -463,6 +465,7 @@ impl CommandExecRequestProcessor {
                                 connection_id,
                                 target.process_id,
                                 &target.generation,
+                                target.resume_token.as_deref(),
                             )
                             .await
                     }

@@ -410,6 +410,10 @@ pub struct ExecCommandOutputDeltaEvent {
     #[schemars(with = "String")]
     #[ts(type = "string")]
     pub chunk: Vec<u8>,
+    /// Incrementally decoded display text for this byte chunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delta: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

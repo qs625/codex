@@ -525,6 +525,7 @@ mod tests {
                 latest_output_tail: Some("secret recent output".to_string()),
                 latest_output_bytes: Vec::new(),
                 replay_truncated: false,
+                replay_through_sequence: 0,
                 can_resize: true,
             }],
         };

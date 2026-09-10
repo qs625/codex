@@ -107,6 +107,8 @@ const {
   markRunningTerminalsLost,
   markTerminalExited,
   mergeTerminalSessions,
+  reattachTerminalSessions,
+  isTerminalSessionDetached,
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
@@ -160,6 +162,7 @@ const handleClientRelaunchNotification =
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
 const terminalPanelsByWindowId = new Map();
+const MAX_PENDING_TERMINAL_NOTIFICATIONS = 4096;
 let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
@@ -263,6 +266,11 @@ appServerClient.on("notification", (notification) => {
   }
   const normalizedNotification = normalizeNotification(notification);
   routeTerminalNotification(normalizedNotification);
+  // The started event carries a server-generated resume capability. Keep it
+  // in Electron main-process state rather than exposing it to renderer IPC.
+  if (normalizedNotification.method === "command/exec/started") {
+    return;
+  }
   if (isClientRelaunchNotification(normalizedNotification)) {
     void getRuntimeRestartController().handle(normalizedNotification);
     return;
@@ -307,6 +315,10 @@ appServerClient.on("status", (status) => {
     for (const panel of terminalPanelsByWindowId.values()) {
       markRunningTerminalsLost(panel.state);
       sendTerminalPanelState(panel);
+    }
+  } else {
+    for (const panel of terminalPanelsByWindowId.values()) {
+      void refreshTerminalPanelSessions(panel);
     }
   }
   broadcast("codex:status", status);
@@ -678,15 +690,7 @@ ipcMain.handle("codex:browser:stop", async (event) => {
 ipcMain.handle("codex:terminal:getState", async (event, threadId) => {
   const panel = terminalPanelForEvent(event);
   panel.threadId = threadId || null;
-  try {
-    const response = await appServerClient.request("terminal/session/list", {
-      threadId: threadId || null,
-    });
-    mergeTerminalSessions(panel.state, response.data ?? [], panel.threadId);
-  } catch (error) {
-    markRunningTerminalsLost(panel.state);
-    panel.error = error instanceof Error ? error.message : String(error);
-  }
+  await refreshTerminalPanelSessions(panel);
   return terminalPanelState(panel);
 });
 
@@ -705,6 +709,7 @@ ipcMain.handle("codex:terminal:create", async (event, payload = {}) => {
     cwd: payload.cwd || defaultWorkspace,
     replayBase64: null,
     replayTruncated: false,
+    replayThroughSequence: 0,
     canResize: true,
     canWrite: true,
     canTerminate: true,
@@ -748,11 +753,18 @@ ipcMain.handle("codex:terminal:close", async (event, tabId) => {
   return terminalPanelState(panel);
 });
 
+ipcMain.handle("codex:terminal:reattach", async (event) => {
+  const panel = terminalPanelForEvent(event);
+  reattachTerminalSessions(panel.state);
+  await refreshTerminalPanelSessions(panel);
+  return terminalPanelState(panel);
+});
+
 ipcMain.handle("codex:terminal:write", async (event, payload) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, payload.tabId);
   await appServerClient.request("terminal/session/write", {
-    ...terminalControlTarget(tab),
+    ...terminalControlTarget(panel, tab),
     deltaBase64: payload.deltaBase64,
   });
   return { ok: true };
@@ -765,7 +777,7 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
     throw new Error("Terminal resize is not supported by this execution environment");
   }
   await appServerClient.request("terminal/session/resize", {
-    ...terminalControlTarget(tab),
+    ...terminalControlTarget(panel, tab),
     size: normalizeTerminalSize(payload.size),
   });
   return { ok: true };
@@ -774,7 +786,10 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
 ipcMain.handle("codex:terminal:terminate", async (event, tabId) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, tabId);
-  await appServerClient.request("terminal/session/terminate", terminalControlTarget(tab));
+  await appServerClient.request(
+    "terminal/session/terminate",
+    terminalControlTarget(panel, tab),
+  );
   return { ok: true };
 });
 
@@ -984,6 +999,8 @@ function terminalPanelForEvent(event) {
     error: null,
     threadId: null,
     refreshPromise: null,
+    pendingNotifications: [],
+    userTerminalResumeTokens: new Map(),
   };
   terminalPanelsByWindowId.set(window.id, panel);
   return panel;
@@ -1006,76 +1023,152 @@ function sendTerminalPanelState(panel, event = { type: "snapshot" }) {
 }
 
 function routeTerminalNotification(notification) {
-  const params = notification.params ?? {};
   for (const panel of terminalPanelsByWindowId.values()) {
-    if (notification.method === "command/exec/outputDelta") {
-      const tab = panel.state.tabs.find(
-        (candidate) =>
-          candidate.origin === "user" &&
-          candidate.processId === params.processId,
-      );
-      if (tab && appendTerminalOutput(tab, params.deltaBase64, null)) {
-        tab.backgroundActivity = panel.state.activeTabId !== tab.id;
-        sendTerminalPanelDelta(panel, {
-          type: "delta",
-          tabId: tab.id,
-          deltaBase64: params.deltaBase64,
-          tab: terminalTabMetadata(tab),
-        });
-      }
-      continue;
-    }
-    if (notification.method === "command/exec/exited") {
-      const tab = panel.state.tabs.find(
-        (candidate) =>
-          candidate.origin === "user" &&
-          candidate.processId === params.processId,
-      );
-      if (tab) {
-        markTerminalExited(tab, params.exitCode);
-        sendTerminalPanelState(panel);
-      }
-      continue;
-    }
-    if (notification.method === "item/commandExecution/outputDelta") {
-      const tab = panel.state.tabs.find(
-        (candidate) =>
-          candidate.origin === "model" &&
-          candidate.threadId === params.threadId &&
-          candidate.commandItemId === params.itemId &&
-          candidate.processId === params.processId,
-      );
+    if (panel.refreshPromise) {
+      panel.pendingNotifications.push(notification);
       if (
-        tab &&
-        params.deltaBase64 &&
-        appendTerminalOutput(tab, params.deltaBase64, params.sequence)
+        panel.pendingNotifications.length >
+        MAX_PENDING_TERMINAL_NOTIFICATIONS
       ) {
-        tab.backgroundActivity = panel.state.activeTabId !== tab.id;
-        sendTerminalPanelDelta(panel, {
-          type: "delta",
-          tabId: tab.id,
-          deltaBase64: params.deltaBase64,
-          tab: terminalTabMetadata(tab),
-        });
-      } else if (!tab && panel.threadId === params.threadId) {
+        panel.pendingNotifications.splice(
+          0,
+          panel.pendingNotifications.length -
+            MAX_PENDING_TERMINAL_NOTIFICATIONS,
+        );
+      }
+    } else {
+      applyTerminalNotification(panel, notification, true);
+    }
+  }
+}
+
+function applyTerminalNotification(panel, notification, allowRefresh) {
+  const params = notification.params ?? {};
+  if (notification.method === "command/exec/started") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "user" &&
+        candidate.processId === params.processId &&
+        candidate.status === "starting",
+    );
+    if (tab) {
+      tab.generation = params.generation;
+      tab.status = "running";
+      panel.userTerminalResumeTokens.set(tab.processId, params.resumeToken);
+      sendTerminalPanelState(panel);
+    }
+    return;
+  }
+  if (
+    notification.method === "item/started" &&
+    params.item?.type === "commandExecution" &&
+    panel.threadId === params.threadId &&
+    allowRefresh
+  ) {
+    // A PTY is interactive as soon as the process starts, even before it
+    // writes output. Listing is the runtime fact that makes the tab available.
+    void refreshTerminalPanelSessions(panel);
+    return;
+  }
+  if (notification.method === "command/exec/outputDelta") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "user" &&
+        candidate.processId === params.processId &&
+        candidate.generation === params.generation,
+    );
+    if (
+      tab &&
+      appendTerminalOutput(tab, params.deltaBase64, params.sequence)
+    ) {
+      tab.backgroundActivity = panel.state.activeTabId !== tab.id;
+      sendTerminalPanelDelta(panel, {
+        type: "delta",
+        tabId: tab.id,
+        deltaBase64: params.deltaBase64,
+        tab: terminalTabMetadata(tab),
+      });
+      if (tab.hasSequenceGap && allowRefresh) {
         void refreshTerminalPanelSessions(panel);
       }
-      continue;
-    }
-    if (
-      notification.method === "item/completed" &&
-      params.item?.type === "commandExecution"
+    } else if (
+      !tab &&
+      allowRefresh &&
+      !isTerminalSessionDetached(panel.state, {
+        origin: "user",
+        threadId: null,
+        processId: params.processId,
+        generation: params.generation,
+      })
     ) {
-      const tab = panel.state.tabs.find(
-        (candidate) =>
-          candidate.origin === "model" &&
-          candidate.threadId === params.threadId &&
-          candidate.commandItemId === params.item.id,
-      );
-      if (tab) {
-        markTerminalExited(tab, params.item.exitCode);
-        sendTerminalPanelState(panel);
+      void refreshTerminalPanelSessions(panel);
+    }
+    return;
+  }
+  if (notification.method === "command/exec/exited") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "user" &&
+        candidate.processId === params.processId &&
+        candidate.generation === params.generation,
+    );
+    if (tab) {
+      markTerminalExited(tab, params.exitCode);
+      sendTerminalPanelState(panel);
+    }
+    return;
+  }
+  if (notification.method === "item/commandExecution/outputDelta") {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "model" &&
+        candidate.threadId === params.threadId &&
+        candidate.commandItemId === params.itemId &&
+        candidate.processId === params.processId,
+    );
+    if (
+      tab &&
+      params.deltaBase64 &&
+      appendTerminalOutput(tab, params.deltaBase64, params.sequence)
+    ) {
+      tab.backgroundActivity = panel.state.activeTabId !== tab.id;
+      sendTerminalPanelDelta(panel, {
+        type: "delta",
+        tabId: tab.id,
+        deltaBase64: params.deltaBase64,
+        tab: terminalTabMetadata(tab),
+      });
+      if (tab.hasSequenceGap && allowRefresh) {
+        void refreshTerminalPanelSessions(panel);
       }
+    } else if (
+      !tab &&
+      allowRefresh &&
+      panel.threadId === params.threadId &&
+      !isTerminalSessionDetached(panel.state, {
+        origin: "model",
+        threadId: params.threadId,
+        processId: params.processId,
+        generation: params.itemId,
+      })
+    ) {
+      void refreshTerminalPanelSessions(panel);
+    }
+    return;
+  }
+  if (
+    notification.method === "item/completed" &&
+    params.item?.type === "commandExecution"
+  ) {
+    const tab = panel.state.tabs.find(
+      (candidate) =>
+        candidate.origin === "model" &&
+        candidate.threadId === params.threadId &&
+        candidate.commandItemId === params.item.id,
+    );
+    if (tab) {
+      markTerminalExited(tab, params.item.exitCode);
+      sendTerminalPanelState(panel);
     }
   }
 }
@@ -1094,8 +1187,13 @@ async function refreshTerminalPanelSessions(panel) {
     try {
       const response = await appServerClient.request("terminal/session/list", {
         threadId: panel.threadId,
+        userResumeTokens: [...panel.userTerminalResumeTokens.values()],
       });
       mergeTerminalSessions(panel.state, response.data ?? [], panel.threadId);
+      const pendingNotifications = panel.pendingNotifications.splice(0);
+      for (const notification of pendingNotifications) {
+        applyTerminalNotification(panel, notification, false);
+      }
       panel.error = null;
     } catch (error) {
       panel.error = error instanceof Error ? error.message : String(error);
@@ -1118,7 +1216,7 @@ function requireTerminalTab(panel, tabId) {
   return tab;
 }
 
-function terminalControlTarget(tab) {
+function terminalControlTarget(panel, tab) {
   return {
     sessionId: tab.sessionId,
     generation: tab.generation,
@@ -1126,6 +1224,10 @@ function terminalControlTarget(tab) {
     threadId: tab.threadId,
     commandItemId: tab.commandItemId,
     processId: tab.processId,
+    resumeToken:
+      tab.origin === "user"
+        ? panel.userTerminalResumeTokens.get(tab.processId) ?? null
+        : null,
   };
 }
 
