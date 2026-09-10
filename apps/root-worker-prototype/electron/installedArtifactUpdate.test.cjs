@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -9,11 +10,13 @@ const {
   APP_NAME,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
+  materializeInstalledArtifactWorkerBundle,
   normalizeRuntimeCapsuleTree,
   removeInstalledArtifactTree,
   resolveInstalledArtifactUpdatePlan,
   resolveInstalledArtifactFileSystem,
   resolveRuntimeLauncherStateRoot,
+  runInstalledArtifactWorker,
   stagePayloadResources,
   updateInstalledArtifacts,
 } = require("./installedArtifactUpdate.cjs");
@@ -86,6 +89,242 @@ test("Electron Runtime Capsule operations use original-fs while Node falls back"
       },
     }),
     patchedFs,
+  );
+});
+
+test("worker bundle preserves a source read failure and cleans the raw destination", () => {
+  const bundleRoots = [];
+  const removedRoots = [];
+  const readFailure = new Error("packaged worker source read failed");
+  const sourceFs = {
+    readFileSync(sourcePath) {
+      if (sourcePath.endsWith("installedArtifactUpdate.cjs")) {
+        throw readFailure;
+      }
+      return fs.readFileSync(
+        path.join(__dirname, path.basename(sourcePath)),
+      );
+    },
+  };
+  const destinationFs = new Proxy(fs, {
+    get(target, property) {
+      if (property === "mkdtempSync") {
+        return (prefix) => {
+          const bundleRoot = target.mkdtempSync(prefix);
+          bundleRoots.push(bundleRoot);
+          return bundleRoot;
+        };
+      }
+      if (property === "rmSync") {
+        return (targetPath, options) => {
+          removedRoots.push(targetPath);
+          return target.rmSync(targetPath, options);
+        };
+      }
+      return target[property];
+    },
+  });
+
+  assert.throws(
+    () =>
+      materializeInstalledArtifactWorkerBundle({
+        destinationFsOps: destinationFs,
+        sourceFsOps: sourceFs,
+        workerSourceDirectory:
+          "/Applications/Morpheus.app/Contents/Resources/app.asar/electron",
+      }),
+    (error) => error === readFailure,
+  );
+  assert.equal(bundleRoots.length, 1);
+  assert.deepEqual(removedRoots, bundleRoots);
+  assert.equal(fs.existsSync(bundleRoots[0]), false);
+});
+
+test("worker bundle keeps a destination write failure when raw cleanup also fails", () => {
+  const writeFailure = new Error("raw worker destination write failed");
+  const cleanupFailure = new Error("raw worker destination cleanup failed");
+  let writeCount = 0;
+  let bundleRoot = null;
+  const destinationFs = new Proxy(fs, {
+    get(target, property) {
+      if (property === "mkdtempSync") {
+        return (prefix) => {
+          bundleRoot = target.mkdtempSync(prefix);
+          return bundleRoot;
+        };
+      }
+      if (property === "writeFileSync") {
+        return (...args) => {
+          writeCount += 1;
+          if (writeCount === 2) {
+            throw writeFailure;
+          }
+          return target.writeFileSync(...args);
+        };
+      }
+      if (property === "rmSync") {
+        return () => {
+          throw cleanupFailure;
+        };
+      }
+      return target[property];
+    },
+  });
+
+  try {
+    assert.throws(
+      () =>
+        materializeInstalledArtifactWorkerBundle({
+          destinationFsOps: destinationFs,
+          sourceFsOps: fs,
+        }),
+      (error) => {
+        assert.equal(error, writeFailure);
+        assert.match(error.message, /^raw worker destination write failed;/);
+        assert.match(error.message, /raw worker destination cleanup failed/);
+        assert.equal(error.cleanupError, cleanupFailure);
+        return true;
+      },
+    );
+    assert.equal(writeCount, 2);
+    assert.ok(bundleRoot);
+    assert.equal(fs.readdirSync(bundleRoot).length, 1);
+  } finally {
+    if (bundleRoot) {
+      fs.rmSync(bundleRoot, { force: true, recursive: true });
+    }
+  }
+});
+
+test("worker bundle defaults work from an ordinary Node source tree", () => {
+  const modulePath = path.join(__dirname, "installedArtifactUpdate.cjs");
+  const script = `
+    const path = require("node:path");
+    const {
+      materializeInstalledArtifactWorkerBundle,
+      runInstalledArtifactWorker,
+    } = require(${JSON.stringify(modulePath)});
+    const bundlePath = materializeInstalledArtifactWorkerBundle();
+    runInstalledArtifactWorker(
+      "resolvePlan",
+      {
+        env: {},
+        isPackaged: false,
+        platform: "linux",
+        resourcesPath: null,
+      },
+      {
+        workerPath: path.join(
+          bundlePath,
+          "installedArtifactUpdateWorker.cjs",
+        ),
+      },
+    ).then(
+      (result) => {
+        if (result !== null) {
+          throw new Error("unexpected worker result");
+        }
+      },
+      (error) => {
+        console.error(error);
+        process.exitCode = 1;
+      },
+    );
+  `;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("Electron worker bundle reads packaged sources and writes a raw loadable bundle", async () => {
+  const packagedSourceDirectory =
+    "/Applications/Morpheus.app/Contents/Resources/app.asar/electron";
+  const sourceReads = [];
+  const destinationCalls = [];
+  const sourceFs = {
+    readFileSync(sourcePath) {
+      assert.ok(sourcePath.startsWith(`${packagedSourceDirectory}${path.sep}`));
+      sourceReads.push(sourcePath);
+      return fs.readFileSync(
+        path.join(__dirname, path.basename(sourcePath)),
+      );
+    },
+  };
+  const destinationFs = new Proxy(fs, {
+    get(target, property) {
+      if (property === "readFileSync") {
+        return (targetPath, ...args) => {
+          if (targetPath.includes(`${path.sep}app.asar${path.sep}`)) {
+            const error = new Error(`not a directory, open '${targetPath}'`);
+            error.code = "ENOTDIR";
+            throw error;
+          }
+          return target.readFileSync(targetPath, ...args);
+        };
+      }
+      if (
+        property === "mkdtempSync" ||
+        property === "writeFileSync" ||
+        property === "rmSync"
+      ) {
+        return (...args) => {
+          destinationCalls.push([property, args[0]]);
+          return target[property](...args);
+        };
+      }
+      return target[property];
+    },
+  });
+  const bundlePath = materializeInstalledArtifactWorkerBundle({
+    sourceFsOps: sourceFs,
+    isElectron: true,
+    loadOriginalFileSystem: () => destinationFs,
+    workerSourceDirectory: packagedSourceDirectory,
+  });
+
+  assert.equal(sourceReads.length, 5);
+  assert.equal(
+    destinationCalls.filter(([operation]) => operation === "writeFileSync")
+      .length,
+    5,
+  );
+  assert.ok(
+    destinationCalls.every(
+      ([operation, targetPath]) =>
+        operation === "mkdtempSync" ||
+        operation === "rmSync" ||
+        targetPath.startsWith(`${bundlePath}${path.sep}`),
+    ),
+  );
+  for (const sourcePath of sourceReads) {
+    const fileName = path.basename(sourcePath);
+    assert.deepEqual(
+      fs.readFileSync(path.join(bundlePath, fileName)),
+      fs.readFileSync(path.join(__dirname, fileName)),
+    );
+    assert.equal(
+      fs.statSync(path.join(bundlePath, fileName)).mode & 0o777,
+      0o600,
+    );
+  }
+  assert.equal(
+    await runInstalledArtifactWorker(
+      "resolvePlan",
+      {
+        env: {},
+        isPackaged: false,
+        platform: "linux",
+        resourcesPath: null,
+      },
+      {
+        workerPath: path.join(
+          bundlePath,
+          "installedArtifactUpdateWorker.cjs",
+        ),
+      },
+    ),
+    null,
   );
 });
 
