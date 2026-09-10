@@ -163,6 +163,7 @@ let runtimeRestartController = null;
 let runtimeRestartIntentStore = null;
 let quittingAfterAppServerStop = false;
 let fatalPayloadExitRequested = false;
+let startupRuntimeRecovery = { hasDurableRestartRecovery: false };
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -327,6 +328,8 @@ ipcMain.handle("codex:bootstrap", async () => {
     await getRuntimeRestartController().recoverPending();
   const autoResume =
     await getAutoResumeCoordinator().runAfterRuntimeRestartRecovery({
+      hasDurableRestartRecovery:
+        startupRuntimeRecovery.hasDurableRestartRecovery,
       threads,
       expectedRestart,
     });
@@ -800,7 +803,7 @@ app.whenReady().then(() => {
   void ensureDefaultWorkspace()
     .then(async () => {
       await appServerClient.ready();
-      await recoverLauncherStateAtStartup({
+      startupRuntimeRecovery = await recoverLauncherStateAtStartup({
         recordLauncherRecovery: () =>
           recordLauncherRecoveryIfPresent({
             appServerClient,

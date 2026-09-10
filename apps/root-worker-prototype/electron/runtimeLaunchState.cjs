@@ -379,15 +379,19 @@ async function recoverLauncherStateAtStartup({
 }) {
   const recorded = await recordLauncherRecovery();
   let payloadRecovery = null;
+  let hasDurableRestartRecovery = false;
   try {
     payloadRecovery = await recoverPayloadFailure();
+    hasDurableRestartRecovery =
+      payloadRecovery?.payloadEvidence === true;
   } catch (error) {
+    hasDurableRestartRecovery = error?.payloadEvidence === true;
     logger.error?.(
       "[prototype] payload recovery input failed; evidence retained",
       error,
     );
   }
-  return { payloadRecovery, recorded };
+  return { hasDurableRestartRecovery, payloadRecovery, recorded };
 }
 
 function isPayloadRuntimeRecoveryEvidence(evidence) {

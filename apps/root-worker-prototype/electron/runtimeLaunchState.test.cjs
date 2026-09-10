@@ -14,10 +14,14 @@ const {
 } = require("./runtimeLaunchState.cjs");
 const {
   formatPayloadRuntimeRecoveryPrompt,
+  RESTART_RECOVERY_PROMPTS,
 } = require("./restartRecoveryPrompts.cjs");
 const {
   sendSelfCommandToThread,
 } = require("./selfProjectThread.cjs");
+const {
+  createThreadAutoResumeCoordinator,
+} = require("./threadAutoResume.cjs");
 
 test("launcher recovery records durable failure evidence without mutating launcher state", async () => {
   const requests = [];
@@ -287,6 +291,7 @@ test("startup records generic recovery before sending a payload /self prompt", a
     assert.equal(sent.length, 1);
     assert.equal(await fileExists(evidencePath), false);
     assert.deepEqual(result, {
+      hasDurableRestartRecovery: true,
       recorded: { evidence: true, recorded: true },
       payloadRecovery: {
         delivery: "sent",
@@ -295,6 +300,43 @@ test("startup records generic recovery before sending a payload /self prompt", a
         recovered: true,
       },
     });
+
+    const genericPrompts = [];
+    const roots = [
+      recoveryProjectRoot({ id: "project-a", updatedAt: 2 }),
+      recoveryProjectRoot({ id: "system-self", name: "/self", updatedAt: 3 }),
+      recoveryProjectRoot({
+        id: "completed",
+        lifecycleStatus: { type: "final", result: { type: "completed" } },
+      }),
+    ];
+    const coordinator = createThreadAutoResumeCoordinator({
+      readThread: async (threadId) => ({
+        thread: roots.find((thread) => thread.id === threadId),
+      }),
+      subscribeThread: async () => {},
+      sendResumeInput: async (thread, text) =>
+        genericPrompts.push({ threadId: thread.id, text }),
+      stateStore: { has: async () => false, mark: async () => {} },
+      logger: { warn: () => {} },
+    });
+    const autoResume = await coordinator.runAfterRuntimeRestartRecovery({
+      hasDurableRestartRecovery: result.hasDurableRestartRecovery,
+      threads: roots,
+      expectedRestart: { expectedThreadIds: [] },
+    });
+
+    assert.deepEqual(autoResume.resumedThreadIds, ["system-self", "project-a"]);
+    assert.deepEqual(genericPrompts, [
+      {
+        threadId: "system-self",
+        text: RESTART_RECOVERY_PROMPTS.projectRootFanout,
+      },
+      {
+        threadId: "project-a",
+        text: RESTART_RECOVERY_PROMPTS.projectRootFanout,
+      },
+    ]);
   });
 });
 
@@ -333,6 +375,7 @@ test("startup has zero recovery sends when no evidence exists", async () => {
 
     assert.deepEqual(calls, []);
     assert.deepEqual(result, {
+      hasDurableRestartRecovery: false,
       recorded: { evidence: false, recorded: false },
       payloadRecovery: {
         evidence: false,
@@ -340,6 +383,19 @@ test("startup has zero recovery sends when no evidence exists", async () => {
         recovered: false,
       },
     });
+    const coordinator = createThreadAutoResumeCoordinator({
+      readThread: async () => calls.push("read-thread"),
+      subscribeThread: async () => calls.push("subscribe"),
+      sendResumeInput: async () => calls.push("generic-send"),
+      stateStore: { has: async () => false, mark: async () => {} },
+      logger: { warn: () => {} },
+    });
+    await coordinator.runAfterRuntimeRestartRecovery({
+      hasDurableRestartRecovery: result.hasDurableRestartRecovery,
+      threads: [recoveryProjectRoot()],
+      expectedRestart: { expectedThreadIds: [] },
+    });
+    assert.deepEqual(calls, []);
   } finally {
     await fs.rm(root, { force: true, recursive: true });
   }
@@ -355,7 +411,9 @@ test("startup still sends a payload /self prompt when generic recovery is comple
     },
     async recoverPayloadFailure() {
       calls.push("payload-self");
-      throw new Error("self turn unavailable");
+      const error = new Error("self turn unavailable");
+      error.payloadEvidence = true;
+      throw error;
     },
     async recordLauncherRecovery() {
       calls.push("generic-fanout");
@@ -368,8 +426,9 @@ test("startup still sends a payload /self prompt when generic recovery is comple
     "payload-self",
     "payload-error",
   ]);
-  assert.deepEqual(result, {
-    payloadRecovery: null,
+    assert.deepEqual(result, {
+      hasDurableRestartRecovery: true,
+      payloadRecovery: null,
     recorded: { recorded: true },
   });
 });
@@ -490,4 +549,20 @@ async function fileExists(targetPath) {
     }
     throw error;
   }
+}
+
+function recoveryProjectRoot(overrides = {}) {
+  return {
+    cwd: "/workspace/project",
+    id: "project-root",
+    lifecycleStatus: { type: "final", result: { type: "interrupted" } },
+    model: "gpt",
+    modelProvider: "openai",
+    reasoningEffort: "medium",
+    source: "appServer",
+    threadSource: "user",
+    turns: [],
+    updatedAt: 1,
+    ...overrides,
+  };
 }
