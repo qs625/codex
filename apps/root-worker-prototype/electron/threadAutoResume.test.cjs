@@ -28,7 +28,7 @@ function projectRootThread(overrides = {}) {
   };
 }
 
-function runtimeRestartRecovery(expectedThreadIds = ["restart-origin"]) {
+function runtimeRestartRecovery(expectedThreadIds = ["system-self"]) {
   return { expectedThreadIds };
 }
 
@@ -201,7 +201,28 @@ test("cold startup without a durable restart fact does not fan out", async () =>
   assert.deepEqual(calls, []);
 });
 
-test("durable restart fans out exactly once to every eligible project root", async () => {
+test("failed or interrupted restart facts still fan out generic recovery", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async () => calls.push("read"),
+    subscribeThread: async () => calls.push("subscribe"),
+    sendResumeInput: async () => calls.push("send"),
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread()],
+    expectedRestart: {
+      expectedThreadIds: ["system-self"],
+    },
+  });
+
+  assert.deepEqual(result.resumedThreadIds, ["thread-1"]);
+  assert.deepEqual(calls, ["read", "subscribe", "send"]);
+});
+
+test("durable restart fans out exactly once to every eligible project root including /self", async () => {
   const sent = [];
   const marked = new Set();
   const coordinator = createThreadAutoResumeCoordinator({
@@ -238,8 +259,8 @@ test("durable restart fans out exactly once to every eligible project root", asy
       parentThreadId: "running",
     }),
     projectRootThread({
-      id: "restart-origin",
-      updatedAt: 4,
+      id: "system-self",
+      updatedAt: 5,
     }),
   ];
 
@@ -250,9 +271,9 @@ test("durable restart fans out exactly once to every eligible project root", asy
         expectedRestart: runtimeRestartRecovery(),
       })
     ).resumedThreadIds,
-    ["running", "waiting"],
+    ["system-self", "running", "waiting"],
   );
-  assert.deepEqual(sent, ["running", "waiting"]);
+  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
   assert.deepEqual(
     (
       await coordinator.runAfterRuntimeRestartRecovery({
@@ -262,7 +283,7 @@ test("durable restart fans out exactly once to every eligible project root", asy
     ).resumedThreadIds,
     [],
   );
-  assert.deepEqual(sent, ["running", "waiting"]);
+  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
 });
 
 test("auto-resume skips interrupted threads that already contain recovery input", async () => {

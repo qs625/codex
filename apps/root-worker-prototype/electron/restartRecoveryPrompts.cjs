@@ -27,6 +27,10 @@ function expectedRuntimeRestartRecoveryPrompt(record) {
   return `${outcome} ${prompt.followUp}`;
 }
 
+function shouldNotifyRuntimeRestartErrorOnSelf(record) {
+  return record?.phase !== "completed";
+}
+
 function formatPayloadRuntimeRecoveryPrompt({
   failedReleaseId,
   reason,
@@ -57,4 +61,5 @@ module.exports = {
   formatPayloadRuntimeRecoveryPrompt,
   RESTART_RECOVERY_PROMPTS,
   expectedRuntimeRestartRecoveryPrompt,
+  shouldNotifyRuntimeRestartErrorOnSelf,
 };

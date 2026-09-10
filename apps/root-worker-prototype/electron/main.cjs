@@ -97,6 +97,7 @@ const {
 } = require("./runtimeRestartIntent.cjs");
 const {
   expectedRuntimeRestartRecoveryPrompt,
+  shouldNotifyRuntimeRestartErrorOnSelf,
 } = require("./restartRecoveryPrompts.cjs");
 const {
   notifyRecoverableRestartErrorOnSelf,
@@ -1396,6 +1397,9 @@ function getRuntimeRestartController() {
 }
 
 async function recoverRuntimeRestartRecord(record) {
+  if (!shouldNotifyRuntimeRestartErrorOnSelf(record)) {
+    return;
+  }
   return notifyRecoverableRestartErrorOnSelf({
     sourceThreadId: record.requestedByThreadId,
     prompt: expectedRuntimeRestartRecoveryPrompt(record),

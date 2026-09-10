@@ -24,8 +24,7 @@ function createThreadAutoResumeCoordinator({
       if (!hasDurableRuntimeRestartRecovery(expectedRestart)) {
         return emptyAutoResumeResult();
       }
-      const expectedThreadIds = new Set(expectedRestart.expectedThreadIds);
-      return run(threads.filter((thread) => !expectedThreadIds.has(thread.id)));
+      return run(threads);
     },
   };
 

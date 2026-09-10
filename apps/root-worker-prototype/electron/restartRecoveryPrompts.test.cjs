@@ -5,6 +5,7 @@ const {
   formatPayloadRuntimeRecoveryPrompt,
   RESTART_RECOVERY_PROMPTS,
   expectedRuntimeRestartRecoveryPrompt,
+  shouldNotifyRuntimeRestartErrorOnSelf,
 } = require("./restartRecoveryPrompts.cjs");
 
 test("restart recovery prompts are centralized and Chinese", () => {
@@ -63,4 +64,19 @@ test("payload recovery formatter falls back to Launcher exit evidence", () => {
   assert.match(prompt, /release-bad/);
   assert.match(prompt, /exit code 9/);
   assert.match(prompt, /signal SIGTERM/);
+});
+
+test("only failed or interrupted restart records notify /self with details", () => {
+  assert.equal(
+    shouldNotifyRuntimeRestartErrorOnSelf({ phase: "completed" }),
+    false,
+  );
+  assert.equal(
+    shouldNotifyRuntimeRestartErrorOnSelf({ phase: "failed" }),
+    true,
+  );
+  assert.equal(
+    shouldNotifyRuntimeRestartErrorOnSelf({ phase: "executing" }),
+    true,
+  );
 });
