@@ -242,16 +242,15 @@ pub fn run(
                 return Err(error);
             }
         };
-        if let Some(failure) = RuntimeFailure::from_exit_status(&outcome.status) {
-            handle_unexpected_payload_exit(
-                paths,
-                &selected.release_id,
-                outcome.payload_pid,
-                failure,
-            )?;
-        } else if let Some(outcome) = normal_payload_exit_outcome(&outcome.status) {
-            return Ok(outcome);
-        }
+        let Some(failure) = RuntimeFailure::from_exit_status(&outcome.status) else {
+            return Ok(RunOutcome::Exited(outcome.status.code().unwrap_or(0)));
+        };
+        handle_unexpected_payload_exit(
+            paths,
+            &selected.release_id,
+            outcome.payload_pid,
+            failure,
+        )?;
     }
 }
 
@@ -956,12 +955,6 @@ fn handle_unexpected_payload_exit(
     Ok(())
 }
 
-fn normal_payload_exit_outcome(status: &ExitStatus) -> Option<RunOutcome> {
-    status
-        .success()
-        .then(|| RunOutcome::Exited(status.code().unwrap_or(0)))
-}
-
 impl RuntimeFailure {
     fn from_exit_status(status: &ExitStatus) -> Option<Self> {
         if status.success() {
@@ -1491,10 +1484,6 @@ mod tests {
             .status()
             .expect("run successful payload");
         assert!(RuntimeFailure::from_exit_status(&success).is_none());
-        assert_eq!(
-            normal_payload_exit_outcome(&success),
-            Some(RunOutcome::Exited(0))
-        );
 
         let replacement = capsule(temp.path(), "replacement");
         let mut selected_after_exit = state.clone();
