@@ -20,13 +20,13 @@ Complete the Terminal-first PTY improvements and then deliver all pending Launch
   files: apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/lib/threadAnalysis.test.ts; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/components/TerminalPanel.tsx if needed for target focus
   base_commit: 22ecbc2edbfa5ada1db377fb0f51569579d87979
   pending_sync_from_main: none
-  status: in_progress
+  status: merged
   objective: Restore command item visibility in the Thread Analysis panel while keeping internal command stdout/stderr out of that panel; live command rows should link users to the Terminal panel/tab for the actual PTY/output surface.
-  last_update: 2026-09-11 CST user clarified that hiding internal command output did not mean hiding command items; RightPanel currently filters command monitor sections and tests explicitly assert live commands are omitted from Thread Analysis.
-  next_action: fixed dev-2 owner should implement the UI semantics, reuse its fixed reviewer, run focused frontend tests, and commit the fix for PM merge.
+  last_update: 2026-09-11 CST fixed dev-2 owner delivered `52b07f41d`, reviewer passed, and PM merged it to canonical main as `b21f9407f`. Thread Analysis now restores the Live Commands section as a navigation summary without exposing command output; command rows open the Terminal panel and focus the corresponding command tab.
+  next_action: no further source work for this regression; include in the next frontend/runtime installed delivery.
   blockers: none
-  validation: pending
-  commit: pending
+  validation: owner `git diff --check`, focused frontend tests 72/72, and Vite production build passed. PM reran focused frontend tests 72/72, `git diff --check`, and Vite production build on merged main; all passed.
+  commit: b21f9407f, 52b07f41d
 - id: project-thread-restart-prompt-fanout
   owner: /self/owner_main
   checkout: /Users/bytedance/.morpheus/source_workspace
