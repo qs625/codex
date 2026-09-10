@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `fb6ca7c23` / `sha256:ec6d9b770c491a349095986fb9f5d5ab22aa987b646d0bb2be256371d6544552`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has the Conversation command display fix installed. Follow-up Terminal live PTY focus fix is merged on main at `5784edb8d` but is not yet installed/effective; build a new complete Runtime Capsule from canonical main and restart before claiming the Terminal fixed-size/wrapping issue is user-visible.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `ea297f8f` / `sha256:3871abd050bdbab88ceb164ba3f32d6ff9871c733d62cf712d2d4f40b23a012f`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has both the Conversation command display fix and Terminal live PTY focus fix installed.
 
 ## Active Work
 - id: conversation-command-item-display-regression
@@ -36,13 +36,13 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
   files: apps/root-worker-prototype/electron/terminalPanel.cjs; apps/root-worker-prototype/electron/terminalPanel.test.cjs
   base_commit: fb6ca7c23
   pending_sync_from_main: none
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   objective: Prefer real live Model PTY terminal tabs for running command focus so FitAddon resize reaches app-server; keep read-only fixed-size output as fallback only when no live PTY can be proven.
-  last_update: 2026-09-11 CST root cause confirmed from screenshot and code: `commandFocusDescriptorForTerminalFocus` selected activeCommand fallback before refreshed liveSession, and request fallback could use commandItemId as placeholder processId so later live descriptors with the real processId failed to merge. Fixed dev-2 owner delivered `2e7c8e80`; reviewer passed; PM merged to canonical main as `5784edb8d`.
-  next_action: build/install a complete Runtime Capsule from canonical main `5784edb8d`, restart, then verify a running command focus shows Model PTY/canResize rather than `fixed size`.
-  blockers: not installed/effective yet; current active payload remains `fb6ca7c23`.
-  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` -> 26/26, `git diff --check`, and Vite build passed. PM reran Electron terminal panel tests 26/26 and `git diff --check`; all passed.
-  commit: 2e7c8e80, 5784edb8d
+  last_update: 2026-09-11 CST root cause confirmed from screenshot and code: `commandFocusDescriptorForTerminalFocus` selected activeCommand fallback before refreshed liveSession, and request fallback could use commandItemId as placeholder processId so later live descriptors with the real processId failed to merge. Fixed dev-2 owner delivered `2e7c8e80`; reviewer passed; PM merged to canonical main as `5784edb8d`, recorded as `ea297f8f`, built a complete Runtime Capsule, and restored/restarted into active external release `sha256:3871abd050bdbab88ceb164ba3f32d6ff9871c733d62cf712d2d4f40b23a012f` with payload PID `18425`; failure evidence absent.
+  next_action: ask the user to re-focus a running command and confirm the Terminal no longer shows `Running · fixed size`; if output still wraps incorrectly with a live resizable Model PTY, investigate FitAddon/CSS/backend resize next.
+  blockers: none
+  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` -> 26/26, `git diff --check`, and Vite build passed. PM reran Electron terminal panel tests 26/26 and `git diff --check`; all passed. Canonical main packaged Runtime Capsule `sha256:3871abd050bdbab88ceb164ba3f32d6ff9871c733d62cf712d2d4f40b23a012f` and launcher control now reports selected/activeLaunch on that release with `lastFailure: null`.
+  commit: 2e7c8e80, 5784edb8d, ea297f8f
 - id: thread-analysis-command-monitor-restoration
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
