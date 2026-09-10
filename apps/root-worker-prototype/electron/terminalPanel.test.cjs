@@ -7,9 +7,11 @@ const {
   appendTerminalOutput,
   closeTerminalTab,
   createTerminalPanelState,
+  focusCommandTerminal,
   mergeTerminalSessions,
   reattachTerminalSessions,
   terminalPanelSnapshot,
+  terminalTabSupports,
 } = require("./terminalPanel.cjs");
 
 function descriptor(overrides = {}) {
@@ -150,4 +152,56 @@ test("explicit reattach clears detached tombstones", () => {
 
   assert.equal(state.tabs.length, 1);
   assert.equal(terminalPanelSnapshot(state).detachedCount, 0);
+});
+
+test("focusing a non-PTY command creates a read-only output tab", () => {
+  const state = createTerminalPanelState();
+  const tab = focusCommandTerminal(
+    state,
+    descriptor({
+      sessionId: "command:thread:call",
+      processId: "call",
+      replayBase64: Buffer.from("output").toString("base64"),
+      canResize: false,
+      canWrite: false,
+      canTerminate: false,
+    }),
+  );
+
+  assert.equal(tab.readOnlyOutput, true);
+  assert.equal(tab.canResize, false);
+  assert.equal(tab.canWrite, false);
+  assert.equal(tab.canTerminate, false);
+  assert.equal(terminalTabSupports(tab, "write"), false);
+  assert.equal(terminalTabSupports(tab, "resize"), false);
+  assert.equal(terminalTabSupports(tab, "terminate"), false);
+  assert.equal(tab.replay.toString(), "output");
+  assert.equal(state.activeTabId, tab.id);
+
+  mergeTerminalSessions(state, [], "thread");
+  assert.equal(tab.status, "running");
+});
+
+test("focusing an existing model terminal reuses and selects its tab", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(state, [descriptor()], "thread");
+  const existing = state.tabs[0];
+
+  const tab = focusCommandTerminal(
+    state,
+    descriptor({
+      sessionId: "command:thread:call",
+      canResize: false,
+      canWrite: false,
+      canTerminate: false,
+    }),
+  );
+
+  assert.equal(tab, existing);
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.activeTabId, existing.id);
+  assert.equal(existing.readOnlyOutput, undefined);
+  assert.equal(terminalTabSupports(existing, "write"), true);
+  assert.equal(terminalTabSupports(existing, "resize"), true);
+  assert.equal(terminalTabSupports(existing, "terminate"), true);
 });

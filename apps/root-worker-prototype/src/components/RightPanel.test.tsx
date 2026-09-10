@@ -553,7 +553,7 @@ test("omits plan work queue from thread analysis", () => {
   assert.doesNotMatch(markup, /Todo Board/);
 });
 
-test("renders live commands and schedule subscriptions", () => {
+test("keeps live commands out of thread analysis while rendering schedules", () => {
   const activeCommand = {
     type: "commandExecution",
     id: "command-1",
@@ -589,10 +589,11 @@ test("renders live commands and schedule subscriptions", () => {
   } satisfies Thread;
   const markup = renderRightPanel(thread);
 
-  assert.match(markup, /tail -f \/tmp\/out\.log/);
+  assert.doesNotMatch(markup, /tail -f \/tmp\/out\.log/);
   assert.match(markup, /Lifetime/);
   assert.match(markup, /<span>Compactions<\/span><strong>2<\/strong>/);
   assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
+  assert.doesNotMatch(markup, /Live Commands/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /every_interval 6h/);

@@ -29,6 +29,19 @@ function terminalTabMetadata(tab) {
   return metadata;
 }
 
+function terminalTabSupports(tab, control) {
+  switch (control) {
+    case "write":
+      return tab.canWrite === true;
+    case "resize":
+      return tab.canResize === true;
+    case "terminate":
+      return tab.canTerminate === true;
+    default:
+      return false;
+  }
+}
+
 function mergeTerminalSessions(state, sessions, threadId = null) {
   const activeKeys = new Set();
   for (const descriptor of sessions) {
@@ -73,7 +86,8 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
   }
   for (const tab of state.tabs) {
     const wasInListedScope =
-      tab.origin === "user" || (threadId && tab.threadId === threadId);
+      tab.origin === "user" ||
+      (!tab.readOnlyOutput && threadId && tab.threadId === threadId);
     if (
       wasInListedScope &&
       tab.status === "running" &&
@@ -103,6 +117,34 @@ function addUserTerminal(state, descriptor) {
     lastSequence: null,
     hasSequenceGap: false,
     backgroundActivity: false,
+  };
+  state.tabs.push(tab);
+  state.activeTabId = tab.id;
+  return tab;
+}
+
+function focusCommandTerminal(state, descriptor) {
+  const existing = state.tabs.find(
+    (tab) =>
+      tab.origin === "model" &&
+      tab.threadId === descriptor.threadId &&
+      tab.commandItemId === descriptor.commandItemId,
+  );
+  if (existing) {
+    state.activeTabId = existing.id;
+    return existing;
+  }
+  const tab = {
+    ...normalizeDescriptor(descriptor),
+    id: descriptor.sessionId,
+    status: "running",
+    replay: descriptor.replayBase64
+      ? Buffer.from(descriptor.replayBase64, "base64")
+      : Buffer.alloc(0),
+    lastSequence: normalizeSequence(descriptor.replayThroughSequence),
+    hasSequenceGap: false,
+    backgroundActivity: false,
+    readOnlyOutput: true,
   };
   state.tabs.push(tab);
   state.activeTabId = tab.id;
@@ -215,6 +257,7 @@ function normalizeSequence(value) {
 module.exports = {
   MAX_TERMINAL_REPLAY_BYTES,
   addUserTerminal,
+  focusCommandTerminal,
   appendTerminalOutput,
   closeTerminalTab,
   createTerminalPanelState,
@@ -226,5 +269,6 @@ module.exports = {
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
+  terminalTabSupports,
   terminalSessionKey,
 };

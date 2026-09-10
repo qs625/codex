@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:terminal:create", payload),
   selectTerminalTab: (tabId) =>
     ipcRenderer.invoke("codex:terminal:select", tabId),
+  focusTerminalCommand: (command) =>
+    ipcRenderer.invoke("codex:terminal:focusCommand", command),
   closeTerminalTab: (tabId) =>
     ipcRenderer.invoke("codex:terminal:close", tabId),
   reattachTerminalTabs: () =>

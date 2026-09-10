@@ -37,6 +37,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./lib/conversation";
+import { filterConversationCellsForDisplay } from "./lib/conversationPresentation";
 import { clientLifecycleFailureReason } from "./lib/clientLifecycleStatus";
 import {
   extractCompactConversationDetails,
@@ -242,10 +243,6 @@ function App() {
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
   const [browserNavigationRequest, setBrowserNavigationRequest] = useState<{
     url: string;
-    token: number;
-  } | null>(null);
-  const [focusedConversationItem, setFocusedConversationItem] = useState<{
-    itemId: string;
     token: number;
   } | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
@@ -783,7 +780,7 @@ function App() {
       },
     );
     conversationStateRef.current = nextConversationState;
-    return nextConversationState.cells;
+    return filterConversationCellsForDisplay(nextConversationState.cells);
   }, [selectedLoadedCompactDetails, selectedThread]);
 
   useLayoutEffect(() => {
@@ -3045,7 +3042,7 @@ function App() {
           draft={draft}
           draftImages={draftImages}
           draftSkills={draftSkills}
-          focusedConversationItem={focusedConversationItem}
+          focusedConversationItem={null}
           imageInputRef={imageInputRef}
           isLoadingThread={isLoadingThread}
           isSending={isSending}
@@ -3111,37 +3108,6 @@ function App() {
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}
           previewRootId={selectedTreeRootId}
-          onSelectCommandMonitor={(commandItemId) => {
-            if (!selectedThread) {
-              return;
-            }
-            void window.codexDesktop
-              .getTerminalState(selectedThread.id)
-              .then((terminalState) => {
-                const terminalTab = terminalState.tabs.find(
-                  (tab) => tab.commandItemId === commandItemId,
-                );
-                if (terminalTab) {
-                  return window.codexDesktop
-                    .selectTerminalTab(terminalTab.id)
-                    .then(() => {
-                      setRightPanelView("terminal");
-                      setIsRightPanelCollapsed(false);
-                    });
-                }
-                setFocusedConversationItem((current) => ({
-                  itemId: commandItemId,
-                  token: (current?.token ?? 0) + 1,
-                }));
-                return undefined;
-              })
-              .catch(() => {
-                setFocusedConversationItem((current) => ({
-                  itemId: commandItemId,
-                  token: (current?.token ?? 0) + 1,
-                }));
-              });
-          }}
           onSetActiveView={setRightPanelView}
           onSetCollapsed={setIsRightPanelCollapsed}
           onSetFilePanelView={handleSetFilePanelView}
