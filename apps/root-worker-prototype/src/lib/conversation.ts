@@ -246,7 +246,6 @@ function buildConversationItemEntries(
           item,
           commandLabel,
         ),
-        toolOutput: formatCommandExecutionNotificationOutput(item),
         toolCategory: "commandNotification",
       },
     ];
@@ -1689,11 +1688,6 @@ function formatCommandExecutionDetails(
     sections.push(`Exit Code\n${item.exitCode}`);
   }
 
-  const aggregatedOutput = stringOrNull(item.aggregatedOutput);
-  if (aggregatedOutput) {
-    sections.push(`Output\n${aggregatedOutput}`);
-  }
-
   return sections.join("\n\n");
 }
 
@@ -1751,17 +1745,6 @@ function formatCommandExecutionNotificationDetails(
   }
 
   return sections.join("\n\n");
-}
-
-function formatCommandExecutionNotificationOutput(
-  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
-) {
-  const output = typeof item.output === "string" ? item.output : null;
-  return {
-    label: "Output",
-    text: output !== null && output.length > 0 ? output : "No output",
-    isEmpty: output === null || output.length === 0,
-  };
 }
 
 function buildCommandLookup(thread: Thread) {

@@ -116,6 +116,36 @@ test("approval request panel disables actions while submitting", () => {
   assert.match(markup, /disabled=""/);
 });
 
+test("tool row renders command summary without command output payload", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "cmd-1",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: "tmp/project • exit 0",
+          timestamp: "09:41",
+          attachments: [],
+          toolName: "npm test",
+          toolStatus: "completed",
+          toolDetails:
+            "Command\nnpm test\n\nCwd\n/tmp/project\n\nStatus\ncompleted",
+          toolCategory: "command",
+        },
+      ]}
+      isOpen
+    />,
+  );
+
+  assert.match(markup, /npm test/);
+  assert.match(markup, /tmp\/project/);
+  assert.match(markup, /Status/);
+  assert.doesNotMatch(markup, /SECRET_STDOUT/);
+  assert.doesNotMatch(markup, /tool-output-block/);
+});
+
 const entries: ConversationEntry[] = [
   {
     id: "tool-1",

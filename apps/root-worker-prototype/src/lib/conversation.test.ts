@@ -512,6 +512,34 @@ test("includes command session parameters in command details", () => {
   assert.equal(entries[0]?.toolDetails?.includes("Notify On\noutput"), true);
 });
 
+test("renders command execution summary without command output payload", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "npm test",
+        cwd: "/tmp/project",
+        status: "completed",
+        initialWaitMs: null,
+        notifyOn: null,
+        aggregatedOutput: "SECRET_STDOUT\n",
+        exitCode: 0,
+        durationMs: 10,
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.kind, "tool");
+  assert.equal(entries[0]?.toolName, "npm test");
+  assert.equal(entries[0]?.toolCategory, "command");
+  assert.match(entries[0]?.toolDetails ?? "", /Command\nnpm test/);
+  assert.match(entries[0]?.toolDetails ?? "", /Status\ncompleted/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /SECRET_STDOUT/);
+  assert.equal(entries[0]?.toolOutput, undefined);
+});
+
 test("renders command notifications as structured command tool entries", () => {
   const entries = buildConversationEntries(
     makeThread([
@@ -587,11 +615,7 @@ test("renders command notifications as structured command tool entries", () => {
         toolCategory: "commandNotification",
         toolDetails:
           "Kind\noutput\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nMessage\nCommand output notification received.",
-        toolOutput: {
-          label: "Output",
-          text: "changed",
-          isEmpty: false,
-        },
+        toolOutput: undefined,
       },
       {
         kind: "tool",
@@ -601,11 +625,7 @@ test("renders command notifications as structured command tool entries", () => {
         toolCategory: "commandNotification",
         toolDetails:
           "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n0\n\nMessage\nCommand exit notification received.",
-        toolOutput: {
-          label: "Output",
-          text: "No output",
-          isEmpty: true,
-        },
+        toolOutput: undefined,
       },
       {
         kind: "tool",
@@ -615,11 +635,7 @@ test("renders command notifications as structured command tool entries", () => {
         toolCategory: "commandNotification",
         toolDetails:
           "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n1\n\nMessage\nCommand exit notification received.",
-        toolOutput: {
-          label: "Output",
-          text: "  go test failure\n",
-          isEmpty: false,
-        },
+        toolOutput: undefined,
       },
     ],
   );
