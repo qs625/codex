@@ -208,7 +208,6 @@ export function RightPanel({
   onOpenPreviewExternally,
   onOpenTreeFile,
   onPreviewUpdated,
-  onSelectCommandMonitor,
   onSetActiveView,
   onSetCollapsed,
   onSetFilePanelView,
@@ -244,7 +243,6 @@ export function RightPanel({
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
-  onSelectCommandMonitor?: (commandItemId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetCollapsed: (value: boolean) => void;
   onSetFilePanelView: (value: FilePanelView) => void;
@@ -293,7 +291,6 @@ export function RightPanel({
                 onCancelGoal={onCancelGoal}
                 onPauseGoal={onPauseGoal}
                 onResumeGoal={onResumeGoal}
-                onSelectCommandMonitor={onSelectCommandMonitor}
                 planUpdate={planUpdate}
               />
             ) : activeView === "git" ? (
@@ -1199,7 +1196,6 @@ function ThreadAnalysisPanel({
   onCancelGoal,
   onPauseGoal,
   onResumeGoal,
-  onSelectCommandMonitor,
   planUpdate,
 }: {
   analysis: ThreadAnalysis;
@@ -1209,10 +1205,25 @@ function ThreadAnalysisPanel({
   onCancelGoal: () => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
-  onSelectCommandMonitor?: (commandItemId: string) => void;
   planUpdate: ThreadPlanUpdate | null;
 }) {
   const { contextUsage, monitors, runtime } = analysis;
+  const displayedMonitorSections = monitors.sections.filter(
+    (section) => section.kind !== "command",
+  );
+  const displayedMonitorCount = displayedMonitorSections.reduce(
+    (count, section) => count + section.monitors.length,
+    0,
+  );
+  const displayedEventCount = displayedMonitorSections.reduce(
+    (count, section) =>
+      count +
+      section.monitors.reduce(
+        (sectionCount, monitor) => sectionCount + monitor.eventCount,
+        0,
+      ),
+    0,
+  );
 
   return (
     <div className="skills-panel context-usage-panel">
@@ -1246,12 +1257,12 @@ function ThreadAnalysisPanel({
           />
           <OverviewMetric
             label="Monitors"
-            value={monitors.totalCount}
+            value={displayedMonitorCount}
             tone="doing"
           />
           <OverviewMetric
             label="Events"
-            value={monitors.eventCount}
+            value={displayedEventCount}
             tone="blocked"
           />
         </section>
@@ -1312,15 +1323,15 @@ function ThreadAnalysisPanel({
               <strong>Live Index</strong>
             </div>
             <span className="context-inline-metric">
-              {monitors.totalCount} item
-              {monitors.totalCount === 1 ? "" : "s"}
+              {displayedMonitorCount} item
+              {displayedMonitorCount === 1 ? "" : "s"}
             </span>
           </div>
 
           <ScheduleAgenda groups={monitors.scheduleAgenda} />
 
           <div className="monitor-section-list">
-            {monitors.sections.map((section) => (
+            {displayedMonitorSections.map((section) => (
               <div key={section.kind} className="monitor-section">
                 <div className="monitor-section-title">
                   <span className={`monitor-kind-dot ${section.kind}`} />
@@ -1331,23 +1342,7 @@ function ThreadAnalysisPanel({
                     {section.monitors.map((monitor) => (
                       <article
                         key={monitor.id}
-                        className={`monitor-row ${monitor.kind === "command" ? "clickable" : ""}`}
-                        tabIndex={monitor.kind === "command" ? 0 : undefined}
-                        role={monitor.kind === "command" ? "button" : undefined}
-                        onClick={() => {
-                          if (monitor.kind === "command") {
-                            onSelectCommandMonitor?.(monitor.id);
-                          }
-                        }}
-                        onKeyDown={(event) => {
-                          if (
-                            monitor.kind === "command" &&
-                            (event.key === "Enter" || event.key === " ")
-                          ) {
-                            event.preventDefault();
-                            onSelectCommandMonitor?.(monitor.id);
-                          }
-                        }}
+                        className="monitor-row"
                       >
                         <div className="monitor-row-main">
                           <strong title={monitor.label}>{monitor.label}</strong>

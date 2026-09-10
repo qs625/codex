@@ -115,6 +115,7 @@ const {
   addUserTerminal,
   appendTerminalOutput,
   closeTerminalTab,
+  focusCommandTerminal,
   createTerminalPanelState,
   markRunningTerminalsLost,
   markTerminalExited,
@@ -124,6 +125,7 @@ const {
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
+  terminalTabSupports,
 } = require("./terminalPanel.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
@@ -705,7 +707,7 @@ ipcMain.handle("codex:browser:stop", async (event) => {
 ipcMain.handle("codex:terminal:getState", async (event, threadId) => {
   const panel = terminalPanelForEvent(event);
   panel.threadId = threadId || null;
-  await refreshTerminalPanelSessions(panel);
+  await refreshTerminalPanelSessions(panel, panel.threadId);
   return terminalPanelState(panel);
 });
 
@@ -759,6 +761,54 @@ ipcMain.handle("codex:terminal:select", async (event, tabId) => {
   return terminalPanelState(panel);
 });
 
+ipcMain.handle("codex:terminal:focusCommand", async (event, command) => {
+  const panel = terminalPanelForEvent(event);
+  if (
+    !command ||
+    typeof command.threadId !== "string" ||
+    typeof command.commandItemId !== "string" ||
+    (command.processId !== undefined &&
+      command.processId !== null &&
+      typeof command.processId !== "string")
+  ) {
+    throw new Error("Live command is no longer available");
+  }
+  const { thread } = await readThread(command.threadId, true);
+  const activeCommand = thread?.activeCommandItems?.find(
+    (item) =>
+      item.type === "commandExecution" &&
+      item.id === command.commandItemId &&
+      isRunningCommandStatus(item.status) &&
+      (!command.processId || item.processId === command.processId),
+  );
+  if (!activeCommand || activeCommand.type !== "commandExecution") {
+    throw new Error("Live command is no longer available");
+  }
+  panel.threadId = command.threadId;
+  await refreshTerminalPanelSessions(panel, command.threadId);
+  const tab = focusCommandTerminal(panel.state, {
+    sessionId: `command:${command.threadId}:${command.commandItemId}`,
+    generation: command.commandItemId,
+    origin: "model",
+    threadId: command.threadId,
+    commandItemId: command.commandItemId,
+    processId: activeCommand.processId || activeCommand.id,
+    title: activeCommand.command,
+    cwd: activeCommand.cwd,
+    replayBase64: activeCommand.aggregatedOutput
+      ? Buffer.from(activeCommand.aggregatedOutput).toString("base64")
+      : null,
+    replayTruncated: false,
+    replayThroughSequence: 0,
+    canResize: false,
+    canWrite: false,
+    canTerminate: false,
+  });
+  panel.error = null;
+  sendTerminalPanelState(panel);
+  return { state: terminalPanelState(panel), tabId: tab.id };
+});
+
 ipcMain.handle("codex:terminal:close", async (event, tabId) => {
   const panel = terminalPanelForEvent(event);
   if (!closeTerminalTab(panel.state, tabId)) {
@@ -778,6 +828,9 @@ ipcMain.handle("codex:terminal:reattach", async (event) => {
 ipcMain.handle("codex:terminal:write", async (event, payload) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, payload.tabId);
+  if (!terminalTabSupports(tab, "write")) {
+    throw new Error("Terminal input is not supported by this execution environment");
+  }
   await appServerClient.request("terminal/session/write", {
     ...terminalControlTarget(panel, tab),
     deltaBase64: payload.deltaBase64,
@@ -788,7 +841,7 @@ ipcMain.handle("codex:terminal:write", async (event, payload) => {
 ipcMain.handle("codex:terminal:resize", async (event, payload) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, payload.tabId);
-  if (!tab.canResize) {
+  if (!terminalTabSupports(tab, "resize")) {
     throw new Error("Terminal resize is not supported by this execution environment");
   }
   await appServerClient.request("terminal/session/resize", {
@@ -801,6 +854,9 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
 ipcMain.handle("codex:terminal:terminate", async (event, tabId) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, tabId);
+  if (!terminalTabSupports(tab, "terminate")) {
+    throw new Error("Terminal termination is not supported by this execution environment");
+  }
   await appServerClient.request(
     "terminal/session/terminate",
     terminalControlTarget(panel, tab),
@@ -1038,6 +1094,8 @@ function terminalPanelForEvent(event) {
     error: null,
     threadId: null,
     refreshPromise: null,
+    refreshThreadId: null,
+    refreshToken: null,
     pendingNotifications: [],
     userTerminalResumeTokens: new Map(),
   };
@@ -1218,30 +1276,53 @@ function sendTerminalPanelDelta(panel, event) {
   }
 }
 
-async function refreshTerminalPanelSessions(panel) {
-  if (panel.refreshPromise) {
+async function refreshTerminalPanelSessions(panel, threadId = panel.threadId) {
+  if (panel.refreshPromise && panel.refreshThreadId === threadId) {
     return panel.refreshPromise;
   }
-  panel.refreshPromise = (async () => {
+  const refreshToken = {};
+  panel.refreshThreadId = threadId;
+  panel.refreshToken = refreshToken;
+  const refreshPromise = Promise.resolve().then(async () => {
     try {
       const response = await appServerClient.request("terminal/session/list", {
-        threadId: panel.threadId,
+        threadId,
         userResumeTokens: [...panel.userTerminalResumeTokens.values()],
       });
-      mergeTerminalSessions(panel.state, response.data ?? [], panel.threadId);
+      if (panel.threadId !== threadId) {
+        return;
+      }
+      mergeTerminalSessions(panel.state, response.data ?? [], threadId);
       const pendingNotifications = panel.pendingNotifications.splice(0);
       for (const notification of pendingNotifications) {
         applyTerminalNotification(panel, notification, false);
       }
       panel.error = null;
     } catch (error) {
-      panel.error = error instanceof Error ? error.message : String(error);
+      if (panel.threadId === threadId) {
+        panel.error = error instanceof Error ? error.message : String(error);
+      }
     } finally {
-      panel.refreshPromise = null;
-      sendTerminalPanelState(panel);
+      if (panel.refreshToken === refreshToken) {
+        panel.refreshPromise = null;
+        panel.refreshThreadId = null;
+        panel.refreshToken = null;
+      }
+      if (panel.threadId === threadId) {
+        sendTerminalPanelState(panel);
+      }
     }
   })();
-  return panel.refreshPromise;
+  panel.refreshPromise = refreshPromise;
+  return refreshPromise;
+}
+
+function isRunningCommandStatus(status) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]/g, "");
+  return normalized === "running" || normalized === "inprogress";
 }
 
 function requireTerminalTab(panel, tabId) {

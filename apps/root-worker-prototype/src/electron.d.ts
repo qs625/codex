@@ -35,6 +35,7 @@ type TerminalPanelTabState = {
   canResize: boolean;
   canWrite: boolean;
   canTerminate: boolean;
+  readOnlyOutput?: boolean;
   exitCode: number | null;
   error?: string | null;
 };
@@ -405,6 +406,11 @@ declare global {
         size?: { rows: number; cols: number };
       }) => Promise<TerminalPanelState>;
       selectTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
+      focusTerminalCommand: (command: {
+        threadId: string;
+        commandItemId: string;
+        processId?: string | null;
+      }) => Promise<{ state: TerminalPanelState; tabId: string }>;
       closeTerminalTab: (tabId: string) => Promise<TerminalPanelState>;
       reattachTerminalTabs: () => Promise<TerminalPanelState>;
       writeTerminal: (payload: {

@@ -3,7 +3,15 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
-import { PlusIcon, StopIcon, XIcon } from "./icons";
+import { GearIcon, PlusIcon, StopIcon, XIcon } from "./icons";
+import {
+  TERMINAL_FONT_FAMILIES,
+  readTerminalDisplayPreferences,
+  resetTerminalDisplayPreferences,
+  storeTerminalDisplayPreferences,
+  terminalFontFamilyValue,
+  updateTerminalDisplayPreferences,
+} from "../lib/terminalDisplayPreferences";
 import type { Thread } from "../types";
 
 type TerminalPanelState = Awaited<
@@ -27,10 +35,16 @@ const EMPTY_STATE: TerminalPanelState = {
 export function TerminalPanel({ thread }: { thread: Thread | null }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const syncTerminalSizeRef = useRef<(() => void) | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const [state, setState] = useState<TerminalPanelState>(EMPTY_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [displayPreferences, setDisplayPreferences] = useState(
+    readTerminalDisplayPreferences,
+  );
+  const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const activeTab = useMemo(
     () =>
       state.tabs.find((tab) => tab.id === state.activeTabId) ??
@@ -92,10 +106,9 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
       convertEol: false,
       cursorBlink: isInteractive(activeTab.status),
       cursorStyle: "bar",
-      fontFamily:
-        '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
-      fontSize: 12,
-      lineHeight: 1.18,
+      fontFamily: terminalFontFamilyValue(displayPreferences.fontFamily),
+      fontSize: displayPreferences.fontSize,
+      lineHeight: displayPreferences.lineHeight,
       scrollback: 10_000,
       theme: {
         background: "#111827",
@@ -118,6 +131,7 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
     terminal.loadAddon(fitAddon);
     terminal.open(viewport);
     terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
     if (activeTab.replayTruncated || activeTab.hasSequenceGap) {
       terminal.writeln(
         "\r\n\u001b[33m[Earlier terminal output is unavailable.]\u001b[0m",
@@ -153,9 +167,10 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
         lastSizeRef.current = next;
         void window.codexDesktop
           .resizeTerminal({ tabId: activeTab.id, size: next })
-          .catch((error) => setLocalError(toTerminalError(error)));
+        .catch((error) => setLocalError(toTerminalError(error)));
       }
     };
+    syncTerminalSizeRef.current = sendSize;
     const resizeObserver = new ResizeObserver(sendSize);
     resizeObserver.observe(viewport);
     queueMicrotask(() => {
@@ -191,6 +206,10 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
       resizeObserver.disconnect();
       terminal.dispose();
       terminalRef.current = null;
+      fitAddonRef.current = null;
+      if (syncTerminalSizeRef.current === sendSize) {
+        syncTerminalSizeRef.current = null;
+      }
       lastSizeRef.current = null;
     };
   }, [
@@ -199,6 +218,24 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
     activeTab?.replayThroughSequence,
     activeTab?.status,
   ]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminal.options.fontFamily = terminalFontFamilyValue(
+      displayPreferences.fontFamily,
+    );
+    terminal.options.fontSize = displayPreferences.fontSize;
+    terminal.options.lineHeight = displayPreferences.lineHeight;
+    try {
+      fitAddonRef.current?.fit();
+      syncTerminalSizeRef.current?.();
+    } catch {
+      // A detached viewport cannot be fitted until it is attached again.
+    }
+  }, [displayPreferences]);
 
   const applyState = (promise: Promise<TerminalPanelState>) => {
     void promise
@@ -218,6 +255,45 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
     );
   };
 
+  const liveCommands = (thread?.activeCommandItems ?? []).filter(
+    (item): item is Extract<typeof item, { type: "commandExecution" }> =>
+      item.type === "commandExecution" &&
+      ["running", "inprogress"].includes(
+        item.status.trim().toLowerCase().replace(/[_-]/g, ""),
+      ),
+  );
+
+  const focusLiveCommand = (command: (typeof liveCommands)[number]) => {
+    if (!thread) {
+      return;
+    }
+    void window.codexDesktop
+      .focusTerminalCommand({
+        threadId: thread.id,
+        commandItemId: command.id,
+        processId: command.processId,
+      })
+      .then(({ state: nextState }) => {
+        setState(nextState);
+        setLocalError(null);
+      })
+      .catch((error) => setLocalError(toTerminalError(error)));
+  };
+
+  const updateDisplayPreferences = (
+    patch: Parameters<typeof updateTerminalDisplayPreferences>[1],
+  ) => {
+    setDisplayPreferences((current) => {
+      const next = updateTerminalDisplayPreferences(current, patch);
+      storeTerminalDisplayPreferences(next);
+      return next;
+    });
+  };
+
+  const resetDisplayPreferences = () => {
+    setDisplayPreferences(resetTerminalDisplayPreferences());
+  };
+
   return (
     <div className="preview-panel terminal-panel">
       <header className="panel-content-header terminal-header">
@@ -226,32 +302,123 @@ export function TerminalPanel({ thread }: { thread: Thread | null }) {
           <h2 title={activeTab?.title}>{activeTab?.title ?? "Terminal"}</h2>
           <p title={activeTab?.cwd}>
             {activeTab
-              ? `${activeTab.origin === "model" ? "Model PTY" : "Shell"} · ${activeTab.cwd}`
+              ? `${activeTab.readOnlyOutput ? "Model output" : activeTab.origin === "model" ? "Model PTY" : "Shell"} · ${activeTab.cwd}`
               : "Create a shell or attach to a live model PTY."}
           </p>
         </div>
-        <button
-          type="button"
-          className="panel-inline-action terminal-terminate"
-          aria-label="Terminate active terminal"
-          title="Terminate process"
-          disabled={
-            !activeTab?.canTerminate || !isInteractive(activeTab.status)
-          }
-          onClick={() => {
-            if (
-              activeTab &&
-              window.confirm(`Terminate “${activeTab.title}”?`)
-            ) {
-              void window.codexDesktop
-                .terminateTerminal(activeTab.id)
-                .catch((error) => setLocalError(toTerminalError(error)));
+        <div className="terminal-header-actions">
+          <button
+            type="button"
+            className="panel-inline-action terminal-display-settings-button"
+            aria-expanded={showDisplaySettings}
+            aria-label="Terminal display settings"
+            title="Terminal display settings"
+            onClick={() => setShowDisplaySettings((current) => !current)}
+          >
+            <GearIcon />
+          </button>
+          <button
+            type="button"
+            className="panel-inline-action terminal-terminate"
+            aria-label="Terminate active terminal"
+            title="Terminate process"
+            disabled={
+              !activeTab?.canTerminate || !isInteractive(activeTab.status)
             }
-          }}
-        >
-          <StopIcon />
-        </button>
+            onClick={() => {
+              if (
+                activeTab &&
+                window.confirm(`Terminate “${activeTab.title}”?`)
+              ) {
+                void window.codexDesktop
+                  .terminateTerminal(activeTab.id)
+                  .catch((error) => setLocalError(toTerminalError(error)));
+              }
+            }}
+          >
+            <StopIcon />
+          </button>
+        </div>
+        {showDisplaySettings ? (
+          <div className="terminal-display-settings" aria-label="Terminal display settings">
+            <div className="terminal-display-settings-heading">
+              <span>Display</span>
+              <button type="button" onClick={resetDisplayPreferences}>
+                Reset
+              </button>
+            </div>
+            <label className="settings-inline-field">
+              <span>Font family</span>
+              <select
+                value={displayPreferences.fontFamily}
+                onChange={(event) =>
+                  updateDisplayPreferences({
+                    fontFamily: event.target.value as typeof displayPreferences.fontFamily,
+                  })
+                }
+              >
+                {TERMINAL_FONT_FAMILIES.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="terminal-display-settings-grid">
+              <label className="settings-inline-field">
+                <span>Font size</span>
+                <input
+                  type="number"
+                  min="10"
+                  max="22"
+                  step="1"
+                  value={displayPreferences.fontSize}
+                  onChange={(event) =>
+                    updateDisplayPreferences({
+                      fontSize: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label className="settings-inline-field">
+                <span>Line height</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="2"
+                  step="0.05"
+                  value={displayPreferences.lineHeight}
+                  onChange={(event) =>
+                    updateDisplayPreferences({
+                      lineHeight: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+            </div>
+          </div>
+        ) : null}
       </header>
+
+      {liveCommands.length > 0 ? (
+        <div className="terminal-live-commands" aria-label="Live Commands">
+          <span className="terminal-live-commands-label">Live Commands</span>
+          <div className="terminal-live-command-list">
+            {liveCommands.map((command) => (
+              <button
+                key={command.id}
+                type="button"
+                className="terminal-live-command"
+                title={command.command}
+                onClick={() => focusLiveCommand(command)}
+              >
+                <span className="terminal-status-dot running" />
+                <span>{command.command}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="browser-tab-strip terminal-tab-strip" role="tablist" aria-label="Terminal tabs">
         <div className="browser-tabs">

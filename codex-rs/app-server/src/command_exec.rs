@@ -49,6 +49,7 @@ use crate::outgoing_message::OutgoingMessageSender;
 const EXEC_TIMEOUT_EXIT_CODE: i32 = 124;
 const OUTPUT_CHUNK_SIZE_HINT: usize = 64 * 1024;
 const TERMINAL_REPLAY_BYTES_CAP: usize = 1024 * 1024;
+const DEFAULT_TTY_TERM: &str = "xterm-256color";
 
 #[derive(Clone)]
 pub(crate) struct CommandExecManager {
@@ -286,6 +287,7 @@ impl CommandExecManager {
             arg0,
             ..
         } = exec_request;
+        let env = effective_spawn_env(env, tty);
 
         let stream_stdin = tty || stream_stdin;
         let stream_stdout_stderr = tty || stream_stdout_stderr;
@@ -709,6 +711,17 @@ impl CommandExecManager {
     }
 }
 
+fn effective_spawn_env(
+    mut env: HashMap<String, String>,
+    tty: bool,
+) -> HashMap<String, String> {
+    if tty && !cfg!(windows) {
+        env.entry("TERM".to_string())
+            .or_insert_with(|| DEFAULT_TTY_TERM.to_string());
+    }
+    env
+}
+
 async fn run_command(params: RunCommandParams) {
     let RunCommandParams {
         outgoing,
@@ -1042,6 +1055,33 @@ mod tests {
             PermissionProfile::read_only(),
             /*arg0*/ None,
         )
+    }
+
+    #[test]
+    fn tty_spawn_environment_defaults_missing_term() {
+        let env = effective_spawn_env(HashMap::new(), true);
+
+        #[cfg(not(windows))]
+        assert_eq!(env.get("TERM"), Some(&DEFAULT_TTY_TERM.to_string()));
+        #[cfg(windows)]
+        assert!(!env.contains_key("TERM"));
+    }
+
+    #[test]
+    fn tty_spawn_environment_preserves_explicit_term() {
+        let env = effective_spawn_env(
+            HashMap::from([("TERM".to_string(), "screen-256color".to_string())]),
+            true,
+        );
+
+        assert_eq!(env.get("TERM"), Some(&"screen-256color".to_string()));
+    }
+
+    #[test]
+    fn pipe_spawn_environment_does_not_add_term() {
+        let env = effective_spawn_env(HashMap::new(), false);
+
+        assert!(!env.contains_key("TERM"));
     }
 
     #[tokio::test]
