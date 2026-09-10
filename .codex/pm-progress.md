@@ -52,13 +52,13 @@ Complete the Terminal-first PTY improvements and then deliver all pending Launch
   files: codex-rs/runtime-launcher/src/supervisor.rs; focused runtime-launcher tests
   base_commit: 5082bb2a69511f84e882ce47888929379e58a37f
   pending_sync_from_main: none
-  status: in_progress
+  status: merged
   objective: Treat payload exit 75 as an unconditional supervised capsule restart signal; do not compare releaseId, sourceCommit, metadata, or capsule identity before continuing the Launcher supervise loop.
-  last_update: 2026-09-11 CST clean install from `5082bb2a6` produced the same releaseId as `0904d0c16`; Launcher compared only releaseId, treated exit 75 as payload failure, and recovered to the previous sourceCommit. User then clarified the desired rule: "不要管releaseid是不是变了, 只要exit 75就重启"; PM updated the dev-3 brief accordingly and must not invoke `request_runtime_restart` automatically after merge.
-  next_action: fixed dev-3 owner should simplify exit 75 handling to unconditional continue, add regression tests proving identical releaseId/selected state still restarts, review, and commit.
+  last_update: 2026-09-11 CST fixed dev-3 owner delivered `469369135`, reviewer passed, and PM merged it to canonical main. Runtime Launcher now treats payload exit 75 as an unconditional supervise-loop restart signal and no longer compares releaseId/sourceCommit/metadata/capsule identity before continuing.
+  next_action: include in the next installed Runtime Capsule delivery only after explicit user authorization to build and restart; do not auto-invoke `request_runtime_restart`.
   blockers: none
-  validation: pending
-  commit: pending
+  validation: owner `cargo test -p runtime-launcher` and `git diff --check` passed. PM reran `cargo test -p runtime-launcher` on merged main: 50 lib + 2 bin tests passed; `git diff --check` passed.
+  commit: 469369135
 - id: project-thread-restart-prompt-fanout
   owner: /self/owner_main
   checkout: /Users/bytedance/.morpheus/source_workspace
