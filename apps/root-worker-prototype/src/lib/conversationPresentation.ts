@@ -5,11 +5,7 @@ export function filterConversationCellsForDisplay(
 ): ConversationCell[] {
   return cells.flatMap((cell) => {
     const entries = cell.entries
-      .filter(
-        (entry) =>
-          entry.toolCategory !== "command" &&
-          entry.toolCategory !== "commandNotification",
-      )
+      .filter((entry) => entry.toolCategory !== "commandNotification")
       .map(filterConversationEntryForDisplay);
     return entries.length > 0 ? [{ ...cell, entries }] : [];
   });

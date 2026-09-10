@@ -5,6 +5,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./conversation";
+import { filterConversationCellsForDisplay } from "./conversationPresentation";
 import { buildThreadAnalysis } from "./threadAnalysis";
 import {
   appendAgentDelta,
@@ -1709,6 +1710,76 @@ test("command item notifications create a visible running command and complete t
     startedAtMs: 2_000,
     completedAtMs: 3_000,
   });
+});
+
+test("conversation display keeps exec command item while hiding output notifications", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "git rev-parse --short HEAD",
+    cwd: "/repo",
+    status: "inProgress",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const commandEnd: ThreadItem = {
+    ...commandStart,
+    status: "completed",
+    aggregatedOutput: "889b416d\n",
+    exitCode: 0,
+    durationMs: 12,
+  };
+  const exitNotification: ThreadItem = {
+    type: "commandExecutionNotification",
+    id: "cmd-1:notification:exit",
+    commandItemId: "cmd-1",
+    kind: "exit",
+    message: "Command cmd-1 has exited with code 0.",
+    output: "889b416d\n",
+    exitCode: 0,
+    createdAtMs: 3_000,
+  };
+
+  const started = updateThreadItem(makeThread(), "turn-1", commandStart, {
+    startedAtMs: 1_000,
+  });
+  const completed = updateThreadItem(started, "turn-1", commandEnd, {
+    completedAtMs: 2_000,
+  });
+  const notified = updateThreadItem(completed, "turn-1", exitNotification, {
+    completedAtMs: 3_000,
+  });
+
+  const displayCells = filterConversationCellsForDisplay(
+    buildConversationState(notified).cells,
+  );
+  const entries = displayCells.flatMap((cell) => cell.entries);
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      toolCategory: entry.toolCategory,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+      text: entry.text,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        id: "cmd-1",
+        toolCategory: "command",
+        toolName: "git rev-parse --short HEAD",
+        toolStatus: "completed",
+        text: "/repo • exit 0",
+        toolDetails:
+          "Command\ngit rev-parse --short HEAD\n\nCwd\n/repo\n\nStatus\ncompleted\n\nInitial Wait\n1000 ms\n\nNotify On\nexit\n\nDuration\n12 ms\n\nExit Code\n0",
+      },
+    ],
+  );
+  assert.equal(JSON.stringify(displayCells).includes("889b416d"), false);
 });
 
 test("command output delta creates a visible placeholder when start was missed", () => {
