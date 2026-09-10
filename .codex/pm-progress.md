@@ -43,6 +43,22 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
   blockers: none
   validation: owner `git diff --check`, Electron terminal panel tests 14/14, focused frontend tests 72/72, and Vite production build passed. Installed runtime delivery verified active artifact `sha256:f84b08c2f03691cc8cc48d855d25527fefc46ffb68963d5ecde01ec0c10c0c19` with source commit `5942c54e3`.
   commit: b849ddd44
+- id: command-item-summary-without-output
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: feature/full-terminal-panel
+  task_type: bugfix/ui-command-conversation-and-terminal-focus
+  depends_on: main `d879350de`; user clarified Conversation command items must remain visible while stdout/stderr output is hidden
+  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/terminalPanel.cjs; focused frontend/Electron tests
+  base_commit: d879350de35e0e0aa4a00ea851728228c75642d0
+  pending_sync_from_main: none
+  status: merged
+  objective: Keep commandExecution items visible in the Conversation and RightPanel live summaries while removing concrete command stdout/stderr output from those surfaces; focus live commands via Terminal session proof when activeCommandItems reads are stale.
+  last_update: 2026-09-11 CST fixed dev-2 owner delivered `879c147c`, reviewer passed after requiring terminal/session/list refresh success before using live session fallback, and PM merged it to canonical main. Conversation command item shell/summary remains visible, command output payload is no longer rendered there, and focusCommand can use a freshly listed live Terminal session when activeCommandItems is stale.
+  next_action: deliver in installed runtime if user wants immediate UI verification; otherwise include in next batch. Do not auto-invoke `request_runtime_restart`.
+  blockers: installed runtime currently predates this commit.
+  validation: owner `node --test apps/root-worker-prototype/electron/terminalPanel.test.cjs` 20/20, focused frontend tests 366/366, Vite build, and `git diff --check` passed. PM reran Electron terminal panel tests 20/20, focused frontend tests 366/366, and `git diff --check`; all passed.
+  commit: 879c147c
 - id: runtime-launcher-capsule-switch-same-release
   owner: /self/owner_dev_3
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
