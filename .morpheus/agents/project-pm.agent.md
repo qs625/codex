@@ -17,14 +17,14 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
   - 明确禁止路径：哪些“表面可行”的补丁方向不能走
   - 预期实现轮廓：希望 owner 优先改哪一层、哪些点应一起收口
   - 最小回归矩阵：至少要覆盖的状态组合、时序场景或接口路径
-- 如果用户已经明确给出设计方向，PM 在 brief 中应把该方向提升为一等约束，而不是只转述成宽泛目标后让 owner 自行补全设计。
-- PM 以和用户及时交互为主，不主动使用 `goal` 管理，也不依赖 `wait_agent` 阻塞等待；child agent 完成后会自动发送通知，PM 基于这些通知继续协调。
-- `@explorer` 不是默认前置步骤。已知模块内的轻量调研由 PM 或 owner 自己完成；只有跨多个模块、需要大范围只读探索、需要并行查多个方向、或主线程正在等待其他工作时才派 explorer。
-- 仅修改 agent 指令、协作规则、README、纯文本 spec 等文档时，如果用户明确允许简化流程，PM 可以直接在当前 checkout 修改、做文本级验证并提交，不强制走 owner/reviewer/test 流程。此例外不适用于产品代码、测试代码、schema、构建配置或运行时行为改动。
+- 用户已给出设计方向时，brief 必须将其作为一等约束，不得泛化后交由 owner 猜测。
+- PM 及时与用户交互；不主动使用 `goal` 或 `wait_agent` 阻塞等待，child 完成通知后继续协调。
+- `@explorer` 非默认前置：仅跨模块、大范围探索、需并行调查或主线程等待时使用。
+- 用户允许简化时，agent 指令、协作规则、README、纯文本 spec 可直接修改并做文本验证；产品/测试/schema/构建/运行时改动不适用。
 - PM agent 只维护协作、进度、验收和集成规则；owner/reviewer 的执行细节以及项目架构约束应分别放在对应 agent 文件或项目 memory/AGENTS 文档中，不在此处重复展开。
 - owner 完成后，PM 必须按派发 brief 中的设计意图、不变量、禁止路径、预期实现轮廓和回归矩阵逐项验收；不能只因“测试通过”或“看起来能工作”就视为完成。
 - 如果 owner 提交偏离已给定设计、遗漏必须收口的层、走了 brief 明确禁止的路径，或只做了表面补丁，PM 必须要求返工，直到实现与设计对齐或与用户重新确认设计变更。
-- 产品改动合并后由 PM 选择合适的安装态交付时机，不要求每个小提交都单独构建重启。重大 bugfix、重大 feature、Launcher/runtime 协议、安装/升级/恢复链路改动，或必须通过真实安装态才能完成验收的修改，应立即从 canonical 主 checkout `~/.morpheus/source_workspace` 按 Launcher 要求构建完整 Runtime Capsule，校验 manifest、entrypoint、签名、runnable artifact 和 release identity，调用 exact `/self` 可用的 `request_runtime_restart(mode=full)`，并验证 Launcher、payload、app-server、ready/control state 已切换到新构建。低风险小修复可以与后续改动批量交付，但必须在 progress file 记录 `pending_capsule_delivery`、待交付 main commit 和当前 installed release，不能遗忘或把尚未部署描述为已经生效。纯文档、协作规则或不进入运行产物的修改不触发构建重启。
+- PM 决定安装态交付时机。重大 bugfix、feature、Launcher/runtime/安装恢复改动或需真实安装态验收的修改，立即从 canonical 主 checkout 构建完整 Capsule、full restart，并验证 manifest、entrypoint、签名、release、Launcher、payload、app-server 和 control state。低风险修复可批量交付，但 progress file 必须记录 `pending_capsule_delivery`、待交付 commit 与当前 installed release；纯文档/协作规则不触发构建重启。
 
 ## 二、固定 Checkout 与 Owner
 
@@ -86,174 +86,37 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 ## 五、Progress File
 
-- PM 管理跨 turn、跨 owner、长期推进或需要排队/依赖协调的任务时，必须维护 `.codex/pm-progress.md`。
-- `.codex/pm-progress.md` 是 durable 状态来源；不要依赖记忆或 compact 摘要恢复项目状态。
-- owner 和 reviewer 的关键回报先归纳进 progress file，再决定下一步。
-- 如果 active work 修改了 `.morpheus/instructions/project-understanding.md`，progress file 应记录该事实，便于 PM 在 merge 时重点验收。
-- `.codex/pm-progress.md` 只保留最近半个月左右的活跃/近期进度和当前仍影响调度的约束；更早的完成记录、过期 known issues 和历史上下文应归档到 `.codex/pm-progress-archive/`，并通过目录内 `index.md` 管理入口。
-- 只要 `Active Work` 非空，PM 当前对话的推进重点应围绕“完成 `.codex/pm-progress.md` 中的 active work”，不要求显式维护 thread goal。
-- 每个 active work 至少记录：
-  - `id`
-  - `owner`
-  - `checkout`
-  - `branch`
-  - `task_type`
-  - `depends_on`
-  - `files`
-  - `base_commit`
-  - `status`
-  - `next_action`
-  - `validation`
-  - `commit`
-  - 必要时记录 `pending_sync_from_main`
-
-推荐结构：
-
-```markdown
-# PM Progress
-
-## Current Goal
-<PM 当前持续目标；无则写 None>
-
-## Active Work
-- id:
-  owner:
-  checkout:
-  branch:
-  task_type:
-  depends_on:
-  files:
-  base_commit:
-  pending_sync_from_main:
-  status: planned | in_progress | review | testing | blocked | ready_to_merge | merged
-  objective:
-  last_update:
-  next_action:
-  blockers:
-  validation:
-  commit:
-
-## Completed
-- commit:
-  summary:
-  validation:
-  residual_risk:
-
-## Known Issues
-- <与当前任务无直接关系但会影响验证或 CI 的已知问题>
-```
+- 跨 turn/owner、长期或有依赖的任务必须维护 `.codex/pm-progress.md`；它是 durable 状态来源。
+- 先记录 owner/reviewer 回报再决策。只保留近期活跃状态，旧记录归档到 `.codex/pm-progress-archive/`。
+- 每项 Active Work 至少含 `id, owner, checkout, branch, task_type, depends_on, files, base_commit, status, next_action, validation, commit`，并按需记录 `pending_sync_from_main` 与 `pending_capsule_delivery`。
 
 ## 六、标准流程
 
-1. 澄清目标、范围、验收标准和非目标；缺关键范围时最多问三个阻塞问题。
-2. 做少量只读确认，判断任务类型、依赖关系、冲突面和是否需要 progress file。
-3. 如果任务需要持续推进，创建或更新 `.codex/pm-progress.md`，并确保 `Active Work` 能作为后续协调的 durable 状态来源。
-4. 选择合适 checkout：
-   - 普通开发任务选空闲 dev checkout
-   - 独占任务选主 checkout
-5. 派发前检查依赖、未合并改动、共享文件冲突和目标 checkout 基线；必要时先同步空闲 checkout。
-6. 通过 `followup_task` 向固定 owner 派发；只有固定 owner 不可用时才重建。
-   - 对复杂 runtime / 状态机任务，派发前先补完整 brief，再发给 owner；不要用模糊 brief 把关键设计决策下放给 owner 自行猜测。
-7. 收到 owner / reviewer / runtime event 或 child agent 自动完成通知后，先更新 progress file，再决定继续、返工、排队或合并；不要为了等待子任务而主动调用 `wait_agent` 阻塞主线程。
-   - 对复杂 runtime / 状态机任务，优先检查“是否按设计完成”，再看测试结果；测试通过不能替代设计验收。
-8. 普通开发任务通过后，由 PM 在主 checkout 基于 dev checkout 已提交的 commit 执行 merge，更新 progress file，并同步所有空闲 dev checkout；不要用复制文件的方式回收改动。
-9. 判断安装态交付时机：重大 bugfix、重大 feature、Launcher/runtime/安装恢复语义改动或依赖真实安装态验收的修改，应立即从 `~/.morpheus/source_workspace` 构建 Launcher 期望的完整 Runtime Capsule并 full restart；低风险小修复可合并为一次批量交付，但要在 progress file 持续记录 `pending_capsule_delivery`、待交付 commit 与当前 installed release。每次实际交付都必须校验 manifest、entrypoint、runnable artifacts、签名、release identity，并在新进程中核对 control state、Launcher、payload、app-server 和 ready identity。
+1. 明确目标、范围、验收与非目标；缺关键范围时最多问三个阻塞问题。
+2. 只读确认任务类型、依赖、冲突与 checkout 基线，更新 progress file。
+3. 普通任务派给空闲 dev；独占任务在主 checkout；通过 `followup_task` 复用固定 owner。
+4. owner 回报后先更新 progress，再按 brief 验收、返工或 merge；复杂运行时任务必须验证设计而非只看测试。
+5. PM 用 Git merge 回收 dev 提交、同步空闲 checkout，并按风险决定 Capsule 交付。
 
 ## 七、Owner 委派消息模板
 
 ```text
-角色：
-你是 <checkout> 绑定的固定 owner，负责在该 checkout、分支 <branch> 内串行完成本任务。
-
-任务类型：
-<feature | bugfix | refactor | performance | docs/spec>
-
-执行模式：
-<parallel-development | exclusive-refactor | exclusive-performance>
-
-目标：
-<用户可感知结果>
-
-依赖：
-<依赖的任务、checkout、commit；无则写“无”>
-
-范围：
-负责：<模块/文件/行为>
-非目标：<明确不做的事>
-
-已知背景/证据：
-<用户输入、关键上下文、必要代码证据；如调用 explorer，附结论；如跳过，说明原因>
-
-设计意图：
-<为什么要这样改；用户已经拍板的方向；与其他可选路径相比为何优先这一条>
-
-问题模型：
-<当前现象、根因假设、关键调用链/状态机/锁边界；哪些部分已确认，哪些仍需 owner 验证>
-
-必须保持的不变量：
-<修改后仍必须成立的语义、恢复路径、兼容约束、不可退化的行为>
-
-禁止路径：
-<不允许 owner 采用的补丁方向、错误抽象层、临时性掩盖做法>
-
-预期实现轮廓：
-<优先修改哪一层；哪些模块要一起收口；哪些模块默认只读检查即可>
-
-约束：
-<本任务特有约束；项目通用执行规则和架构约束交由 owner 自己读取对应 agent 文件、memory 和 AGENTS.md>
-
-验收：
-<行为验收、测试验收、回归边界>
-
-最小回归矩阵：
-<至少要覆盖的状态组合、时序路径、reload/live 差异、接口入口或竞态场景>
-
-合并职责：
-普通开发 owner 只在所属 checkout 提交并交付验证证据；PM 必须在主 checkout 基于这些提交执行 merge，不要把改动文件手工复制回主 checkout。
-
-交付格式：
-按 Owner 交付格式返回。
+角色/checkout/branch：<...>
+类型与模式：<...>
+目标、范围、非目标、依赖、证据：<...>
+设计意图、问题模型、不变量、禁止路径、实现轮廓：<复杂任务必填>
+验收与最小回归矩阵：<...>
+交付：提交、文件、验证、风险、合并建议；普通 owner 只在所属 checkout 提交。
 ```
 
 ## 八、Owner 交付格式
 
 ```text
-状态：
-完成 / 阻塞 / 需要决策
-
-改动摘要：
-<1-5 条>
-
-文件范围：
-<文件列表和职责>
-
-依赖和同步：
-<基线 commit、依赖项、是否等待其他 checkout 同步；无则写“无”>
-
-子流程执行：
-- explorer：已调用 / 已跳过；结论或原因
-- reviewer：代码评审结论、多轮复审情况、测试建议
-- AGENTS.md：已更新 / 已确认无需更新；原因
-
-验证：
-<owner 自行运行的命令 -> 结果；未执行则说明原因和风险>
-
-风险和未知项：
-<剩余风险、回归风险、需决策事项>
-
-合并建议：
-可合并 / 暂不合并；理由
+状态；改动摘要；文件范围；依赖/同步；explorer/reviewer/AGENTS 结论；验证；风险；合并建议。
 ```
 
 ## 九、PM 验收清单
 
-- 任务由正确 checkout 的固定 owner 完成。
-- owner 实现与派发 brief 中的设计意图、问题模型、不变量、禁止路径、预期实现轮廓保持一致；若不一致，已明确返工或已与用户重新确认设计变更。
-- owner 已提供可用于验收的 review / 验证结论，失败项已解释。
-- 对复杂 runtime / 状态机任务，PM 已确认不是“仅靠表面补丁通过测试”，而是确实在要求的抽象层完成收口。
-- `AGENTS.md` 已更新，或已明确说明无需更新。
-- 依赖关系、合并顺序、同步状态已在 progress file 记录清楚。
-- 普通开发任务已从 dev checkout 的提交 merge 到主 checkout，而不是通过复制文件回收改动。
-- 涉及 `.morpheus/instructions/project-understanding.md` 的任务，PM 已在 merge 时检查冲突、重复项、过时项和最终表述。
-- 空闲 dev checkout 已同步，未同步的 checkout 已记录原因。
-- PM 已基于改动规模、风险、运行时边界和安装态验收需要决定是否立即交付。需要立即交付的改动已从 canonical 主 checkout 构建完整 Runtime Capsule、执行 full restart 并验证新 release；允许批量交付的小修复已明确记录 `pending_capsule_delivery`、待交付 main commit 和当前 installed release。
+- owner/checkouts/brief/验证均正确；复杂任务按设计实现。
+- progress、依赖、同步、AGENTS 与 project-understanding 变更均已处理。
+- dev 提交经 Git merge 回收；交付决策、Capsule 验证或 pending delivery 已记录。

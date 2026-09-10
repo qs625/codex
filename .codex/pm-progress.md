@@ -8,9 +8,121 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the canonical checkout migration to `~/.morpheus/source_workspace`, preserve and relocate all active or dirty work into worktrees owned by that repository, then continue the Runtime Capsule follow-up and full interactive PTY Terminal Panel work from the new checkout layout.
+Complete the Terminal-first PTY improvements and then deliver all pending Launcher/runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance.
 
 ## Active Work
+- id: thread-analysis-command-monitor-restoration
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: feature/full-terminal-panel
+  task_type: bugfix/ui-command-monitor-regression
+  depends_on: main `22ecbc2edb`
+  files: apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/lib/threadAnalysis.test.ts; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/components/TerminalPanel.tsx if needed for target focus
+  base_commit: 22ecbc2edbfa5ada1db377fb0f51569579d87979
+  pending_sync_from_main: none
+  status: in_progress
+  objective: Restore command item visibility in the Thread Analysis panel while keeping internal command stdout/stderr out of that panel; live command rows should link users to the Terminal panel/tab for the actual PTY/output surface.
+  last_update: 2026-09-11 CST user clarified that hiding internal command output did not mean hiding command items; RightPanel currently filters command monitor sections and tests explicitly assert live commands are omitted from Thread Analysis.
+  next_action: fixed dev-2 owner should implement the UI semantics, reuse its fixed reviewer, run focused frontend tests, and commit the fix for PM merge.
+  blockers: none
+  validation: pending
+  commit: pending
+- id: project-thread-restart-prompt-fanout
+  owner: /self/owner_main
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: main
+  task_type: bugfix/client-restart-recovery
+  depends_on: installed runtime delivery `24c34b834`
+  files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/runtimeRestartIntent.cjs and focused tests; app-server/thread input path only if necessary for a durable idempotent client input
+  base_commit: 24c34b83425a6889ef3072b62e46ca75eded00ad
+  pending_sync_from_main: none
+  status: merged
+  objective: 仅 exact `/self` 可发起 Runtime Capsule restart；只要存在真实、持久化的 restart 事实，所有未完成 project root（包括 `/self`）各注入一次中文通用提示，无论 completed、failed、interrupted 或 payload 异常回退；错误详情仅额外注入 exact `/self`，不得投递给普通 project；文案必须由唯一 repo-local 配置文件维护。
+  last_update: 2026-09-10 CST 用户最终澄清：失败场景其他 project 也要收到通用提示；因此 generic fanout 只取决于真实 restart fact 与 project completion，不取决于 restart outcome。`/self` 也接 generic；错误详情是 `/self` 的额外专用输入。此前 PM 关于按 success/error 分开 generic 路由的解释已撤回。
+  next_action: complete installed-state restart smoke using the exact `/self` runtime restart path, then confirm control/release/PID evidence and payload fallback routing. Do not treat bundle replacement alone as active-runtime proof.
+  blockers: complete signed App is installed but the currently running runtime has not yet been formally restarted into it.
+  validation: PM reran Electron focused Node matrix 62/62 after integration; Runtime Launcher 42 library + 2 binary tests passed; `cargo build -p app-server --bin app-server` passed; diff check passed. Complete macOS package succeeded, outer signature verified, embedded Seed release is `sha256:0656b26c2baed9a17b4bbeecf88349ba8f3ccd310c646a6c40bb6bb632e2dc2c` with source commit `d1bc78bcb`. `/Applications/Root Worker Prototype.app` was recoverably replaced; previous bundle is at `/Users/bytedance/.Trash/root-worker-update-K1pwVi/Root Worker Prototype.app`.
+  commit: e66beff05, 754bc82f9, 95e26d888, d1bc78bcb
+- id: launcher-payload-exit-classification-and-self-notification
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-lifecycle-state-machine
+  depends_on: main `24c34b834`；与 `project-thread-restart-prompt-fanout` 共享 `/self` 通知语义，但 Launcher Rust state machine 与 Electron client fanout 分开开发、合并后联测
+  files: codex-rs/runtime-launcher/src/supervisor.rs; codex-rs/runtime-launcher/src/control.rs; codex-rs/runtime-launcher/src/process.rs; directly related Rust tests; Electron/app-server 的 Launcher failure recovery bridge only if required to deliver a durable `/self` input
+  base_commit: 24c34b83425a6889ef3072b62e46ca75eded00ad
+  pending_sync_from_main: none
+  status: merged
+  objective: 以最小改动让 payload 在仍可执行错误处理时自行在 `MORPHEUS_HOME` release 外文件记录可解释错误原因；Launcher 只观察异常退出并按既有 previous→Seed 规则回退；回退后的 payload 自己读取文件并仅一次向 `/self` 发送中文失败提示。
+  last_update: 2026-09-10 CST 用户明确指出此前 Launcher 任务过度设计，并进一步指定错误原因不应由 Launcher 发送给 payload：payload 自己通过文件记录。范围维持最小：不新增独立 recovery state machine、claim/consume 协议、event schema 或 Launcher↔payload 通信；Launcher 的 exit code/signal 仅作为 payload 没有机会落盘（SIGKILL/崩溃/断电）的通用事实，不能伪造内部原因。
+  next_action: validate in installed state after the exact `/self` restart: payload fallback→generic all-root prompt plus exact `/self` detail.
+  blockers: complete signed App is installed but real runtime restart smoke remains pending.
+  validation: PM design inspection accepted the narrow payload evidence→startup boolean→bootstrap OR-gate dataflow. Merged-main Electron focused 62/62, Runtime Launcher 42+2, app-server build and diff check passed; fixed reviewer passed. Embedded Seed release `sha256:0656b26c2baed9a17b4bbeecf88349ba8f3ccd310c646a6c40bb6bb632e2dc2c` installed from `d1bc78bcb`.
+  commit: fd0e8a2ac, 7324066af, f25f06854, 8790090b8, d1bc78bcb
+- id: runtime-launcher-post-checkpoint-cleanup-evidence
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-lifecycle-state-machine
+  depends_on: merged checkpoint `449dfef1b9` via main merge `a071ab3c8`; user explicitly requested all seven post-checkpoint working-tree changes be merged
+  files: apps/root-worker-prototype/README.md; apps/root-worker-prototype/electron/runtimeCapsule.cjs; apps/root-worker-prototype/electron/runtimeCapsule.test.cjs; codex-rs/runtime-launcher/src/capsule.rs; codex-rs/runtime-launcher/src/guard.rs; codex-rs/runtime-launcher/src/process.rs; codex-rs/runtime-launcher/src/supervisor.rs
+  base_commit: 449dfef1b9c4f44c0c3dd665415fd3e99d30b6a9
+  pending_sync_from_main: checkout cannot fast-forward while these intended working-tree changes are uncommitted; target branch is already an ancestor of main
+  status: merged
+  objective: Preserve and formally deliver the seven post-checkpoint Launcher changes: safely terminate observed Electron process-group handoffs and their late descendants, reject PID-reuse ownership inheritance, and require durable Guard cleanup evidence before recovered/rollback/timed-out launches are cleared.
+  last_update: 2026-09-10 CST owner delivered `7f02c51e5` after three fixed-reviewer rounds. The final design only uses `killpg` while the exact registered group leader identity remains present, directly signals tracked handed-off identities, continuously discovers late descendants, rejects PID reuse, and retains activeLaunch until a matching durable GuardExitReport proves cleanup. New manifests declare four prohibitions while legacy three-item manifests remain readable with their original release identity. PM design-accepted and merged through Git as `cc792f32c`.
+  next_action: build the complete installed Runtime Capsule from merged main and perform real restart/cleanup-evidence acceptance
+  blockers: none
+  validation: owner Node runtimeCapsule 9/9 and Runtime Launcher 65 library + 2 binary passed; fixed reviewer passed after 4 P1 + 1 P2 were repaired. PM merged-main rerun passed Node combined 29/29, Runtime Launcher 65+2, and diff check.
+  commit: cc792f32c, 7f02c51e5
+- id: runtime-capsule-incoming-asar-cleanup
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-packaging-lifecycle
+  depends_on: canonical main `a071ab3c8`; real installed restart attempt activation `24ef651f-8cf9-4c67-bb66-01d7abdef287`
+  files: apps/root-worker-prototype/electron/installedArtifactUpdate.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs; only directly required updater worker/lifecycle wiring tests if evidence proves necessary
+  base_commit: 449dfef1b9c4f44c0c3dd665415fd3e99d30b6a9; target updater files verified equal canonical main before dispatch
+  pending_sync_from_main: checkout cannot be fast-forwarded because it retains unrelated dirty Launcher/docs files; those files are protected and must remain untouched/uncommitted
+  status: merged
+  objective: Fix installed Runtime Capsule candidate production and cleanup so Electron's patched `node:fs` never interprets the regular-file `app.asar` as a directory, while preserving complete-candidate hashing/signing, failure cleanup, worker isolation, and fail-closed activation semantics.
+  last_update: 2026-09-10 CST owner delivered `7277398a9`, fixed reviewer passed, and PM merged it as `d974628e7`; merged-main Node 29/29 and Launcher 65+2 passed. PM built and installed Seed `sha256:4644aa71...` from source commit `d974628e7`, removed six conflicting `/Applications` backup bundles to Trash, and verified control rebind plus Launcher/Guard/payload/app-server PIDs `8700/8767/8773/8801`. The real restart then exposed a second filesystem-boundary bug: worker bundle source files live inside the running payload's virtual `app.asar/electron/*`, but `materializeInstalledArtifactWorkerBundle` used original-fs for both source and destination, causing `ENOTDIR ... app.asar/electron/environment.cjs -> /tmp/morpheus-artifact-worker-*`. Candidate production again failed before Launcher prepare; control remains healthy on the installed Seed.
+  next_action: fixed dev-3 owner must split worker materialization into patched-fs source reads and raw-fs destination writes/cleanup, add a regression modeling both namespaces, review, commit, merge, rebuild/install, and repeat the real restart
+  blockers: real worker-bundle source/destination filesystem split is not yet fixed
+  validation: installed Seed and control/PID chain passed; real restart failed with exact copyfile ENOTDIR before prepare
+  commit: d974628e7, 7277398a9; follow-up pending
+- id: runtime-launcher-orphaned-supervision-fix
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-lifecycle-state-machine
+  depends_on: runtime-launcher orphaned active launch `34749-1789012282792-c27711607632cbdc`
+  files: codex-rs/runtime-launcher/src/guard.rs; codex-rs/runtime-launcher/src/supervisor.rs; directly related lifecycle tests
+  base_commit: 77bda16249a27614416252ecde83fd48d5cb132e
+  pending_sync_from_main: dev-3 is clean and can fast-forward, but dispatch is blocked because canonical main currently has uncommitted edits to both shared state-machine files.
+  status: testing
+  objective: Replace the Guard-based double-supervisor lifecycle with a single Launcher→payload supervisor that can recover exact orphaned payloads without permanently blocking future restarts, then reduce version switching to one Launcher-owned atomic selection operation with no payload readiness or activation handshake.
+  last_update: 2026-09-10 CST. User explicitly accepted documented best-effort residuals and manual cleanup of rare unidentifiable survivors. Reviewer accepted the post-spawn/pre-persist SIGKILL window but found a remaining PID/PG lifecycle conflict: a direct child root exit must clean contemporaneously observed group workers, while a later startup root identity mismatch cannot safely signal a possibly reused PGID. PM chose the user-approved simple split: direct-owned exit performs exact observed-worker cleanup; identity mismatch never signals the group, discards the stale record, permits a new launch, and documents the possible manual cleanup residual. Canonical-main full package completed at 15:16:37 CST: outer App passed `codesign --verify --deep --strict`; embedded Seed release is `sha256:69bdfabf40deaab945b602354663ab2e05cb7d0848d0612d1c9340abf66cf09a` and `capsule.json` records source commit `fc1aa8a686386700b4ae93b3a7dfa1cb62ed6a84`. User then directed removal of the remaining version-switch handshake. Main commit `24c34b83425a6889ef3072b62e46ca75eded00ad` removes status/CAS prepare, exit 75, activation prepare/cancel/rollback/commit phases, and payload ready/token/identity surfaces; it provides only validated, locked `select-candidate`, normal app exit, direct supervision, and Launcher-local previous/Seed fallback. Fixed reviewer passed. PM design inspection confirmed the required public surfaces are gone; merged-main Electron focused tests passed 9/9, Runtime Launcher passed 38 library + 2 binary tests, and diff check passed. Current user WIP was absorbed into that commit: first window precedes microphone prompt, and all readiness state was deleted.
+  next_action: runtime delivery accepted; retain the two recoverable obsolete App backups until the user asks to purge them. A fresh full package from `24c34b834` completed with signed Seed release `sha256:3c8ebd598e928822fe8851726e8c9d5cca5513c4aa9528719efee3130b423170`, schema v2 and no readiness field. PM recoverably replaced `/Applications/Root Worker Prototype.app`, verified signing and embedded commit/release, and moved the interim fc1 bundle to `/Users/bytedance/.Trash/root-worker-update-UQkP7X/Root Worker Prototype.app`. The older pre-fc1 backup remains at `/Users/bytedance/.Trash/root-worker-update-ckARXA/Root Worker Prototype.app`. Neither backup is the current fix. User manually restarted at 2026-09-10 CST: installed Launcher `47075` directly supervised payload `47082` and app-server `47085`; control migrated to schema v3 with Seed/selected source commit `24c34b834`, no `activation` or `readyExpectation` fields. User then explicitly requested a restart-tool test: the tool call itself was interrupted by the expected app exit, but process/control evidence proves success—old payload `47082` exited, the same Launcher `47075` directly spawned external artifact payload `47673` and app-server `47768`, and control selected `externalCurrent` artifact `3c8ebd...3170` with no legacy handshake state.
+  blockers: none for implementation; current installed state remains blocked/orphaned until the repaired Launcher is delivered.
+  validation: existing evidence: registration/ack/payload registration/exec success/ready but no exit report; active payload/app-server live while Launcher/Guard absent. Completed simplified-state coverage: v2 manifest rejects retired readiness, select success/idempotence, invalid candidate leaves current selection, external spawn failure returns previous then Seed, stale failure/new selection race, PID reuse, late descendant cleanup and normal Electron exit. PM reran Electron 9/9 and Runtime Launcher 38+2.
+  commit: 24c34b83425a6889ef3072b62e46ca75eded00ad
+- id: runtime-launcher-orphaned-active-launch-recovery
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: runtime-lifecycle operational recovery
+  depends_on: installed Seed `sha256:05fe80a3...` / current active launch `34749-1789012282792-c27711607632cbdc`
+  files: /Users/bytedance/.morpheus/runtime-launcher/control.json; /Users/bytedance/.morpheus/runtime-launcher/failure-evidence.json; matching attempt records
+  base_commit: 77bda16249a27614416252ecde83fd48d5cb132e
+  pending_sync_from_main: none
+  status: blocked
+  objective: Recover safely from an orphaned active payload without weakening durable cooperative cleanup evidence.
+  last_update: 2026-09-10 CST. User requested stale blocked-state cleanup. Owner confirmed the failure evidence is bound to the current active launch, not stale residue: payload PID 34761 and app-server PID 34764 remain alive while the matching Guard and Launcher parent have exited, with no exit report. Official `ack-failure` correctly rejects acknowledgement while activeLaunch remains. No state or App files were changed.
+  next_action: user decision required — either authorize a controlled stop of PID 34761/process group followed by supported state recovery, or implement a strictly identity-verified orphan re-adoption/replacement state machine before recovery.
+  blockers: deleting evidence, clearing activeLaunch, or fabricating an exit report would lose durable tracking or bypass the fail-closed gate.
+  validation: control stable at revision 341 / executor epoch 329; current failure is `cooperative_cleanup_blocked`; payload and app-server verified live; Guard and parent verified absent; official acknowledgement path inspected and safely rejected.
+  commit: none
 - id: canonical-source-workspace-migration
   owner: /self
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -20,7 +132,7 @@ Complete the canonical checkout migration to `~/.morpheus/source_workspace`, pre
   files: `.morpheus/agents/project-pm.agent.md`; `.morpheus/instructions/user-preferences.md`; `.morpheus/instructions/project-understanding.md`; `.codex/pm-progress.md`; Git worktree metadata and local branches
   base_commit: 589dadfb3e
   pending_sync_from_main: none
-  status: in_progress
+  status: blocked
   objective: Make `~/.morpheus/source_workspace` the canonical main checkout and build source, recreate the three fixed dev worktrees beside it, migrate all active/uncommitted work through Git commits rather than file copying, reassign fixed owners, verify the new layout, and only then delete the four old `~/Projects/my-codex*` directories.
   last_update: 2026-09-09 CST current source workspace main was fast-forwarded locally from old main `ffb6145eb8..589dadfb3e` without using the remote, and the checkout/build rules were committed as `894957186`. dev-3 preserved the eight user-authored Capsule fixes as `449dfef1b9`; dev-2 preserved 41 Terminal files as `f025db307d`; legacy dev preserved all 188 tracked changes as `4f1bc5e4fb`. All three branches were fetched into the canonical repository and checked out at `source_workspace-dev*`. `.playwright-cli/` remains intentionally untracked and excluded.
   next_action: preserve the old main's untracked Android local properties in the canonical checkout, verify all old/new heads and cleanliness, move the four old directories to Trash, recreate the fixed owner threads with new cwd values, and validate build commands resolve from the canonical source tree
@@ -36,7 +148,7 @@ Complete the canonical checkout migration to `~/.morpheus/source_workspace`, pre
   files: apps/root-worker-prototype/README.md; electron/runtimeCapsule.cjs and tests; electron/selfProjectThread.cjs and tests; runtime-launcher capsule.rs, guard.rs and process.rs
   base_commit: 092747995d
   pending_sync_from_main: new dev-3 worktree is at migration checkpoint `449dfef1b9`; continue validation there before integrating with canonical main
-  status: in_progress
+  status: review
   objective: Preserve, design-review, test and commit the user's follow-up fixes for problems in the previously merged generic Runtime Capsule Launcher, then merge the validated commit to main through Git.
   last_update: 2026-09-09 CST user confirmed the eight dirty dev-3 files are intentional fixes and requested merge. Old dev-3 saved them unchanged as WIP checkpoint `449dfef1b9c4f44c0c3dd665415fd3e99d30b6a9`; the worktree is clean and diff check passed. Initial inspection flags a remaining risk that observed PGID handoff may not receive TERM/KILL through the generic cleanup path.
   next_action: create the canonical dev-3 worktree at the checkpoint, reassign the fixed owner, complete design review/tests and produce a non-WIP merge-ready commit
@@ -134,12 +246,43 @@ Complete the canonical checkout migration to `~/.morpheus/source_workspace`, pre
   pending_sync_from_main: none; dev-2 fast-forwarded to accepted Capsule integration baseline
   status: in_progress
   objective: Provide a complete interactive terminal experience for PTY-backed commands and a multi-tab Terminal panel in the Root Worker right sidebar. ANSI/VT screen state, cursor motion, alternate screen, terminal queries, keyboard input and resize must work through a real terminal emulator instead of rendering raw escape sequences as `<pre>` text.
-  last_update: 2026-09-09 CST implementation reached 38 modified/new files before migration. Fixed reviewer identified five blockers to resolve after relocation: split UTF-8 chunks are decoded lossily, the 10,000-event cap can permanently stop live terminal updates, silent programs remain unusable in `starting`, snapshot/delta replay lacks a sequence watermark, and detached tombstones prevent explicit reattach. Focused Rust, React and Electron tests for these paths are also missing. Owner was instructed to create a migration checkpoint without further implementation.
-  next_action: recreate the fixed dev-2 owner at the new cwd, then fix all five review findings and complete the original regression matrix with a fixed reviewer
-  blockers: five design/reliability review findings; owner thread must be recreated with the new cwd
-  validation: migration checkpoint `f025db307dd9d1257a2950bbcaa967f0b4cf491f` created with 41 task files; reviewer read-only inspection complete; tests/build not yet run
-  commit: f025db307dd9d1257a2950bbcaa967f0b4cf491f (migration checkpoint, not merge-ready)
-  commit:
+  last_update: 2026-09-10 CST dev-2 and fixed reviewer confirmed no source dependency defect: `d10a69268` already declares `@xterm/addon-fit:^0.11.0` and `@xterm/xterm:^6.0.0` as production dependencies, with matching pnpm importer/resolution/snapshot. The earlier main package failure used a stale node_modules view. After `pnpm install --frozen-lockfile`, dev-2 passed Vite build (392 modules), terminal Node 6/6 and RightPanel TypeScript 7/7 without source changes or a new commit.
+  next_action: PM refreshes canonical-main node_modules with the frozen lockfile, then reruns complete package-mac-app, verifies manifest/signature, and proceeds to the exact `/self` installed-state restart acceptance.
+  blockers: no source blocker; canonical package must be rerun after the frozen dependency install. Baseline app-server approval-resume initialization timeout remains a separate residual validation risk.
+  validation: PM merged-main thread-service turn-state, command-service unified-exec, both exact cancellation tests, and `cargo build -p app-server --bin app-server` passed. Terminal Node tests 6/6, RightPanel TypeScript tests 7/7, and diff check passed. The former Vite unresolved-import failure is reproduced only with stale node_modules; dev-2 frozen-lockfile install resolves it.
+  commit: d10a69268, c8c6742e8d0d8e0a64c538685d337779ea232a5e, 72d5950c5
+- id: runtime-launcher-external-capsule-gc
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feature/generic-runtime-capsule-launcher
+  task_type: bugfix/runtime-lifecycle-state-machine
+  depends_on: canonical main `d10a69268`; user-owned uncommitted main changes to `selfProjectThread.*` and the normal-exit branch in `runtime-launcher/src/supervisor.rs` must be preserved at merge
+  files: codex-rs/runtime-launcher/src/capsule.rs; codex-rs/runtime-launcher/src/supervisor.rs; directly related control/launcher tests only
+  base_commit: d10a692687301a5b551e585f79ff3ab4f7431b6f
+  pending_sync_from_main: none; dev-3 is clean at the required base
+  status: in_progress
+  objective: Retain only the externally selected current and rollback-previous Runtime Capsules, and safely garbage-collect superseded content-addressed external artifacts without ever deleting a selected, rollback-eligible, or active runtime.
+  last_update: 2026-09-10 CST PM Git-merged dev-3 follow-up `8fa538d20` as `06d5bb2d1`, preserving the user-owned normal-exit intent and resolving the restored-worktree conflict without discarding `/self` work. `supervisor::run` now classifies exit once: success returns `RunOutcome::Exited` immediately; failure alone enters existing fallback plus post-transition GC.
+  next_action: wait for the independent dev-2 Terminal work; then build one complete Capsule from canonical main and complete exact `/self` installed-state restart acceptance.
+  blockers: none. The user-owned `/self` main working-tree files remain uncommitted and preserved.
+  validation: owner fixed-reviewer passed. PM merged-main `cargo test -p runtime-launcher` passed 48 library + 2 binary tests; `cargo build -p runtime-launcher` and `git diff --check` passed. Existing dead-code warnings remain.
+  commit: 6583e7026, b835f9201, 8fa538d20, 06d5bb2d1
+- id: terminal-default-term-and-display-preferences
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: feature/full-terminal-panel
+  task_type: feature/ui-runtime-terminal
+  depends_on: canonical main `d10a69268`; independent of runtime-launcher external GC
+  files: codex-rs/app-server/src/command_exec.rs; directly related PTY spawn/unit tests; apps/root-worker-prototype/src/components/TerminalPanel.tsx; focused terminal preference helper/tests and existing styles
+  base_commit: d10a692687301a5b551e585f79ff3ab4f7431b6f
+  pending_sync_from_main: none; dev-2 is clean at the required base
+  status: in_progress
+  objective: Give PTY terminals a default TERM capability when callers omit it; provide compact persistent Terminal display preferences for font family, font size, and line height without changing cursor/bar style; and make active commands Terminal-first instead of analysis/conversation display items.
+  last_update: 2026-09-10 CST PM merged rebased owner commit `1c63b1587` as canonical main `22ecbc2edbfa5ada1db377fb0f51569579d87979 merge: consolidate live commands in terminal panel`. User explicitly authorized skipping the provider-auth-blocked Playwright click smoke, then requested a complete outer-App replacement. Canonical packaging succeeded; outer codesign verification passed; `/Applications/Root Worker Prototype.app` now has Seed release `sha256:fef6c1125a6b1a660b0fc42271f9b425c715fe90f9640fe63e669133dead7b94` with matching source commit. The exact `/self` restart tool call was interrupted before a result by the user's backup-cleanup request.
+  next_action: invoke exact `/self` restart and inspect control/release/PID evidence; do not claim the currently running payload has changed until this succeeds.
+  blockers: user accepted the missing Playwright click-to-exact-tab smoke. Direct `tsx` RightPanel test remains blocked by existing xterm CSS loader behavior; production Vite build passes.
+  validation: rebase ancestry and clean status passed; terminal Node 8/8, presentation/preferences TypeScript 5/5, Vite build, app-server spawn-environment 3/3, app-server build and diff check passed. Full Electron baseline screenshots: `/tmp/root-worker-rebased-smoke-9233.png`; auth-blocked run: `/tmp/root-worker-rebase-auth-blocked.png`.
+  commit: 1c63b1587, 22ecbc2edbfa5ada1db377fb0f51569579d87979
 - id: remove-built-in-worker-explorer-roles
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -587,7 +730,8 @@ Recent completed work older than 2026-08-19 is archived in [PM Progress Archive]
 ## Known Issues
 - 用户已确认 `request_runtime_restart` 采用 terminal fire-and-forget control action。成功路径不向当前模型返回普通 FunctionCallOutput，也不等待 Host 向旧 server 回执；server 只做校验和定向投递，Host 收到后先原子持久化 expected-restart intent，再执行 build/update/restart，新进程消费 intent 并进行专用恢复。实现应删除 prepare/commit/output-flush/release 屏障，保留唯一 Host 定向路由、requestId 幂等、same-mode coalesce/cross-mode conflict，并补最小 terminal-tool/runtime 与 expected-restart 恢复语义。
 - 2026-09-09 interactive PTY input itself works for both `y\n` and a single `y`, but command notification delivery has a race: when a command emits output or exits immediately after `command_write_stdin`, the output/exit notification can occur before `poll_event` starts waiting. `poll_event` may then time out even though `list_commands` shows the command already finished; adding a short post-input delay makes the typed exit notification arrive normally. Treat this as a command event queue/wakeup issue, not a stdin write failure.
+- 2026-09-10 `cargo test -p app-server thread_resume_replays_pending_command_execution_request_approval -- --test-threads=1` hits a 10.24-second `initialize` deadline before target assertions on both canonical main `c8c6742e8` and dev-2 `72d5950c5`. It is a baseline test-environment blocker, not evidence of the Terminal compatibility repair; retain it as a residual validation risk until the harness initialization flake is separately diagnosed.
 - 2026-09-03 Right Panel File Preview does not keep OS file descriptors open after reading, but text previews are loaded as full UTF-8 strings into React state and one preview is remembered per project root. There is no explicit file-size cap or preview-memory/LRU cap yet, so very large files or many project roots can still increase renderer memory. Future file preview hardening should add bounded preview size and/or memory eviction without changing the basic read-close file behavior.
 - 2026-09-03 editable file preview exposed an installed refresh boundary: ordinary frontend/backend changes can use app-server restart + renderer reload, but changes to Electron `main.cjs` or main-process IPC handlers may require a full Electron app relaunch to enter the running process. This was not the root cause of the missing markdown Edit button after a real quit/open, so it is deferred from the markdown UI follow-up and should be handled as a separate runtime lifecycle task.
-- 2026-09-03 after merging `global-agent-path-namespace`, `/Users/bytedance/Projects/my-codex-dev-3` was fast-forwarded to main `86efaf41f` and is available for future work. `/Users/bytedance/Projects/my-codex-dev` still has extensive unrelated tracked dirty changes and remains unsynced. `/Users/bytedance/Projects/my-codex-dev-2` could not fast-forward because its branch still contains old local progress commit `2af1b92db0` while main has the canonical later progress history; it also still has unrelated untracked `apps/android-companion/local.properties`. Do not assign new work to dev/dev-2 until each checkout is realigned without losing local files.
+- 2026-09-10 `/Users/bytedance/.morpheus/source_workspace-dev-2` and `/Users/bytedance/.morpheus/source_workspace-dev-3` have fast-forwarded to `d10a69268`. `/Users/bytedance/.morpheus/source_workspace-dev` is clean but on an old divergent `4f1bc5e4f` checkpoint and cannot fast-forward; do not assign it new work until its protected legacy branch is explicitly reconciled.
 - 2026-09-03 older known issues and undated legacy issues moved to [known-issues-through-2026-08-18.md](pm-progress-archive/known-issues-through-2026-08-18.md).

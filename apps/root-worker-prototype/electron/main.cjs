@@ -1312,7 +1312,7 @@ async function refreshTerminalPanelSessions(panel, threadId = panel.threadId) {
         sendTerminalPanelState(panel);
       }
     }
-  })();
+  });
   panel.refreshPromise = refreshPromise;
   return refreshPromise;
 }

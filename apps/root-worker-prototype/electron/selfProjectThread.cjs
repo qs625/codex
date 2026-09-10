@@ -3,19 +3,10 @@ const { buildSelfCommandThreadStartParams } = require("./threadConfig.cjs");
 const SELF_PROJECT_THREAD_NAME = "/self";
 
 function isSelfProjectThread(thread, project) {
-  const systemThreadId = normalizeThreadId(project?.systemThreadId);
   return (
-    isManagedSystemSelfProject(project) &&
-    systemThreadId !== null &&
-    thread?.id === systemThreadId &&
-    thread?.name === SELF_PROJECT_THREAD_NAME &&
-    normalizeProjectPath(thread?.cwd) === normalizeProjectPath(project.workspace) &&
-    !thread?.parentThreadId &&
-    !thread?.parent_thread_id &&
-    !thread?.forkedFromId &&
-    !thread?.forked_from_id &&
-    thread?.threadSource !== "subagent" &&
-    !isSubAgentSource(thread?.source)
+    thread?.name === SELF_PROJECT_THREAD_NAME ||
+    thread?.agentPath === SELF_PROJECT_THREAD_NAME ||
+    thread?.agent_path === SELF_PROJECT_THREAD_NAME
   );
 }
 
@@ -26,9 +17,38 @@ async function ensureSelfProjectThread(
   project,
   threads,
 ) {
-  const existing = threads.find((thread) => isSelfProjectThread(thread, project));
+  const selfThreads = threads.filter((thread) =>
+    isSelfProjectThread(thread, project),
+  );
+  const existing =
+    selfThreads.find((thread) => thread.id === project.systemThreadId) ??
+    selfThreads[0];
   if (existing) {
-    return { created: false, runtime: null, thread: existing, threads };
+    // Older clients could create more than one /self thread when their local
+    // project record did not point at the backend-returned thread. Agent paths
+    // are global, so never expose those stale roots for a later resume.
+    const duplicateSelfThreads = selfThreads.filter(
+      (thread) => thread.id !== existing.id,
+    );
+    await Promise.all(
+      duplicateSelfThreads.map(async (thread) => {
+        try {
+          await appServerClient.request("thread/archive", { threadId: thread.id });
+        } catch {
+          // Keep the canonical root usable if cleanup needs to be retried.
+        }
+      }),
+    );
+    project.systemThreadId = existing.id;
+    if (typeof persistSystemThreadId === "function") {
+      await persistSystemThreadId(existing.id);
+    }
+    return {
+      created: false,
+      runtime: null,
+      thread: existing,
+      threads: threads.filter((thread) => !duplicateSelfThreads.includes(thread)),
+    };
   }
 
   const start = await appServerClient.request(

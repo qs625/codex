@@ -78,7 +78,7 @@ test("ensureSelfProjectThread reuses an existing self root", async () => {
   assert.deepEqual(requests, []);
 });
 
-test("ensureSelfProjectThread does not reuse a same-name root from another workspace", async () => {
+test("ensureSelfProjectThread reuses a backend-returned self thread regardless of workspace", async () => {
   const requests = [];
   const otherWorkspaceSelfRoot = {
     id: "other-self-root",
@@ -111,12 +111,39 @@ test("ensureSelfProjectThread does not reuse a same-name root from another works
     [otherWorkspaceSelfRoot],
   );
 
-  assert.equal(result.created, true);
-  assert.equal(result.thread.id, "created-self-root");
-  assert.deepEqual(
-    result.threads.map((thread) => thread.id),
-    ["created-self-root", "other-self-root"],
+  assert.equal(result.created, false);
+  assert.equal(result.thread.id, "other-self-root");
+  assert.deepEqual(result.threads, [otherWorkspaceSelfRoot]);
+  assert.deepEqual(requests, []);
+});
+
+test("ensureSelfProjectThread keeps the configured self root and archives stale duplicates", async () => {
+  const requests = [];
+  const configuredSelfRoot = { id: "configured-self", name: "/self" };
+  const staleSelfRoot = { id: "stale-self", agentPath: "/self" };
+  const ordinaryThread = { id: "ordinary", name: "Project chat" };
+
+  const result = await ensureSelfProjectThread(
+    {
+      async request(method, params) {
+        requests.push({ method, params });
+        assert.equal(method, "thread/archive");
+        assert.deepEqual(params, { threadId: "stale-self" });
+        return {};
+      },
+    },
+    (thread) => thread,
+    null,
+    { ...selfProject, systemThreadId: "configured-self" },
+    [staleSelfRoot, ordinaryThread, configuredSelfRoot],
   );
+
+  assert.equal(result.created, false);
+  assert.equal(result.thread, configuredSelfRoot);
+  assert.deepEqual(result.threads, [ordinaryThread, configuredSelfRoot]);
+  assert.deepEqual(requests, [
+    { method: "thread/archive", params: { threadId: "stale-self" } },
+  ]);
 });
 
 test("ensureSelfProjectThread creates and names a real self root when missing", async () => {
@@ -177,7 +204,7 @@ test("ensureSelfProjectThread creates and names a real self root when missing", 
   assert.equal(requests[1].method, "thread/name/set");
 });
 
-test("isSelfProjectThread rejects forked and child threads using the system id", () => {
+test("isSelfProjectThread recognizes backend-returned self threads without local provenance", () => {
   const baseThread = {
     id: "self-root",
     name: "/self",
@@ -187,11 +214,11 @@ test("isSelfProjectThread rejects forked and child threads using the system id",
   assert.equal(isSelfProjectThread(baseThread, selfProject), true);
   assert.equal(
     isSelfProjectThread({ ...baseThread, forkedFromId: "origin" }, selfProject),
-    false,
+    true,
   );
   assert.equal(
     isSelfProjectThread({ ...baseThread, parentThreadId: "parent" }, selfProject),
-    false,
+    true,
   );
   assert.equal(
     isSelfProjectThread(
@@ -201,7 +228,7 @@ test("isSelfProjectThread rejects forked and child threads using the system id",
       },
       selfProject,
     ),
-    false,
+    true,
   );
 });
 
