@@ -222,7 +222,6 @@ function buildMonitorSections(
 ): ThreadAnalysis["monitors"] {
   const monitors: InternalMonitorSummary[] = [];
   const eventsByTool = new Map<string, MonitorEvent[]>();
-  const commandNotificationsByCommandId = new Map<string, string>();
   const allowLiveCommandMonitors = threadAllowsLiveCommandMonitors(thread);
 
   if (thread) {
@@ -231,7 +230,6 @@ function buildMonitorSections(
         applyMonitorItem(item, {
           monitors,
           eventsByTool,
-          commandNotificationsByCommandId,
           allowLiveCommandMonitors,
           allowCommandExecutionMonitors: false,
         });
@@ -241,7 +239,6 @@ function buildMonitorSections(
       applyMonitorItem(item, {
         monitors,
         eventsByTool,
-        commandNotificationsByCommandId,
         allowLiveCommandMonitors,
         allowCommandExecutionMonitors: false,
       });
@@ -250,7 +247,6 @@ function buildMonitorSections(
       applyMonitorItem(item, {
         monitors,
         eventsByTool,
-        commandNotificationsByCommandId,
         allowLiveCommandMonitors,
         allowCommandExecutionMonitors: true,
       });
@@ -310,7 +306,6 @@ function applyMonitorItem(
   state: {
     monitors: InternalMonitorSummary[];
     eventsByTool: Map<string, MonitorEvent[]>;
-    commandNotificationsByCommandId: Map<string, string>;
     allowLiveCommandMonitors: boolean;
     allowCommandExecutionMonitors: boolean;
   },
@@ -318,7 +313,6 @@ function applyMonitorItem(
   const {
     monitors,
     eventsByTool,
-    commandNotificationsByCommandId,
     allowLiveCommandMonitors,
     allowCommandExecutionMonitors,
   } = state;
@@ -350,27 +344,11 @@ function applyMonitorItem(
       removeCommandMonitor(monitors, item.id);
       return;
     }
-    const commandMonitor = buildCommandMonitorSummary(
-      item,
-      commandNotificationsByCommandId.get(item.id) ?? null,
-      allowLiveCommandMonitors,
-    );
+    const commandMonitor = buildCommandMonitorSummary(item, allowLiveCommandMonitors);
     if (commandMonitor) {
       upsertMonitorSummary(monitors, commandMonitor);
     }
     return;
-  }
-
-  if (item.type === "commandExecutionNotification") {
-    const summary = summarizeCommandNotification(item);
-    commandNotificationsByCommandId.set(item.commandItemId, summary);
-    const existingMonitor = monitors.find(
-      (monitor) => monitor.id === item.commandItemId,
-    );
-    if (existingMonitor) {
-      existingMonitor.latestEvent = summary;
-      existingMonitor.eventCount = Math.max(existingMonitor.eventCount, 1);
-    }
   }
 }
 
@@ -433,18 +411,12 @@ function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {
 
 function buildCommandMonitorSummary(
   item: Extract<ThreadItem, { type: "commandExecution" }>,
-  latestNotification: string | null,
   allowLiveCommandMonitors: boolean,
 ): InternalMonitorSummary | null {
   const status = statusLabel(item.status);
   if (!allowLiveCommandMonitors || !isRunningCommandStatus(item.status)) {
     return null;
   }
-  const latestOutput =
-    stringOrNull(item.aggregatedOutput)
-      ?.split(/\r?\n/)
-      .filter(Boolean)
-      .at(-1) ?? null;
   return {
     id: item.id,
     subscriptionId: item.id,
@@ -452,8 +424,8 @@ function buildCommandMonitorSummary(
     label: item.command,
     detail: item.cwd,
     status,
-    eventCount: latestNotification || latestOutput ? 1 : 0,
-    latestEvent: latestNotification ?? latestOutput,
+    eventCount: 0,
+    latestEvent: null,
   };
 }
 
@@ -480,20 +452,6 @@ function threadAllowsLiveCommandMonitors(thread: Thread | null) {
     (thread.lifecycleStatus.reason === "command" ||
       thread.lifecycleStatus.reason === "child")
   );
-}
-
-function summarizeCommandNotification(
-  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
-) {
-  if (item.kind === "output") {
-    return stringOrNull(item.output) ?? "Output notification";
-  }
-  if (item.kind === "exit") {
-    return item.exitCode === null || item.exitCode === undefined
-      ? "Exit notification"
-      : `Exit notification ${item.exitCode}`;
-  }
-  return item.message;
 }
 
 function buildMonitorSummary(
