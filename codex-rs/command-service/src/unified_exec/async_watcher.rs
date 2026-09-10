@@ -177,7 +177,7 @@ pub(crate) fn spawn_exit_watcher(
 
         let duration = Instant::now().saturating_duration_since(started_at);
         let background_session_active = notification_state.is_background_session_active();
-        let process_id_for_event = background_session_active.then(|| process_id.to_string());
+        let process_id_for_event = Some(process_id.to_string());
         let failure_message = process.failure_message();
         if background_session_active {
             let status = if failure_message.is_some() {

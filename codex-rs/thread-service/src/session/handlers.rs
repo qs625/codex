@@ -291,7 +291,7 @@ pub async fn exec_approval(
     turn_id: Option<String>,
     decision: ReviewDecision,
 ) {
-    let event_turn_id = turn_id.unwrap_or_else(|| approval_id.clone());
+    let event_turn_id = turn_id.as_deref().unwrap_or(&approval_id);
     if let ReviewDecision::ApprovedExecpolicyAmendment {
         proposed_execpolicy_amendment,
     } = &decision
@@ -302,7 +302,7 @@ pub async fn exec_approval(
         {
             Ok(()) => {
                 sess.record_execpolicy_amendment_message(
-                    &event_turn_id,
+                    event_turn_id,
                     proposed_execpolicy_amendment,
                 )
                 .await;
@@ -312,7 +312,7 @@ pub async fn exec_approval(
                 tracing::warn!("{message}");
                 let warning = EventMsg::Warning(WarningEvent { message });
                 sess.send_event_raw(Event {
-                    id: event_turn_id.clone(),
+                    id: event_turn_id.to_string(),
                     msg: warning,
                 })
                 .await;
@@ -323,7 +323,10 @@ pub async fn exec_approval(
         ReviewDecision::Abort => {
             sess.interrupt_task().await;
         }
-        other => sess.notify_approval(&approval_id, other).await,
+        other => {
+            sess.notify_approval(&approval_id, turn_id.as_deref(), other)
+                .await
+        }
     }
 }
 
@@ -332,7 +335,7 @@ pub async fn patch_approval(sess: &Arc<Session>, id: String, decision: ReviewDec
         ReviewDecision::Abort => {
             sess.interrupt_task().await;
         }
-        other => sess.notify_approval(&id, other).await,
+        other => sess.notify_approval(&id, None, other).await,
     }
 }
 

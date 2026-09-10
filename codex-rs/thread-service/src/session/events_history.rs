@@ -840,7 +840,11 @@ impl Session {
             match active.as_mut() {
                 Some(at) => {
                     let mut ts = at.turn_state.lock().await;
-                    ts.insert_pending_approval(effective_approval_id.clone(), tx_approve)
+                    ts.insert_pending_approval(
+                        &turn_context.sub_id,
+                        effective_approval_id.clone(),
+                        tx_approve,
+                    )
                 }
                 None => None,
             }
@@ -909,7 +913,11 @@ impl Session {
             match active.as_mut() {
                 Some(at) => {
                     let mut ts = at.turn_state.lock().await;
-                    ts.insert_pending_approval(approval_id.clone(), tx_approve)
+                    ts.insert_pending_approval(
+                        &turn_context.sub_id,
+                        approval_id.clone(),
+                        tx_approve,
+                    )
                 }
                 None => None,
             }
@@ -1325,15 +1333,21 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
-    pub async fn notify_approval(&self, approval_id: &str, decision: ReviewDecision) {
+    pub async fn notify_approval(
+        &self,
+        approval_id: &str,
+        turn_id: Option<&str>,
+        decision: ReviewDecision,
+    ) {
         let entry = {
             let mut active = self.active_turn.lock().await;
             match active.as_mut() {
-                Some(at) => {
+                Some(at) if turn_id.is_none_or(|turn_id| at.tasks.contains_key(turn_id)) => {
                     let mut ts = at.turn_state.lock().await;
-                    ts.remove_pending_approval(approval_id)
+                    ts.resolve_pending_approval(approval_id, turn_id, decision.clone())
                 }
                 None => None,
+                Some(_) => None,
             }
         };
         match entry {

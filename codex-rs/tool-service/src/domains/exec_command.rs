@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -44,6 +45,7 @@ use crate::domains::apply_patch::normalize_and_validate_additional_permissions;
 use crate::output::ExecCommandToolOutput;
 
 const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
+const LEGACY_SHELL_COMMAND_TOOL_NAME: &str = "shell_command";
 
 // This domain owns the `exec_command` tool. The underlying config enum still
 // uses historical shell-oriented names, but there is no separate legacy shell
@@ -75,7 +77,11 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
 }
 
 pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &ToolName) -> bool {
-    tool_name.namespace.is_none() && tool_name.name.as_str() == EXEC_COMMAND_TOOL_NAME
+    tool_name.namespace.is_none()
+        && matches!(
+            tool_name.name.as_str(),
+            EXEC_COMMAND_TOOL_NAME | LEGACY_SHELL_COMMAND_TOOL_NAME
+        )
 }
 
 pub(crate) fn create_diff_consumer(
@@ -101,7 +107,7 @@ pub(crate) async fn dispatch(
     _tracker: SharedToolTurnDiffTracker,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
-    if call.tool_name.name.as_str() != EXEC_COMMAND_TOOL_NAME {
+    if !is_exec_command_tool_name(&call.tool_name) {
         return Err(FunctionCallError::Fatal(format!(
             "unsupported exec_command tool {}",
             call.tool_name
@@ -141,7 +147,8 @@ async fn dispatch_exec_command(
     call: &ToolCall,
 ) -> Result<ExecCommandToolOutput, FunctionCallError> {
     let arguments = call.function_arguments()?;
-    let environment_args: ExecCommandEnvironmentArgs = parse_arguments(arguments)?;
+    let arguments = normalize_exec_command_arguments(&call.tool_name, arguments)?;
+    let environment_args: ExecCommandEnvironmentArgs = parse_arguments(&arguments)?;
     let turn_capability = turn.as_ref();
     let Some(turn_environment) = turn_capability.resolve_exec_command_environment(
         environment_args.environment_id.as_deref(),
@@ -153,7 +160,7 @@ async fn dispatch_exec_command(
         ));
     };
     let cwd = turn_environment.cwd.clone();
-    let args: ExecCommandArgs = parse_arguments_with_base_path(arguments, &cwd)?;
+    let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &cwd)?;
     let hook_command = args.cmd.clone();
     turn_capability
         .maybe_emit_implicit_skill_invocation(&hook_command, &cwd)
@@ -382,6 +389,53 @@ async fn dispatch_exec_command(
             "exec_command failed for `{command_for_display}`: {err:?}"
         ))),
     }
+}
+
+fn is_exec_command_tool_name(tool_name: &ToolName) -> bool {
+    tool_name.namespace.is_none()
+        && matches!(
+            tool_name.name.as_str(),
+            EXEC_COMMAND_TOOL_NAME | LEGACY_SHELL_COMMAND_TOOL_NAME
+        )
+}
+
+fn normalize_exec_command_arguments<'a>(
+    tool_name: &ToolName,
+    arguments: &'a str,
+) -> Result<Cow<'a, str>, FunctionCallError> {
+    if tool_name.name.as_str() != LEGACY_SHELL_COMMAND_TOOL_NAME {
+        return Ok(Cow::Borrowed(arguments));
+    }
+
+    let mut value: serde_json::Value = serde_json::from_str(arguments).map_err(|err| {
+        FunctionCallError::RespondToModel(format!("failed to parse shell_command arguments: {err}"))
+    })?;
+    let object = value.as_object_mut().ok_or_else(|| {
+        FunctionCallError::RespondToModel(
+            "failed to parse shell_command arguments: expected an object".to_string(),
+        )
+    })?;
+    if !object.contains_key("cmd") {
+        let command = object.remove("command").ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "shell_command requires a command argument".to_string(),
+            )
+        })?;
+        object.insert("cmd".to_string(), command);
+    }
+    if !object.contains_key("yield_time_ms")
+        && let Some(timeout_ms) = object.remove("timeout_ms")
+    {
+        object.insert("yield_time_ms".to_string(), timeout_ms);
+    }
+
+    serde_json::to_string(&value)
+        .map(Cow::Owned)
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to normalize shell_command arguments: {err}"
+            ))
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -635,5 +689,21 @@ mod tests {
             message,
             "tool exec_command invoked with incompatible payload"
         );
+    }
+
+    #[test]
+    fn legacy_shell_command_arguments_normalize_to_exec_command_shape() {
+        let arguments = normalize_exec_command_arguments(
+            &ToolName::plain(LEGACY_SHELL_COMMAND_TOOL_NAME),
+            r#"{"command":"python3 -c 'print(42)'","workdir":"/tmp","timeout_ms":5000}"#,
+        )
+        .expect("legacy shell arguments should normalize");
+        let arguments: serde_json::Value =
+            serde_json::from_str(&arguments).expect("normalized arguments should be JSON");
+
+        assert_eq!(arguments["cmd"], "python3 -c 'print(42)'");
+        assert_eq!(arguments["workdir"], "/tmp");
+        assert_eq!(arguments["yield_time_ms"], 5000);
+        assert!(arguments.get("command").is_none());
     }
 }

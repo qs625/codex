@@ -20,6 +20,7 @@ use crate::PendingInputItem;
 /// Mutable state for a single turn.
 pub struct TurnState {
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
+    early_approval_decisions: HashMap<(String, String), ReviewDecision>,
     pending_request_permissions: HashMap<String, PendingRequestPermissions>,
     pending_user_input: HashMap<String, oneshot::Sender<RequestUserInputResponse>>,
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
@@ -38,6 +39,7 @@ impl Default for TurnState {
     fn default() -> Self {
         Self {
             pending_approvals: HashMap::default(),
+            early_approval_decisions: HashMap::default(),
             pending_request_permissions: HashMap::default(),
             pending_user_input: HashMap::default(),
             pending_elicitations: HashMap::default(),
@@ -72,21 +74,40 @@ impl TurnState {
 
     pub fn insert_pending_approval(
         &mut self,
+        turn_id: &str,
         key: String,
         tx: oneshot::Sender<ReviewDecision>,
     ) -> Option<oneshot::Sender<ReviewDecision>> {
+        if let Some(decision) = self
+            .early_approval_decisions
+            .remove(&(turn_id.to_string(), key.clone()))
+        {
+            tx.send(decision).ok();
+            return None;
+        }
         self.pending_approvals.insert(key, tx)
     }
 
-    pub fn remove_pending_approval(
+    pub fn resolve_pending_approval(
         &mut self,
         key: &str,
+        turn_id: Option<&str>,
+        decision: ReviewDecision,
     ) -> Option<oneshot::Sender<ReviewDecision>> {
-        self.pending_approvals.remove(key)
+        let pending = self.pending_approvals.remove(key);
+        if pending.is_none()
+            && let Some(turn_id) = turn_id
+        {
+            self.early_approval_decisions
+                .entry((turn_id.to_string(), key.to_string()))
+                .or_insert(decision);
+        }
+        pending
     }
 
     pub fn clear_pending(&mut self) {
         self.pending_approvals.clear();
+        self.early_approval_decisions.clear();
         self.pending_request_permissions.clear();
         self.pending_user_input.clear();
         self.pending_elicitations.clear();
@@ -237,5 +258,34 @@ impl TurnState {
 
     pub fn strict_auto_review_enabled(&self) -> bool {
         self.strict_auto_review_enabled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn early_approval_decision_requires_the_matching_turn() {
+        let mut state = TurnState::default();
+        state.resolve_pending_approval("approval", Some("turn-one"), ReviewDecision::Approved);
+
+        let (other_turn_tx, mut other_turn_rx) = oneshot::channel();
+        state.insert_pending_approval("turn-two", "approval".to_string(), other_turn_tx);
+        assert!(other_turn_rx.try_recv().is_err());
+
+        let (matching_turn_tx, mut matching_turn_rx) = oneshot::channel();
+        state.insert_pending_approval("turn-one", "approval".to_string(), matching_turn_tx);
+        assert_eq!(matching_turn_rx.try_recv(), Ok(ReviewDecision::Approved));
+    }
+
+    #[test]
+    fn approval_without_turn_id_is_not_cached_early() {
+        let mut state = TurnState::default();
+        state.resolve_pending_approval("approval", None, ReviewDecision::Approved);
+
+        let (tx, mut rx) = oneshot::channel();
+        state.insert_pending_approval("turn-one", "approval".to_string(), tx);
+        assert!(rx.try_recv().is_err());
     }
 }

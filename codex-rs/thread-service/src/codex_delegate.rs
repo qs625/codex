@@ -529,6 +529,7 @@ async fn handle_exec_approval(
             ),
             parent_session,
             &approval_id_for_op,
+            &parent_ctx.sub_id,
             cancel_token,
             /*review_cancel_token*/ None,
         )
@@ -636,6 +637,7 @@ async fn handle_patch_approval(
             async move { decision_rx.await.unwrap_or_default() },
             parent_session,
             &approval_id,
+            &parent_ctx.sub_id,
             cancel_token,
             /*review_cancel_token*/ None,
         )
@@ -867,6 +869,7 @@ async fn await_approval_with_cancel<F>(
     fut: F,
     parent_session: &Session,
     approval_id: &str,
+    parent_turn_id: &str,
     cancel_token: &CancellationToken,
     review_cancel_token: Option<&CancellationToken>,
 ) -> protocol::protocol::ReviewDecision
@@ -880,7 +883,11 @@ where
                 review_cancel_token.cancel();
             }
             parent_session
-                .notify_approval(approval_id, protocol::protocol::ReviewDecision::Abort)
+                .notify_approval(
+                    approval_id,
+                    Some(parent_turn_id),
+                    protocol::protocol::ReviewDecision::Abort,
+                )
                 .await;
             protocol::protocol::ReviewDecision::Abort
         }
