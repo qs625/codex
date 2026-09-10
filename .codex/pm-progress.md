@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `c07a1735` / `sha256:d79ad7de33615cb537f984acd2bb66d5be63293593f766f363a1b062ec9d59a7`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has the Conversation command display fix, Terminal live PTY focus fix, and fish terminal PDA query response forwarding fix installed.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `1b11771f7` / `sha256:c77bf7ddccaf38a7821d13613fc0d87ff5daa3f19c8cea51dc4390c64705fcdb`; `/Applications/Root Worker Prototype.app` still has the previous seed capsule, but the active external Runtime Capsule has the Conversation command display fix, Terminal live PTY focus fix, fish terminal PDA query response forwarding fix, and thread `last_run_status` persistence installed.
 
 ## Active Work
 - id: terminal-fish-primary-device-attribute-warning
@@ -814,6 +814,10 @@ Complete the Terminal-first PTY improvements and deliver pending runtime changes
 
 ## Completed
 Recent completed work older than 2026-08-19 is archived in [PM Progress Archive](pm-progress-archive/index.md).
+- commit: 1b11771f7
+  summary: Persisted externally meaningful thread lifecycle status changes to state DB `threads.last_run_status`, made startup recovery use active/waiting `last_run_status`, changed `thread/read` to load+subscribe while `sendMessage`/`turn/start` load without subscribing, and kept unsubscribe as observe-only removal rather than thread interruption.
+  validation: Dev and main merge validation passed `cargo check -p app-server -p state -p state-api`, focused app-server `thread_status`/`persisted_last_run_status` unit tests, Root Worker send/selection TS tests 12/12, and `git diff --check`; fixed reviewer passed. Installed Runtime Capsule `sha256:c77bf7ddccaf38a7821d13613fc0d87ff5daa3f19c8cea51dc4390c64705fcdb` records source commit `1b11771f792ead9c899fef90109f3f0e72e4fa46`, Launcher control reports selected/activeLaunch on that release with payload PID `66947` and app-server PID `66995`, and failure evidence is absent.
+  residual_risk: Local `McpProcess` integration tests that should cover archived read/turn reject and runtime status notification currently fail before target assertions or before mock model requests, matching existing initialize/integration-environment blockers; startup recovery from `last_run_status` still deserves a narrower future integration test once that harness is stable.
 - commit: 8cf853b21
   summary: Merged global virtual `/` agent path namespace semantics so absolute inter-agent reference/list/read can cross project roots while relative references remain scoped and legacy `/root` compatibility is preserved.
   validation: Main reran focused codex-agent-runtime/thread-service tests, `rtk git diff --check HEAD~1..HEAD`, and `rtk cargo build -p app-server --bin app-server`; all passed, with only existing linker/future-incompat warnings.
