@@ -150,7 +150,7 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
 });
 const installedArtifactUpdateLifecycle =
   createInstalledArtifactUpdateLifecycleAdapter({
-    appExit: () => app.quit(),
+    appExit: (code) => app.exit(code),
     cleanupPreparedArtifact: (preparedRoot) =>
       removeInstalledArtifactTree(preparedRoot),
     resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),

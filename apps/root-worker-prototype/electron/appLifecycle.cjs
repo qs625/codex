@@ -1,5 +1,9 @@
 "use strict";
 
+// Hand the selected Runtime Capsule back to its supervising launcher. This is
+// distinct from exit 0, which means the user intentionally closed the app.
+const CAPSULE_SWITCH_EXIT_CODE = 75;
+
 function createAppRelaunchAdapter({
   app,
   beforeExit,
@@ -352,12 +356,12 @@ async function runInstalledArtifactUpdate({
     if (typeof appExit !== "function") {
       throw new Error("Application exit is unavailable after Runtime Capsule selection");
     }
-    appExit(0);
+    appExit(CAPSULE_SWITCH_EXIT_CODE);
     const relaunch = {
       ok: true,
       relaunching: true,
       supervised: true,
-      exitCode: 0,
+      exitCode: CAPSULE_SWITCH_EXIT_CODE,
     };
     broadcastStatus?.({
       lifecycle: {
@@ -567,6 +571,7 @@ function requestFullRelaunchFallback(
 }
 
 module.exports = {
+  CAPSULE_SWITCH_EXIT_CODE,
   createAppRelaunchAdapter,
   createClientRelaunchNotificationHandler,
   createInstalledArtifactUpdateLifecycleAdapter,

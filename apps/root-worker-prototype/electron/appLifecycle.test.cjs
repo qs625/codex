@@ -2,11 +2,12 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  CAPSULE_SWITCH_EXIT_CODE,
   createClientRelaunchNotificationHandler,
   createInstalledArtifactUpdateLifecycleAdapter,
 } = require("./appLifecycle.cjs");
 
-test("complete candidate selection exits normally without a readiness handshake", async () => {
+test("complete candidate selection exits with the capsule switch code", async () => {
   const events = [];
   const exits = [];
   const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
@@ -44,8 +45,8 @@ test("complete candidate selection exits normally without a readiness handshake"
   const result = await lifecycle.requestUpdateAndRelaunch("update", "request-1");
 
   assert.equal(result.ok, true);
-  assert.equal(result.relaunch.exitCode, 0);
-  assert.deepEqual(exits, [0]);
+  assert.equal(result.relaunch.exitCode, CAPSULE_SWITCH_EXIT_CODE);
+  assert.deepEqual(exits, [CAPSULE_SWITCH_EXIT_CODE]);
   assert.deepEqual(events[0], {
     type: "status",
     status: {

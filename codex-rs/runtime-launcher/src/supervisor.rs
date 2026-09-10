@@ -242,6 +242,9 @@ pub fn run(
                 return Err(error);
             }
         };
+        if is_selected_capsule_switch(&outcome.status, paths, &selected)? {
+            continue;
+        }
         let Some(failure) = RuntimeFailure::from_exit_status(&outcome.status) else {
             return Ok(RunOutcome::Exited(outcome.status.code().unwrap_or(0)));
         };
@@ -252,6 +255,24 @@ pub fn run(
             failure,
         )?;
     }
+}
+
+/// Exit code emitted by Electron after a successfully selected Runtime Capsule
+/// update. It is honored only when control state confirms a different selected
+/// release, so an unrelated process cannot request a restart with this code.
+const CAPSULE_SWITCH_EXIT_CODE: i32 = 75;
+
+fn is_selected_capsule_switch(
+    status: &std::process::ExitStatus,
+    paths: &LauncherPaths,
+    launched: &CapsuleRecord,
+) -> Result<bool> {
+    if status.code() != Some(CAPSULE_SWITCH_EXIT_CODE) {
+        return Ok(false);
+    }
+    let latest = ControlState::load(&paths.control)?
+        .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
+    Ok(latest.selected.capsule().release_id != launched.release_id)
 }
 
 fn reconcile_active_launch(paths: &LauncherPaths, state: ControlState) -> Result<ControlState> {
