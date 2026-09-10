@@ -18,10 +18,16 @@ function createThreadAutoResumeCoordinator({
 
   return {
     async runAfterRuntimeRestartRecovery({
+      hasDurableRestartRecovery = false,
       threads = [],
       expectedRestart,
     } = {}) {
-      if (!hasDurableRuntimeRestartRecovery(expectedRestart)) {
+      if (
+        !hasDurableRuntimeRestartRecovery({
+          expectedRestart,
+          hasDurableRestartRecovery,
+        })
+      ) {
         return emptyAutoResumeResult();
       }
       return run(threads);
@@ -93,9 +99,15 @@ function createThreadAutoResumeCoordinator({
   }
 }
 
-function hasDurableRuntimeRestartRecovery(expectedRestart) {
-  return Array.isArray(expectedRestart?.expectedThreadIds) &&
-    expectedRestart.expectedThreadIds.length > 0;
+function hasDurableRuntimeRestartRecovery({
+  expectedRestart,
+  hasDurableRestartRecovery,
+}) {
+  return (
+    hasDurableRestartRecovery === true ||
+    (Array.isArray(expectedRestart?.expectedThreadIds) &&
+      expectedRestart.expectedThreadIds.length > 0)
+  );
 }
 
 function emptyAutoResumeResult() {

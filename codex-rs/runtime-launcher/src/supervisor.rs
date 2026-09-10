@@ -34,6 +34,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::ExitStatusExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -94,6 +95,14 @@ pub struct SelectCandidateResult {
 
 struct LaunchOutcome {
     status: ExitStatus,
+    payload_pid: Option<i32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RuntimeFailure {
+    code: String,
+    message: String,
+    details: BTreeMap<String, String>,
 }
 
 enum ExternalFallback {
@@ -197,7 +206,12 @@ pub fn run(
         let selected = match load_selected(&state, &target) {
             Ok(selected) => selected,
             Err(error) if matches!(state.selected, SelectedRuntime::External { .. }) => {
-                let _ = restore_failed_external(paths, &state, error.to_string())?;
+                let _ = restore_failed_external(
+                    paths,
+                    &state,
+                    RuntimeFailure::load(error.to_string()),
+                    None,
+                )?;
                 continue;
             }
             Err(error) => return Err(error),
@@ -217,15 +231,24 @@ pub fn run(
                     return Err(error);
                 }
                 if matches!(latest.selected, SelectedRuntime::External { .. }) {
-                    let _ = restore_failed_external(paths, &latest, error.to_string())?;
+                    let _ = restore_failed_external(
+                        paths,
+                        &latest,
+                        RuntimeFailure::spawn_or_load(error.to_string()),
+                        None,
+                    )?;
                     continue;
                 }
                 return Err(error);
             }
         };
-        let code = outcome.status.code().unwrap_or(1);
-        if code != 0 {
-            write_runtime_diagnostic(paths, &selected.release_id, code, "payload exited")?;
+        if let Some(failure) = RuntimeFailure::from_exit_status(&outcome.status) {
+            handle_unexpected_payload_exit(
+                paths,
+                &selected.release_id,
+                outcome.payload_pid,
+                failure,
+            )?;
         }
     }
 }
@@ -304,10 +327,7 @@ fn launch_selected(
     command
         .args(&verified.manifest.launch.arguments)
         .env_clear()
-        .envs(build_payload_environment(
-            paths,
-            launcher_path,
-        ))
+        .envs(build_payload_environment(paths, launcher_path, &verified.release_id))
         .stdin(Stdio::null());
     if let Some(cwd) = &verified.cwd {
         command.current_dir(cwd);
@@ -339,7 +359,10 @@ fn launch_selected(
             .wait()
             .map_err(|error| crate::io_error("wait for early payload exit", error))?;
         clear_active_launch(paths, &launch_instance_id)?;
-        return Ok(LaunchOutcome { status });
+        return Ok(LaunchOutcome {
+            status,
+            payload_pid: Some(pid),
+        });
     };
     let process_group = match process_group.require_dedicated() {
         Ok(process_group) => process_group,
@@ -442,7 +465,10 @@ fn launch_selected(
                 return Err(LauncherError::Launch(message));
             }
             clear_active_launch(paths, &launch_instance_id)?;
-            return Ok(LaunchOutcome { status });
+            return Ok(LaunchOutcome {
+                status,
+                payload_pid: Some(pid),
+            });
         }
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -714,6 +740,7 @@ fn launch_identity() -> (String, String) {
 fn build_payload_environment(
     paths: &LauncherPaths,
     launcher_path: &Path,
+    release_id: &str,
 ) -> BTreeMap<String, String> {
     const ALLOWLIST: [&str; 17] = [
         "HOME",
@@ -756,6 +783,10 @@ fn build_payload_environment(
             "RUNTIME_CAPSULE_LAUNCHER_HOME",
             paths.root.display().to_string(),
         ),
+        (
+            "RUNTIME_CAPSULE_RELEASE_ID",
+            release_id.to_string(),
+        ),
     ] {
         environment.insert(key.to_string(), value);
     }
@@ -792,7 +823,8 @@ fn clear_active_launch(paths: &LauncherPaths, launch_instance_id: &str) -> Resul
 fn restore_failed_external(
     paths: &LauncherPaths,
     state: &ControlState,
-    reason: String,
+    failure: RuntimeFailure,
+    payload_pid: Option<i32>,
 ) -> Result<ExternalFallback> {
     let failed = match &state.selected {
         SelectedRuntime::External { capsule } => capsule.clone(),
@@ -836,22 +868,116 @@ fn restore_failed_external(
         }
         Err(error) => return Err(error),
     };
-    crate::control::write_json_atomic(
-        &paths.failure_evidence,
-        &FailureProjection {
-            activation_id: format!("select-{}", unix_time_ms()),
-            release_id: failed.release_id.clone(),
-            occurred_at: rfc3339_now(),
-            fallback_release_id: Some(restored.selected.capsule().release_id.clone()),
-            code: "selected_runtime_spawn_failed".to_string(),
-            message: reason,
-            failed: Some(failed),
-            fallback: Some(restored.selected.clone()),
-            evidence_path: Some(paths.failure_evidence.clone()),
-            details: BTreeMap::new(),
-        },
+    write_runtime_failure(
+        paths,
+        failed,
+        failure,
+        Some(restored.selected.clone()),
+        payload_pid,
     )?;
     Ok(ExternalFallback::Restored)
+}
+
+fn handle_unexpected_payload_exit(
+    paths: &LauncherPaths,
+    launched_release_id: &str,
+    payload_pid: Option<i32>,
+    failure: RuntimeFailure,
+) -> Result<()> {
+    let latest = ControlState::load(&paths.control)?
+        .ok_or_else(|| LauncherError::Conflict("control state disappeared".to_string()))?;
+    if latest.selected.capsule().release_id != launched_release_id {
+        return Ok(());
+    }
+    if matches!(latest.selected, SelectedRuntime::External { .. }) {
+        let _ = restore_failed_external(paths, &latest, failure, payload_pid)?;
+    } else {
+        write_runtime_failure(
+            paths,
+            latest.selected.capsule().clone(),
+            failure,
+            None,
+            payload_pid,
+        )?;
+    }
+    Ok(())
+}
+
+impl RuntimeFailure {
+    fn from_exit_status(status: &ExitStatus) -> Option<Self> {
+        if status.success() {
+            return None;
+        }
+        if let Some(signal) = status.signal() {
+            return Some(Self {
+                code: "payload_exit_signal".to_string(),
+                message: format!("payload terminated by signal {signal}"),
+                details: BTreeMap::from([("signal".to_string(), signal.to_string())]),
+            });
+        }
+        let code = status.code().unwrap_or(1);
+        Some(Self {
+            code: "payload_exit_code".to_string(),
+            message: format!("payload exited with code {code}"),
+            details: BTreeMap::from([("exitCode".to_string(), code.to_string())]),
+        })
+    }
+
+    fn load(message: String) -> Self {
+        Self::spawn_or_load_with_stage(message, "load")
+    }
+
+    fn spawn_or_load(message: String) -> Self {
+        Self::spawn_or_load_with_stage(message, "spawn_or_load")
+    }
+
+    fn spawn_or_load_with_stage(message: String, stage: &str) -> Self {
+        Self {
+            code: "payload_spawn_or_load_error".to_string(),
+            message: format!("payload {stage} failed: {message}"),
+            details: BTreeMap::from([("stage".to_string(), stage.to_string())]),
+        }
+    }
+}
+
+fn write_runtime_failure(
+    paths: &LauncherPaths,
+    failed: CapsuleRef,
+    failure: RuntimeFailure,
+    fallback: Option<SelectedRuntime>,
+    payload_pid: Option<i32>,
+) -> Result<()> {
+    let mut evidence = crate::control::read_json_if_exists::<FailureProjection>(
+        &paths.failure_evidence,
+    )?
+    .filter(|existing| {
+        existing.release_id == failed.release_id
+            && existing.code == "payload_reported_error"
+            && payload_pid.is_some_and(|pid| {
+                existing
+                    .details
+                    .get("payloadPid")
+                    .is_some_and(|recorded| recorded == &pid.to_string())
+            })
+    })
+    .unwrap_or_else(|| FailureProjection {
+        activation_id: format!("runtime-{}", unix_time_ms()),
+        release_id: failed.release_id.clone(),
+        occurred_at: rfc3339_now(),
+        fallback_release_id: None,
+        code: failure.code,
+        message: failure.message,
+        failed: Some(failed.clone()),
+        fallback: None,
+        evidence_path: Some(paths.failure_evidence.clone()),
+        details: failure.details,
+    });
+    evidence.fallback_release_id = fallback
+        .as_ref()
+        .map(|selected| selected.capsule().release_id.clone());
+    evidence.fallback = fallback;
+    evidence.evidence_path = Some(paths.failure_evidence.clone());
+    crate::control::write_json_atomic(&paths.failure_evidence, &evidence)
 }
 
 fn rebind_seed(
@@ -954,6 +1080,7 @@ mod tests {
     use super::*;
     use crate::control::CapsuleRef;
     use crate::control::TrustedSeed;
+    use std::process::Command;
 
     fn capsule(root: &Path, id: &str) -> CapsuleRef {
         let root = root.join(id);
@@ -1028,7 +1155,12 @@ mod tests {
         crate::control::write_json_atomic(&paths.control.control, &state)
             .expect("write external state");
 
-        match restore_failed_external(&paths, &state, "load failed".to_string())
+        match restore_failed_external(
+            &paths,
+            &state,
+            RuntimeFailure::load("load failed".to_string()),
+            None,
+        )
             .expect("restore previous")
         {
             ExternalFallback::Restored => {}
@@ -1064,7 +1196,12 @@ mod tests {
         crate::control::write_json_atomic(&paths.control.control, &state)
             .expect("write external state");
 
-        match restore_failed_external(&paths, &state, "spawn failed".to_string())
+        match restore_failed_external(
+            &paths,
+            &state,
+            RuntimeFailure::spawn_or_load("spawn failed".to_string()),
+            None,
+        )
             .expect("restore Seed")
         {
             ExternalFallback::Restored => {}
@@ -1076,6 +1213,171 @@ mod tests {
         assert!(matches!(restored.selected, SelectedRuntime::Seed { .. }));
         assert!(restored.external_current.is_none());
         assert!(restored.external_previous.is_none());
+    }
+
+    #[test]
+    fn abnormal_external_exit_restores_previous_and_records_exit_code() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), true);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+        let status = Command::new("/bin/sh")
+            .args(["-c", "exit 23"])
+            .status()
+            .expect("run exited payload");
+        let failure =
+            RuntimeFailure::from_exit_status(&status).expect("abnormal payload exit");
+
+        handle_unexpected_payload_exit(
+            &paths,
+            "release-current",
+            None,
+            failure,
+        )
+        .expect("restore previous");
+
+        let restored = ControlState::load(&paths.control)
+            .expect("load restored state")
+            .expect("state");
+        assert_eq!(restored.selected.capsule().release_id, "release-previous");
+        let evidence =
+            crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+                .expect("read evidence")
+                .expect("evidence");
+        assert_eq!(evidence.code, "payload_exit_code");
+        assert_eq!(evidence.details.get("exitCode"), Some(&"23".to_string()));
+        assert_eq!(evidence.fallback_release_id.as_deref(), Some("release-previous"));
+    }
+
+    #[test]
+    fn signaled_external_exit_restores_seed_and_records_signal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), false);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+        let status = Command::new("/bin/sh")
+            .args(["-c", "kill -TERM $$"])
+            .status()
+            .expect("run signaled payload");
+        let failure =
+            RuntimeFailure::from_exit_status(&status).expect("abnormal payload exit");
+
+        handle_unexpected_payload_exit(
+            &paths,
+            "release-current",
+            None,
+            failure,
+        )
+        .expect("restore seed");
+
+        let restored = ControlState::load(&paths.control)
+            .expect("load restored state")
+            .expect("state");
+        assert!(matches!(restored.selected, SelectedRuntime::Seed { .. }));
+        let evidence =
+            crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+                .expect("read evidence")
+                .expect("evidence");
+        assert_eq!(evidence.code, "payload_exit_signal");
+        assert_eq!(
+            evidence.details.get("signal"),
+            Some(&libc::SIGTERM.to_string())
+        );
+    }
+
+    #[test]
+    fn successful_exit_and_newer_selection_do_not_trigger_fallback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), true);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+        let success = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .status()
+            .expect("run successful payload");
+        assert!(RuntimeFailure::from_exit_status(&success).is_none());
+
+        let replacement = capsule(temp.path(), "replacement");
+        let mut selected_after_exit = state.clone();
+        selected_after_exit.external_previous = selected_after_exit.external_current.clone();
+        selected_after_exit.external_current = Some(replacement.clone());
+        selected_after_exit.selected = SelectedRuntime::external(replacement);
+        crate::control::write_json_atomic(&paths.control.control, &selected_after_exit)
+            .expect("write new selection");
+        let failed = RuntimeFailure::from_exit_status(
+            &Command::new("/bin/sh")
+                .args(["-c", "exit 9"])
+                .status()
+                .expect("run failed payload"),
+        )
+        .expect("abnormal payload exit");
+
+        handle_unexpected_payload_exit(
+            &paths,
+            "release-current",
+            None,
+            failed,
+        )
+        .expect("ignore stale payload exit");
+
+        let current = ControlState::load(&paths.control)
+            .expect("load current state")
+            .expect("state");
+        assert_eq!(current.selected.capsule().release_id, "release-replacement");
+        assert!(crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+            .expect("read evidence")
+            .is_none());
+    }
+
+    #[test]
+    fn early_exiting_payload_reason_is_preserved_when_launcher_selects_fallback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let state = external_state(temp.path(), false);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write external state");
+        crate::control::write_json_atomic(
+            &paths.failure_evidence,
+            &FailureProjection {
+                activation_id: "payload-123".to_string(),
+                release_id: "release-current".to_string(),
+                occurred_at: "2026-09-10T00:00:00.000Z".to_string(),
+                fallback_release_id: None,
+                code: "payload_reported_error".to_string(),
+                message: "renderer initialization failed".to_string(),
+                failed: None,
+                fallback: None,
+                evidence_path: None,
+                details: BTreeMap::from([
+                    ("payloadPid".to_string(), "123".to_string()),
+                    ("source".to_string(), "payload".to_string()),
+                ]),
+            },
+        )
+        .expect("write payload evidence");
+
+        handle_unexpected_payload_exit(
+            &paths,
+            "release-current",
+            Some(123),
+            RuntimeFailure::spawn_or_load("fallback reason".to_string()),
+        )
+        .expect("restore seed");
+
+        let evidence =
+            crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+                .expect("read evidence")
+                .expect("evidence");
+        assert_eq!(evidence.code, "payload_reported_error");
+        assert_eq!(evidence.message, "renderer initialization failed");
+        assert_eq!(evidence.fallback_release_id.as_deref(), Some("release-seed"));
     }
 
     #[test]
@@ -1097,8 +1399,13 @@ mod tests {
             .expect("write newer selection");
 
         assert!(matches!(
-            restore_failed_external(&paths, &state, "stale load failure".to_string())
-                .expect("detect newer selection"),
+            restore_failed_external(
+                &paths,
+                &state,
+                RuntimeFailure::load("stale load failure".to_string()),
+                None,
+            )
+            .expect("detect newer selection"),
             ExternalFallback::SelectionChanged
         ));
         assert!(crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)

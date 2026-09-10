@@ -222,6 +222,26 @@ test("failed or interrupted restart facts still fan out generic recovery", async
   assert.deepEqual(calls, ["read", "subscribe", "send"]);
 });
 
+test("payload fallback restart fact fans out without expected intent ids", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async () => calls.push("read"),
+    subscribeThread: async () => calls.push("subscribe"),
+    sendResumeInput: async () => calls.push("send"),
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    hasDurableRestartRecovery: true,
+    threads: [projectRootThread()],
+    expectedRestart: { expectedThreadIds: [] },
+  });
+
+  assert.deepEqual(result.resumedThreadIds, ["thread-1"]);
+  assert.deepEqual(calls, ["read", "subscribe", "send"]);
+});
+
 test("durable restart fans out exactly once to every eligible project root including /self", async () => {
   const sent = [];
   const marked = new Set();
