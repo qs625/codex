@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `889b416d` / `sha256:47441f97e5eb0167715bc3f3ae39962932f0f63513f8665cc5204a0ca13eb7af`; `/Applications/Root Worker Prototype.app` has also been replaced with a seed capsule from `889b416d`. The exact `/self` restart request `call_rhfVTwIj9jzmfVPHrjumdX27` was durably accepted and caused the expected client interruption/recovery; active payload PID `99822` is running from the new external artifact path.
+Complete the Terminal-first PTY improvements and deliver pending runtime changes as one complete installed Runtime Capsule with an exact `/self` restart acceptance. Runtime payload delivery is active at `889b416d` / `sha256:47441f97e5eb0167715bc3f3ae39962932f0f63513f8665cc5204a0ca13eb7af`; `/Applications/Root Worker Prototype.app` has also been replaced with a seed capsule from `889b416d`. The exact `/self` restart request `call_rhfVTwIj9jzmfVPHrjumdX27` was durably accepted and caused the expected client interruption/recovery; active payload PID `99822` is running from the new external artifact path. Follow-up Conversation display regression fix is merged on main at `2f5483b78` but is not yet installed/effective; build a new complete Runtime Capsule from canonical main and restart before claiming user-visible resolution.
 
 ## Active Work
+- id: conversation-command-item-display-regression
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: feature/full-terminal-panel
+  task_type: bugfix/ui-conversation-display-regression
+  depends_on: installed runtime `889b416d` / user report that current `exec_command` cards no longer appear in Conversation
+  files: apps/root-worker-prototype/src/lib/conversationPresentation.ts; apps/root-worker-prototype/src/lib/conversationPresentation.test.ts; apps/root-worker-prototype/src/lib/thread.test.ts
+  base_commit: 82e21644a
+  pending_sync_from_main: none
+  status: merged_pending_capsule_delivery
+  objective: Restore Conversation display of command/tool item cards for model-run commands while continuing to hide command stdout/stderr/output payload and command notification noise.
+  last_update: 2026-09-11 CST root cause confirmed: backend still emits `ExecCommandBegin`/`ExecCommandEnd` and `conversation.ts` still builds `command` entries, but `filterConversationCellsForDisplay` filtered both `command` and `commandNotification`, deleting the real command card at the final display layer. Fixed dev-2 owner delivered `d2923ab74`; reviewer passed; PM merged to canonical main as `2f5483b78`.
+  next_action: build and install a complete Runtime Capsule from canonical main `2f5483b78`, perform exact `/self` restart, then run a small command and ask the user to confirm Conversation shows the command card without output.
+  blockers: not installed/effective yet; current active payload remains `889b416d`.
+  validation: owner and PM reran `pnpm --dir apps/root-worker-prototype test src/lib/conversationPresentation.test.ts src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/thread.test.ts` -> 299/299 passed; `git diff --check` passed; owner Vite build passed with only existing chunk-size warning.
+  commit: d2923ab74, 2f5483b78
 - id: thread-analysis-command-monitor-restoration
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
