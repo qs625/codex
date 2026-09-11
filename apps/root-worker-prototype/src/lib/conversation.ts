@@ -176,7 +176,11 @@ export function buildConversationState(
     author,
     flatItems,
     entries,
-    cells: buildConversationCells(entries, previous?.cells, options),
+    cells: buildConversationCells(
+      entries,
+      canReusePrevious ? previous?.cells : null,
+      options,
+    ),
   };
 }
 

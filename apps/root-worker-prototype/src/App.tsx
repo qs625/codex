@@ -101,6 +101,7 @@ import {
   mergeDefaultCollapsedProjectIds,
   normalizeProjectCwd,
   normalizeThreadSnapshot,
+  pickBootstrapInitialProjectThread,
   pickInitialProjectThread,
   pickInitialThread,
   preserveTerminalLifecycleStatus,
@@ -172,6 +173,7 @@ const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
 const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
 const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 5 * 60 * 1000;
+const SELECTED_THREAD_STORAGE_KEY = "morpheus.rootWorker.selectedThreadId";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 type CompactHistoryViewState = {
@@ -445,6 +447,13 @@ function App() {
       cleanupVoiceTransport();
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedThreadId) {
+      return;
+    }
+    writeStoredSelectedThreadId(selectedThreadId);
+  }, [selectedThreadId]);
 
   const selectedThreadPlan = selectedThreadId
     ? (latestPlansByThreadId[selectedThreadId] ??
@@ -931,18 +940,15 @@ function App() {
         ),
       );
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
-      const autoResumeThread = normalizedThreads.find(
-        (thread) =>
-          thread.id ===
-          (payload.expectedRestart?.focusThreadId ??
-            payload.autoResume?.focusThreadId),
-      );
       const excludedInitialThreadIds = payload.materializedSelfThreadId
         ? new Set([payload.materializedSelfThreadId])
         : undefined;
       const preferredProjectThread =
-        autoResumeThread ??
-        pickInitialProjectThread(normalizedThreads, {
+        pickBootstrapInitialProjectThread(normalizedThreads, {
+          focusThreadId:
+            payload.expectedRestart?.focusThreadId ??
+            payload.autoResume?.focusThreadId,
+          rememberedThreadId: readStoredSelectedThreadId(),
           excludedThreadIds: excludedInitialThreadIds,
         });
       if (preferredProjectThread) {
@@ -3297,4 +3303,21 @@ function normalizeFileLocation(location: FileLocation | FilePreview | null) {
     line: location.line,
     column: location.column ?? 1,
   };
+}
+
+function readStoredSelectedThreadId() {
+  try {
+    return window.localStorage.getItem(SELECTED_THREAD_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSelectedThreadId(threadId: string) {
+  try {
+    window.localStorage.setItem(SELECTED_THREAD_STORAGE_KEY, threadId);
+  } catch {
+    // Selection persistence is best-effort. The client should still work in
+    // restricted storage environments.
+  }
 }

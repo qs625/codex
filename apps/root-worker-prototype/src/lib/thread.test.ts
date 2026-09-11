@@ -36,6 +36,7 @@ import {
   mergeThreadLifecycleStatus,
   mergeThreadSnapshot,
   normalizeThreadSnapshot,
+  pickBootstrapInitialProjectThread,
   pickInitialProjectThread,
   preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
@@ -840,6 +841,68 @@ test("pickInitialProjectThread can fall back to an excluded self root", () => {
   });
 
   assert.equal(picked?.id, "self-root");
+});
+
+test("pickBootstrapInitialProjectThread prefers explicit restart focus", () => {
+  const rememberedRoot = makeSidebarThread({
+    id: "remembered-root",
+    cwd: "/work/remembered",
+    updatedAt: 20,
+  });
+  const focusedRoot = makeSidebarThread({
+    id: "focused-root",
+    cwd: "/work/focused",
+    updatedAt: 1,
+  });
+
+  const picked = pickBootstrapInitialProjectThread(
+    [rememberedRoot, focusedRoot],
+    {
+      focusThreadId: "focused-root",
+      rememberedThreadId: "remembered-root",
+    },
+  );
+
+  assert.equal(picked?.id, "focused-root");
+});
+
+test("pickBootstrapInitialProjectThread restores remembered thread before recency fallback", () => {
+  const activeRoot = makeSidebarThread({
+    id: "active-root",
+    cwd: "/work/active",
+    updatedAt: 30,
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+  });
+  const rememberedRoot = makeSidebarThread({
+    id: "remembered-root",
+    name: "/self",
+    path: "/self",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    updatedAt: 10,
+  });
+
+  const picked = pickBootstrapInitialProjectThread(
+    [activeRoot, rememberedRoot],
+    {
+      rememberedThreadId: "remembered-root",
+    },
+  );
+
+  assert.equal(picked?.id, "remembered-root");
+});
+
+test("pickBootstrapInitialProjectThread falls back when remembered thread is stale", () => {
+  const activeRoot = makeSidebarThread({
+    id: "active-root",
+    cwd: "/work/active",
+    updatedAt: 30,
+  });
+
+  const picked = pickBootstrapInitialProjectThread([activeRoot], {
+    rememberedThreadId: "missing-root",
+  });
+
+  assert.equal(picked?.id, "active-root");
 });
 
 test("buildProjectAgentSidebar makes subagents inherit their project root", () => {

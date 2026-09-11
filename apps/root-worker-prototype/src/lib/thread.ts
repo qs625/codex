@@ -207,6 +207,33 @@ export function pickInitialProjectThread(
   );
 }
 
+export function pickBootstrapInitialProjectThread(
+  threads: Thread[],
+  options: {
+    focusThreadId?: string | null;
+    rememberedThreadId?: string | null;
+    excludedThreadIds?: ReadonlySet<string>;
+  } = {},
+) {
+  const focusedThread = options.focusThreadId
+    ? (threads.find((thread) => thread.id === options.focusThreadId) ?? null)
+    : null;
+  if (focusedThread) {
+    return focusedThread;
+  }
+
+  const rememberedThread = options.rememberedThreadId
+    ? (threads.find((thread) => thread.id === options.rememberedThreadId) ?? null)
+    : null;
+  if (rememberedThread) {
+    return rememberedThread;
+  }
+
+  return pickInitialProjectThread(threads, {
+    excludedThreadIds: options.excludedThreadIds,
+  });
+}
+
 export function findProjectByRootIdentity(
   projects: readonly SidebarProjectNode[],
   cwd: string | null | undefined,
