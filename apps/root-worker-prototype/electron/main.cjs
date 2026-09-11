@@ -113,9 +113,12 @@ const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 const {
   activeCommandForTerminalFocus,
   addUserTerminal,
+  appendCommandOutputCache,
   appendTerminalOutput,
+  applyCommandOutputCacheToDescriptor,
   closeTerminalTab,
   commandFocusDescriptorForTerminalFocus,
+  deleteCommandOutputCache,
   focusCommandTerminal,
   createTerminalPanelState,
   liveCommandSessionForTerminalFocus,
@@ -174,6 +177,7 @@ const handleClientRelaunchNotification =
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
 const terminalPanelsByWindowId = new Map();
+const commandOutputCache = new Map();
 const MAX_PENDING_TERMINAL_NOTIFICATIONS = 4096;
 let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
@@ -796,7 +800,10 @@ ipcMain.handle("codex:terminal:focusCommand", async (event, command) => {
   if (!focusDescriptor) {
     throw new Error("Live command is no longer available");
   }
-  const tab = focusCommandTerminal(panel.state, focusDescriptor);
+  const tab = focusCommandTerminal(
+    panel.state,
+    applyCommandOutputCacheToDescriptor(panel.state, focusDescriptor),
+  );
   panel.error = null;
   sendTerminalPanelState(panel);
   return { state: terminalPanelState(panel), tabId: tab.id };
@@ -1083,7 +1090,7 @@ function terminalPanelForEvent(event) {
   }
   const panel = {
     window,
-    state: createTerminalPanelState(),
+    state: createTerminalPanelState(commandOutputCache),
     error: null,
     threadId: null,
     refreshPromise: null,
@@ -1113,6 +1120,7 @@ function sendTerminalPanelState(panel, event = { type: "snapshot" }) {
 }
 
 function routeTerminalNotification(notification) {
+  cacheTerminalNotification(notification);
   for (const panel of terminalPanelsByWindowId.values()) {
     if (panel.refreshPromise) {
       panel.pendingNotifications.push(notification);
@@ -1129,6 +1137,30 @@ function routeTerminalNotification(notification) {
     } else {
       applyTerminalNotification(panel, notification, true);
     }
+  }
+}
+
+function cacheTerminalNotification(notification) {
+  const params = notification.params ?? {};
+  if (notification.method === "item/commandExecution/outputDelta") {
+    appendCommandOutputCache(
+      { commandOutputCache },
+      params.threadId,
+      params.itemId,
+      params.deltaBase64,
+      params.sequence,
+    );
+    return;
+  }
+  if (
+    notification.method === "item/completed" &&
+    params.item?.type === "commandExecution"
+  ) {
+    deleteCommandOutputCache(
+      { commandOutputCache },
+      params.threadId,
+      params.item.id,
+    );
   }
 }
 
@@ -1214,8 +1246,17 @@ function applyTerminalNotification(panel, notification, allowRefresh) {
         candidate.origin === "model" &&
         candidate.threadId === params.threadId &&
         candidate.commandItemId === params.itemId &&
-        candidate.processId === params.processId,
+        (candidate.processId === params.processId ||
+          candidate.processId === params.itemId),
     );
+    if (
+      tab &&
+      candidateProcessIdIsPlaceholder(tab.processId, params.itemId) &&
+      typeof params.processId === "string" &&
+      params.processId.length > 0
+    ) {
+      tab.processId = params.processId;
+    }
     if (
       tab &&
       params.deltaBase64 &&
@@ -1250,6 +1291,11 @@ function applyTerminalNotification(panel, notification, allowRefresh) {
     notification.method === "item/completed" &&
     params.item?.type === "commandExecution"
   ) {
+    deleteCommandOutputCache(
+      { commandOutputCache },
+      params.threadId,
+      params.item.id,
+    );
     const tab = panel.state.tabs.find(
       (candidate) =>
         candidate.origin === "model" &&
@@ -1343,6 +1389,14 @@ function normalizeTerminalSize(size) {
     rows: Math.max(1, Math.min(65535, Math.round(Number(size?.rows) || 24))),
     cols: Math.max(1, Math.min(65535, Math.round(Number(size?.cols) || 80))),
   };
+}
+
+function candidateProcessIdIsPlaceholder(processId, commandItemId) {
+  return (
+    typeof processId === "string" &&
+    processId.length > 0 &&
+    processId === commandItemId
+  );
 }
 
 function resolveInteractiveShell() {

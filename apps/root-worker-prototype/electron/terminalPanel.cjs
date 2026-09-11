@@ -1,10 +1,11 @@
 const MAX_TERMINAL_REPLAY_BYTES = 1024 * 1024;
 
-function createTerminalPanelState() {
+function createTerminalPanelState(commandOutputCache = new Map()) {
   return {
     activeTabId: null,
     tabs: [],
     detachedSessionKeys: new Set(),
+    commandOutputCache,
   };
 }
 
@@ -64,19 +65,9 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
           tab.processId === descriptor.processId),
     );
     if (existing) {
-      const descriptorSequence = normalizeSequence(
-        descriptor.replayThroughSequence,
-      );
-      const shouldApplyReplay =
-        descriptor.replayBase64 &&
-        descriptorSequence >= (existing.lastSequence ?? 0);
-      Object.assign(existing, normalizeDescriptor(descriptor), { status: "running" });
+      mergeFocusedCommandDescriptor(existing, descriptor);
+      existing.status = "running";
       delete existing.readOnlyOutput;
-      if (shouldApplyReplay) {
-        existing.replay = Buffer.from(descriptor.replayBase64, "base64");
-        existing.lastSequence = descriptorSequence;
-        existing.hasSequenceGap = false;
-      }
       continue;
     }
     state.tabs.push({
@@ -143,6 +134,7 @@ function focusCommandTerminal(state, descriptor) {
   );
   if (existing) {
     state.activeTabId = existing.id;
+    mergeFocusedCommandDescriptor(existing, descriptor);
     return existing;
   }
   const tab = {
@@ -160,6 +152,22 @@ function focusCommandTerminal(state, descriptor) {
   state.tabs.push(tab);
   state.activeTabId = tab.id;
   return tab;
+}
+
+function mergeFocusedCommandDescriptor(tab, descriptor) {
+  const normalized = normalizeDescriptor(descriptor);
+  const currentSequence = normalizeSequence(tab.lastSequence);
+  const descriptorSequence = normalizeSequence(descriptor.replayThroughSequence);
+  Object.assign(tab, normalized, {
+    canResize: tab.canResize === true || normalized.canResize === true,
+    canWrite: tab.canWrite === true || normalized.canWrite === true,
+    canTerminate: tab.canTerminate === true || normalized.canTerminate === true,
+  });
+  if (descriptor.replayBase64 && descriptorSequence >= currentSequence) {
+    tab.replay = Buffer.from(descriptor.replayBase64, "base64");
+    tab.lastSequence = descriptorSequence;
+    tab.hasSequenceGap = false;
+  }
 }
 
 function isLivePtyTerminalTab(tab) {
@@ -347,6 +355,99 @@ function appendTerminalOutput(tab, deltaBase64, sequence) {
   return true;
 }
 
+function commandOutputCacheKey(threadId, commandItemId) {
+  if (
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    typeof commandItemId !== "string" ||
+    commandItemId.length === 0
+  ) {
+    return null;
+  }
+  return `${threadId}\0${commandItemId}`;
+}
+
+function appendCommandOutputCache(state, threadId, commandItemId, deltaBase64, sequence) {
+  const key = commandOutputCacheKey(threadId, commandItemId);
+  if (!key || !deltaBase64) {
+    return null;
+  }
+  let entry = state.commandOutputCache.get(key);
+  if (!entry) {
+    entry = {
+      replay: Buffer.alloc(0),
+      firstSequence: null,
+      lastSequence: null,
+      replayTruncated: false,
+      hasSequenceGap: false,
+    };
+    state.commandOutputCache.set(key, entry);
+  }
+  if (
+    Number.isInteger(sequence) &&
+    !Number.isInteger(entry.firstSequence)
+  ) {
+    entry.firstSequence = sequence;
+  }
+  if (!appendTerminalOutput(entry, deltaBase64, sequence)) {
+    return entry;
+  }
+  return entry;
+}
+
+function applyCommandOutputCacheToDescriptor(state, descriptor) {
+  const key = commandOutputCacheKey(descriptor.threadId, descriptor.commandItemId);
+  if (!key) {
+    return descriptor;
+  }
+  const entry = state.commandOutputCache.get(key);
+  if (!entry || entry.replay.length === 0) {
+    return descriptor;
+  }
+  const descriptorSequence = normalizeSequence(descriptor.replayThroughSequence);
+  const cacheSequence = normalizeSequence(entry.lastSequence);
+  if (descriptor.replayBase64 && descriptorSequence >= cacheSequence) {
+    return descriptor;
+  }
+  if (descriptor.replayBase64) {
+    const firstCacheSequence = Number.isInteger(entry.firstSequence)
+      ? entry.firstSequence
+      : null;
+    if (firstCacheSequence === descriptorSequence + 1) {
+      return {
+        ...descriptor,
+        replayBase64: Buffer.concat([
+          Buffer.from(descriptor.replayBase64, "base64"),
+          entry.replay,
+        ]).toString("base64"),
+        replayTruncated:
+          Boolean(descriptor.replayTruncated) || Boolean(entry.replayTruncated),
+        replayThroughSequence: cacheSequence,
+      };
+    }
+    if (firstCacheSequence !== 1) {
+      return descriptor;
+    }
+  }
+  return {
+    ...descriptor,
+    replayBase64: entry.replay.toString("base64"),
+    replayTruncated:
+      Boolean(descriptor.replayTruncated) ||
+      Boolean(entry.replayTruncated) ||
+      (Number.isInteger(entry.firstSequence) && entry.firstSequence > 1),
+    replayThroughSequence: cacheSequence,
+  };
+}
+
+function deleteCommandOutputCache(state, threadId, commandItemId) {
+  const key = commandOutputCacheKey(threadId, commandItemId);
+  if (!key) {
+    return false;
+  }
+  return state.commandOutputCache.delete(key);
+}
+
 function markTerminalExited(tab, exitCode) {
   tab.status = "exited";
   tab.exitCode = Number.isInteger(exitCode) ? exitCode : null;
@@ -437,6 +538,9 @@ module.exports = {
   commandFocusDescriptorForTerminalFocus,
   commandFocusDescriptorFromRequest,
   commandFocusDescriptorFromLiveSession,
+  appendCommandOutputCache,
+  applyCommandOutputCacheToDescriptor,
+  deleteCommandOutputCache,
   focusCommandTerminal,
   appendTerminalOutput,
   closeTerminalTab,

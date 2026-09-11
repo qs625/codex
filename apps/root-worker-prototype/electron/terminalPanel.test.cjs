@@ -5,13 +5,16 @@ const {
   MAX_TERMINAL_REPLAY_BYTES,
   activeCommandForTerminalFocus,
   addUserTerminal,
+  appendCommandOutputCache,
   appendTerminalOutput,
+  applyCommandOutputCacheToDescriptor,
   closeTerminalTab,
   commandFocusDescriptor,
   commandFocusDescriptorForTerminalFocus,
   commandFocusDescriptorFromRequest,
   commandFocusDescriptorFromLiveSession,
   createTerminalPanelState,
+  deleteCommandOutputCache,
   focusCommandTerminal,
   liveCommandSessionForTerminalFocus,
   markTerminalExited,
@@ -254,6 +257,208 @@ test("focus descriptor keeps running active command available despite process mi
     canWrite: false,
     canTerminate: false,
   });
+});
+
+test("command output cache hydrates focused running command replay", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("first\n").toString("base64"),
+    1,
+  );
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("second\n").toString("base64"),
+    2,
+  );
+
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+  const tab = focusCommandTerminal(state, descriptorWithCache);
+
+  assert.equal(tab.replay.toString(), "first\nsecond\n");
+  assert.equal(tab.lastSequence, 2);
+  assert.equal(tab.canResize, false);
+});
+
+test("command output cache can be shared before terminal panel opens", () => {
+  const sharedCache = new Map();
+  const notificationOnlyState = { commandOutputCache: sharedCache };
+  appendCommandOutputCache(
+    notificationOnlyState,
+    "thread",
+    "call",
+    Buffer.from("cached before open\n").toString("base64"),
+    1,
+  );
+
+  const state = createTerminalPanelState(sharedCache);
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+  const tab = focusCommandTerminal(state, descriptorWithCache);
+
+  assert.equal(tab.replay.toString(), "cached before open\n");
+});
+
+test("command output cache marks tail-only hydrate truncated", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("tail only\n").toString("base64"),
+    3,
+  );
+
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+
+  assert.equal(
+    Buffer.from(descriptorWithCache.replayBase64, "base64").toString(),
+    "tail only\n",
+  );
+  assert.equal(descriptorWithCache.replayTruncated, true);
+});
+
+test("focused command replay keeps descriptor when cache is not newer", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("cached\n").toString("base64"),
+    1,
+  );
+
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(state, {
+    ...descriptor({
+      sessionId: "command:thread:call",
+      processId: "42",
+      replayBase64: Buffer.from("live\n").toString("base64"),
+      replayThroughSequence: 1,
+    }),
+    canWrite: false,
+    canTerminate: false,
+  });
+
+  assert.equal(
+    Buffer.from(descriptorWithCache.replayBase64, "base64").toString(),
+    "live\n",
+  );
+  assert.equal(descriptorWithCache.replayThroughSequence, 1);
+});
+
+test("focused command replay appends contiguous cache after descriptor", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("tail\n").toString("base64"),
+    3,
+  );
+
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(state, {
+    ...descriptor({
+      sessionId: "command:thread:call",
+      processId: "42",
+      replayBase64: Buffer.from("head\n").toString("base64"),
+      replayThroughSequence: 2,
+    }),
+    canWrite: false,
+    canTerminate: false,
+  });
+
+  assert.equal(
+    Buffer.from(descriptorWithCache.replayBase64, "base64").toString(),
+    "head\ntail\n",
+  );
+  assert.equal(descriptorWithCache.replayThroughSequence, 3);
+});
+
+test("focused command replay rejects non-contiguous newer cache over descriptor", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("late\n").toString("base64"),
+    4,
+  );
+
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(state, {
+    ...descriptor({
+      sessionId: "command:thread:call",
+      processId: "42",
+      replayBase64: Buffer.from("head\n").toString("base64"),
+      replayThroughSequence: 2,
+    }),
+    canWrite: false,
+    canTerminate: false,
+  });
+
+  assert.equal(
+    Buffer.from(descriptorWithCache.replayBase64, "base64").toString(),
+    "head\n",
+  );
+  assert.equal(descriptorWithCache.replayThroughSequence, 2);
+});
+
+test("command output cache can be deleted after command completion", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("output\n").toString("base64"),
+    1,
+  );
+
+  assert.equal(deleteCommandOutputCache(state, "thread", "call"), true);
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+
+  assert.equal(descriptorWithCache.replayBase64, null);
 });
 
 test("focus descriptor rejects truly stale command items", () => {
