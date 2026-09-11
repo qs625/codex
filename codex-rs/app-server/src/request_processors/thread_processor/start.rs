@@ -1173,20 +1173,6 @@ impl ThreadRequestProcessor {
         ))
     }
 
-    pub(super) async fn resume_thread_from_rollout(
-        &self,
-        thread_id: &str,
-        path: Option<&PathBuf>,
-    ) -> Result<(InitialHistory, StoredThread), JSONRPCErrorError> {
-        let stored_thread = self
-            .read_stored_thread_for_resume(thread_id, path, /*include_history*/ true)
-            .await?;
-        let history = self
-            .stored_thread_to_initial_history(&stored_thread)
-            .await?;
-        Ok((history, stored_thread))
-    }
-
     pub(super) async fn ensure_persisted_native_thread_loaded(
         &self,
         thread_id: ThreadId,
@@ -1315,7 +1301,7 @@ impl ThreadRequestProcessor {
         self.thread_watch_manager
             .upsert_thread_silently_with_lifecycle_status(
                 loaded_thread,
-                stored_thread.last_run_status.clone(),
+                stored_thread.thread_status.clone(),
             )
             .await;
         Ok(())

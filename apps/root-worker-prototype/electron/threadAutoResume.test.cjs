@@ -19,7 +19,7 @@ function projectRootThread(overrides = {}) {
     updatedAt: 10,
     source: "appServer",
     threadSource: "user",
-    lifecycleStatus: { type: "final", result: { type: "interrupted" } },
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
     model: "gpt",
     modelProvider: "openai",
     reasoningEffort: "medium",
@@ -32,7 +32,7 @@ function runtimeRestartRecovery(expectedThreadIds = ["system-self"]) {
   return { expectedThreadIds };
 }
 
-test("auto-resume selects every non-completed project root and excludes children", () => {
+test("auto-resume selects active project roots and excludes terminal/waiting/children", () => {
   assert.equal(isAutoResumeEligibleThread(projectRootThread()), true);
   assert.equal(
     isAutoResumeEligibleThread(
@@ -42,6 +42,24 @@ test("auto-resume selects every non-completed project root and excludes children
       }),
     ),
     true,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "interrupted",
+        lifecycleStatus: { type: "final", result: { type: "interrupted" } },
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "waiting",
+        lifecycleStatus: { type: "waiting", reason: "command" },
+      }),
+    ),
+    false,
   );
   assert.equal(
     isAutoResumeEligibleThread(
@@ -291,9 +309,9 @@ test("durable restart fans out exactly once to every eligible project root inclu
         expectedRestart: runtimeRestartRecovery(),
       })
     ).resumedThreadIds,
-    ["system-self", "running", "waiting"],
+    ["system-self", "running"],
   );
-  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
+  assert.deepEqual(sent, ["system-self", "running"]);
   assert.deepEqual(
     (
       await coordinator.runAfterRuntimeRestartRecovery({
@@ -303,10 +321,10 @@ test("durable restart fans out exactly once to every eligible project root inclu
     ).resumedThreadIds,
     [],
   );
-  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
+  assert.deepEqual(sent, ["system-self", "running"]);
 });
 
-test("auto-resume skips interrupted threads that already contain recovery input", async () => {
+test("auto-resume skips active threads that already contain recovery input", async () => {
   const restored = projectRootThread({
     turns: [
       {

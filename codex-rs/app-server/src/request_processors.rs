@@ -415,7 +415,6 @@ use thread_service::config::NetworkProxyAuditMetadata;
 use thread_service::config::edit::ConfigEdit;
 use thread_service::config::edit::ConfigEditsBuilder;
 use thread_service::path_utils;
-use thread_service_api::ActiveEventSubscriptionTracker;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::CodexThreadTurnContextOverrides;
 use thread_service_api::LiveThreadSnapshot;

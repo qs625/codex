@@ -620,7 +620,7 @@ impl ThreadRequestProcessor {
             watch_status,
             has_in_progress_turn,
         );
-        self.persist_thread_last_run_status(thread_id, &lifecycle_status)
+        self.persist_thread_status(thread_id, &lifecycle_status)
             .await;
         let Some(lifecycle_status) =
             crate::thread_status::persistable_thread_lifecycle_status(&lifecycle_status).cloned()
@@ -641,7 +641,7 @@ impl ThreadRequestProcessor {
             .await;
     }
 
-    pub(crate) async fn persist_thread_last_run_status(
+    pub(crate) async fn persist_thread_status(
         &self,
         thread_id: ThreadId,
         lifecycle_status: &ThreadLifecycleStatus,
@@ -655,10 +655,10 @@ impl ThreadRequestProcessor {
             return;
         };
         if let Err(err) = state_db
-            .set_thread_last_run_status(thread_id, Some(lifecycle_status))
+            .set_thread_status(thread_id, Some(lifecycle_status))
             .await
         {
-            warn!("failed to persist last run status for thread {thread_id}: {err}");
+            warn!("failed to persist thread status for thread {thread_id}: {err}");
         }
     }
 
@@ -2077,7 +2077,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_last_run_status_keeps_externally_meaningful_statuses() {
+    fn persisted_thread_status_keeps_externally_meaningful_statuses() {
         let active = ThreadLifecycleStatus::Active {
             active_flags: vec![ThreadLifecycleActiveFlag::Running],
         };
@@ -2101,7 +2101,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_last_run_status_filters_loaded_cache_statuses() {
+    fn persisted_thread_status_filters_loaded_cache_statuses() {
         assert_eq!(
             crate::thread_status::persistable_thread_lifecycle_status(
                 &ThreadLifecycleStatus::NotLoaded

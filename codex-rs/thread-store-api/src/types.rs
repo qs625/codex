@@ -378,8 +378,8 @@ pub struct StoredThread {
     pub token_usage: Option<TokenUsage>,
     /// First user message observed for this thread, if any.
     pub first_user_message: Option<String>,
-    /// Last persisted run status, when available from current-state metadata.
-    pub last_run_status: Option<ThreadLifecycleStatus>,
+    /// Persisted thread status, when available from current-state metadata.
+    pub thread_status: Option<ThreadLifecycleStatus>,
     /// Aggregate thread-level skills observed for this thread.
     pub skills: Vec<ThreadSkill>,
     /// Persisted history, populated only when requested.
@@ -1160,7 +1160,7 @@ mod tests {
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             token_usage: None,
             first_user_message: None,
-            last_run_status: None,
+            thread_status: None,
             skills: Vec::new(),
             history: Some(StoredThreadHistory { thread_id, items }),
         }

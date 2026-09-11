@@ -68,6 +68,6 @@ pub(super) fn test_thread_metadata(
         git_branch: None,
         git_origin_url: None,
         subscriptions: None,
-        last_run_status: None,
+        thread_status: None,
     }
 }

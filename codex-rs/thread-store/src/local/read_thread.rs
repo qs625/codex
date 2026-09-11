@@ -410,7 +410,7 @@ async fn stored_thread_from_sqlite_metadata(
         ),
         token_usage: None,
         first_user_message: metadata.first_user_message,
-        last_run_status: metadata.last_run_status,
+        thread_status: metadata.thread_status,
         skills,
         history: None,
     }
@@ -469,7 +469,7 @@ async fn stored_thread_from_meta_line(
         sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: None,
-        last_run_status: None,
+        thread_status: None,
         skills: load_thread_skills_from_rollout(path.as_path())
             .await
             .unwrap_or_default(),

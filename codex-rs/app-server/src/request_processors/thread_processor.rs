@@ -10,7 +10,6 @@ use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-use tokio::sync::OnceCell;
 
 mod listing;
 mod ops;
@@ -466,10 +465,8 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) thread_list_state_permit: Arc<Semaphore>,
     pub(super) thread_goal_processor: ThreadGoalRequestProcessor,
     pub(super) state_db: Option<StateDbHandle>,
-    pub(super) background_tasks: TaskTracker,
     pub(super) skills_watcher: Arc<SkillsWatcher>,
-    pub(super) startup_active_threads_restore_scheduled: Arc<OnceCell<()>>,
-    pub(super) startup_active_threads_restored: Arc<OnceCell<()>>,
+    pub(super) background_tasks: TaskTracker,
 }
 
 impl ThreadRequestProcessor {
@@ -517,10 +514,8 @@ impl ThreadRequestProcessor {
             thread_list_state_permit,
             thread_goal_processor,
             state_db,
-            background_tasks: TaskTracker::new(),
             skills_watcher,
-            startup_active_threads_restore_scheduled: Arc::new(OnceCell::new()),
-            startup_active_threads_restored: Arc::new(OnceCell::new()),
+            background_tasks: TaskTracker::new(),
         }
     }
 

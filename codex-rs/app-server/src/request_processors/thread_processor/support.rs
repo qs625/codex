@@ -1,6 +1,8 @@
 use super::*;
 use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
+#[cfg(test)]
+use thread_service_api::ActiveEventSubscriptionTracker;
 
 pub(super) fn xcode_26_4_mcp_elicitations_auto_deny(
     client_name: Option<&str>,
@@ -678,7 +680,7 @@ pub(crate) fn thread_from_stored_thread(
         created_at: thread.created_at.timestamp(),
         updated_at: thread.updated_at.timestamp(),
         lifecycle_status: thread
-            .last_run_status
+            .thread_status
             .clone()
             .unwrap_or_else(|| ThreadLifecycleStatus::completed(None)),
         path,
@@ -707,6 +709,7 @@ pub(crate) fn thread_from_stored_thread(
     (thread, history)
 }
 
+#[cfg(test)]
 pub(super) async fn sync_active_event_subscriptions(
     active_event_subscriptions: &ActiveEventSubscriptionTracker,
     thread_watch_manager: &ThreadWatchManager,
@@ -718,25 +721,6 @@ pub(super) async fn sync_active_event_subscriptions(
     thread_watch_manager
         .note_active_event_subscriptions(thread_id_str.as_str(), active_count)
         .await;
-}
-
-pub(super) fn persisted_subscription_count(thread: &StoredThread) -> usize {
-    thread
-        .history
-        .as_ref()
-        .and_then(|history| {
-            history.items.iter().rev().find_map(|item| match item {
-                RolloutItem::SessionMeta(meta_line) => Some(
-                    meta_line
-                        .meta
-                        .subscriptions
-                        .as_ref()
-                        .map_or(0, std::vec::Vec::len),
-                ),
-                _ => None,
-            })
-        })
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

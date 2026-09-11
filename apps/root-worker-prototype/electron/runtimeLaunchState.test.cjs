@@ -303,8 +303,17 @@ test("startup records generic recovery before sending a payload /self prompt", a
 
     const genericPrompts = [];
     const roots = [
-      recoveryProjectRoot({ id: "project-a", updatedAt: 2 }),
-      recoveryProjectRoot({ id: "system-self", name: "/self", updatedAt: 3 }),
+      recoveryProjectRoot({
+        id: "project-a",
+        lifecycleStatus: { type: "active", activeFlags: ["running"] },
+        updatedAt: 2,
+      }),
+      recoveryProjectRoot({
+        id: "system-self",
+        lifecycleStatus: { type: "active", activeFlags: ["running"] },
+        name: "/self",
+        updatedAt: 3,
+      }),
       recoveryProjectRoot({
         id: "completed",
         lifecycleStatus: { type: "final", result: { type: "completed" } },

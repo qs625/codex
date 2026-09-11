@@ -229,7 +229,7 @@ async fn thread_archive_missing_rollout_file_with_metadata_is_idempotent_success
             git_branch: None,
             git_origin_url: None,
             subscriptions: None,
-            last_run_status: None,
+            thread_status: None,
         })
         .await?;
     assert!(

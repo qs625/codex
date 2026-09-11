@@ -37,7 +37,7 @@ SELECT
     threads.git_branch,
     threads.git_origin_url,
     threads.subscriptions,
-    threads.last_run_status
+    threads.thread_status
 FROM threads
 WHERE threads.id = ?
             "#,
@@ -82,28 +82,6 @@ FROM threads
 WHERE archived = 0
   AND subscriptions IS NOT NULL
   AND json_array_length(subscriptions) > 0
-ORDER BY updated_at_ms DESC
-            "#,
-        )
-        .fetch_all(self.pool.as_ref())
-        .await?;
-        rows.into_iter()
-            .map(|row| {
-                let id: String = row.try_get("id")?;
-                Ok(ThreadId::try_from(id)?)
-            })
-            .collect()
-    }
-
-    pub async fn list_thread_ids_with_active_last_run_status(
-        &self,
-    ) -> anyhow::Result<Vec<ThreadId>> {
-        let rows = sqlx::query(
-            r#"
-SELECT id
-FROM threads
-WHERE archived = 0
-  AND json_extract(last_run_status, '$.type') IN ('active', 'waiting')
 ORDER BY updated_at_ms DESC
             "#,
         )
@@ -653,7 +631,7 @@ INSERT INTO threads (
     git_origin_url,
     memory_mode,
     subscriptions,
-    last_run_status
+    thread_status
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO NOTHING
             "#,
@@ -697,7 +675,7 @@ ON CONFLICT(id) DO NOTHING
         .bind("enabled")
         .bind(serialize_subscriptions(metadata.subscriptions.as_ref())?)
         .bind(serialize_thread_lifecycle_status(
-            metadata.last_run_status.as_ref(),
+            metadata.thread_status.as_ref(),
         )?)
         .execute(self.pool.as_ref())
         .await?;
@@ -823,12 +801,12 @@ WHERE id = ?
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn set_thread_last_run_status(
+    pub async fn set_thread_status(
         &self,
         thread_id: ThreadId,
         status: Option<&ThreadLifecycleStatus>,
     ) -> anyhow::Result<bool> {
-        let result = sqlx::query("UPDATE threads SET last_run_status = ? WHERE id = ?")
+        let result = sqlx::query("UPDATE threads SET thread_status = ? WHERE id = ?")
             .bind(serialize_thread_lifecycle_status(status)?)
             .bind(thread_id.to_string())
             .execute(self.pool.as_ref())
@@ -878,7 +856,7 @@ INSERT INTO threads (
     git_origin_url,
     memory_mode,
     subscriptions,
-    last_run_status
+    thread_status
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     rollout_path = excluded.rollout_path,
@@ -908,7 +886,7 @@ ON CONFLICT(id) DO UPDATE SET
     git_branch = COALESCE(threads.git_branch, excluded.git_branch),
     git_origin_url = COALESCE(threads.git_origin_url, excluded.git_origin_url),
     subscriptions = COALESCE(excluded.subscriptions, threads.subscriptions),
-    last_run_status = COALESCE(excluded.last_run_status, threads.last_run_status)
+    thread_status = COALESCE(excluded.thread_status, threads.thread_status)
             "#,
         )
         .bind(metadata.id.to_string())
@@ -950,7 +928,7 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(creation_memory_mode.unwrap_or("enabled"))
         .bind(serialize_subscriptions(metadata.subscriptions.as_ref())?)
         .bind(serialize_thread_lifecycle_status(
-            metadata.last_run_status.as_ref(),
+            metadata.thread_status.as_ref(),
         )?)
         .execute(self.pool.as_ref())
         .await?;
@@ -1225,7 +1203,7 @@ SELECT
     threads.git_branch,
     threads.git_origin_url,
     threads.subscriptions,
-    threads.last_run_status
+    threads.thread_status
 "#,
     );
 }

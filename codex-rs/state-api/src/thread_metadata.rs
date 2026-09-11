@@ -112,8 +112,8 @@ pub struct ThreadMetadata {
     pub git_origin_url: Option<String>,
     /// Persisted event subscriptions for runtime restore, if a current-state snapshot exists.
     pub subscriptions: Option<Vec<PersistedSubscription>>,
-    /// Last externally meaningful run status observed for this thread.
-    pub last_run_status: Option<ThreadLifecycleStatus>,
+    /// Persisted externally meaningful thread status observed for this thread.
+    pub thread_status: Option<ThreadLifecycleStatus>,
 }
 
 /// Builder data required to construct [`ThreadMetadata`] without parsing filenames.
@@ -229,7 +229,7 @@ impl ThreadMetadataBuilder {
             git_branch: self.git_branch.clone(),
             git_origin_url: self.git_origin_url.clone(),
             subscriptions: None,
-            last_run_status: None,
+            thread_status: None,
         }
     }
 }
@@ -249,8 +249,8 @@ impl ThreadMetadata {
         if existing.subscriptions.is_some() {
             self.subscriptions = existing.subscriptions.clone();
         }
-        if existing.last_run_status.is_some() {
-            self.last_run_status = existing.last_run_status.clone();
+        if existing.thread_status.is_some() {
+            self.thread_status = existing.thread_status.clone();
         }
     }
 
@@ -329,8 +329,8 @@ impl ThreadMetadata {
         if self.subscriptions != other.subscriptions {
             diffs.push("subscriptions");
         }
-        if self.last_run_status != other.last_run_status {
-            diffs.push("last_run_status");
+        if self.thread_status != other.thread_status {
+            diffs.push("thread_status");
         }
         diffs
     }

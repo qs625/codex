@@ -63,8 +63,6 @@ pub trait ThreadStateRuntime: Send + Sync {
 
     fn list_thread_ids_with_active_subscriptions(&self) -> StateApiFuture<'_, Vec<ThreadId>>;
 
-    fn list_thread_ids_with_active_last_run_status(&self) -> StateApiFuture<'_, Vec<ThreadId>>;
-
     fn mark_thread_memory_mode_polluted(&self, thread_id: ThreadId) -> StateApiFuture<'_, ()>;
 
     fn find_rollout_path_by_id(
@@ -195,7 +193,7 @@ pub trait ThreadStateRuntime: Send + Sync {
         git_origin_url: Option<Option<&'a str>>,
     ) -> StateApiFuture<'a, bool>;
 
-    fn set_thread_last_run_status<'a>(
+    fn set_thread_status<'a>(
         &'a self,
         thread_id: ThreadId,
         status: Option<&'a ThreadLifecycleStatus>,

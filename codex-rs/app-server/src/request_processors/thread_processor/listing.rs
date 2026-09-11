@@ -3,32 +3,6 @@ use super::*;
 use app_server_protocol::CommandExecutionStatus;
 #[cfg(test)]
 use app_server_protocol::DynamicToolCallStatus;
-use app_server_protocol::ThreadLifecycleActiveFlag;
-#[cfg(test)]
-use app_server_protocol::ThreadLifecycleWaitReason;
-use thread_store_api::ExternalLiveRestoreEligibility;
-
-const STARTUP_ACTIVE_THREAD_CONTINUATION_PROMPT: &str = "Morpheus 在客户端重启后发现这个 thread 重启前仍处于 Active/Running。请基于当前持久化上下文继续处理中断前的任务；如果无法安全继续，请简要说明中断影响和需要用户确认的事项。";
-
-fn external_root_startup_restore_skip_reason(
-    eligibility: ExternalLiveRestoreEligibility,
-) -> &'static str {
-    match eligibility {
-        ExternalLiveRestoreEligibility::RunningNoDescriptor => {
-            "no reconnect descriptor was persisted"
-        }
-        ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { .. } => {
-            "reconnect descriptor is present but external live restore is disabled"
-        }
-        ExternalLiveRestoreEligibility::TerminalReadOnly => {
-            "external thread is already terminal and read-only"
-        }
-        ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
-            "external live restore is not implemented"
-        }
-        ExternalLiveRestoreEligibility::NotExternal => "provider reconnect is not supported",
-    }
-}
 
 impl ThreadRequestProcessor {
     pub(super) async fn thread_list_response_inner(
@@ -121,8 +95,6 @@ impl ThreadRequestProcessor {
                 thread
             })
             .collect();
-        self.schedule_persisted_active_threads_restore_on_startup()
-            .await;
         Ok(ThreadListResponse {
             data,
             next_cursor,
@@ -134,7 +106,6 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
-        self.restore_persisted_active_threads_on_startup().await;
         let ThreadLoadedListParams { cursor, limit } = params;
         let mut data: Vec<String> = self
             .live_thread_inspection
@@ -656,234 +627,6 @@ impl ThreadRequestProcessor {
         self.thread_watch_manager.subscribe_running_turn_count()
     }
 
-    pub(super) async fn schedule_persisted_active_threads_restore_on_startup(&self) {
-        let processor = self.clone();
-        let background_tasks = self.background_tasks.clone();
-        self.startup_active_threads_restore_scheduled
-            .get_or_init(|| async move {
-                background_tasks.spawn(async move {
-                    processor
-                        .restore_persisted_active_threads_on_startup()
-                        .await;
-                });
-            })
-            .await;
-    }
-
-    pub(super) async fn restore_persisted_active_threads_on_startup(&self) {
-        self.startup_active_threads_restored
-            .get_or_init(|| async {
-                self.restore_persisted_active_threads_on_startup_inner()
-                    .await;
-            })
-            .await;
-    }
-
-    pub(super) async fn restore_persisted_active_threads_on_startup_inner(&self) {
-        let thread_ids = self
-            .list_threads_with_active_last_run_status()
-            .await
-            .unwrap_or_else(|err| {
-                warn!("failed to list threads with active last-run status: {err:?}");
-                Vec::new()
-            });
-
-        for thread_id in thread_ids {
-            if self
-                .live_thread_inspection
-                .is_live_thread_loaded(thread_id)
-                .await
-            {
-                continue;
-            }
-            self.restore_persisted_active_thread(thread_id).await;
-        }
-    }
-
-    pub(super) async fn list_threads_with_active_last_run_status(
-        &self,
-    ) -> Result<Vec<ThreadId>, JSONRPCErrorError> {
-        let Some(state_db) = self.state_db.as_ref() else {
-            return Ok(Vec::new());
-        };
-        state_db
-            .list_thread_ids_with_active_last_run_status()
-            .await
-            .map_err(|err| {
-                internal_error(format!(
-                    "failed to list active last-run threads from state db: {err}"
-                ))
-            })
-    }
-
-    pub(super) async fn restore_persisted_active_thread(&self, thread_id: ThreadId) {
-        let thread_id_string = thread_id.to_string();
-        let (thread_history, stored_thread) = match self
-            .resume_thread_from_rollout(&thread_id_string, /*path*/ None)
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                warn!("failed to load persisted active thread {thread_id}: {err:?}");
-                return;
-            }
-        };
-
-        let last_run_status = stored_thread.last_run_status.clone();
-        let persisted_subscription_count = self
-            .thread_store
-            .read_thread_subscriptions(thread_id, /*include_archived*/ true)
-            .await
-            .ok()
-            .flatten()
-            .map_or_else(
-                || persisted_subscription_count(&stored_thread),
-                |subscriptions| subscriptions.len(),
-            );
-        match self
-            .persisted_thread_provider_facts_runtime
-            .persisted_external_root_thread_facts(
-                thread_service_api::PersistedThreadProviderFactsSelector::ThreadId(thread_id),
-            )
-            .await
-        {
-            Ok(Some(facts)) => {
-                let skip_reason =
-                    external_root_startup_restore_skip_reason(facts.restore_eligibility);
-                info!(
-                    "skipping live startup restore for persisted external root thread {thread_id}; {skip_reason}"
-                );
-                return;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                warn!(
-                    "failed to inspect persisted provider facts for active thread {thread_id}: {err}"
-                );
-                return;
-            }
-        }
-
-        let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
-        let agent_metadata = stored_thread_root_agent_metadata(&stored_thread);
-        let stored_agent_path = stored_thread.agent_path.clone();
-        let stored_agent_role = stored_thread.agent_role.clone();
-        let history_cwd = thread_history.session_cwd();
-        let mut request_overrides = None;
-        let mut typesafe_overrides = self.build_thread_config_overrides(
-            /*model*/ None, /*model_provider*/ None, /*service_tier*/ None,
-            /*cwd*/ None, /*runtime_workspace_roots*/ None,
-            /*approval_policy*/ None, /*approvals_reviewer*/ None, /*sandbox*/ None,
-            /*permissions*/ None, /*base_instructions*/ None,
-            /*developer_instructions*/ None, /*personality*/ None,
-        );
-        self.load_and_apply_persisted_resume_metadata(
-            &thread_history,
-            &mut request_overrides,
-            &mut typesafe_overrides,
-        )
-        .await;
-
-        let config = match self
-            .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
-            .await
-        {
-            Ok(config) => config,
-            Err(err) => {
-                warn!("failed to load config while restoring thread {thread_id}: {err}");
-                return;
-            }
-        };
-
-        match self
-            .native_thread_creation
-            .resume_thread_with_history_and_source(
-                config,
-                thread_history,
-                session_source,
-                agent_metadata,
-                /*parent_trace*/ None,
-            )
-            .await
-        {
-            Ok(new_thread) => {
-                let ThreadProcessorNewThread {
-                    thread_id,
-                    session_configured,
-                    ..
-                } = thread_processor_new_thread(new_thread);
-                let config_snapshot = match self
-                    .live_thread_inspection
-                    .live_thread_config_snapshot(thread_id)
-                    .await
-                {
-                    Ok(config_snapshot) => config_snapshot,
-                    Err(err) => {
-                        warn!(
-                            "failed to read live config snapshot while restoring thread {thread_id}: {err}"
-                        );
-                        return;
-                    }
-                };
-                let mut loaded_thread = build_thread_from_snapshot(
-                    thread_id,
-                    session_configured.session_id.to_string(),
-                    &config_snapshot,
-                    session_configured.rollout_path,
-                );
-                if let Some(history) = stored_thread.history.as_ref() {
-                    restore_persisted_display_turns_from_rollout_items(
-                        &mut loaded_thread,
-                        history.items.as_slice(),
-                    );
-                }
-                apply_stored_agent_metadata_to_loaded_thread(
-                    &mut loaded_thread,
-                    stored_agent_path,
-                    stored_agent_role,
-                );
-                self.thread_watch_manager
-                    .upsert_thread_silently_with_lifecycle_status(
-                        loaded_thread,
-                        last_run_status.clone(),
-                    )
-                    .await;
-                let active_event_subscriptions =
-                    self.thread_lifecycle_runtime.active_event_subscriptions();
-                sync_active_event_subscriptions(
-                    active_event_subscriptions.as_ref(),
-                    &self.thread_watch_manager,
-                    thread_id,
-                    persisted_subscription_count,
-                )
-                .await;
-                if should_submit_startup_continuation(last_run_status.as_ref())
-                    && let Err(err) = self
-                        .live_thread_command
-                        .submit_live_thread_op(
-                            thread_id,
-                            Op::UserInput {
-                                items: vec![CoreInputItem::Text {
-                                    text: STARTUP_ACTIVE_THREAD_CONTINUATION_PROMPT.to_string(),
-                                    text_elements: Vec::new(),
-                                }],
-                                environments: None,
-                                final_output_json_schema: None,
-                                responsesapi_client_metadata: None,
-                            },
-                        )
-                        .await
-                {
-                    warn!("failed to submit startup continuation for thread {thread_id}: {err}");
-                }
-            }
-            Err(err) => {
-                warn!("failed to restore persisted active thread {thread_id}: {err}");
-            }
-        }
-    }
-
     /// Best-effort: ensure initialized connections are subscribed to this thread.
     pub(crate) async fn try_attach_thread_listener(
         &self,
@@ -911,14 +654,6 @@ impl ThreadRequestProcessor {
             );
         }
     }
-}
-
-fn should_submit_startup_continuation(lifecycle_status: Option<&ThreadLifecycleStatus>) -> bool {
-    matches!(
-        lifecycle_status,
-        Some(ThreadLifecycleStatus::Active { active_flags })
-            if active_flags.contains(&ThreadLifecycleActiveFlag::Running)
-    )
 }
 
 pub(crate) fn apply_stored_agent_metadata_to_loaded_thread(
@@ -1512,28 +1247,5 @@ mod restore_persisted_injected_context_turns_tests {
         );
 
         assert_eq!(thread.agent_path.as_deref(), Some("/root/from_metadata"));
-    }
-
-    #[test]
-    fn startup_continuation_only_runs_for_active_running_status() {
-        assert!(should_submit_startup_continuation(Some(
-            &ThreadLifecycleStatus::Active {
-                active_flags: vec![ThreadLifecycleActiveFlag::Running],
-            },
-        )));
-        assert!(!should_submit_startup_continuation(Some(
-            &ThreadLifecycleStatus::Active {
-                active_flags: vec![ThreadLifecycleActiveFlag::WaitingOnApproval],
-            },
-        )));
-        assert!(!should_submit_startup_continuation(Some(
-            &ThreadLifecycleStatus::Waiting {
-                reason: ThreadLifecycleWaitReason::EventSubscription,
-            },
-        )));
-        assert!(!should_submit_startup_continuation(Some(
-            &ThreadLifecycleStatus::completed(None),
-        )));
-        assert!(!should_submit_startup_continuation(None));
     }
 }

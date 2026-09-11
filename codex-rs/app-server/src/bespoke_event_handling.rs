@@ -940,7 +940,7 @@ fn post_turn_runtime_status_flags(
     // A TurnComplete event is authoritative that the model turn ended. The
     // live runtime can still report Active briefly while the completion event
     // is being handled; do not let that stale in-turn snapshot overwrite the
-    // completed last_run_status. Post-turn waiting states remain meaningful.
+    // completed thread_status. Post-turn waiting states remain meaningful.
     (
         false,
         matches!(runtime_status, ThreadRuntimeStatus::IdleWaitChild),

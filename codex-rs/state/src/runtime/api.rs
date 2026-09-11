@@ -154,12 +154,6 @@ impl ThreadStateRuntime for StateRuntime {
         Box::pin(async move { StateRuntime::list_thread_ids_with_active_subscriptions(self).await })
     }
 
-    fn list_thread_ids_with_active_last_run_status(&self) -> StateApiFuture<'_, Vec<ThreadId>> {
-        Box::pin(
-            async move { StateRuntime::list_thread_ids_with_active_last_run_status(self).await },
-        )
-    }
-
     fn mark_thread_memory_mode_polluted(&self, thread_id: ThreadId) -> StateApiFuture<'_, ()> {
         Box::pin(async move {
             StateRuntime::mark_thread_memory_mode_polluted(self, thread_id)
@@ -401,14 +395,12 @@ impl ThreadStateRuntime for StateRuntime {
         })
     }
 
-    fn set_thread_last_run_status<'a>(
+    fn set_thread_status<'a>(
         &'a self,
         thread_id: ThreadId,
         status: Option<&'a ThreadLifecycleStatus>,
     ) -> StateApiFuture<'a, bool> {
-        Box::pin(
-            async move { StateRuntime::set_thread_last_run_status(self, thread_id, status).await },
-        )
+        Box::pin(async move { StateRuntime::set_thread_status(self, thread_id, status).await })
     }
 
     fn apply_rollout_items<'a>(

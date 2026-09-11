@@ -91,6 +91,7 @@ mod thread_processor_behavior_tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use thread_service_api::ActiveEventSubscriptionTracker;
     use thread_store::StoredThread;
 
     #[test]
@@ -1347,7 +1348,7 @@ mod thread_processor_behavior_tests {
             skills: Vec::new(),
             token_usage: None,
             first_user_message: Some("first user message".to_string()),
-            last_run_status: None,
+            thread_status: None,
             history: None,
         };
 
@@ -1402,7 +1403,7 @@ mod thread_processor_behavior_tests {
             skills: Vec::new(),
             token_usage: None,
             first_user_message: Some("first user message".to_string()),
-            last_run_status: None,
+            thread_status: None,
             history: None,
         };
 
@@ -1459,7 +1460,7 @@ mod thread_processor_behavior_tests {
             skills: Vec::new(),
             token_usage: None,
             first_user_message: Some("first user message".to_string()),
-            last_run_status: None,
+            thread_status: None,
             history: None,
         };
         let fallback_cwd = AbsolutePathBuf::from_absolute_path("/")?;

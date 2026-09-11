@@ -105,10 +105,10 @@ impl ThreadWatchManager {
                 let state_db = state_db.clone();
                 Box::pin(async move {
                     if let Err(err) = state_db
-                        .set_thread_last_run_status(thread_id, Some(&lifecycle_status))
+                        .set_thread_status(thread_id, Some(&lifecycle_status))
                         .await
                     {
-                        warn!("failed to persist last run status for thread {thread_id}: {err}");
+                        warn!("failed to persist thread status for thread {thread_id}: {err}");
                     }
                 }) as PersistThreadStatusFuture
             }) as PersistThreadStatusFn
@@ -345,7 +345,7 @@ impl ThreadWatchManager {
             match ThreadId::from_string(&notification.thread_id) {
                 Ok(thread_id) => persist_status(thread_id, lifecycle_status.clone()).await,
                 Err(err) => warn!(
-                    "failed to persist last run status for invalid thread id {}: {err}",
+                    "failed to persist thread status for invalid thread id {}: {err}",
                     notification.thread_id
                 ),
             }
@@ -1221,7 +1221,7 @@ mod tests {
             timeout(Duration::from_millis(100), persisted_rx.recv())
                 .await
                 .is_err(),
-            "loaded-cache NotLoaded should not be persisted as last_run_status"
+            "loaded-cache NotLoaded should not be persisted as thread_status"
         );
     }
 

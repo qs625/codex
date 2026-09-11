@@ -45,7 +45,7 @@ pub(crate) struct ThreadRow {
     git_branch: Option<String>,
     git_origin_url: Option<String>,
     subscriptions: Option<String>,
-    last_run_status: Option<String>,
+    thread_status: Option<String>,
 }
 
 impl ThreadRow {
@@ -76,7 +76,7 @@ impl ThreadRow {
             git_branch: row.try_get("git_branch")?,
             git_origin_url: row.try_get("git_origin_url")?,
             subscriptions: row.try_get("subscriptions")?,
-            last_run_status: row.try_get("last_run_status")?,
+            thread_status: row.try_get("thread_status")?,
         })
     }
 }
@@ -111,7 +111,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             git_branch,
             git_origin_url,
             subscriptions,
-            last_run_status,
+            thread_status,
         } = row;
         let thread_source = thread_source
             .map(|thread_source| thread_source.parse())
@@ -120,7 +120,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
         let subscriptions = subscriptions
             .map(|subscriptions| serde_json::from_str::<Vec<PersistedSubscription>>(&subscriptions))
             .transpose()?;
-        let last_run_status = last_run_status
+        let thread_status = thread_status
             .map(|status| serde_json::from_str::<ThreadLifecycleStatus>(&status))
             .transpose()?;
         Ok(Self {
@@ -150,7 +150,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             git_branch,
             git_origin_url,
             subscriptions,
-            last_run_status,
+            thread_status,
         })
     }
 }
@@ -219,7 +219,7 @@ mod tests {
             git_branch: None,
             git_origin_url: None,
             subscriptions: None,
-            last_run_status: None,
+            thread_status: None,
         }
     }
 
@@ -251,7 +251,7 @@ mod tests {
             git_branch: None,
             git_origin_url: None,
             subscriptions: None,
-            last_run_status: None,
+            thread_status: None,
         }
     }
 
