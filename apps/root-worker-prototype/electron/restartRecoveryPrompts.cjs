@@ -27,8 +27,8 @@ function expectedRuntimeRestartRecoveryPrompt(record) {
   return `${outcome} ${prompt.followUp}`;
 }
 
-function shouldNotifyRuntimeRestartErrorOnSelf(record) {
-  return record?.phase !== "completed";
+function shouldNotifyRuntimeRestartRecoveryOnSelf(record) {
+  return Boolean(record?.requestId && record?.requestedByThreadId);
 }
 
 function formatPayloadRuntimeRecoveryPrompt({
@@ -61,5 +61,6 @@ module.exports = {
   formatPayloadRuntimeRecoveryPrompt,
   RESTART_RECOVERY_PROMPTS,
   expectedRuntimeRestartRecoveryPrompt,
-  shouldNotifyRuntimeRestartErrorOnSelf,
+  shouldNotifyRuntimeRestartErrorOnSelf: shouldNotifyRuntimeRestartRecoveryOnSelf,
+  shouldNotifyRuntimeRestartRecoveryOnSelf,
 };

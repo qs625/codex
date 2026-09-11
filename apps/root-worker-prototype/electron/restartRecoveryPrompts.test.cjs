@@ -6,6 +6,7 @@ const {
   RESTART_RECOVERY_PROMPTS,
   expectedRuntimeRestartRecoveryPrompt,
   shouldNotifyRuntimeRestartErrorOnSelf,
+  shouldNotifyRuntimeRestartRecoveryOnSelf,
 } = require("./restartRecoveryPrompts.cjs");
 
 test("restart recovery prompts are centralized and Chinese", () => {
@@ -66,17 +67,44 @@ test("payload recovery formatter falls back to Launcher exit evidence", () => {
   assert.match(prompt, /signal SIGTERM/);
 });
 
-test("only failed or interrupted restart records notify /self with details", () => {
+test("expected restart records notify /self with completed or failure details", () => {
   assert.equal(
-    shouldNotifyRuntimeRestartErrorOnSelf({ phase: "completed" }),
-    false,
-  );
-  assert.equal(
-    shouldNotifyRuntimeRestartErrorOnSelf({ phase: "failed" }),
+    shouldNotifyRuntimeRestartRecoveryOnSelf({
+      requestId: "restart-completed",
+      requestedByThreadId: "thread-1",
+      phase: "completed",
+    }),
     true,
   );
   assert.equal(
-    shouldNotifyRuntimeRestartErrorOnSelf({ phase: "executing" }),
+    shouldNotifyRuntimeRestartRecoveryOnSelf({
+      requestId: "restart-failed",
+      requestedByThreadId: "thread-1",
+      phase: "failed",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldNotifyRuntimeRestartRecoveryOnSelf({
+      requestId: "restart-interrupted",
+      requestedByThreadId: "thread-1",
+      phase: "executing",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldNotifyRuntimeRestartRecoveryOnSelf({
+      requestId: "restart-missing-thread",
+      phase: "completed",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldNotifyRuntimeRestartErrorOnSelf({
+      requestId: "restart-alias",
+      requestedByThreadId: "thread-1",
+      phase: "completed",
+    }),
     true,
   );
 });

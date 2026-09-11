@@ -5105,22 +5105,52 @@ test("normalizeThreadSnapshot drops legacy orphan command output placeholders", 
     exitCode: null,
     durationMs: null,
   };
+  const commandOutputNamedCommand: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-real-command-output",
+    command: "Command output",
+    cwd: "cwd pending",
+    status: "inProgress",
+    initialWaitMs: 1000,
+    notifyOn: "output",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
 
   const normalized = normalizeThreadSnapshot({
     ...makeThread(),
     turns: [
-      makeTurn("turn-1", [legacyPlaceholder, realCommand]),
-      makeTurn("active-commands", [legacyPlaceholder, realCommand]),
+      makeTurn("turn-1", [
+        legacyPlaceholder,
+        realCommand,
+        commandOutputNamedCommand,
+      ]),
+      makeTurn("active-commands", [
+        legacyPlaceholder,
+        realCommand,
+        commandOutputNamedCommand,
+      ]),
     ],
-    activeCommandItems: [legacyPlaceholder, realCommand],
+    activeCommandItems: [
+      legacyPlaceholder,
+      realCommand,
+      commandOutputNamedCommand,
+    ],
   });
 
   assert.deepEqual(normalized.turns.map((turn) => turn.id), ["turn-1"]);
-  assert.deepEqual(normalized.turns[0]?.items, [realCommand]);
-  assert.deepEqual(normalized.activeCommandItems, [realCommand]);
+  assert.deepEqual(normalized.turns[0]?.items, [
+    realCommand,
+    commandOutputNamedCommand,
+  ]);
+  assert.deepEqual(normalized.activeCommandItems, [
+    realCommand,
+    commandOutputNamedCommand,
+  ]);
   assert.deepEqual(
     buildConversationEntries(normalized).map((entry) => entry.id),
-    ["cmd-real"],
+    ["cmd-real", "cmd-real-command-output"],
   );
 });
 

@@ -1315,6 +1315,8 @@ function isLegacyOrphanCommandOutputPlaceholder(item: ThreadItem) {
     item.cwd === "cwd pending" &&
     isRunningCommandExecutionStatus(item.status) &&
     !item.processId &&
+    item.initialWaitMs == null &&
+    item.notifyOn == null &&
     item.exitCode === null &&
     item.durationMs === null
   );
