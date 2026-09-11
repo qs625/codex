@@ -1015,6 +1015,26 @@ test("renders live active command current state as a transient conversation tail
   );
 });
 
+test("does not render legacy orphan command output placeholder as active tail", () => {
+  const thread = normalizeThreadSnapshot({
+    ...makeThread([]),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "cmd-orphan",
+        command: "Command output",
+        cwd: "cwd pending",
+        status: "inProgress",
+        aggregatedOutput: "late output\n",
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread);
+
+  assert.deepEqual(buildConversationEntries(thread), []);
+});
+
 test("active command tail reuse follows active item ids after previous state changes", () => {
   const activeCommand = (
     id: string,

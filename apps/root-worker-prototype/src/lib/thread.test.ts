@@ -5081,6 +5081,49 @@ test("mergeThreadSnapshot clears stale active command state when snapshot has no
   );
 });
 
+test("normalizeThreadSnapshot drops legacy orphan command output placeholders", () => {
+  const legacyPlaceholder: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-orphan",
+    command: "Command output",
+    cwd: "cwd pending",
+    status: "inProgress",
+    aggregatedOutput: "late output\n",
+    exitCode: null,
+    durationMs: null,
+  };
+  const realCommand: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-real",
+    command: "pnpm test",
+    cwd: "/repo",
+    processId: "process-real",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+
+  const normalized = normalizeThreadSnapshot({
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-1", [legacyPlaceholder, realCommand]),
+      makeTurn("active-commands", [legacyPlaceholder, realCommand]),
+    ],
+    activeCommandItems: [legacyPlaceholder, realCommand],
+  });
+
+  assert.deepEqual(normalized.turns.map((turn) => turn.id), ["turn-1"]);
+  assert.deepEqual(normalized.turns[0]?.items, [realCommand]);
+  assert.deepEqual(normalized.activeCommandItems, [realCommand]);
+  assert.deepEqual(
+    buildConversationEntries(normalized).map((entry) => entry.id),
+    ["cmd-real"],
+  );
+});
+
 test("mergeThreadSnapshot preserves live active command items from thread read", () => {
   const commandStart: ThreadItem = {
     type: "commandExecution",

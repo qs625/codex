@@ -1306,6 +1306,24 @@ function isRunningCommandExecutionStatus(status: string) {
   return normalized === "running" || normalized === "inprogress";
 }
 
+function isLegacyOrphanCommandOutputPlaceholder(item: ThreadItem) {
+  if (item.type !== "commandExecution") {
+    return false;
+  }
+  return (
+    item.command === "Command output" &&
+    item.cwd === "cwd pending" &&
+    isRunningCommandExecutionStatus(item.status) &&
+    !item.processId &&
+    item.exitCode === null &&
+    item.durationMs === null
+  );
+}
+
+function dropLegacyOrphanCommandOutputPlaceholders(items: ThreadItem[]) {
+  return items.filter((item) => !isLegacyOrphanCommandOutputPlaceholder(item));
+}
+
 export function mergeTurn(existing: Turn, next: Turn): Turn {
   const existingItems = existing.items.map(normalizeThreadItemSnapshot);
   const nextItems = next.items.map(normalizeThreadItemSnapshot);
@@ -1517,7 +1535,9 @@ export function preserveTerminalLifecycleStatus(
 
 export function normalizeThreadSnapshot(thread: Thread): Thread {
   const activeSubscriptionItems = [...(thread.activeSubscriptionItems ?? [])];
-  const activeCommandItems = [...(thread.activeCommandItems ?? [])];
+  let activeCommandItems = dropLegacyOrphanCommandOutputPlaceholders([
+    ...(thread.activeCommandItems ?? []),
+  ]);
   const turns = thread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
     if (isActiveSubscriptionsTurn(turn)) {
       activeSubscriptionItems.splice(
@@ -1528,7 +1548,11 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
       return normalizedTurns;
     }
     if (isActiveCommandsTurn(turn)) {
-      activeCommandItems.splice(0, activeCommandItems.length, ...turn.items);
+      activeCommandItems.splice(
+        0,
+        activeCommandItems.length,
+        ...dropLegacyOrphanCommandOutputPlaceholders(turn.items),
+      );
       return normalizedTurns;
     }
 
@@ -1614,8 +1638,11 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
   const latestActiveCommandTurn = thread.turns
     .filter(isActiveCommandsTurn)
     .at(-1);
-  const activeCommandItems =
+  const rawActiveCommandItems =
     latestActiveCommandTurn?.items ?? thread.activeCommandItems;
+  const activeCommandItems = rawActiveCommandItems
+    ? dropLegacyOrphanCommandOutputPlaceholders(rawActiveCommandItems)
+    : rawActiveCommandItems;
   const postCompactTurns = thread.turns.slice(latestCompact.turnIndex);
   const turns = postCompactTurns
     .map((turn, index) => {
@@ -1680,6 +1707,9 @@ function findLatestCompactItemPosition(turns: Turn[]) {
 function normalizeTurnSnapshot(turn: Turn): Turn {
   const items = turn.items.reduce<ThreadItem[]>((normalizedItems, item) => {
     const normalizedItem = normalizeThreadItemSnapshot(item);
+    if (isLegacyOrphanCommandOutputPlaceholder(normalizedItem)) {
+      return normalizedItems;
+    }
     const existingIndex = normalizedItems.findIndex(
       (item) =>
         item.id === normalizedItem.id ||
