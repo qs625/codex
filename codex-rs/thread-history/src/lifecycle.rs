@@ -7,6 +7,8 @@ use app_server_protocol::TurnError as V2TurnError;
 use app_server_protocol::TurnStatus;
 use app_server_protocol::context_compaction_replacement_item_from_core;
 use protocol::items::context_compaction_replacement_items_from_response_items;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
 use protocol::protocol::ContextCompactedEvent;
 use protocol::protocol::ErrorEvent;
@@ -19,7 +21,52 @@ use protocol::protocol::TurnContextItem;
 use protocol::protocol::TurnStartedEvent;
 
 impl ThreadHistoryBuilder {
+    pub(super) fn handle_response_item(&mut self, payload: &ResponseItem) {
+        if !is_checkpoint_compaction_prompt(payload) {
+            return;
+        }
+
+        self.pending_checkpoint_compaction = Some(super::PendingCheckpointCompaction {
+            rollout_index: self.current_rollout_index,
+            turn_id: self.current_turn.as_ref().map(|turn| turn.id.clone()),
+        });
+    }
+
+    pub(super) fn apply_pending_checkpoint_compaction(&mut self) {
+        let Some(pending) = self.pending_checkpoint_compaction.take() else {
+            return;
+        };
+        if let Some(pending_turn_id) = pending.turn_id.as_deref()
+            && !self
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.id == pending_turn_id)
+        {
+            self.pending_checkpoint_compaction = Some(pending);
+            return;
+        }
+
+        self.latest_compaction_index = Some(pending.rollout_index);
+        let turn = self.ensure_turn();
+        turn.saw_compaction = true;
+        if turn
+            .items
+            .iter()
+            .any(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+        {
+            return;
+        }
+        let id = self.next_item_id();
+        self.ensure_turn()
+            .items
+            .push(ThreadItem::ContextCompaction {
+                id,
+                replacement_history: Vec::new(),
+            });
+    }
+
     pub(super) fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
+        self.pending_checkpoint_compaction = None;
         if self.ensure_turn().items.iter().any(|item| {
             matches!(
                 item,
@@ -149,6 +196,7 @@ impl ThreadHistoryBuilder {
             turn.status = TurnStatus::InProgress;
             turn.started_at = payload.started_at;
             turn.opened_explicitly = true;
+            self.bind_pending_checkpoint_compaction_to_turn(&payload.turn_id);
             return;
         }
 
@@ -159,6 +207,7 @@ impl ThreadHistoryBuilder {
                 .with_started_at(payload.started_at)
                 .opened_explicitly(),
         );
+        self.bind_pending_checkpoint_compaction_to_turn(&payload.turn_id);
     }
 
     pub(super) fn handle_turn_context(&mut self, payload: &TurnContextItem) {
@@ -175,6 +224,7 @@ impl ThreadHistoryBuilder {
             .as_ref()
             .is_some_and(|turn| turn.id == *turn_id)
         {
+            self.bind_pending_checkpoint_compaction_to_turn(turn_id);
             return;
         }
 
@@ -184,11 +234,21 @@ impl ThreadHistoryBuilder {
         {
             turn.id = turn_id.clone();
             turn.rollout_start_index = self.current_rollout_index;
+            self.bind_pending_checkpoint_compaction_to_turn(turn_id);
             return;
         }
 
         self.finish_current_turn();
         self.current_turn = Some(self.new_turn(Some(turn_id.clone())));
+        self.bind_pending_checkpoint_compaction_to_turn(turn_id);
+    }
+
+    fn bind_pending_checkpoint_compaction_to_turn(&mut self, turn_id: &str) {
+        if let Some(pending) = self.pending_checkpoint_compaction.as_mut()
+            && pending.turn_id.is_none()
+        {
+            pending.turn_id = Some(turn_id.to_string());
+        }
     }
 
     pub(super) fn handle_turn_complete(&mut self, payload: &TurnCompleteEvent) {
@@ -230,6 +290,7 @@ impl ThreadHistoryBuilder {
     }
 
     pub(super) fn handle_compacted(&mut self, payload: &CompactedItem) {
+        self.pending_checkpoint_compaction = None;
         let replacement_history = payload
             .replacement_history
             .as_ref()
@@ -285,4 +346,19 @@ impl ThreadHistoryBuilder {
         let item_count: usize = self.turns.iter().map(|t| t.items.len()).sum();
         self.next_item_index = i64::try_from(item_count.saturating_add(1)).unwrap_or(i64::MAX);
     }
+}
+
+fn is_checkpoint_compaction_prompt(item: &ResponseItem) -> bool {
+    let ResponseItem::Message { role, content, .. } = item else {
+        return false;
+    };
+    if role != "developer" {
+        return false;
+    }
+    content.iter().any(|content| match content {
+        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+            text.contains("CONTEXT CHECKPOINT COMPACTION")
+        }
+        _ => false,
+    })
 }

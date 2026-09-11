@@ -73,6 +73,20 @@ impl ThreadHistoryBuilder {
             return;
         }
 
+        if let Some(turn) = self.current_turn.as_ref()
+            && self
+                .pending_checkpoint_compaction
+                .as_ref()
+                .is_some_and(|pending| {
+                    pending
+                        .turn_id
+                        .as_deref()
+                        .is_none_or(|turn_id| turn_id == turn.id)
+                })
+        {
+            self.apply_pending_checkpoint_compaction();
+        }
+
         let id = self.next_item_id();
         self.ensure_turn().items.push(assistant_message_thread_item(
             id,

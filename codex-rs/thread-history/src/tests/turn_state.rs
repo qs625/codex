@@ -304,6 +304,218 @@ use super::*;
     }
 
     #[test]
+    fn checkpoint_compaction_prompt_marks_boundary_without_hiding_summary() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-before".into(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "previous visible answer".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-before".into(),
+                last_agent_message: Some("previous visible answer".into()),
+                completed_at: Some(2),
+                duration_ms: Some(1000),
+                time_to_first_token_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: Some(3),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".into(),
+                content: vec![ContentItem::InputText {
+                    text: "你正在为 my-codex 项目执行 CONTEXT CHECKPOINT COMPACTION。".into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "## Current Goal\n\n- compact summary".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-compact".into(),
+                last_agent_message: Some("## Current Goal\n\n- compact summary".into()),
+                completed_at: Some(4),
+                duration_ms: Some(1000),
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(
+            turns[1].items,
+            vec![
+                ThreadItem::ContextCompaction {
+                    id: "item-2".into(),
+                    replacement_history: Vec::new(),
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-3".into(),
+                    text: "## Current Goal\n\n- compact summary".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn checkpoint_compaction_prompt_before_turn_start_uses_summary_turn_boundary() {
+        let items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".into(),
+                content: vec![ContentItem::InputText {
+                    text: "CONTEXT CHECKPOINT COMPACTION".into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: Some(3),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "compact summary".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-compact");
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::ContextCompaction {
+                    id: "item-1".into(),
+                    replacement_history: Vec::new(),
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".into(),
+                    text: "compact summary".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn checkpoint_compaction_prompt_without_summary_does_not_mark_boundary() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: Some(3),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".into(),
+                content: vec![ContentItem::InputText {
+                    text: "CONTEXT CHECKPOINT COMPACTION".into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-compact".into(),
+                last_agent_message: None,
+                completed_at: Some(4),
+                duration_ms: Some(1000),
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-compact");
+        assert!(turns[0]
+            .items
+            .iter()
+            .all(|item| !matches!(item, ThreadItem::ContextCompaction { .. })));
+    }
+
+    #[test]
+    fn checkpoint_compaction_summary_boundary_accepts_later_replacement_history() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: Some(3),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".into(),
+                content: vec![ContentItem::InputText {
+                    text: "CONTEXT CHECKPOINT COMPACTION".into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "compact summary".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".into(),
+                replacement_history: Some(vec![ResponseItem::Message {
+                    id: None,
+                    role: "user".into(),
+                    content: vec![ContentItem::InputText {
+                        text: "recent request".into(),
+                    }],
+                    phase: None,
+                }]),
+                visible_replacement_history_len: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::ContextCompaction {
+                    id: "item-1".into(),
+                    replacement_history: vec![ContextCompactionReplacementItem::UserMessage {
+                        id: "replacement-0".into(),
+                        content: vec![UserInput::Text {
+                            text: "recent request".into(),
+                            text_elements: Vec::new(),
+                        }],
+                    }],
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".into(),
+                    text: "compact summary".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn preserves_compaction_replacement_history() {
         let replacement_history = vec![
             ResponseItem::Message {

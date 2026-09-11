@@ -14,14 +14,19 @@ mod turn_helpers;
 mod collab;
 mod compat_items;
 mod lifecycle;
-mod tool_events;
 mod support;
 #[cfg(test)]
 mod tests;
+mod tool_events;
 
 use pending_turn::PendingTurn;
 use pending_turn::upsert_turn_item;
 use support::PendingAgentMessageResponse;
+
+struct PendingCheckpointCompaction {
+    rollout_index: usize,
+    turn_id: Option<String>,
+}
 
 pub use compat_items::build_item_from_guardian_event;
 
@@ -66,6 +71,7 @@ pub struct ThreadHistoryBuilder {
     next_rollout_index: usize,
     pending_agent_message_responses: Vec<PendingAgentMessageResponse>,
     latest_compaction_index: Option<usize>,
+    pending_checkpoint_compaction: Option<PendingCheckpointCompaction>,
     schedule_activities: HashMap<String, ScheduleSubscriptionActivity>,
     command_activities: HashMap<String, CommandExecutionActivity>,
 }
@@ -86,6 +92,7 @@ impl ThreadHistoryBuilder {
             next_rollout_index: 0,
             pending_agent_message_responses: Vec::new(),
             latest_compaction_index: None,
+            pending_checkpoint_compaction: None,
             schedule_activities: HashMap::new(),
             command_activities: HashMap::new(),
         }
@@ -252,7 +259,7 @@ impl ThreadHistoryBuilder {
                 self.latest_compaction_index = Some(self.current_rollout_index);
                 self.handle_compacted(payload);
             }
-            RolloutItem::ResponseItem(_) => {}
+            RolloutItem::ResponseItem(payload) => self.handle_response_item(payload),
             RolloutItem::TurnContext(payload) => self.handle_turn_context(payload),
             RolloutItem::SessionMeta(payload) => self.handle_session_meta(payload),
         }

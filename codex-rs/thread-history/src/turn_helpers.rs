@@ -13,6 +13,18 @@ impl ThreadHistoryBuilder {
     pub(super) fn finish_current_turn(&mut self) {
         self.pending_agent_message_responses.clear();
         if let Some(turn) = self.current_turn.take() {
+            if self
+                .pending_checkpoint_compaction
+                .as_ref()
+                .is_some_and(|pending| {
+                    pending
+                        .turn_id
+                        .as_deref()
+                        .is_none_or(|turn_id| turn_id == turn.id)
+                })
+            {
+                self.pending_checkpoint_compaction = None;
+            }
             if turn.items.is_empty() && !turn.opened_explicitly && !turn.saw_compaction {
                 return;
             }
