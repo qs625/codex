@@ -22,6 +22,16 @@ use protocol::protocol::TurnStartedEvent;
 
 impl ThreadHistoryBuilder {
     pub(super) fn handle_response_item(&mut self, payload: &ResponseItem) {
+        if self
+            .pending_compact_summary_echo
+            .as_ref()
+            .is_some_and(|summary| summary == payload)
+        {
+            self.pending_compact_summary_echo = None;
+            return;
+        }
+        self.pending_compact_summary_echo = None;
+
         if !is_checkpoint_compaction_prompt(payload) {
             return;
         }
@@ -291,6 +301,7 @@ impl ThreadHistoryBuilder {
 
     pub(super) fn handle_compacted(&mut self, payload: &CompactedItem) {
         self.pending_checkpoint_compaction = None;
+        self.pending_compact_summary_echo = compact_summary_response_item(payload);
         let replacement_history = payload
             .replacement_history
             .as_ref()
@@ -302,9 +313,9 @@ impl ThreadHistoryBuilder {
                 context_compaction_replacement_items_from_response_items(
                     history[..visible_len].to_vec(),
                 )
-                    .into_iter()
-                    .map(context_compaction_replacement_item_from_core)
-                    .collect()
+                .into_iter()
+                .map(context_compaction_replacement_item_from_core)
+                .collect()
             })
             .unwrap_or_default();
         {
@@ -346,6 +357,13 @@ impl ThreadHistoryBuilder {
         let item_count: usize = self.turns.iter().map(|t| t.items.len()).sum();
         self.next_item_index = i64::try_from(item_count.saturating_add(1)).unwrap_or(i64::MAX);
     }
+}
+
+fn compact_summary_response_item(compacted: &CompactedItem) -> Option<ResponseItem> {
+    if compacted.message.trim().is_empty() {
+        return None;
+    }
+    Some(compacted.clone().into())
 }
 
 fn is_checkpoint_compaction_prompt(item: &ResponseItem) -> bool {

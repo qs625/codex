@@ -6,6 +6,7 @@ use codex_context_manager::collect_compaction_user_messages;
 use codex_context_manager::is_user_turn_boundary;
 use codex_utils_output_truncation::TruncationPolicy;
 use protocol::models::ResponseItem;
+use protocol::protocol::CompactedItem;
 use protocol::protocol::EventMsg;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::TurnContextItem;
@@ -277,9 +278,25 @@ pub fn reconstruct_history_from_rollout(
     // Materialize exact history semantics from the replay-derived suffix. The
     // eventual lazy design should keep this same replay shape, but drive it from
     // a resumable reverse source instead of an eagerly loaded `&[RolloutItem]`.
+    let mut skip_compact_summary_echo = base_replacement_history.and_then(|_| {
+        rollout_items
+            .get(rollout_items.len().saturating_sub(rollout_suffix.len() + 1))
+            .and_then(|item| match item {
+                RolloutItem::Compacted(compacted) => compact_summary_response_item(compacted),
+                _ => None,
+            })
+    });
     for item in rollout_suffix {
         match item {
             RolloutItem::ResponseItem(response_item) => {
+                if skip_compact_summary_echo
+                    .as_ref()
+                    .is_some_and(|summary| summary == response_item)
+                {
+                    skip_compact_summary_echo = None;
+                    continue;
+                }
+                skip_compact_summary_echo = None;
                 history.record_items(std::iter::once(response_item), options.truncation_policy);
             }
             RolloutItem::Compacted(compacted) => {
@@ -287,6 +304,7 @@ pub fn reconstruct_history_from_rollout(
                     // This should never happen, because the reverse loop above
                     // should stop before any compaction with replacement history.
                     history.replace(replacement_history.clone());
+                    skip_compact_summary_echo = compact_summary_response_item(compacted);
                 } else {
                     saw_legacy_compaction_without_replacement_history = true;
                     // Legacy rollouts without `replacement_history` should
@@ -303,14 +321,18 @@ pub fn reconstruct_history_from_rollout(
                     let rebuilt =
                         build_compacted_history(Vec::new(), &user_messages, &compacted.message);
                     history.replace(rebuilt);
+                    skip_compact_summary_echo = compact_summary_response_item(compacted);
                 }
             }
             RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback)) => {
+                skip_compact_summary_echo = None;
                 history.drop_last_n_user_turns(rollback.num_turns);
             }
             RolloutItem::EventMsg(_)
             | RolloutItem::TurnContext(_)
-            | RolloutItem::SessionMeta(_) => {}
+            | RolloutItem::SessionMeta(_) => {
+                skip_compact_summary_echo = None;
+            }
         }
     }
 
@@ -331,6 +353,13 @@ pub fn reconstruct_history_from_rollout(
         previous_turn_settings,
         reference_context_item,
     }
+}
+
+fn compact_summary_response_item(compacted: &CompactedItem) -> Option<ResponseItem> {
+    if compacted.message.trim().is_empty() {
+        return None;
+    }
+    Some(compacted.clone().into())
 }
 
 #[cfg(test)]

@@ -283,7 +283,7 @@ fn replacement_history_checkpoint_seeds_replay_suffix() {
         RolloutItem::Compacted(CompactedItem {
             message: "summary".to_string(),
             replacement_history: Some(vec![replacement_user.clone()]),
-                visible_replacement_history_len: None,
+            visible_replacement_history_len: None,
         }),
         RolloutItem::ResponseItem(suffix_assistant.clone()),
         turn_complete("turn-1"),
@@ -303,6 +303,53 @@ fn replacement_history_checkpoint_seeds_replay_suffix() {
         })
     );
     assert!(reconstructed.reference_context_item.is_none());
+}
+
+#[test]
+fn replacement_history_checkpoint_skips_persisted_summary_echo() {
+    let replacement_summary = assistant_message("summary");
+    let suffix_assistant = assistant_message("suffix assistant");
+    let rollout_items = vec![
+        turn_started("turn-1"),
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".to_string(),
+            replacement_history: Some(vec![replacement_summary.clone()]),
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::ResponseItem(replacement_summary.clone()),
+        RolloutItem::ResponseItem(suffix_assistant.clone()),
+        turn_complete("turn-1"),
+    ];
+
+    let reconstructed = reconstruct_history_from_rollout(&rollout_items, options());
+
+    assert_eq!(
+        reconstructed.history,
+        vec![replacement_summary, suffix_assistant]
+    );
+}
+
+#[test]
+fn replacement_history_checkpoint_only_skips_immediate_summary_echo() {
+    let replacement_summary = assistant_message("summary");
+    let rollout_items = vec![
+        turn_started("turn-1"),
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".to_string(),
+            replacement_history: Some(vec![replacement_summary.clone()]),
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::TurnContext(turn_context_item("turn-1", "model-1")),
+        RolloutItem::ResponseItem(replacement_summary.clone()),
+        turn_complete("turn-1"),
+    ];
+
+    let reconstructed = reconstruct_history_from_rollout(&rollout_items, options());
+
+    assert_eq!(
+        reconstructed.history,
+        vec![replacement_summary.clone(), replacement_summary]
+    );
 }
 
 #[test]
@@ -328,7 +375,7 @@ fn legacy_compaction_without_replacement_history_filters_context_and_warning_mes
         RolloutItem::Compacted(CompactedItem {
             message: "legacy summary".to_string(),
             replacement_history: None,
-                visible_replacement_history_len: None,
+            visible_replacement_history_len: None,
         }),
     ];
 
@@ -345,6 +392,31 @@ fn legacy_compaction_without_replacement_history_filters_context_and_warning_mes
 }
 
 #[test]
+fn legacy_compaction_without_replacement_history_skips_persisted_summary_echo() {
+    let rollout_items = vec![
+        RolloutItem::ResponseItem(user_message("real user message")),
+        RolloutItem::Compacted(CompactedItem {
+            message: "legacy summary".to_string(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::ResponseItem(assistant_message("legacy summary")),
+        RolloutItem::ResponseItem(assistant_message("suffix assistant")),
+    ];
+
+    let reconstructed = reconstruct_history_from_rollout(&rollout_items, options());
+
+    assert_eq!(
+        reconstructed.history,
+        vec![
+            user_message("real user message"),
+            user_message("legacy summary"),
+            assistant_message("suffix assistant"),
+        ]
+    );
+}
+
+#[test]
 fn legacy_compaction_without_replacement_history_clears_later_reference_context_item() {
     let current_context_item = turn_context_item("current-turn", "model-1");
     let rollout_items = vec![
@@ -352,7 +424,7 @@ fn legacy_compaction_without_replacement_history_clears_later_reference_context_
         RolloutItem::Compacted(CompactedItem {
             message: "legacy summary".to_string(),
             replacement_history: None,
-                visible_replacement_history_len: None,
+            visible_replacement_history_len: None,
         }),
         turn_started("current-turn"),
         user_event("after legacy compact"),

@@ -42,19 +42,7 @@ use app_server_protocol::CommandExecParams;
 use app_server_protocol::CommandExecResizeParams;
 use app_server_protocol::CommandExecTerminateParams;
 use app_server_protocol::CommandExecWriteParams;
-use app_server_protocol::TerminalSessionDescriptor;
-use app_server_protocol::TerminalSessionListParams;
-use app_server_protocol::TerminalSessionListResponse;
-use app_server_protocol::TerminalSessionOrigin;
-use app_server_protocol::TerminalSessionResizeResponse;
-use app_server_protocol::TerminalSessionRef;
-use app_server_protocol::TerminalSessionResizeParams;
-use app_server_protocol::TerminalSessionTerminateResponse;
-use app_server_protocol::TerminalSessionTerminateParams;
-use app_server_protocol::TerminalSessionWriteResponse;
-use app_server_protocol::TerminalSessionWriteParams;
 use app_server_protocol::ConfigWarningNotification;
-use base64::Engine as _;
 use app_server_protocol::DeprecationNoticeNotification;
 use app_server_protocol::DynamicToolSpec as ApiDynamicToolSpec;
 use app_server_protocol::EnvironmentAddParams;
@@ -153,6 +141,17 @@ use app_server_protocol::SkillsConfigWriteResponse;
 use app_server_protocol::SkillsListParams;
 use app_server_protocol::SkillsListResponse;
 use app_server_protocol::SortDirection;
+use app_server_protocol::TerminalSessionDescriptor;
+use app_server_protocol::TerminalSessionListParams;
+use app_server_protocol::TerminalSessionListResponse;
+use app_server_protocol::TerminalSessionOrigin;
+use app_server_protocol::TerminalSessionRef;
+use app_server_protocol::TerminalSessionResizeParams;
+use app_server_protocol::TerminalSessionResizeResponse;
+use app_server_protocol::TerminalSessionTerminateParams;
+use app_server_protocol::TerminalSessionTerminateResponse;
+use app_server_protocol::TerminalSessionWriteParams;
+use app_server_protocol::TerminalSessionWriteResponse;
 use app_server_protocol::Thread;
 use app_server_protocol::ThreadApproveGuardianDeniedActionParams;
 use app_server_protocol::ThreadApproveGuardianDeniedActionResponse;
@@ -161,6 +160,8 @@ use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadArchivedNotification;
 use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use app_server_protocol::ThreadBackgroundTerminalsCleanResponse;
+use app_server_protocol::ThreadClientRecoveryRecordParams;
+use app_server_protocol::ThreadClientRecoveryRecordResponse;
 use app_server_protocol::ThreadClosedNotification;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadCompactStartResponse;
@@ -181,8 +182,6 @@ use app_server_protocol::ThreadIncrementElicitationParams;
 use app_server_protocol::ThreadIncrementElicitationResponse;
 use app_server_protocol::ThreadInjectItemsParams;
 use app_server_protocol::ThreadInjectItemsResponse;
-use app_server_protocol::ThreadClientRecoveryRecordParams;
-use app_server_protocol::ThreadClientRecoveryRecordResponse;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListCwdFilter;
@@ -255,6 +254,7 @@ use app_server_protocol::WindowsSandboxSetupCompletedNotification;
 use app_server_protocol::WindowsSandboxSetupMode;
 use app_server_protocol::WindowsSandboxSetupStartParams;
 use app_server_protocol::WindowsSandboxSetupStartResponse;
+use base64::Engine as _;
 use chrono::Duration as ChronoDuration;
 use chrono::SecondsFormat;
 use codex_analytics::AnalyticsEventsClient;
@@ -632,6 +632,8 @@ mod build_api_turns_from_rollout_items_tests {
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::models::ContentItem;
+    use protocol::models::ResponseItem;
     use protocol::parse_command::ParsedCommand;
     use protocol::protocol::EventMsg;
     use protocol::protocol::ExecCommandBeginEvent;
@@ -758,6 +760,46 @@ mod build_api_turns_from_rollout_items_tests {
                 replacement_history,
                 ..
             } if !replacement_history.is_empty()
+        ));
+    }
+
+    #[test]
+    fn compact_summary_response_item_is_not_displayed_twice() {
+        let turns = build_api_turns_from_rollout_items(&[
+            RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(vec![ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "summary".to_string(),
+                    }],
+                    phase: None,
+                }]),
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "summary".to_string(),
+                }],
+                phase: None,
+            }),
+        ]);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history,
+                ..
+            } if replacement_history.iter().any(|item| matches!(
+                item,
+                ContextCompactionReplacementItem::AgentMessage { text, .. }
+                    if text == "summary"
+            ))
         ));
     }
 

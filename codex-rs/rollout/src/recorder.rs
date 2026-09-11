@@ -50,6 +50,7 @@ use crate::state_db::StateDbHandle;
 use codex_git_info::collect_git_info;
 use codex_git_info::get_git_repo_root;
 use codex_utils_path as path_utils;
+use protocol::protocol::CompactedItem;
 use protocol::protocol::GitInfo as ProtocolGitInfo;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::ResumedHistory;
@@ -1388,6 +1389,7 @@ struct SegmentChain {
 struct PendingSegment {
     path: PathBuf,
     compact_written: bool,
+    summary_written: bool,
 }
 
 impl SegmentChain {
@@ -1793,6 +1795,7 @@ impl RolloutWriterState {
         self.pending_segment = Some(PendingSegment {
             path: next_path,
             compact_written: false,
+            summary_written: false,
         });
         Ok(())
     }
@@ -1801,7 +1804,7 @@ impl RolloutWriterState {
         let Some(pending_segment) = self.pending_segment.as_ref() else {
             return Ok(());
         };
-        if !pending_segment.compact_written {
+        if !pending_segment.compact_written || !pending_segment.summary_written {
             return Ok(());
         }
         let path = pending_segment.path.clone();
@@ -1835,7 +1838,11 @@ impl RolloutWriterState {
         let mut write_result = Ok(());
         while written_count < self.pending_items.len() {
             let item = self.pending_items[written_count].clone();
-            let item_starts_segment = matches!(item, RolloutItem::Compacted(_));
+            let compacted_item = match &item {
+                RolloutItem::Compacted(compacted) => Some(compacted.clone()),
+                _ => None,
+            };
+            let item_starts_segment = compacted_item.is_some();
             if item_starts_segment {
                 // A compact segment is not published as the durable head until every
                 // following item in the same append batch has been written. If another
@@ -1850,23 +1857,38 @@ impl RolloutWriterState {
             let Some(writer) = self.writer.as_mut() else {
                 return Err(IoError::other("rollout writer is not open"));
             };
-            if !(item_starts_segment
+            let compact_already_written = item_starts_segment
                 && self
                     .pending_segment
                     .as_ref()
-                    .is_some_and(|segment| segment.compact_written))
-            {
+                    .is_some_and(|segment| segment.compact_written);
+            if !compact_already_written {
                 if let Err(err) = writer.write_rollout_item(&item).await {
                     write_result = Err(err);
                     break;
                 }
-            }
-            written_count += 1;
-            if item_starts_segment {
-                if let Some(segment) = self.pending_segment.as_mut() {
+                if item_starts_segment && let Some(segment) = self.pending_segment.as_mut() {
                     segment.compact_written = true;
                 }
             }
+            if let Some(compacted) = compacted_item {
+                if let Some(summary_item) = compact_summary_response_item(&compacted) {
+                    let summary_already_written = self
+                        .pending_segment
+                        .as_ref()
+                        .is_some_and(|segment| segment.summary_written);
+                    if !summary_already_written {
+                        if let Err(err) = writer.write_rollout_item(&summary_item).await {
+                            write_result = Err(err);
+                            break;
+                        }
+                    }
+                }
+                if let Some(segment) = self.pending_segment.as_mut() {
+                    segment.summary_written = true;
+                }
+            }
+            written_count += 1;
         }
 
         if written_count > 0 {
@@ -1879,6 +1901,13 @@ impl RolloutWriterState {
 
         write_result
     }
+}
+
+fn compact_summary_response_item(compacted: &CompactedItem) -> Option<RolloutItem> {
+    if compacted.message.trim().is_empty() {
+        return None;
+    }
+    Some(RolloutItem::ResponseItem(compacted.clone().into()))
 }
 
 async fn rollout_writer(

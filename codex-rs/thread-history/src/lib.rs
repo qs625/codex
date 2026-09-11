@@ -2,22 +2,23 @@ use app_server_protocol::ProjectedEventItem;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::Turn;
 use app_server_protocol::project_event_msg_item;
+use protocol::models::ResponseItem;
 use protocol::protocol::EventMsg;
 use protocol::protocol::ExecCommandSource;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionMetaLine;
 use std::collections::HashMap;
 
-mod pending_turn;
 mod basic_events;
-mod turn_helpers;
 mod collab;
 mod compat_items;
 mod lifecycle;
+mod pending_turn;
 mod support;
 #[cfg(test)]
 mod tests;
 mod tool_events;
+mod turn_helpers;
 
 use pending_turn::PendingTurn;
 use pending_turn::upsert_turn_item;
@@ -33,9 +34,9 @@ pub use compat_items::build_item_from_guardian_event;
 #[cfg(test)]
 use app_server_protocol::CommandAction;
 #[cfg(test)]
-use app_server_protocol::FileUpdateChange;
-#[cfg(test)]
 use app_server_protocol::DynamicToolCallOutputContentItem;
+#[cfg(test)]
+use app_server_protocol::FileUpdateChange;
 #[cfg(test)]
 use app_server_protocol::PatchApplyStatus;
 #[cfg(test)]
@@ -72,6 +73,7 @@ pub struct ThreadHistoryBuilder {
     pending_agent_message_responses: Vec<PendingAgentMessageResponse>,
     latest_compaction_index: Option<usize>,
     pending_checkpoint_compaction: Option<PendingCheckpointCompaction>,
+    pending_compact_summary_echo: Option<ResponseItem>,
     schedule_activities: HashMap<String, ScheduleSubscriptionActivity>,
     command_activities: HashMap<String, CommandExecutionActivity>,
 }
@@ -93,6 +95,7 @@ impl ThreadHistoryBuilder {
             pending_agent_message_responses: Vec::new(),
             latest_compaction_index: None,
             pending_checkpoint_compaction: None,
+            pending_compact_summary_echo: None,
             schedule_activities: HashMap::new(),
             command_activities: HashMap::new(),
         }
@@ -252,6 +255,7 @@ impl ThreadHistoryBuilder {
         self.next_rollout_index += 1;
         match item {
             RolloutItem::EventMsg(event) => {
+                self.pending_compact_summary_echo = None;
                 self.handle_event(event);
                 self.record_schedule_subscription_event(event);
             }
@@ -260,8 +264,14 @@ impl ThreadHistoryBuilder {
                 self.handle_compacted(payload);
             }
             RolloutItem::ResponseItem(payload) => self.handle_response_item(payload),
-            RolloutItem::TurnContext(payload) => self.handle_turn_context(payload),
-            RolloutItem::SessionMeta(payload) => self.handle_session_meta(payload),
+            RolloutItem::TurnContext(payload) => {
+                self.pending_compact_summary_echo = None;
+                self.handle_turn_context(payload);
+            }
+            RolloutItem::SessionMeta(payload) => {
+                self.pending_compact_summary_echo = None;
+                self.handle_session_meta(payload);
+            }
         }
     }
 

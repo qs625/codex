@@ -623,6 +623,23 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
         head_items.first(),
         Some(RolloutItem::SessionMeta(_))
     ));
+    assert!(matches!(
+        head_items.get(1),
+        Some(RolloutItem::Compacted(compacted)) if compacted.message == "compacted checkpoint"
+    ));
+    assert!(matches!(
+        head_items.get(2),
+        Some(RolloutItem::ResponseItem(ResponseItem::Message {
+            role,
+            content,
+            ..
+        })) if role == "assistant"
+            && content.iter().any(|item| matches!(
+                item,
+                protocol::models::ContentItem::OutputText { text }
+                    if text == "compacted checkpoint"
+            ))
+    ));
     assert!(
         head_items
             .iter()
@@ -632,12 +649,27 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
         .iter()
         .position(|item| matches!(item, RolloutItem::Compacted(_)))
         .expect("compacted checkpoint");
+    let turn_context_index = head_items
+        .iter()
+        .position(|item| {
+            matches!(
+                item,
+                RolloutItem::TurnContext(item)
+                    if item.turn_id.as_deref() == Some("compact-turn")
+                        && item.user_instructions.as_deref() == Some("fresh instructions")
+            )
+        })
+        .expect("compact turn context");
     assert!(matches!(
-        head_items.get(compact_index + 1),
+        head_items.get(turn_context_index),
         Some(RolloutItem::TurnContext(item))
             if item.turn_id.as_deref() == Some("compact-turn")
                 && item.user_instructions.as_deref() == Some("fresh instructions")
     ));
+    assert!(
+        turn_context_index > compact_index,
+        "compact TurnContext should stay in the compact head suffix"
+    );
     assert!(
         !std::fs::read_to_string(&head_path)?.contains("before compact"),
         "head segment should not contain pre-compact events"
@@ -749,6 +781,7 @@ async fn compact_segment_is_not_published_before_following_checkpoint_items() ->
         .file
         .flush()
         .await?;
+    state.finalize_pending_segment_after_compaction().await?;
 
     assert_eq!(
         current_rollout_path
@@ -761,8 +794,48 @@ async fn compact_segment_is_not_published_before_following_checkpoint_items() ->
     assert_eq!(
         resolve_current_segment_path(&initial_path).await?,
         initial_path,
-        "a crash before TurnContext must leave reload on the pre-compact head"
+        "a crash before the summary echo must leave reload on the pre-compact head"
     );
+
+    state.add_items(vec![
+        compacted_item,
+        RolloutItem::TurnContext(compact_turn_context_item("retry-turn")),
+    ]);
+    state.write_pending_items_once().await?;
+
+    let head_path = current_rollout_path
+        .lock()
+        .expect("current rollout path lock")
+        .clone();
+    assert_ne!(head_path, initial_path);
+    assert_eq!(resolve_current_segment_path(&initial_path).await?, head_path);
+
+    let (head_items, _, _) = RolloutRecorder::load_rollout_items(&head_path).await?;
+    let compact_count = head_items
+        .iter()
+        .filter(|item| matches!(item, RolloutItem::Compacted(_)))
+        .count();
+    assert_eq!(
+        compact_count, 1,
+        "retry must not duplicate an already-written compact checkpoint"
+    );
+    assert!(matches!(
+        head_items.get(2),
+        Some(RolloutItem::ResponseItem(ResponseItem::Message {
+            role,
+            content,
+            ..
+        })) if role == "assistant"
+            && content.iter().any(|item| matches!(
+                item,
+                protocol::models::ContentItem::OutputText { text }
+                    if text == "interrupted compact checkpoint"
+            ))
+    ));
+    assert!(matches!(
+        head_items.last(),
+        Some(RolloutItem::TurnContext(item)) if item.turn_id.as_deref() == Some("retry-turn")
+    ));
     Ok(())
 }
 

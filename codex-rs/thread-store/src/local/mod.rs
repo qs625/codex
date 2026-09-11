@@ -324,6 +324,8 @@ mod tests {
 
     use protocol::ThreadId;
     use protocol::models::BaseInstructions;
+    use protocol::models::ContentItem;
+    use protocol::models::ResponseItem;
     use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
     use protocol::protocol::RolloutItem;
@@ -1021,6 +1023,20 @@ mod tests {
         assert!(history.items.iter().any(|item| {
             matches!(
                 item,
+                RolloutItem::ResponseItem(ResponseItem::Message {
+                    role,
+                    content,
+                    ..
+                }) if role == "assistant"
+                    && content.iter().any(|content| matches!(
+                        content,
+                        ContentItem::OutputText { text } if text == "compact checkpoint"
+                    ))
+            )
+        }));
+        assert!(history.items.iter().any(|item| {
+            matches!(
+                item,
                 RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "after compact"
             )
         }));
@@ -1030,6 +1046,64 @@ mod tests {
                 RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "before compact"
             )
         }));
+
+        let read_thread = store
+            .read_thread(ReadThreadParams {
+                thread_id,
+                include_archived: false,
+                include_history: true,
+            })
+            .await
+            .expect("read head thread");
+        assert!(
+            read_thread
+                .history
+                .expect("read history")
+                .items
+                .iter()
+                .any(|item| matches!(
+                    item,
+                    RolloutItem::ResponseItem(ResponseItem::Message {
+                        role,
+                        content,
+                        ..
+                    }) if role == "assistant"
+                        && content.iter().any(|content| matches!(
+                            content,
+                            ContentItem::OutputText { text } if text == "compact checkpoint"
+                        ))
+                )),
+            "read_thread should restore the compact summary from the head segment"
+        );
+
+        let read_by_path = store
+            .read_thread_by_rollout_path(
+                initial_path,
+                /*include_archived*/ false,
+                /*include_history*/ true,
+            )
+            .await
+            .expect("read head thread by base rollout path");
+        assert!(
+            read_by_path
+                .history
+                .expect("path history")
+                .items
+                .iter()
+                .any(|item| matches!(
+                    item,
+                    RolloutItem::ResponseItem(ResponseItem::Message {
+                        role,
+                        content,
+                        ..
+                    }) if role == "assistant"
+                        && content.iter().any(|content| matches!(
+                            content,
+                            ContentItem::OutputText { text } if text == "compact checkpoint"
+                        ))
+                )),
+            "read_thread_by_rollout_path should resolve the head segment and restore the compact summary"
+        );
     }
 
     #[tokio::test]
