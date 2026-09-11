@@ -1040,8 +1040,77 @@ pub(super) async fn resolve_pending_server_request(
 }
 
 pub(super) fn merge_turn_history_with_active_turn(turns: &mut Vec<Turn>, active_turn: Turn) {
-    turns.retain(|turn| turn.id != active_turn.id);
-    turns.push(active_turn);
+    let Some(persisted_turn) = turns.iter_mut().find(|turn| turn.id == active_turn.id) else {
+        turns.push(active_turn);
+        return;
+    };
+
+    persisted_turn.status = active_turn.status;
+    persisted_turn.error = active_turn.error;
+    persisted_turn.started_at = active_turn.started_at.or(persisted_turn.started_at);
+    persisted_turn.completed_at = active_turn.completed_at;
+    persisted_turn.duration_ms = active_turn.duration_ms;
+    persisted_turn.items_view = active_turn.items_view;
+
+    for active_item in active_turn.items {
+        if let Some(existing_item) = persisted_turn
+            .items
+            .iter_mut()
+            .find(|existing_item| existing_item.id() == active_item.id())
+        {
+            if existing_item == &active_item {
+                continue;
+            }
+            if same_thread_item_kind(existing_item, &active_item)
+                && !is_generated_thread_item_id(active_item.id())
+            {
+                *existing_item = active_item;
+            } else if let Some(renamed_item) =
+                rename_thread_item_id(active_item, unique_live_item_id(&persisted_turn.items))
+            {
+                persisted_turn.items.push(renamed_item);
+            }
+            continue;
+        }
+        if persisted_turn
+            .items
+            .iter()
+            .any(|existing_item| existing_item == &active_item)
+        {
+            continue;
+        }
+        persisted_turn.items.push(active_item);
+    }
+}
+
+fn same_thread_item_kind(left: &ThreadItem, right: &ThreadItem) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
+fn unique_live_item_id(existing_items: &[ThreadItem]) -> String {
+    let mut suffix = 1;
+    loop {
+        let candidate = format!("live-item-{suffix}");
+        if existing_items
+            .iter()
+            .all(|existing_item| existing_item.id() != candidate)
+        {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn is_generated_thread_item_id(id: &str) -> bool {
+    id.strip_prefix("item-")
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn rename_thread_item_id(item: ThreadItem, next_id: String) -> Option<ThreadItem> {
+    let mut value = serde_json::to_value(item).ok()?;
+    value.get_mut("id")?.as_str()?;
+    value["id"] = serde_json::Value::String(next_id);
+    serde_json::from_value(value).ok()
 }
 
 pub(super) fn set_thread_status_and_interrupt_stale_turns(

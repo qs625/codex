@@ -549,6 +549,206 @@ mod thread_processor_behavior_tests {
         );
     }
 
+    #[test]
+    fn populate_thread_turns_from_history_preserves_persisted_prefix_when_merging_active_turn() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::UserMessage(
+                protocol::protocol::UserMessageEvent {
+                    message: "recovered restart prompt".to_string(),
+                    images: Some(Vec::new()),
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "continuing after restart".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ];
+        let active_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![
+                ThreadItem::AgentMessage {
+                    id: "item-1".to_string(),
+                    text: "live agent suffix".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".to_string(),
+                    text: "second live agent suffix".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                ThreadItem::CommandExecution {
+                    id: "exec-live".to_string(),
+                    command: "rtk cargo test".to_string(),
+                    cwd: test_path_buf("/tmp").abs(),
+                    process_id: Some("pid-1".to_string()),
+                    source: CommandExecutionSource::Agent,
+                    status: CommandExecutionStatus::InProgress,
+                    initial_wait_ms: None,
+                    notify_on: None,
+                    command_actions: vec![CommandAction::Unknown {
+                        command: "rtk cargo test".to_string(),
+                    }],
+                    aggregated_output: None,
+                    exit_code: None,
+                    duration_ms: None,
+                },
+            ],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(thread.turns[0].id, "turn-1");
+        assert_eq!(thread.turns[0].status, TurnStatus::InProgress);
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-1", "item-2", "live-item-1", "live-item-2", "exec-live"]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[0],
+            ThreadItem::UserMessage { content, .. }
+                if content == &vec![V2UserInput::Text {
+                    text: "recovered restart prompt".to_string(),
+                    text_elements: Vec::new(),
+                }]
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[2],
+            ThreadItem::AgentMessage { id, text, .. }
+                if id == "live-item-1" && text == "live agent suffix"
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[3],
+            ThreadItem::AgentMessage { id, text, .. }
+                if id == "live-item-2" && text == "second live agent suffix"
+        ));
+    }
+
+    #[test]
+    fn thread_turns_list_reconstruction_preserves_persisted_prefix_on_active_id_collision() {
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::UserMessage(
+                protocol::protocol::UserMessageEvent {
+                    message: "recovered restart prompt".to_string(),
+                    images: Some(Vec::new()),
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "persisted agent prefix".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ];
+        let active_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![ThreadItem::AgentMessage {
+                id: "item-2".to_string(),
+                text: "live agent suffix".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        let turns = reconstruct_thread_turns_for_turns_list(
+            &persisted_items,
+            ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            /*has_live_running_thread*/ true,
+            Some(active_turn),
+        );
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, TurnStatus::InProgress);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::UserMessage { content, .. }
+                if content == &vec![V2UserInput::Text {
+                    text: "recovered restart prompt".to_string(),
+                    text_elements: Vec::new(),
+                }]
+        ));
+        assert!(matches!(
+            &turns[0].items[1],
+            ThreadItem::AgentMessage { id, text, .. }
+                if id == "item-2" && text == "persisted agent prefix"
+        ));
+        assert!(matches!(
+            &turns[0].items[2],
+            ThreadItem::AgentMessage { id, text, .. }
+                if id == "live-item-1" && text == "live agent suffix"
+        ));
+    }
+
     fn compacted_display_history_items() -> Vec<RolloutItem> {
         vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(
