@@ -1782,7 +1782,7 @@ test("conversation display keeps exec command item while hiding output notificat
   assert.equal(JSON.stringify(displayCells).includes("889b416d"), false);
 });
 
-test("command output delta creates a visible placeholder when start was missed", () => {
+test("command output delta without command start does not create a visible placeholder", () => {
   const withOutput = appendCommandExecutionDelta(
     makeThread(),
     "turn-1",
@@ -1790,30 +1790,9 @@ test("command output delta creates a visible placeholder when start was missed",
     "running\n",
   );
 
-  assert.equal(withOutput.turns.length, 1);
-  assert.deepEqual(withOutput.turns[0]?.items, [
-    {
-      type: "commandExecution",
-      id: "cmd-1",
-      command: "Command output",
-      cwd: "cwd pending",
-      status: "inProgress",
-      initialWaitMs: null,
-      notifyOn: null,
-      aggregatedOutput: "running\n",
-      exitCode: null,
-      durationMs: null,
-    },
-  ]);
-  assert.deepEqual(
-    buildConversationEntries(withOutput).map((entry) => [
-      entry.id,
-      entry.kind,
-      entry.toolCategory,
-      entry.toolStatus,
-    ]),
-    [["cmd-1", "tool", "command", "inProgress"]],
-  );
+  assert.deepEqual(withOutput.turns, []);
+  assert.deepEqual(withOutput.activeCommandItems, undefined);
+  assert.deepEqual(buildConversationEntries(withOutput), []);
 
   const started = updateThreadItem(
     withOutput,
@@ -1842,7 +1821,7 @@ test("command output delta creates a visible placeholder when start was missed",
       status: "inProgress",
       initialWaitMs: 1000,
       notifyOn: "output",
-      aggregatedOutput: "running\n",
+      aggregatedOutput: null,
       exitCode: null,
       durationMs: null,
       startedAtMs: 2_000,
@@ -5253,7 +5232,7 @@ test("compact turn command delta without existing command does not create placeh
   assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
 });
 
-test("live command delta before start creates one monitor and merges start", () => {
+test("live command delta before start does not create placeholder monitor", () => {
   const commandStart: ThreadItem = {
     type: "commandExecution",
     id: "cmd-1",
@@ -5273,6 +5252,12 @@ test("live command delta before start creates one monitor and merges start", () 
     "cmd-1",
     "hello\n",
   );
+  const beforeStartAnalysis = buildThreadAnalysis(withDelta, 0);
+
+  assert.deepEqual(withDelta.turns, []);
+  assert.deepEqual(withDelta.activeCommandItems, undefined);
+  assert.deepEqual(beforeStartAnalysis.monitors.sections[0]?.monitors, []);
+
   const withStart = updateThreadItem(withDelta, "turn-command", commandStart, {
     startedAtMs: 1_000,
   });
@@ -5295,6 +5280,47 @@ test("live command delta before start creates one monitor and merges start", () 
       latestEvent: null,
     },
   ]);
+});
+
+test("command delta does not create active placeholder when active command state is missing", () => {
+  const thread = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    turns: [
+      makeTurn("turn-command", [
+        {
+          type: "commandExecution",
+          id: "cmd-1",
+          command: "rtk printf hello",
+          cwd: "/tmp",
+          status: "running",
+          initialWaitMs: 1000,
+          notifyOn: "output",
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      ]),
+    ],
+    activeCommandItems: undefined,
+  } satisfies Thread;
+
+  const withDelta = appendCommandExecutionDelta(
+    thread,
+    "turn-command",
+    "cmd-1",
+    "hello\n",
+  );
+  const commandItem = withDelta.turns[0]?.items[0] as Extract<
+    ThreadItem,
+    { type: "commandExecution" }
+  >;
+
+  assert.equal(commandItem.aggregatedOutput, "hello\n");
+  assert.deepEqual(withDelta.activeCommandItems, undefined);
+  assert.deepEqual(
+    buildThreadAnalysis(withDelta, 0).monitors.sections[0]?.monitors,
+    [],
+  );
 });
 
 test("uninitialized live schedule notifications update monitors after the snapshot arrives", () => {

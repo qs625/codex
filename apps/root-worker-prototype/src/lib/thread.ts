@@ -1201,21 +1201,6 @@ export function appendCommandExecutionDelta(
   itemId: string,
   delta: string,
 ) {
-  const createDeltaPlaceholder = (): Extract<
-    ThreadItem,
-    { type: "commandExecution" }
-  > => ({
-    type: "commandExecution",
-    id: itemId,
-    command: "Command output",
-    cwd: "cwd pending",
-    status: "inProgress",
-    initialWaitMs: null,
-    notifyOn: null,
-    aggregatedOutput: delta,
-    exitCode: null,
-    durationMs: null,
-  });
   const appendDelta = (
     item: Extract<ThreadItem, { type: "commandExecution" }>,
   ): ThreadItem => ({
@@ -1223,48 +1208,26 @@ export function appendCommandExecutionDelta(
     aggregatedOutput: `${item.aggregatedOutput ?? ""}${delta}`,
   });
   let shouldUpdateActiveCommandItems = false;
-  const hasTargetTurn = thread.turns.some((turn) => turn.id === turnId);
-  const turns = hasTargetTurn
-    ? thread.turns.map((turn) => {
-        if (turn.id !== turnId) {
-          return turn;
-        }
-        const hasCommandItem = turn.items.some(
-          (item) => item.id === itemId && item.type === "commandExecution",
-        );
-        if (!hasCommandItem && turnHasCompactItem(turn)) {
-          return turn;
-        }
-        shouldUpdateActiveCommandItems = true;
-        return {
-          ...turn,
-          items: hasCommandItem
-            ? turn.items.map((item) =>
-                item.id === itemId && item.type === "commandExecution"
-                  ? appendDelta(item)
-                  : item,
-              )
-            : [...turn.items, createDeltaPlaceholder()],
-        };
-      })
-    : threadHasCompactItem(thread)
-      ? thread.turns
-      : (() => {
-          shouldUpdateActiveCommandItems = true;
-          return [
-            ...thread.turns,
-            {
-              id: turnId,
-              items: [createDeltaPlaceholder()],
-              itemsView: "full" as const,
-              status: "running" as const,
-              error: null,
-              startedAt: null,
-              completedAt: null,
-              durationMs: null,
-            } satisfies Turn,
-          ];
-        })();
+  const turns = thread.turns.map((turn) => {
+    if (turn.id !== turnId) {
+      return turn;
+    }
+    const hasCommandItem = turn.items.some(
+      (item) => item.id === itemId && item.type === "commandExecution",
+    );
+    if (!hasCommandItem) {
+      return turn;
+    }
+    shouldUpdateActiveCommandItems = true;
+    return {
+      ...turn,
+      items: turn.items.map((item) =>
+        item.id === itemId && item.type === "commandExecution"
+          ? appendDelta(item)
+          : item,
+      ),
+    };
+  });
   const updated = pruneThreadSnapshotToLatestCompact({ ...thread, turns });
   return shouldUpdateActiveCommandItems
     ? appendActiveCommandExecutionDelta(updated, itemId, delta)
@@ -1322,32 +1285,19 @@ function appendActiveCommandExecutionDelta(
     ...item,
     aggregatedOutput: `${item.aggregatedOutput ?? ""}${delta}`,
   });
+  if (existingIndex === -1) {
+    return thread;
+  }
   const nextItem =
-    existingIndex === -1
-      ? ({
-          type: "commandExecution",
-          id: itemId,
-          command: "Command output",
-          cwd: "cwd pending",
-          status: "inProgress",
-          initialWaitMs: null,
-          notifyOn: null,
-          aggregatedOutput: delta,
-          exitCode: null,
-          durationMs: null,
-        } satisfies ThreadItem)
-      : appendDelta(
-          activeCommandItems[existingIndex]! as Extract<
-            ThreadItem,
-            { type: "commandExecution" }
-          >,
-        );
-  const nextActiveCommandItems =
-    existingIndex === -1
-      ? [...activeCommandItems, nextItem]
-      : activeCommandItems.map((item, index) =>
-          index === existingIndex ? nextItem : item,
-        );
+    appendDelta(
+      activeCommandItems[existingIndex]! as Extract<
+        ThreadItem,
+        { type: "commandExecution" }
+      >,
+    );
+  const nextActiveCommandItems = activeCommandItems.map((item, index) =>
+    index === existingIndex ? nextItem : item,
+  );
   return { ...thread, activeCommandItems: nextActiveCommandItems };
 }
 
