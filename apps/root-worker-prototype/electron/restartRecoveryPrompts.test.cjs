@@ -17,7 +17,8 @@ test("restart recovery prompts are centralized and Chinese", () => {
   });
   assert.match(completed, /\p{Script=Han}/u);
   assert.match(completed, /restart-1/);
-  assert.match(completed, /不要自动再次调用/);
+  assert.match(completed, /请勿为了同一个请求连续调用/);
+  assert.match(completed, /新的代码修改/);
 });
 
 test("restart recovery prompts preserve failed and interrupted evidence", () => {

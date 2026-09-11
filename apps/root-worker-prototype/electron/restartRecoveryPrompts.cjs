@@ -11,7 +11,7 @@ const RESTART_RECOVERY_PROMPTS = Object.freeze({
     interrupted: (requestId, sourceThreadId) =>
       `Morpheus 已恢复预期的 Runtime Capsule 重启请求 ${requestId}；未找到 Host 退出前的正常交接完成记录。原始 thread id：${sourceThreadId}。`,
     followUp:
-      "这是预期的重启恢复，不是通用崩溃。不要自动再次调用 request_runtime_restart；请基于持久化结果继续处理。",
+      "这是预期的重启恢复，不是通用崩溃。该重启请求已恢复，请勿为了同一个请求连续调用 request_runtime_restart；如果后续完成了新的代码修改或需要交付新的 Runtime Capsule，请按正常流程构建并重启。",
   }),
 });
 

@@ -331,7 +331,7 @@ test("duplicate request id does not execute twice across controller instances", 
   });
 });
 
-test("failed execution is durable and recovery prompt forbids automatic restart", async () => {
+test("failed execution is durable and recovery prompt prevents duplicate same-request restart", async () => {
   await withStore(async (store) => {
     const recovered = [];
     let releaseExecution;
@@ -378,7 +378,8 @@ test("failed execution is durable and recovery prompt forbids automatic restart"
     assert.equal(recovered.length, 1);
     const prompt = expectedRuntimeRestartRecoveryPrompt(record);
     assert.match(prompt, /预期的 Runtime Capsule 重启请求/);
-    assert.match(prompt, /不要自动再次调用/);
+    assert.match(prompt, /请勿为了同一个请求连续调用/);
+    assert.match(prompt, /新的代码修改/);
     assert.doesNotMatch(prompt, /\(hot\)|\(full\)/);
     assert.equal(recovered[0].requestId, "restart-1");
     assert.deepEqual(await store.recoverable(), []);
