@@ -155,10 +155,10 @@ pub(super) fn reconstruct_thread_turns_for_turns_list(
             .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
     let mut turns = build_api_turns_from_rollout_items(items);
     normalize_thread_turns_status(&mut turns, loaded_status, has_live_in_progress_turn);
+    prune_turns_to_latest_compaction_boundary(&mut turns);
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn);
     }
-    prune_turns_to_latest_compaction_boundary(&mut turns);
     turns
 }
 

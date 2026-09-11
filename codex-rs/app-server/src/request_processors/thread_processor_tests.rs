@@ -654,7 +654,13 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .map(ThreadItem::id)
                 .collect::<Vec<_>>(),
-            vec!["item-1", "item-2", "live-item-1", "live-item-2", "exec-live"]
+            vec![
+                "item-1",
+                "item-2",
+                "live-item-1",
+                "live-item-2",
+                "exec-live"
+            ]
         );
         assert!(matches!(
             &thread.turns[0].items[0],
@@ -673,6 +679,120 @@ mod thread_processor_behavior_tests {
             &thread.turns[0].items[3],
             ThreadItem::AgentMessage { id, text, .. }
                 if id == "live-item-2" && text == "second live agent suffix"
+        ));
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_does_not_prune_with_live_compaction_boundary_after_merge()
+    {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+        let persisted_items = vec![
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::UserMessage(
+                protocol::protocol::UserMessageEvent {
+                    message: "recovered restart prompt after compact".to_string(),
+                    images: Some(Vec::new()),
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                },
+            )),
+        ];
+        let active_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![
+                ThreadItem::ContextCompaction {
+                    id: "item-1".to_string(),
+                    replacement_history: Vec::new(),
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".to_string(),
+                    text: "live agent suffix".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
+
+        assert_eq!(thread.turns.len(), 2);
+        assert!(matches!(
+            thread.turns[0].items.as_slice(),
+            [ThreadItem::ContextCompaction { .. }]
+        ));
+        assert_eq!(thread.turns[1].id, "turn-1");
+        assert_eq!(thread.turns[1].status, TurnStatus::InProgress);
+        assert_eq!(
+            thread.turns[1]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-2", "item-1", "live-item-1"]
+        );
+        assert!(matches!(
+            &thread.turns[1].items[0],
+            ThreadItem::UserMessage { content, .. }
+                if content == &vec![V2UserInput::Text {
+                    text: "recovered restart prompt after compact".to_string(),
+                    text_elements: Vec::new(),
+                }]
+        ));
+        assert!(matches!(
+            &thread.turns[1].items[1],
+            ThreadItem::ContextCompaction { id, .. }
+                if id == "item-1"
+        ));
+        assert!(matches!(
+            &thread.turns[1].items[2],
+            ThreadItem::AgentMessage { id, text, .. }
+                if id == "live-item-1" && text == "live agent suffix"
         ));
     }
 
@@ -744,6 +864,97 @@ mod thread_processor_behavior_tests {
         ));
         assert!(matches!(
             &turns[0].items[2],
+            ThreadItem::AgentMessage { id, text, .. }
+                if id == "live-item-1" && text == "live agent suffix"
+        ));
+    }
+
+    #[test]
+    fn thread_turns_list_reconstruction_does_not_prune_with_live_compaction_boundary_after_merge()
+    {
+        let persisted_items = vec![
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::UserMessage(
+                protocol::protocol::UserMessageEvent {
+                    message: "recovered restart prompt after compact".to_string(),
+                    images: Some(Vec::new()),
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                },
+            )),
+        ];
+        let active_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![
+                ThreadItem::ContextCompaction {
+                    id: "item-1".to_string(),
+                    replacement_history: Vec::new(),
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".to_string(),
+                    text: "live agent suffix".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        let turns = reconstruct_thread_turns_for_turns_list(
+            &persisted_items,
+            ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            /*has_live_running_thread*/ true,
+            Some(active_turn),
+        );
+
+        assert_eq!(turns.len(), 2);
+        assert!(matches!(
+            turns[0].items.as_slice(),
+            [ThreadItem::ContextCompaction { .. }]
+        ));
+        assert_eq!(
+            turns[1]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-2", "item-1", "live-item-1"]
+        );
+        assert!(matches!(
+            &turns[1].items[0],
+            ThreadItem::UserMessage { content, .. }
+                if content == &vec![V2UserInput::Text {
+                    text: "recovered restart prompt after compact".to_string(),
+                    text_elements: Vec::new(),
+                }]
+        ));
+        assert!(matches!(
+            &turns[1].items[1],
+            ThreadItem::ContextCompaction { id, .. }
+                if id == "item-1"
+        ));
+        assert!(matches!(
+            &turns[1].items[2],
             ThreadItem::AgentMessage { id, text, .. }
                 if id == "live-item-1" && text == "live agent suffix"
         ));
