@@ -632,7 +632,7 @@ async fn after_turn_event_subscription_waiting_thread_becomes_active_when_new_me
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result<()> {
+async fn startup_keeps_waiting_subscription_metadata_without_auto_loading() -> Result<()> {
     let codex_home = TempDir::new()?;
     let schedule_args = serde_json::to_string(&json!({
         "schedule": {
@@ -710,8 +710,8 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
     .await??;
     let ThreadLoadedListResponse { data, .. } = to_response(loaded_list_resp)?;
     assert!(
-        data.contains(&thread_id),
-        "restored thread should be loaded after app-server restart"
+        !data.contains(&thread_id),
+        "app-server restart should not auto-load persisted waiting threads"
     );
 
     let list_id = second_mcp
@@ -724,7 +724,7 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
             source_kinds: None,
             archived: None,
             cwd: None,
-            use_state_db_only: false,
+            use_state_db_only: true,
             search_term: None,
         })
         .await?;
@@ -734,15 +734,16 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
     )
     .await??;
     let ThreadListResponse { data, .. } = to_response(list_resp)?;
-    let restored_thread = data
+    let listed_thread = data
         .into_iter()
         .find(|thread| thread.id == thread_id)
-        .expect("thread/list should include the restored thread");
+        .expect("state-db-only thread/list should include persisted thread metadata");
     assert_eq!(
-        restored_thread.lifecycle_status,
+        listed_thread.lifecycle_status,
         ThreadLifecycleStatus::Waiting {
             reason: ThreadLifecycleWaitReason::EventSubscription,
         },
+        "state-db-only thread/list should project persisted thread_status"
     );
 
     Ok(())

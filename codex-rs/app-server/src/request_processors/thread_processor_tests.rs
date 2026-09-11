@@ -55,6 +55,7 @@ mod thread_processor_behavior_tests {
     use app_server_protocol::ServerRequestPayload;
     use app_server_protocol::SessionSource as ApiSessionSource;
     use app_server_protocol::ThreadItem;
+    use app_server_protocol::ThreadLifecycleStatus;
     use app_server_protocol::ThreadLifecycleWaitReason;
     use app_server_protocol::ToolRequestUserInputParams;
     use chrono::DateTime;
@@ -1460,7 +1461,9 @@ mod thread_processor_behavior_tests {
             skills: Vec::new(),
             token_usage: None,
             first_user_message: Some("first user message".to_string()),
-            thread_status: None,
+            thread_status: Some(ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            }),
             history: None,
         };
         let fallback_cwd = AbsolutePathBuf::from_absolute_path("/")?;
@@ -1482,6 +1485,12 @@ mod thread_processor_behavior_tests {
         );
         assert_eq!(thread.agent_nickname, Some("researcher".to_string()));
         assert_eq!(thread.agent_role, Some("explorer".to_string()));
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            }
+        );
         Ok(())
     }
 
