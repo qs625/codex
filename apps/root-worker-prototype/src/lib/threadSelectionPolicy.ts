@@ -63,13 +63,8 @@ export function shouldApplyThreadReadSnapshot({
   selectedThreadId,
   requestId,
   latestRequestId,
-  isLoaded,
 }: ThreadReadSnapshotPolicyInput) {
-  return (
-    selectedThreadId === threadId &&
-    requestId === latestRequestId &&
-    !isLoaded
-  );
+  return selectedThreadId === threadId && requestId === latestRequestId;
 }
 
 export function nextThreadReadRequestId(

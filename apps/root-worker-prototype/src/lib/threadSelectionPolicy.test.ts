@@ -117,7 +117,7 @@ test("selection policy reads initialized live cached threads before subscribing"
   );
 });
 
-test("thread read snapshots apply only to the current uninitialized request", () => {
+test("thread read snapshots apply only to the current latest request", () => {
   assert.equal(
     shouldApplyThreadReadSnapshot({
       threadId: "thread-a",
@@ -159,7 +159,7 @@ test("thread read snapshots apply only to the current uninitialized request", ()
       latestRequestId: 2,
       isLoaded: true,
     }),
-    false,
+    true,
   );
 });
 
