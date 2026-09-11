@@ -359,20 +359,21 @@ ipcMain.handle("codex:relaunchApp", async (_event, payload = {}) => {
 
 ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
-  const listResult = await listThreads(defaultWorkspace);
-  const threads = listResult.threads;
+  const initialListResult = await listThreads(defaultWorkspace);
+  const initialThreads = initialListResult.threads;
   const expectedRestart =
     await getRuntimeRestartController().recoverPending();
   const autoResume =
     await getAutoResumeCoordinator().runAfterRuntimeRestartRecovery({
       hasDurableRestartRecovery:
         startupRuntimeRecovery.hasDurableRestartRecovery,
-      threads,
+      threads: initialThreads,
       expectedRestart,
     });
+  const listResult = await listThreads(defaultWorkspace);
   return {
     workspace: defaultWorkspace,
-    threads,
+    threads: listResult.threads,
     materializedSelfThreadId: listResult.materializedSelfThreadId,
     autoResume,
     expectedRestart,
