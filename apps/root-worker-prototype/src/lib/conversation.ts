@@ -88,7 +88,6 @@ export function buildConversationState(
     previous?.threadId === thread.id && previous.author === author;
   const flatItems: ConversationFlatItemState[] = [];
   const entries: ConversationEntry[] = [];
-  const turnCommandItemIds = new Set<string>();
   let flatItemIndex = 0;
 
   for (const turn of thread.turns) {
@@ -97,9 +96,6 @@ export function buildConversationState(
     );
 
     for (const item of turn.items) {
-      if (item.type === "commandExecution") {
-        turnCommandItemIds.add(item.id);
-      }
       const timestamp = formatItemTimestamp(item) ?? turnTimestamp;
       const previousFlatItem = canReusePrevious
         ? previous.flatItems[flatItemIndex]
@@ -128,47 +124,6 @@ export function buildConversationState(
       entries.push(...rebuiltEntries);
       flatItemIndex += 1;
     }
-  }
-
-  const activeCommandTimestamp = formatClockTime(thread.updatedAt);
-  const activeCommandItemIds = new Set<string>();
-  for (const item of thread.activeCommandItems ?? []) {
-    if (
-      item.type !== "commandExecution" ||
-      !isLiveCommandExecutionItem(item) ||
-      turnCommandItemIds.has(item.id) ||
-      activeCommandItemIds.has(item.id)
-    ) {
-      continue;
-    }
-    activeCommandItemIds.add(item.id);
-    const timestamp = formatItemTimestamp(item) ?? activeCommandTimestamp;
-    const previousFlatItem = canReusePrevious
-      ? previous.flatItems[flatItemIndex]
-      : undefined;
-    const rebuiltEntries =
-      previousFlatItem &&
-      previousFlatItem.id === item.id &&
-      previousFlatItem.item === item &&
-      previousFlatItem.timestamp === timestamp
-        ? previousFlatItem.entries
-        : buildConversationItemEntries(item, {
-            author,
-            timestamp,
-            commandLookup,
-          }).map((entry) => ({
-            ...entry,
-            turnId: "active-commands",
-          }));
-
-    flatItems.push({
-      id: item.id,
-      item,
-      timestamp,
-      entries: rebuiltEntries,
-    });
-    entries.push(...rebuiltEntries);
-    flatItemIndex += 1;
   }
 
   return {
@@ -1739,13 +1694,6 @@ function formatCommandExecutionDetails(
   }
 
   return sections.join("\n\n");
-}
-
-function isLiveCommandExecutionItem(
-  item: Extract<ThreadItem, { type: "commandExecution" }>,
-) {
-  const normalized = item.status.trim().toLowerCase().replace(/[_-]/g, "");
-  return normalized === "running" || normalized === "inprogress";
 }
 
 function summarizeCommandExecutionNotification(

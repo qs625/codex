@@ -642,6 +642,23 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
         !std::fs::read_to_string(&head_path)?.contains("before compact"),
         "head segment should not contain pre-compact events"
     );
+    let (base_items, base_thread_id, _) =
+        RolloutRecorder::load_rollout_items(&initial_path).await?;
+    assert_eq!(base_thread_id, Some(thread_id));
+    assert!(
+        base_items.iter().any(|item| matches!(
+            item,
+            RolloutItem::EventMsg(EventMsg::UserMessage(event))
+                if event.message == "before compact"
+        )),
+        "direct base segment reads should keep reading the base segment"
+    );
+    assert!(
+        !base_items
+            .iter()
+            .any(|item| matches!(item, RolloutItem::Compacted(_))),
+        "direct base segment reads must not resolve to the compact head"
+    );
     let (dir_items, dir_thread_id, _) = RolloutRecorder::load_rollout_items(&session_dir).await?;
     assert_eq!(dir_thread_id, Some(thread_id));
     assert_eq!(

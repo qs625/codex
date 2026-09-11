@@ -109,15 +109,11 @@ pub(super) async fn read_thread_by_rollout_path(
     include_history: bool,
 ) -> ThreadStoreResult<StoredThread> {
     let path = resolve_requested_rollout_path(store, rollout_path)?;
-    let path = if path.is_dir() {
-        resolve_current_segment_path(path.as_path())
-            .await
-            .map_err(|err| ThreadStoreError::InvalidRequest {
-                message: format!("failed to resolve rollout path `{}`: {err}", path.display()),
-            })?
-    } else {
-        path
-    };
+    let path = resolve_current_segment_path(path.as_path())
+        .await
+        .map_err(|err| ThreadStoreError::InvalidRequest {
+            message: format!("failed to resolve rollout path `{}`: {err}", path.display()),
+        })?;
     let mut thread = read_thread_from_rollout_path(store, path).await?;
     if !include_archived && thread.archived_at.is_some() {
         return Err(ThreadStoreError::InvalidRequest {
@@ -530,6 +526,7 @@ mod tests {
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use protocol::ThreadId;
+    use protocol::protocol::EventMsg;
     use protocol::protocol::SessionSource;
     use state::ThreadMetadataBuilder;
     use tempfile::TempDir;
@@ -643,6 +640,52 @@ mod tests {
             thread.first_user_message.as_deref(),
             Some("Directory direct read")
         );
+    }
+
+    #[tokio::test]
+    async fn read_thread_by_rollout_path_resolves_base_segment_to_head() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(213);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let base_path = write_directory_session_file(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            uuid,
+            "Base segment direct read",
+        )
+        .expect("directory session");
+        let relative_base = base_path
+            .strip_prefix(home.path())
+            .expect("path should be under codex home")
+            .to_path_buf();
+
+        let thread = store
+            .read_thread_by_rollout_path(
+                relative_base,
+                /*include_archived*/ false,
+                /*include_history*/ true,
+            )
+            .await
+            .expect("read thread by base segment rollout path");
+
+        assert_eq!(thread.thread_id, thread_id);
+        let canonical_container = std::fs::canonicalize(base_path.parent().expect("container"))
+            .expect("canonical container");
+        assert_eq!(
+            thread.rollout_path,
+            Some(canonical_container.join("compact-000001.jsonl"))
+        );
+        assert_eq!(thread.preview, "Base segment direct read");
+        let history = thread.history.expect("history should load");
+        assert!(history.items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::UserMessage(event))
+                    if event.message == "Base segment direct read"
+            )
+        }));
     }
 
     #[tokio::test]

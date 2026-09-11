@@ -148,7 +148,7 @@ test("tool row renders command summary without command output payload", () => {
   assert.doesNotMatch(markup, /tool-output-block/);
 });
 
-test("tool row renders live active command tail without output payload", () => {
+test("conversation does not render live active command tail", () => {
   const thread = {
     id: "thread-1",
     updatedAt: 1,
@@ -169,13 +169,8 @@ test("tool row renders live active command tail without output payload", () => {
     ],
   } as Thread;
   const entries = buildConversationEntries(thread);
-  const markup = renderToStaticMarkup(<ToolRow entries={entries} isOpen />);
 
-  assert.match(markup, /cargo test/);
-  assert.match(markup, /tmp\/project/);
-  assert.match(markup, /running/);
-  assert.doesNotMatch(markup, /ACTIVE_STDOUT/);
-  assert.doesNotMatch(markup, /tool-output-block/);
+  assert.deepEqual(entries, []);
 });
 
 const entries: ConversationEntry[] = [

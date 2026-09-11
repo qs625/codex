@@ -884,7 +884,7 @@ test("keeps command notifications separated across replacement history boundarie
   );
 });
 
-test("renders live active command current state as a transient conversation tail", () => {
+test("does not render live active command current state as a transient conversation tail", () => {
   const thread = {
     ...makeThread([
       {
@@ -986,7 +986,6 @@ test("renders live active command current state as a transient conversation tail
     [
       ["compact-1", "compact", undefined, "turn-1", false],
       ["exec-existing", "tool", "pnpm lint", "turn-1", false],
-      ["exec-1", "tool", "cargo test", "active-commands", false],
     ],
   );
   assert.deepEqual(
@@ -1005,11 +1004,6 @@ test("renders live active command current state as a transient conversation tail
         id: "exec-existing",
         kind: "tool",
         entries: ["exec-existing"],
-      },
-      {
-        id: "exec-1",
-        kind: "tool",
-        entries: ["exec-1"],
       },
     ],
   );
@@ -1035,7 +1029,7 @@ test("does not render legacy orphan command output placeholder as active tail", 
   assert.deepEqual(buildConversationEntries(thread), []);
 });
 
-test("active command tail reuse follows active item ids after previous state changes", () => {
+test("active command current state stays out of conversation reuse state", () => {
   const activeCommand = (
     id: string,
     command: string,
@@ -1069,10 +1063,9 @@ test("active command tail reuse follows active item ids after previous state cha
 
   const secondState = buildConversationState(secondThread, firstState);
 
-  assert.deepEqual(
-    secondState.entries.map((entry) => [entry.id, entry.toolName]),
-    [["exec-2", "pnpm test"]],
-  );
+  assert.deepEqual(firstState.entries, []);
+  assert.deepEqual(secondState.entries, []);
+  assert.deepEqual(secondState.flatItems, []);
 });
 
 test("renders command wait and stdin actions as standalone event entries", () => {
