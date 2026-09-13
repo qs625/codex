@@ -35,6 +35,14 @@ pub(super) async fn read_thread(
     params: ReadThreadParams,
 ) -> ThreadStoreResult<StoredThread> {
     let thread_id = params.thread_id;
+    if params.include_history
+        && let Ok(rollout_path) = live_writer::rollout_path(store, thread_id).await
+    {
+        let live_thread =
+            read_thread_by_rollout_path(store, rollout_path, params.include_archived, true).await?;
+        return Ok(overlay_sqlite_metadata_on_live_history(store, live_thread).await);
+    }
+
     if let Some(mut metadata) = read_sqlite_metadata(store, thread_id).await
         && (params.include_archived
             || (metadata.archived_at.is_none()
@@ -82,6 +90,21 @@ pub(super) async fn read_thread(
     }
     attach_history_if_requested(&mut thread, params.include_history).await?;
     Ok(thread)
+}
+
+async fn overlay_sqlite_metadata_on_live_history(
+    store: &LocalThreadStore,
+    live_thread: StoredThread,
+) -> StoredThread {
+    let Some(metadata) = read_sqlite_metadata(store, live_thread.thread_id).await else {
+        return live_thread;
+    };
+    let mut thread = stored_thread_from_sqlite_metadata(store, metadata).await;
+    thread.rollout_path = live_thread.rollout_path;
+    thread.forked_from_id = live_thread.forked_from_id.or(thread.forked_from_id);
+    thread.archived_at = live_thread.archived_at.or(thread.archived_at);
+    thread.history = live_thread.history;
+    thread
 }
 
 async fn sqlite_rollout_path_can_load_history_for_thread(

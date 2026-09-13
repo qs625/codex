@@ -326,8 +326,12 @@ mod tests {
     use protocol::models::BaseInstructions;
     use protocol::models::ContentItem;
     use protocol::models::ResponseItem;
+    use protocol::parse_command::ParsedCommand;
     use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
+    use protocol::protocol::ExecCommandBeginEvent;
+    use protocol::protocol::ExecCommandNotifyOn;
+    use protocol::protocol::ExecCommandSource;
     use protocol::protocol::RolloutItem;
     use protocol::protocol::SessionSource;
     use protocol::protocol::ThreadMemoryMode;
@@ -1107,6 +1111,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_thread_with_history_prefers_live_writer_head_over_stale_sqlite_path() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let runtime = state::StateRuntime::init(
+            config.sqlite_home.clone(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = Arc::new(LocalThreadStore::new(config, Some(runtime.clone())));
+        let thread_id = ThreadId::new();
+        let live_thread = LiveThread::create(store.clone(), create_thread_params(thread_id))
+            .await
+            .expect("create live thread");
+
+        live_thread
+            .append_items(&[user_message_item("before compact")])
+            .await
+            .expect("append pre-compact item");
+        live_thread.flush().await.expect("flush initial segment");
+        let initial_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("initial rollout path");
+        let metadata = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("sqlite metadata read")
+            .expect("sqlite metadata should exist");
+        assert_eq!(metadata.rollout_path, initial_path);
+        let stale_path = home.path().join(format!("stale-before-{thread_id}.jsonl"));
+        tokio::fs::copy(initial_path.as_path(), stale_path.as_path())
+            .await
+            .expect("copy stale rollout path");
+        let mut stale_metadata = metadata.clone();
+        stale_metadata.rollout_path = stale_path;
+        stale_metadata.title = "Pinned sqlite title".to_string();
+        stale_metadata.preview = Some("SQLite preview".to_string());
+        runtime
+            .upsert_thread(&stale_metadata)
+            .await
+            .expect("upsert stale sqlite metadata");
+
+        live_thread
+            .append_items(&[RolloutItem::Compacted(CompactedItem {
+                message: "compact checkpoint".to_string(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            })])
+            .await
+            .expect("append compact item");
+        let head_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("head rollout path");
+        assert_ne!(head_path, initial_path);
+        live_thread
+            .append_items(&[RolloutItem::EventMsg(EventMsg::ExecCommandBegin(
+                exec_command_begin_item("exec-after-compact", "turn-after-compact"),
+            ))])
+            .await
+            .expect("append live command");
+
+        let thread = store
+            .read_thread(ReadThreadParams {
+                thread_id,
+                include_archived: false,
+                include_history: true,
+            })
+            .await
+            .expect("read live thread with history");
+
+        assert_eq!(
+            thread
+                .rollout_path
+                .as_deref()
+                .map(std::fs::canonicalize)
+                .transpose()
+                .expect("canonical thread rollout path"),
+            Some(std::fs::canonicalize(head_path.as_path()).expect("canonical head path"))
+        );
+        assert_eq!(thread.name.as_deref(), Some("Pinned sqlite title"));
+        assert_eq!(thread.preview, "SQLite preview");
+        let history = thread.history.expect("history should load");
+        assert_eq!(history.thread_id, thread_id);
+        assert!(history.items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(event))
+                    if event.call_id == "exec-after-compact"
+            )
+        }));
+    }
+
+    #[tokio::test]
     async fn read_thread_uses_live_writer_rollout_path_for_external_resume() {
         let home = TempDir::new().expect("temp dir");
         let external_home = TempDir::new().expect("external temp dir");
@@ -1137,7 +1236,15 @@ mod tests {
             .await
             .expect("read external live thread");
 
-        assert_eq!(thread.rollout_path, Some(rollout_path));
+        assert_eq!(
+            thread
+                .rollout_path
+                .as_deref()
+                .map(std::fs::canonicalize)
+                .transpose()
+                .expect("canonical thread rollout path"),
+            Some(std::fs::canonicalize(rollout_path.as_path()).expect("canonical rollout path"))
+        );
         assert!(thread.history.expect("history").items.iter().any(|item| {
             matches!(
                 item,
@@ -1290,6 +1397,28 @@ mod tests {
             skills: Vec::new(),
             text_elements: Vec::new(),
         }))
+    }
+
+    fn exec_command_begin_item(call_id: &str, turn_id: &str) -> ExecCommandBeginEvent {
+        let cwd = std::env::current_dir()
+            .expect("cwd")
+            .try_into()
+            .expect("cwd should be absolute");
+        ExecCommandBeginEvent {
+            call_id: call_id.to_string(),
+            process_id: Some(format!("process-{call_id}")),
+            turn_id: turn_id.to_string(),
+            started_at_ms: 123,
+            command: vec!["printf".to_string(), "hi".to_string()],
+            cwd,
+            parsed_cmd: vec![ParsedCommand::Unknown {
+                cmd: "printf hi".to_string(),
+            }],
+            source: ExecCommandSource::Agent,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(ExecCommandNotifyOn::Exit),
+        }
     }
 
     async fn assert_rollout_contains_message(path: &std::path::Path, expected: &str) {
