@@ -11,10 +11,12 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const onDataIndex = source.indexOf("dataSubscription = terminal.onData");
   const onBinaryIndex = source.indexOf("binarySubscription = terminal.onBinary");
+  const initialFitIndex = source.indexOf("sendSize();");
   const replayWriteIndex = source.indexOf("terminal.write(decodeBase64(activeTab.replayBase64))");
 
   assert.notEqual(onDataIndex, -1);
   assert.notEqual(onBinaryIndex, -1);
+  assert.notEqual(initialFitIndex, -1);
   assert.notEqual(replayWriteIndex, -1);
   assert.ok(
     onDataIndex < replayWriteIndex,
@@ -23,5 +25,9 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
   assert.ok(
     onBinaryIndex < replayWriteIndex,
     "binary xterm responses generated while parsing replay output must be forwarded to the PTY",
+  );
+  assert.ok(
+    initialFitIndex < replayWriteIndex,
+    "terminal replay should be written after fitting to the current viewport",
   );
 });

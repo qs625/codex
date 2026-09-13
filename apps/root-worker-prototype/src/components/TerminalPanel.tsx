@@ -194,6 +194,36 @@ export function TerminalPanel({
         terminal.open(viewport);
         terminalRef.current = terminal;
         fitAddonRef.current = fitAddon;
+        const fitTerminal = () => {
+          if (!terminal) {
+            return null;
+          }
+          try {
+            fitAddon.fit();
+          } catch {
+            return null;
+          }
+          const next = { rows: terminal.rows, cols: terminal.cols };
+          return next;
+        };
+        sendSize = () => {
+          const next = fitTerminal();
+          if (!next) {
+            return;
+          }
+          const previous = lastSizeRef.current;
+          lastSizeRef.current = next;
+          if (
+            activeTab.canResize &&
+            isInteractive(activeTab.status) &&
+            (previous?.rows !== next.rows || previous.cols !== next.cols)
+          ) {
+            void window.codexDesktop
+              .resizeTerminal({ tabId: activeTab.id, size: next })
+              .catch((error) => setLocalError(toTerminalError(error)));
+          }
+        };
+        syncTerminalSizeRef.current = sendSize;
         dataSubscription = terminal.onData((data) => {
           if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
             return;
@@ -216,6 +246,7 @@ export function TerminalPanel({
             })
             .catch((error) => setLocalError(toTerminalError(error)));
         });
+        sendSize();
         if (activeTab.replayTruncated || activeTab.hasSequenceGap) {
           terminal.writeln(
             "\r\n\u001b[33m[Earlier terminal output is unavailable.]\u001b[0m",
@@ -235,29 +266,6 @@ export function TerminalPanel({
           );
         }
 
-        sendSize = () => {
-          if (!terminal) {
-            return;
-          }
-          try {
-            fitAddon.fit();
-          } catch {
-            return;
-          }
-          const next = { rows: terminal.rows, cols: terminal.cols };
-          const previous = lastSizeRef.current;
-          if (
-            activeTab.canResize &&
-            isInteractive(activeTab.status) &&
-            (previous?.rows !== next.rows || previous.cols !== next.cols)
-          ) {
-            lastSizeRef.current = next;
-            void window.codexDesktop
-              .resizeTerminal({ tabId: activeTab.id, size: next })
-              .catch((error) => setLocalError(toTerminalError(error)));
-          }
-        };
-        syncTerminalSizeRef.current = sendSize;
         resizeObserver = new ResizeObserver(sendSize);
         resizeObserver.observe(viewport);
         queueMicrotask(() => {
