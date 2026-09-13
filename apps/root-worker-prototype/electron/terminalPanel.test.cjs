@@ -20,7 +20,9 @@ const {
   markTerminalExited,
   mergeTerminalSessions,
   reattachTerminalSessions,
+  replayBufferFromDescriptor,
   setTerminalTabSize,
+  terminalSafeTruncatedReplay,
   terminalPanelSnapshot,
   terminalCommandItemKey,
   terminalSessionKey,
@@ -105,6 +107,80 @@ test("terminal resize updates tab size metadata used by future replay", () => {
   });
   assert.equal(setTerminalTabSize(tab, { rows: 0, cols: 0 }), false);
   assert.deepEqual(tab.size, { rows: 35, cols: 118 });
+});
+
+test("truncated terminal replay starts after a partial carriage-return progress line", () => {
+  const replay = Buffer.from(
+    "buildkit partial progress that lost its leading cursor state\r#20 DONE 0.2s\n#21 [stage-1 5/6] RUN printf '%s\\n'\n",
+  );
+
+  assert.equal(
+    terminalSafeTruncatedReplay(replay).toString(),
+    "#20 DONE 0.2s\n#21 [stage-1 5/6] RUN printf '%s\\n'\n",
+  );
+});
+
+test("truncated terminal replay drops a wrapped leading line before later newlines", () => {
+  const wrappedTail = Buffer.from(
+    "ps/group-manager-bot/fly.toml\n#20 DONE 0.2s\n#21 [stage-1 5/6] RUN printf '%s\\n'\n",
+  );
+  const tab = focusCommandTerminal(
+    createTerminalPanelState(),
+    descriptor({
+      replayBase64: wrappedTail.toString("base64"),
+      replayTruncated: true,
+      replayThroughSequence: 12,
+    }),
+  );
+
+  assert.equal(
+    tab.replay.toString(),
+    "#20 DONE 0.2s\n#21 [stage-1 5/6] RUN printf '%s\\n'\n",
+  );
+  assert.equal(tab.replayTruncated, true);
+  assert.equal(tab.lastSequence, 12);
+});
+
+test("complete terminal replay preserves carriage returns and wrapped lines", () => {
+  const completeReplay = Buffer.from(
+    "#20 [stage-1 4/6] RUN mkdir -p /app-runtime/apps/group-manager-bot\r#20 DONE 0.2s\n",
+  );
+
+  assert.equal(
+    replayBufferFromDescriptor({
+      replayBase64: completeReplay.toString("base64"),
+      replayTruncated: false,
+    }).toString(),
+    completeReplay.toString(),
+  );
+});
+
+test("truncated command output cache hydrate starts replay at a terminal boundary", () => {
+  const state = createTerminalPanelState();
+  appendCommandOutputCache(
+    state,
+    "thread",
+    "call",
+    Buffer.from("partial wrapped docker output\n#22 DONE 0.4s\n").toString("base64"),
+    7,
+  );
+  const descriptorWithCache = applyCommandOutputCacheToDescriptor(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: "42",
+      command: "docker build",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+
+  assert.equal(descriptorWithCache.replayTruncated, true);
+  const tab = focusCommandTerminal(state, descriptorWithCache);
+
+  assert.equal(tab.replay.toString(), "#22 DONE 0.4s\n");
+  assert.equal(tab.lastSequence, 7);
 });
 
 test("output sequence is idempotent and reports gaps", () => {

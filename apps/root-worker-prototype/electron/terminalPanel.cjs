@@ -52,6 +52,34 @@ function terminalTabNeedsLiveSessionRefresh(tab) {
   );
 }
 
+function replayBufferFromDescriptor(descriptor) {
+  const replay = descriptor.replayBase64
+    ? Buffer.from(descriptor.replayBase64, "base64")
+    : Buffer.alloc(0);
+  if (!descriptor.replayTruncated) {
+    return replay;
+  }
+  return terminalSafeTruncatedReplay(replay);
+}
+
+function terminalSafeTruncatedReplay(replay) {
+  if (!Buffer.isBuffer(replay) || replay.length === 0) {
+    return Buffer.alloc(0);
+  }
+  const cr = replay.indexOf(0x0d);
+  const lf = replay.indexOf(0x0a);
+  const boundary =
+    cr === -1 ? lf : lf === -1 ? cr : Math.min(cr, lf);
+  if (boundary === -1) {
+    return Buffer.alloc(0);
+  }
+  let start = boundary + 1;
+  if (replay[boundary] === 0x0d && replay[start] === 0x0a) {
+    start += 1;
+  }
+  return replay.subarray(start);
+}
+
 function mergeTerminalSessions(state, sessions, threadId = null) {
   const activeKeys = new Set();
   for (const descriptor of sessions) {
@@ -83,9 +111,7 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
       ...normalizeDescriptor(descriptor),
       id: descriptor.sessionId,
       status: "running",
-      replay: descriptor.replayBase64
-        ? Buffer.from(descriptor.replayBase64, "base64")
-        : Buffer.alloc(0),
+      replay: replayBufferFromDescriptor(descriptor),
       lastSequence: normalizeSequence(descriptor.replayThroughSequence),
       hasSequenceGap: false,
       backgroundActivity: false,
@@ -120,7 +146,7 @@ function addUserTerminal(state, descriptor) {
     ...normalizeDescriptor(descriptor),
     id: descriptor.sessionId,
     status: "starting",
-    replay: Buffer.alloc(0),
+    replay: replayBufferFromDescriptor(descriptor),
     lastSequence: null,
     hasSequenceGap: false,
     backgroundActivity: false,
@@ -150,9 +176,7 @@ function focusCommandTerminal(state, descriptor) {
     ...normalizeDescriptor(descriptor),
     id: descriptor.sessionId,
     status: "running",
-    replay: descriptor.replayBase64
-      ? Buffer.from(descriptor.replayBase64, "base64")
-      : Buffer.alloc(0),
+    replay: replayBufferFromDescriptor(descriptor),
     lastSequence: normalizeSequence(descriptor.replayThroughSequence),
     hasSequenceGap: false,
     backgroundActivity: false,
@@ -173,7 +197,7 @@ function mergeFocusedCommandDescriptor(tab, descriptor) {
     canTerminate: tab.canTerminate === true || normalized.canTerminate === true,
   });
   if (descriptor.replayBase64 && descriptorSequence >= currentSequence) {
-    tab.replay = Buffer.from(descriptor.replayBase64, "base64");
+    tab.replay = replayBufferFromDescriptor(descriptor);
     tab.lastSequence = descriptorSequence;
     tab.hasSequenceGap = false;
   }
@@ -589,11 +613,13 @@ module.exports = {
   mergeTerminalSessions,
   liveCommandSessionForTerminalFocus,
   reattachTerminalSessions,
+  replayBufferFromDescriptor,
   setTerminalTabSize,
   isTerminalSessionDetached,
   isRunningCommandStatus,
   selectTerminalTab,
   terminalPanelSnapshot,
+  terminalSafeTruncatedReplay,
   terminalTabMetadata,
   terminalTabNeedsLiveSessionRefresh,
   terminalTabSupports,
