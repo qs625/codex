@@ -191,7 +191,7 @@ export function TerminalPanel({
         }
         terminal = new Terminal({
           allowProposedApi: false,
-          convertEol: false,
+          convertEol: shouldConvertTerminalEol(activeTab),
           cursorBlink: isInteractive(activeTab.status),
           cursorStyle: "bar",
           fontFamily: terminalFontFamilyValue(displayPreferences.fontFamily),
@@ -343,6 +343,9 @@ export function TerminalPanel({
   }, [
     activeTab?.id,
     activeTab?.generation,
+    activeTab?.canResize,
+    activeTab?.canWrite,
+    activeTab?.readOnlyOutput,
     activeTab?.replayThroughSequence,
     activeTab?.status,
     publishPreferredTerminalSize,
@@ -727,6 +730,10 @@ function normalizedTerminalSize(size: TerminalSize | null | undefined) {
     return null;
   }
   return { rows, cols };
+}
+
+function shouldConvertTerminalEol(tab: TerminalPanelTabState) {
+  return tab.readOnlyOutput === true || (!tab.canWrite && !tab.canResize);
 }
 
 function numericCssPixels(value: string): number {

@@ -58,6 +58,34 @@ test("TerminalPanel publishes fitted size as thread preferred terminal size", ()
   );
 });
 
+test("TerminalPanel converts LF-only output only for read-only command views", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const helperIndex = source.indexOf("function shouldConvertTerminalEol");
+  const readOnlyIndex = source.indexOf("tab.readOnlyOutput === true", helperIndex);
+  const fixedOutputIndex = source.indexOf("!tab.canWrite && !tab.canResize", helperIndex);
+  const constructorIndex = source.indexOf("terminal = new Terminal({");
+  const convertIndex = source.indexOf(
+    "convertEol: shouldConvertTerminalEol(activeTab)",
+    constructorIndex,
+  );
+
+  assert.notEqual(helperIndex, -1);
+  assert.notEqual(readOnlyIndex, -1);
+  assert.notEqual(fixedOutputIndex, -1);
+  assert.notEqual(convertIndex, -1);
+});
+
+test("TerminalPanel rebuilds xterm when fallback upgrades to live capabilities", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");
+  const dependencyEnd = source.indexOf("  ]);", dependencyStart);
+  const dependencies = source.slice(dependencyStart, dependencyEnd);
+
+  assert.match(dependencies, /activeTab\?\.canResize/);
+  assert.match(dependencies, /activeTab\?\.canWrite/);
+  assert.match(dependencies, /activeTab\?\.readOnlyOutput/);
+});
+
 test("TerminalPanel publishes preferred size while idle with no active tab", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const idleEffectIndex = source.indexOf(
