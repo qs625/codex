@@ -1763,6 +1763,7 @@ function commandExecutionNotificationOutput(
     label: item.kind === "exit" ? "Command exit output" : "Command output",
     text: item.output,
     isEmpty: item.output.length === 0,
+    terminalEmulated: true,
   };
 }
 

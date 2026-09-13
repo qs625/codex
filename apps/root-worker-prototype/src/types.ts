@@ -888,6 +888,7 @@ export type ConversationEntry = {
     label: string;
     text: string;
     isEmpty?: boolean;
+    terminalEmulated?: boolean;
   };
   pollEventProgress?: {
     startedAtMs: number;

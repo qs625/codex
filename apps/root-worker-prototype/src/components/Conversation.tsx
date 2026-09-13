@@ -1209,12 +1209,97 @@ function ToolEntryBody({ entry }: { entry: ConversationEntry }) {
       ) : null}
       {entry.toolDetails ? <pre>{entry.toolDetails}</pre> : null}
       {entry.toolOutput ? (
-        <details className={toolOutputClassName(entry.toolOutput)}>
+        <details
+          className={toolOutputClassName(entry.toolOutput)}
+          open={entry.toolOutput.terminalEmulated ? true : undefined}
+        >
           <summary>{entry.toolOutput.label}</summary>
-          <pre>{entry.toolOutput.text}</pre>
+          {entry.toolOutput.terminalEmulated && !entry.toolOutput.isEmpty ? (
+            <TerminalOutputPreview text={entry.toolOutput.text} />
+          ) : (
+            <pre>{entry.toolOutput.text}</pre>
+          )}
         </details>
       ) : null}
     </>
+  );
+}
+
+function TerminalOutputPreview({ text }: { text: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return undefined;
+    }
+
+    let disposed = false;
+    let terminal: { dispose: () => void; write: (value: string) => void } | null =
+      null;
+    let fitAddon: { fit: () => void } | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
+      .then(([{ Terminal }, { FitAddon }]) => {
+        if (disposed) {
+          return;
+        }
+        const nextTerminal = new Terminal({
+          allowProposedApi: false,
+          convertEol: false,
+          cursorBlink: false,
+          cursorStyle: "block",
+          disableStdin: true,
+          fontFamily: '"SFMono-Regular", "Consolas", "Liberation Mono", monospace',
+          fontSize: 12,
+          lineHeight: 1.45,
+          scrollback: 10_000,
+          theme: {
+            background: "#111827",
+            foreground: "#e7e5e4",
+            cursor: "#111827",
+            cursorAccent: "#111827",
+            selectionBackground: "#0f766e66",
+          },
+        });
+        const nextFitAddon = new FitAddon();
+        nextTerminal.loadAddon(nextFitAddon);
+        nextTerminal.open(container);
+        terminal = nextTerminal;
+        fitAddon = nextFitAddon;
+        const fit = () => {
+          try {
+            fitAddon?.fit();
+          } catch {
+            // Hidden or not-yet-laid-out details cannot be fitted until visible.
+          }
+        };
+        fit();
+        nextTerminal.write(text);
+        resizeObserver = new ResizeObserver(fit);
+        resizeObserver.observe(container);
+        queueMicrotask(fit);
+      })
+      .catch(() => {
+        if (!disposed) {
+          container.textContent = text;
+        }
+      });
+
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      terminal?.dispose();
+    };
+  }, [text]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="tool-terminal-output-preview"
+      aria-label="Terminal-rendered command output"
+    />
   );
 }
 

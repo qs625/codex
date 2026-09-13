@@ -3352,6 +3352,24 @@ svg {
   word-break: break-word;
 }
 
+.tool-terminal-output-preview {
+  height: min(420px, 58vh);
+  min-height: 180px;
+  padding: 8px 6px 6px 9px;
+  border-top: 1px solid rgba(15, 118, 110, 0.12);
+  background: #111827;
+}
+
+.tool-terminal-output-preview .xterm,
+.tool-terminal-output-preview .xterm-screen {
+  height: 100%;
+}
+
+.tool-terminal-output-preview .xterm-viewport {
+  scrollbar-color: #57534e #111827;
+  scrollbar-width: thin;
+}
+
 .tool-output-block-empty pre {
   color: #78716c;
   font-style: italic;

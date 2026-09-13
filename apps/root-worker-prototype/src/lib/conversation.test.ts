@@ -619,6 +619,7 @@ test("renders command notifications as structured command tool entries", () => {
           label: "Command output",
           text: "changed",
           isEmpty: false,
+          terminalEmulated: true,
         },
       },
       {
@@ -643,6 +644,7 @@ test("renders command notifications as structured command tool entries", () => {
           label: "Command exit output",
           text: "  go test failure\n",
           isEmpty: false,
+          terminalEmulated: true,
         },
       },
     ],

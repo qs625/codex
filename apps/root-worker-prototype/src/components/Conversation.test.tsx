@@ -713,6 +713,41 @@ test("command notification tool rows keep output collapsed inside expanded cards
   assert.match(markup, /line one[\s\S]*line two/);
 });
 
+test("terminal-emulated tool output renders in a terminal preview surface", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "cmd-1:notification:output",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: "Command notification • output • fly deploy",
+          timestamp: "09:41",
+          attachments: [],
+          toolName: "fly deploy",
+          toolStatus: "completed",
+          toolDetails: "Kind\noutput\n\nCommand\nfly deploy",
+          toolOutput: {
+            label: "Command output",
+            text: "Layer already exists\r\u001b[2KPushed\n",
+            isEmpty: false,
+            terminalEmulated: true,
+          },
+          toolCategory: "command",
+        },
+      ]}
+      isOpen
+    />,
+  );
+
+  assert.match(markup, /<details class="tool-output-block" open="">/);
+  assert.match(markup, /<summary>Command output<\/summary>/);
+  assert.match(markup, /tool-terminal-output-preview/);
+  assert.match(markup, /Terminal-rendered command output/);
+  assert.doesNotMatch(markup, /<pre>Layer already exists/);
+});
+
 test("command start, output, and exit notifications render in one command cell with selectable output", () => {
   const state = buildConversationState({
     id: "thread-1",
@@ -785,7 +820,8 @@ test("command start, output, and exit notifications render in one command cell w
     />,
   );
   assert.match(outputMarkup, /<summary>Command output<\/summary>/);
-  assert.match(outputMarkup, /stdout line/);
+  assert.match(outputMarkup, /tool-terminal-output-preview/);
+  assert.doesNotMatch(outputMarkup, /<pre>stdout line<\/pre>/);
 
   const exitMarkup = renderToStaticMarkup(
     <ToolRow
@@ -795,7 +831,8 @@ test("command start, output, and exit notifications render in one command cell w
     />,
   );
   assert.match(exitMarkup, /<summary>Command exit output<\/summary>/);
-  assert.match(exitMarkup, /stderr line/);
+  assert.match(exitMarkup, /tool-terminal-output-preview/);
+  assert.doesNotMatch(exitMarkup, /<pre>stderr line<\/pre>/);
 });
 
 test("expanded poll_event tool rows render current wait progress", () => {
