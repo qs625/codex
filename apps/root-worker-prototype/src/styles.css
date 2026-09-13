@@ -5842,6 +5842,10 @@ svg {
   padding: 8px 6px 6px 9px;
 }
 
+.terminal-viewport.idle {
+  visibility: hidden;
+}
+
 .terminal-viewport .xterm,
 .terminal-viewport .xterm-screen {
   height: 100%;
@@ -5853,11 +5857,12 @@ svg {
 }
 
 .terminal-empty {
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 10px;
-  width: 100%;
   padding: 24px;
   color: #a8a29e;
   text-align: center;

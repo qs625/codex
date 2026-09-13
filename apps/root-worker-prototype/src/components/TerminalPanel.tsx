@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTermTerminal } from "@xterm/xterm";
 
@@ -21,6 +21,7 @@ import type { Thread } from "../types";
 type TerminalPanelState = Awaited<
   ReturnType<Window["codexDesktop"]["getTerminalState"]>
 >;
+type TerminalSize = { rows: number; cols: number };
 
 /*
  * Design brief: a compact operational surface that extends the Browser panel's
@@ -71,6 +72,26 @@ export function TerminalPanel({
     [state],
   );
   activeTabIdRef.current = activeTab?.id ?? null;
+
+  const publishPreferredTerminalSize = useCallback((next: TerminalSize) => {
+    const threadId = thread?.id ?? null;
+    const previousPreferred = lastPreferredSizeRef.current;
+    if (
+      threadId &&
+      (previousPreferred?.threadId !== threadId ||
+        previousPreferred.rows !== next.rows ||
+        previousPreferred.cols !== next.cols)
+    ) {
+      lastPreferredSizeRef.current = { threadId, ...next };
+      void window.codexDesktop
+        .updateTerminalPreferredSize({ threadId, size: next })
+        .catch(() => {
+          if (lastPreferredSizeRef.current?.threadId === threadId) {
+            lastPreferredSizeRef.current = previousPreferred;
+          }
+        });
+    }
+  }, [thread?.id]);
 
   useEffect(() => {
     let disposed = false;
@@ -218,23 +239,7 @@ export function TerminalPanel({
           }
           const previous = lastSizeRef.current;
           lastSizeRef.current = next;
-          const threadId = thread?.id ?? null;
-          const previousPreferred = lastPreferredSizeRef.current;
-          if (
-            threadId &&
-            (previousPreferred?.threadId !== threadId ||
-              previousPreferred.rows !== next.rows ||
-              previousPreferred.cols !== next.cols)
-          ) {
-            lastPreferredSizeRef.current = { threadId, ...next };
-            void window.codexDesktop
-              .updateTerminalPreferredSize({ threadId, size: next })
-              .catch(() => {
-                if (lastPreferredSizeRef.current?.threadId === threadId) {
-                  lastPreferredSizeRef.current = previousPreferred;
-                }
-              });
-          }
+          publishPreferredTerminalSize(next);
           if (
             activeTab.canResize &&
             isInteractive(activeTab.status) &&
@@ -324,8 +329,35 @@ export function TerminalPanel({
     activeTab?.generation,
     activeTab?.replayThroughSequence,
     activeTab?.status,
+    publishPreferredTerminalSize,
     thread?.id,
   ]);
+
+  useEffect(() => {
+    if (activeTab) {
+      return undefined;
+    }
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return undefined;
+    }
+
+    const sendPreferredSize = () => {
+      const next = measureTerminalViewportSize(viewport, displayPreferences);
+      if (!next) {
+        return;
+      }
+      lastSizeRef.current = next;
+      publishPreferredTerminalSize(next);
+    };
+    sendPreferredSize();
+    const resizeObserver = new ResizeObserver(sendPreferredSize);
+    resizeObserver.observe(viewport);
+    queueMicrotask(sendPreferredSize);
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [activeTab, displayPreferences, publishPreferredTerminalSize, thread?.id]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -603,9 +635,11 @@ export function TerminalPanel({
       </div>
 
       <div className="terminal-viewport-shell">
-        {activeTab ? (
-          <div ref={viewportRef} className="terminal-viewport" />
-        ) : (
+        <div
+          ref={viewportRef}
+          className={`terminal-viewport ${activeTab ? "" : "idle"}`}
+        />
+        {!activeTab ? (
           <div className="terminal-empty">
             <span>$</span>
             <p>Open a sandboxed shell or wait for a model PTY to become attachable.</p>
@@ -613,10 +647,58 @@ export function TerminalPanel({
               New shell
             </button>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
+}
+
+function measureTerminalViewportSize(
+  viewport: HTMLElement,
+  displayPreferences: ReturnType<typeof readTerminalDisplayPreferences>,
+): TerminalSize | null {
+  const style = window.getComputedStyle(viewport);
+  const contentWidth =
+    viewport.clientWidth -
+    numericCssPixels(style.paddingLeft) -
+    numericCssPixels(style.paddingRight);
+  const contentHeight =
+    viewport.clientHeight -
+    numericCssPixels(style.paddingTop) -
+    numericCssPixels(style.paddingBottom);
+  if (contentWidth <= 0 || contentHeight <= 0) {
+    return null;
+  }
+
+  const measure = document.createElement("span");
+  measure.textContent = "W".repeat(32);
+  measure.style.position = "absolute";
+  measure.style.visibility = "hidden";
+  measure.style.pointerEvents = "none";
+  measure.style.whiteSpace = "pre";
+  measure.style.fontFamily = terminalFontFamilyValue(
+    displayPreferences.fontFamily,
+  );
+  measure.style.fontSize = `${displayPreferences.fontSize}px`;
+  measure.style.lineHeight = `${displayPreferences.lineHeight}`;
+  viewport.appendChild(measure);
+  const bounds = measure.getBoundingClientRect();
+  measure.remove();
+
+  const cellWidth = bounds.width / 32;
+  const cellHeight = displayPreferences.fontSize * displayPreferences.lineHeight;
+  if (cellWidth <= 0 || cellHeight <= 0) {
+    return null;
+  }
+  return {
+    rows: Math.max(1, Math.floor(contentHeight / cellHeight)),
+    cols: Math.max(1, Math.floor(contentWidth / cellWidth)),
+  };
+}
+
+function numericCssPixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function decodeBase64(value: string): Uint8Array {

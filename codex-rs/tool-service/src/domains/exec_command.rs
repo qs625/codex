@@ -332,16 +332,8 @@ async fn dispatch_exec_command(
 
     turn_capability.emit_unified_exec_tty_metric(tty);
     let process_id = command_state.allocate_process_id().await;
-    let terminal_size = if tty {
-        turn_capability
-            .preferred_terminal_size()
-            .map(|size| ExecCommandTerminalSize {
-                rows: size.rows,
-                cols: size.cols,
-            })
-    } else {
-        None
-    };
+    let terminal_size =
+        terminal_size_for_exec_command(tty, turn_capability.preferred_terminal_size());
     let run_request = ExecCommandRunRequest {
         command,
         shell_type: resolved_command.shell_type,
@@ -517,6 +509,19 @@ fn exec_command_tool_output_from_run_output(output: ExecCommandRunOutput) -> Exe
         original_token_count: output.original_token_count,
         hook_command: output.hook_command,
     }
+}
+
+fn terminal_size_for_exec_command(
+    tty: bool,
+    preferred_size: Option<thread_service_api::PreferredTerminalSize>,
+) -> Option<ExecCommandTerminalSize> {
+    if !tty {
+        return None;
+    }
+    preferred_size.map(|size| ExecCommandTerminalSize {
+        rows: size.rows,
+        cols: size.cols,
+    })
 }
 
 #[cfg(test)]
@@ -717,5 +722,26 @@ mod tests {
         assert_eq!(arguments["workdir"], "/tmp");
         assert_eq!(arguments["yield_time_ms"], 5000);
         assert!(arguments.get("command").is_none());
+    }
+
+    #[test]
+    fn terminal_size_is_only_forwarded_for_tty_exec_commands() {
+        let preferred_size = thread_service_api::PreferredTerminalSize {
+            rows: 37,
+            cols: 118,
+        };
+
+        assert_eq!(
+            terminal_size_for_exec_command(true, Some(preferred_size)),
+            Some(ExecCommandTerminalSize {
+                rows: 37,
+                cols: 118,
+            }),
+        );
+        assert_eq!(
+            terminal_size_for_exec_command(false, Some(preferred_size)),
+            None,
+        );
+        assert_eq!(terminal_size_for_exec_command(true, None), None);
     }
 }
