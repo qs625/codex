@@ -94,6 +94,7 @@ impl CommandExecRequestProcessor {
                 replay_base64: session.replay_base64,
                 replay_truncated: session.replay_truncated,
                 replay_through_sequence: session.replay_through_sequence,
+                size: session.size.map(command_exec_terminal_size_from_pty),
                 can_resize: true,
                 can_write: true,
                 can_terminate: true,
@@ -127,6 +128,7 @@ impl CommandExecRequestProcessor {
                     }),
                     replay_truncated: command.replay_truncated,
                     replay_through_sequence: command.replay_through_sequence,
+                    size: command.terminal_size.map(command_exec_terminal_size_from_command),
                     can_resize: command.can_resize,
                     can_write: true,
                     can_terminate: true,
@@ -549,6 +551,24 @@ impl CommandExecRequestProcessor {
     ) {
         file_system_sandbox_policy
             .preserve_deny_read_restrictions_from(configured_file_system_sandbox_policy);
+    }
+}
+
+fn command_exec_terminal_size_from_pty(
+    size: codex_utils_pty::TerminalSize,
+) -> app_server_protocol::CommandExecTerminalSize {
+    app_server_protocol::CommandExecTerminalSize {
+        rows: size.rows,
+        cols: size.cols,
+    }
+}
+
+fn command_exec_terminal_size_from_command(
+    size: command_service_api::ExecCommandTerminalSize,
+) -> app_server_protocol::CommandExecTerminalSize {
+    app_server_protocol::CommandExecTerminalSize {
+        rows: size.rows,
+        cols: size.cols,
     }
 }
 

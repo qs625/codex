@@ -92,6 +92,7 @@ pub struct RunningCommandSnapshot {
     pub latest_output_bytes: Vec<u8>,
     pub replay_truncated: bool,
     pub replay_through_sequence: u64,
+    pub terminal_size: Option<ExecCommandTerminalSize>,
     pub can_resize: bool,
 }
 

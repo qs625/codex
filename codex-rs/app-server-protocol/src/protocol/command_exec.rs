@@ -286,6 +286,12 @@ pub struct TerminalSessionDescriptor {
     pub replay_truncated: bool,
     /// Sequence of the newest chunk included in `replayBase64`.
     pub replay_through_sequence: u64,
+    /// Current PTY size in character cells. Clients use this to replay stored
+    /// terminal bytes with the same width that produced them before resizing to
+    /// the visible viewport.
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<CommandExecTerminalSize>,
     pub can_resize: bool,
     pub can_write: bool,
     pub can_terminate: bool,

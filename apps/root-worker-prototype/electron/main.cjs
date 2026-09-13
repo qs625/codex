@@ -127,6 +127,7 @@ const {
   mergeTerminalSessions,
   reattachTerminalSessions,
   isTerminalSessionDetached,
+  setTerminalTabSize,
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
@@ -738,6 +739,7 @@ ipcMain.handle("codex:terminal:create", async (event, payload = {}) => {
     replayBase64: null,
     replayTruncated: false,
     replayThroughSequence: 0,
+    size: normalizeTerminalSize(payload.size),
     canResize: true,
     canWrite: true,
     canTerminate: true,
@@ -844,10 +846,14 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
   if (!terminalTabSupports(tab, "resize")) {
     throw new Error("Terminal resize is not supported by this execution environment");
   }
+  const size = normalizeTerminalSize(payload.size);
   await appServerClient.request("terminal/session/resize", {
     ...terminalControlTarget(panel, tab),
-    size: normalizeTerminalSize(payload.size),
+    size,
   });
+  if (setTerminalTabSize(tab, size)) {
+    sendTerminalPanelState(panel);
+  }
   return { ok: true };
 });
 

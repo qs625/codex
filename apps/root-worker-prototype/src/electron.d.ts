@@ -29,6 +29,7 @@ type TerminalPanelTabState = {
   replayBase64: string;
   replayTruncated: boolean;
   replayThroughSequence: number;
+  size: { rows: number; cols: number } | null;
   lastSequence: number | null;
   hasSequenceGap: boolean;
   backgroundActivity: boolean;

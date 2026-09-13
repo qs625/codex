@@ -1,6 +1,7 @@
 #![allow(clippy::module_inception)]
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::watch;
@@ -64,6 +65,7 @@ pub struct UnifiedExecProcess {
     output_runtime: CommandOutputRuntime,
     state_tx: watch::Sender<ProcessState>,
     state_rx: watch::Receiver<ProcessState>,
+    terminal_size: Mutex<Option<TerminalSize>>,
     output_task: Option<JoinHandle<()>>,
     sandbox_type: SandboxType,
     _spawn_lifecycle: Option<SpawnLifecycleHandle>,
@@ -84,6 +86,7 @@ impl UnifiedExecProcess {
         process_handle: ProcessHandle,
         sandbox_type: SandboxType,
         spawn_lifecycle: Option<SpawnLifecycleHandle>,
+        terminal_size: Option<TerminalSize>,
     ) -> Self {
         let output_runtime = CommandOutputRuntime::new();
         let (state_tx, state_rx) = watch::channel(ProcessState::default());
@@ -93,6 +96,7 @@ impl UnifiedExecProcess {
             output_runtime,
             state_tx,
             state_rx,
+            terminal_size: Mutex::new(terminal_size),
             output_task: None,
             sandbox_type,
             _spawn_lifecycle: spawn_lifecycle,
@@ -126,13 +130,23 @@ impl UnifiedExecProcess {
 
     pub fn resize(&self, size: TerminalSize) -> Result<(), UnifiedExecError> {
         match &self.process_handle {
-            ProcessHandle::Local(process_handle) => process_handle
-                .resize(size)
-                .map_err(|err| UnifiedExecError::process_failed(err.to_string())),
+            ProcessHandle::Local(process_handle) => {
+                process_handle
+                    .resize(size)
+                    .map_err(|err| UnifiedExecError::process_failed(err.to_string()))?;
+                if let Ok(mut current) = self.terminal_size.lock() {
+                    *current = Some(size);
+                }
+                Ok(())
+            }
             ProcessHandle::ExecServer(_) => Err(UnifiedExecError::process_failed(
                 "terminal resize is not supported by this execution environment".to_string(),
             )),
         }
+    }
+
+    pub fn terminal_size(&self) -> Option<TerminalSize> {
+        self.terminal_size.lock().ok().and_then(|current| *current)
     }
 
     pub fn supports_resize(&self) -> bool {
@@ -271,6 +285,7 @@ impl UnifiedExecProcess {
         spawned: SpawnedPty,
         sandbox_type: SandboxType,
         spawn_lifecycle: SpawnLifecycleHandle,
+        terminal_size: Option<TerminalSize>,
     ) -> Result<Self, UnifiedExecError> {
         let SpawnedPty {
             session: process_handle,
@@ -284,6 +299,7 @@ impl UnifiedExecProcess {
             ProcessHandle::Local(Box::new(process_handle)),
             sandbox_type,
             Some(spawn_lifecycle),
+            terminal_size,
         );
         managed.output_task = Some(tokio::spawn(
             managed
@@ -331,7 +347,12 @@ impl UnifiedExecProcess {
         sandbox_type: SandboxType,
     ) -> Result<Self, UnifiedExecError> {
         let process_handle = ProcessHandle::ExecServer(Arc::clone(&started.process));
-        let mut managed = Self::new(process_handle, sandbox_type, /*spawn_lifecycle*/ None);
+        let mut managed = Self::new(
+            process_handle,
+            sandbox_type,
+            /*spawn_lifecycle*/ None,
+            /*terminal_size*/ None,
+        );
         let output_runtime = managed.output_runtime.clone();
         managed.output_task = Some(Self::spawn_exec_server_output_task(
             started,

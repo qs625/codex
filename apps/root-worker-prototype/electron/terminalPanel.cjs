@@ -230,6 +230,7 @@ function commandFocusDescriptor(command, activeCommand) {
       : null,
     replayTruncated: false,
     replayThroughSequence: 0,
+    size: null,
     canResize: false,
     canWrite: false,
     canTerminate: false,
@@ -276,6 +277,7 @@ function commandFocusDescriptorFromRequest(command) {
     replayBase64: null,
     replayTruncated: false,
     replayThroughSequence: 0,
+    size: null,
     canResize: false,
     canWrite: false,
     canTerminate: false,
@@ -297,6 +299,7 @@ function commandFocusDescriptorFromLiveSession(command, session) {
       : null,
     replayTruncated: Boolean(session.replayTruncated),
     replayThroughSequence: session.lastSequence ?? session.replayThroughSequence ?? 0,
+    size: normalizeTerminalSizeDescriptor(session.size),
     canResize: session.canResize !== false,
     canWrite: session.canWrite !== false,
     canTerminate: session.canTerminate !== false,
@@ -352,6 +355,15 @@ function appendTerminalOutput(tab, deltaBase64, sequence) {
     tab.status = "running";
   }
   tab.backgroundActivity = true;
+  return true;
+}
+
+function setTerminalTabSize(tab, size) {
+  const normalized = normalizeTerminalSizeDescriptor(size);
+  if (!normalized) {
+    return false;
+  }
+  tab.size = normalized;
   return true;
 }
 
@@ -519,6 +531,7 @@ function normalizeDescriptor(descriptor) {
     replayThroughSequence: normalizeSequence(
       descriptor.replayThroughSequence,
     ),
+    size: normalizeTerminalSizeDescriptor(descriptor.size),
     canResize: descriptor.canResize !== false,
     canWrite: descriptor.canWrite !== false,
     canTerminate: descriptor.canTerminate !== false,
@@ -528,6 +541,23 @@ function normalizeDescriptor(descriptor) {
 
 function normalizeSequence(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function normalizeTerminalSizeDescriptor(size) {
+  if (!size || typeof size !== "object") {
+    return null;
+  }
+  const rows = Math.round(Number(size.rows));
+  const cols = Math.round(Number(size.cols));
+  if (
+    !Number.isSafeInteger(rows) ||
+    !Number.isSafeInteger(cols) ||
+    rows <= 0 ||
+    cols <= 0
+  ) {
+    return null;
+  }
+  return { rows, cols };
 }
 
 module.exports = {
@@ -550,6 +580,7 @@ module.exports = {
   mergeTerminalSessions,
   liveCommandSessionForTerminalFocus,
   reattachTerminalSessions,
+  setTerminalTabSize,
   isTerminalSessionDetached,
   isRunningCommandStatus,
   selectTerminalTab,

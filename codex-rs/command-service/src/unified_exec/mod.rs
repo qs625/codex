@@ -300,6 +300,13 @@ impl ProcessEntry {
             latest_output_bytes,
             replay_truncated,
             replay_through_sequence,
+            terminal_size: self
+                .process
+                .terminal_size()
+                .map(|size| command_service_api::ExecCommandTerminalSize {
+                    rows: size.rows,
+                    cols: size.cols,
+                }),
             can_resize: self.process.supports_resize(),
         }
     }

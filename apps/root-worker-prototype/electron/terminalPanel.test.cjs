@@ -20,6 +20,7 @@ const {
   markTerminalExited,
   mergeTerminalSessions,
   reattachTerminalSessions,
+  setTerminalTabSize,
   terminalPanelSnapshot,
   terminalCommandItemKey,
   terminalSessionKey,
@@ -52,6 +53,57 @@ test("merge restores live sessions and marks missing sessions lost", () => {
   assert.equal(state.tabs[0].status, "running");
   mergeTerminalSessions(state, [], "thread");
   assert.equal(state.tabs[0].status, "lost");
+});
+
+test("merge preserves live terminal size for width-sensitive replay", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        replayBase64: Buffer.from("progress\rnext").toString("base64"),
+        size: { rows: 31, cols: 97 },
+      }),
+    ],
+    "thread",
+  );
+
+  assert.deepEqual(state.tabs[0].size, { rows: 31, cols: 97 });
+  assert.deepEqual(terminalPanelSnapshot(state).tabs[0].size, {
+    rows: 31,
+    cols: 97,
+  });
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        size: { rows: 33, cols: 101 },
+      }),
+    ],
+    "thread",
+  );
+  assert.deepEqual(state.tabs[0].size, { rows: 33, cols: 101 });
+});
+
+test("terminal resize updates tab size metadata used by future replay", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [descriptor({ size: { rows: 24, cols: 80 } })],
+    "thread",
+  );
+  const tab = state.tabs[0];
+
+  assert.equal(setTerminalTabSize(tab, { rows: 35, cols: 118 }), true);
+  assert.deepEqual(tab.size, { rows: 35, cols: 118 });
+  assert.deepEqual(terminalPanelSnapshot(state).tabs[0].size, {
+    rows: 35,
+    cols: 118,
+  });
+  assert.equal(setTerminalTabSize(tab, { rows: 0, cols: 0 }), false);
+  assert.deepEqual(tab.size, { rows: 35, cols: 118 });
 });
 
 test("output sequence is idempotent and reports gaps", () => {
@@ -253,6 +305,7 @@ test("focus descriptor keeps running active command available despite process mi
     replayBase64: Buffer.from("ready\n").toString("base64"),
     replayTruncated: false,
     replayThroughSequence: 0,
+    size: null,
     canResize: false,
     canWrite: false,
     canTerminate: false,

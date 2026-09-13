@@ -1547,6 +1547,7 @@ impl UnifiedExecProcessManager {
                 spawned.map_err(|err| UnifiedExecError::create_process(err.to_string()))?,
                 request.sandbox,
                 spawn_lifecycle,
+                tty.then(|| pty_spawn_terminal_size(request.terminal_size)),
             )
             .await;
         }
@@ -1601,7 +1602,13 @@ impl UnifiedExecProcessManager {
         let spawned =
             spawn_result.map_err(|err| UnifiedExecError::create_process(err.to_string()))?;
         spawn_lifecycle.after_spawn();
-        UnifiedExecProcess::from_spawned(spawned, request.sandbox, spawn_lifecycle).await
+        UnifiedExecProcess::from_spawned(
+            spawned,
+            request.sandbox,
+            spawn_lifecycle,
+            tty.then(|| pty_spawn_terminal_size(request.terminal_size)),
+        )
+        .await
     }
 
     pub(super) async fn open_session_with_sandbox(

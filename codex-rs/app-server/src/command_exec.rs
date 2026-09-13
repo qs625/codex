@@ -100,6 +100,7 @@ struct UserTerminalRuntimeState {
     replay: Vec<u8>,
     replay_truncated: bool,
     replay_through_sequence: u64,
+    size: Option<TerminalSize>,
 }
 
 #[derive(Clone)]
@@ -111,6 +112,7 @@ pub(crate) struct UserTerminalSessionSnapshot {
     pub(crate) replay_base64: Option<String>,
     pub(crate) replay_truncated: bool,
     pub(crate) replay_through_sequence: u64,
+    pub(crate) size: Option<TerminalSize>,
 }
 
 enum CommandControl {
@@ -316,6 +318,7 @@ impl CommandExecManager {
                 replay: Vec::new(),
                 replay_truncated: false,
                 replay_through_sequence: 0,
+                size: tty.then(|| size.unwrap_or_default()),
             })),
             delivery_lock: Arc::new(Mutex::new(())),
         };
@@ -610,6 +613,7 @@ impl CommandExecManager {
                 replay_base64: (!runtime.replay.is_empty()).then(|| STANDARD.encode(&runtime.replay)),
                 replay_truncated: runtime.replay_truncated,
                 replay_through_sequence: runtime.replay_through_sequence,
+                size: runtime.size,
             });
         }
         data.sort_by(|left, right| left.process_id.cmp(&right.process_id));
@@ -792,7 +796,11 @@ async fn run_command(params: RunCommandParams) {
                                 ).await
                             }
                             CommandControl::Resize { size } => {
-                                handle_process_resize(&session, size)
+                                let result = handle_process_resize(&session, size);
+                                if result.is_ok() {
+                                    terminal_runtime.lock().await.size = Some(size);
+                                }
+                                result
                             }
                             CommandControl::Terminate => {
                                 session.request_terminate();
@@ -1420,6 +1428,7 @@ mod tests {
                         replay: Vec::new(),
                         replay_truncated: false,
                         replay_through_sequence: 0,
+                        size: Some(TerminalSize::default()),
                     })),
                     delivery_lock: Arc::new(Mutex::new(())),
                 },
@@ -1458,6 +1467,7 @@ mod tests {
             replay: b"ready".to_vec(),
             replay_truncated: false,
             replay_through_sequence: 1,
+            size: Some(TerminalSize { rows: 33, cols: 120 }),
         }));
         let (control_tx, mut control_rx) = mpsc::channel(1);
         manager.sessions.lock().await.insert(
@@ -1536,6 +1546,7 @@ mod tests {
             replay: Vec::new(),
             replay_truncated: false,
             replay_through_sequence: 0,
+            size: Some(TerminalSize::default()),
         });
 
         assert_eq!(append_user_terminal_replay(&runtime, b"first").await, 1);
@@ -1591,6 +1602,7 @@ mod tests {
                         replay: Vec::new(),
                         replay_truncated: false,
                         replay_through_sequence: 0,
+                        size: Some(TerminalSize::default()),
                     })),
                     delivery_lock: Arc::new(Mutex::new(())),
                 },

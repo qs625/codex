@@ -232,6 +232,15 @@ export function TerminalPanel({
           const next = { rows: terminal.rows, cols: terminal.cols };
           return next;
         };
+        const resizeToRecordedReplaySize = () => {
+          const size = normalizedTerminalSize(activeTab.size);
+          if (!terminal || !size) {
+            return false;
+          }
+          terminal.resize(size.cols, size.rows);
+          lastSizeRef.current = size;
+          return true;
+        };
         sendSize = () => {
           const next = fitTerminal();
           if (!next) {
@@ -273,7 +282,11 @@ export function TerminalPanel({
             })
             .catch((error) => setLocalError(toTerminalError(error)));
         });
-        sendSize();
+        const shouldReplayAtRecordedSize =
+          Boolean(activeTab.replayBase64) && resizeToRecordedReplaySize();
+        if (!shouldReplayAtRecordedSize) {
+          sendSize();
+        }
         if (activeTab.replayTruncated || activeTab.hasSequenceGap) {
           terminal.writeln(
             "\r\n\u001b[33m[Earlier terminal output is unavailable.]\u001b[0m",
@@ -291,6 +304,9 @@ export function TerminalPanel({
           terminal.writeln(
             `\r\n\u001b[90m[Process exited${activeTab.exitCode == null ? "" : ` with code ${activeTab.exitCode}`}.]\u001b[0m`,
           );
+        }
+        if (shouldReplayAtRecordedSize) {
+          sendSize();
         }
 
         resizeObserver = new ResizeObserver(sendSize);
@@ -694,6 +710,23 @@ function measureTerminalViewportSize(
     rows: Math.max(1, Math.floor(contentHeight / cellHeight)),
     cols: Math.max(1, Math.floor(contentWidth / cellWidth)),
   };
+}
+
+function normalizedTerminalSize(size: TerminalSize | null | undefined) {
+  if (!size) {
+    return null;
+  }
+  const rows = Math.round(Number(size.rows));
+  const cols = Math.round(Number(size.cols));
+  if (
+    !Number.isSafeInteger(rows) ||
+    !Number.isSafeInteger(cols) ||
+    rows <= 0 ||
+    cols <= 0
+  ) {
+    return null;
+  }
+  return { rows, cols };
 }
 
 function numericCssPixels(value: string): number {

@@ -11,13 +11,18 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const onDataIndex = source.indexOf("dataSubscription = terminal.onData");
   const onBinaryIndex = source.indexOf("binarySubscription = terminal.onBinary");
-  const initialFitIndex = source.indexOf("sendSize();");
+  const recordedSizeIndex = source.indexOf("resizeToRecordedReplaySize();");
   const replayWriteIndex = source.indexOf("terminal.write(decodeBase64(activeTab.replayBase64))");
+  const postReplayFitIndex = source.indexOf(
+    "if (shouldReplayAtRecordedSize) {\n          sendSize();",
+    replayWriteIndex,
+  );
 
   assert.notEqual(onDataIndex, -1);
   assert.notEqual(onBinaryIndex, -1);
-  assert.notEqual(initialFitIndex, -1);
+  assert.notEqual(recordedSizeIndex, -1);
   assert.notEqual(replayWriteIndex, -1);
+  assert.notEqual(postReplayFitIndex, -1);
   assert.ok(
     onDataIndex < replayWriteIndex,
     "xterm responses generated while parsing replay output must be forwarded to the PTY",
@@ -27,8 +32,12 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
     "binary xterm responses generated while parsing replay output must be forwarded to the PTY",
   );
   assert.ok(
-    initialFitIndex < replayWriteIndex,
-    "terminal replay should be written after fitting to the current viewport",
+    recordedSizeIndex < replayWriteIndex,
+    "terminal replay should be written after restoring the recorded PTY size",
+  );
+  assert.ok(
+    replayWriteIndex < postReplayFitIndex,
+    "terminal should fit to the current viewport after replaying recorded output",
   );
 });
 
