@@ -179,6 +179,196 @@ allow_login_shell = false
 }
 
 #[tokio::test]
+async fn fresh_turn_context_reloads_agent_role_file_metadata() {
+    let codex_home = tempfile::tempdir().expect("create temp dir");
+    let agents_dir = codex_home.path().join("agents");
+    std::fs::create_dir_all(&agents_dir).expect("create agents dir");
+    let role_file = agents_dir.join("reload.agent.md");
+    std::fs::write(
+        &role_file,
+        r#"---
+name: reload
+description: Reload role v1
+---
+Reload developer instructions v1.
+"#,
+    )
+    .expect("write initial role file");
+    let (session, _turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        codex_home.path(),
+        |_| {},
+    )
+    .await;
+    let agent_metadata = codex_agent_runtime::AgentMetadata {
+        agent_id: Some(session.conversation_id),
+        agent_path: Some(protocol::AgentPath::try_from("/root").expect("valid agent path")),
+        agent_role: Some("reload".to_string()),
+        ..Default::default()
+    };
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.root_agent_metadata = Some(agent_metadata.clone());
+        state.session_configuration.developer_instructions =
+            Some("Reload developer instructions v1.".to_string());
+    }
+    session
+        .services
+        .agent_control
+        .register_root_scope_agent_metadata(agent_metadata);
+    let session_configuration = {
+        let state = session.state.lock().await;
+        state.session_configuration.clone()
+    };
+
+    std::fs::write(
+        &role_file,
+        r#"---
+name: reload
+description: Reload role v2
+---
+Reload developer instructions v2.
+"#,
+    )
+    .expect("update role file");
+
+    let refreshed_config = Session::build_fresh_per_turn_config(
+        &session_configuration,
+        session_configuration.cwd.clone(),
+    )
+    .await;
+    assert_eq!(
+        refreshed_config
+            .agent_roles
+            .get("reload")
+            .and_then(|role| role.description.as_deref()),
+        Some("Reload role v2")
+    );
+
+    let turn_environments = session
+        .resolve_turn_environments(&session_configuration.environments)
+        .expect("resolve turn environments");
+    let next_turn = session
+        .new_turn_from_configuration(
+            "next-turn".to_string(),
+            session_configuration,
+            None,
+            turn_environments,
+        )
+        .await;
+    let initial_context = session.build_initial_context(&next_turn).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("Reload role v2")),
+        "expected refreshed agent role description in init context, got {developer_texts:?}"
+    );
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("Reload role v1")),
+        "did not expect stale agent role description in init context, got {developer_texts:?}"
+    );
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("Reload developer instructions v2.")),
+        "expected refreshed current role instructions in init context, got {developer_texts:?}"
+    );
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("Reload developer instructions v1.")),
+        "did not expect stale current role instructions in init context, got {developer_texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn fresh_turn_context_drops_stale_agent_role_body_when_role_file_is_missing() {
+    let codex_home = tempfile::tempdir().expect("create temp dir");
+    let agents_dir = codex_home.path().join("agents");
+    std::fs::create_dir_all(&agents_dir).expect("create agents dir");
+    let role_file = agents_dir.join("reload.agent.md");
+    std::fs::write(
+        &role_file,
+        r#"---
+name: reload
+description: Reload role v1
+---
+Reload developer instructions v1.
+"#,
+    )
+    .expect("write initial role file");
+    let (session, _turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        codex_home.path(),
+        |_| {},
+    )
+    .await;
+    let agent_metadata = codex_agent_runtime::AgentMetadata {
+        agent_id: Some(session.conversation_id),
+        agent_path: Some(protocol::AgentPath::try_from("/root").expect("valid agent path")),
+        agent_role: Some("reload".to_string()),
+        ..Default::default()
+    };
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.root_agent_metadata = Some(agent_metadata.clone());
+        state.session_configuration.developer_instructions =
+            Some("Reload developer instructions v1.".to_string());
+    }
+    session
+        .services
+        .agent_control
+        .register_root_scope_agent_metadata(agent_metadata);
+    let session_configuration = {
+        let state = session.state.lock().await;
+        state.session_configuration.clone()
+    };
+
+    std::fs::remove_file(&role_file).expect("remove role file");
+
+    let refreshed_config = Session::build_fresh_per_turn_config(
+        &session_configuration,
+        session_configuration.cwd.clone(),
+    )
+    .await;
+    assert!(
+        !refreshed_config.agent_roles.contains_key("reload"),
+        "missing role file should not remain available in refreshed agent roles"
+    );
+
+    let turn_environments = session
+        .resolve_turn_environments(&session_configuration.environments)
+        .expect("resolve turn environments");
+    let next_turn = session
+        .new_turn_from_configuration(
+            "next-turn".to_string(),
+            session_configuration,
+            None,
+            turn_environments,
+        )
+        .await;
+    let initial_context = session.build_initial_context(&next_turn).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("Reload role v1")),
+        "did not expect stale agent role description in init context, got {developer_texts:?}"
+    );
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("Reload developer instructions v1.")),
+        "did not expect stale current role instructions in init context, got {developer_texts:?}"
+    );
+}
+
+#[tokio::test]
 async fn submit_with_id_captures_current_span_trace_context() {
     let (session, _turn_context) = make_session_and_context().await;
     let (tx_sub, rx_sub) = async_channel::bounded(1);

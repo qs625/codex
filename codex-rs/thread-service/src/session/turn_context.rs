@@ -899,6 +899,75 @@ impl Session {
         )
     }
 
+    pub(crate) async fn build_fresh_per_turn_config(
+        session_configuration: &SessionConfiguration,
+        cwd: AbsolutePathBuf,
+    ) -> Config {
+        let mut per_turn_config = Self::build_per_turn_config(session_configuration, cwd);
+        if let Err(err) = Self::refresh_agent_roles_for_turn_config(&mut per_turn_config).await {
+            warn!("failed to refresh agent role files for turn context: {err}");
+        }
+        per_turn_config
+    }
+
+    async fn refresh_agent_roles_for_turn_config(config: &mut Config) -> std::io::Result<()> {
+        let cfg: ConfigToml = config
+            .config_layer_stack
+            .effective_config()
+            .try_into()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let mut startup_warnings = Vec::new();
+        let agent_roles = codex_agent_roles::load_agent_roles(
+            LOCAL_FS.as_ref(),
+            &cfg,
+            &config.config_layer_stack,
+            &config.codex_home,
+            &config.cwd,
+            &mut startup_warnings,
+        )
+        .await?;
+        config.agent_roles = agent_roles;
+        config.startup_warnings.extend(startup_warnings);
+        Ok(())
+    }
+
+    async fn agent_role_developer_instructions_from_config(
+        config: &Config,
+        role_name: &str,
+    ) -> Option<String> {
+        let role = codex_agent_roles::resolve_role_config(&config.agent_roles, role_name)?;
+        let role_file = role
+            .source_path
+            .as_deref()
+            .or(role.config_file.as_deref())?;
+        let is_built_in = !config.agent_roles.contains_key(role_name);
+        let role_contents = if is_built_in {
+            codex_agent_roles::built_in_config_file_contents(role_file)?.to_string()
+        } else {
+            tokio::fs::read_to_string(role_file).await.ok()?
+        };
+        let role_base_dir = if is_built_in {
+            config.codex_home.as_path()
+        } else {
+            role_file.parent()?
+        };
+        let parsed = codex_agent_roles::parse_agent_role_file_contents(
+            &role_contents,
+            role_file,
+            role_base_dir,
+            Some(role_name),
+        )
+        .ok()?;
+        parsed
+            .config
+            .as_table()
+            .and_then(|table| table.get("developer_instructions"))
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
     pub(crate) fn build_effective_session_config(
         session_configuration: &SessionConfiguration,
     ) -> Config {
@@ -1166,7 +1235,7 @@ impl Session {
             .await)
     }
 
-    fn resolve_turn_environments(
+    pub(crate) fn resolve_turn_environments(
         &self,
         environments: &[TurnEnvironmentSelection],
     ) -> CodexResult<ResolvedTurnEnvironments> {
@@ -1176,10 +1245,10 @@ impl Session {
         )
     }
 
-    async fn new_turn_from_configuration(
+    pub(crate) async fn new_turn_from_configuration(
         &self,
         sub_id: String,
-        session_configuration: SessionConfiguration,
+        mut session_configuration: SessionConfiguration,
         final_output_json_schema: Option<Option<Value>>,
         turn_environments: ResolvedTurnEnvironments,
     ) -> Arc<TurnContext> {
@@ -1187,7 +1256,13 @@ impl Session {
         let cwd = primary_turn_environment
             .map(|turn_environment| turn_environment.cwd.clone())
             .unwrap_or_else(|| session_configuration.cwd.clone());
-        let mut per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
+        let mut per_turn_config =
+            Self::build_fresh_per_turn_config(&session_configuration, cwd.clone()).await;
+        let current_agent_role = session_configuration
+            .root_agent_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.agent_role.clone())
+            .or_else(|| session_configuration.session_source.get_agent_role());
         {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
             mcp_connection_manager.set_approval_policy(&session_configuration.approval_policy);
@@ -1222,6 +1297,14 @@ impl Session {
             &mut per_turn_config.startup_warnings,
         )
         .await;
+        if let Some(current_agent_role) = current_agent_role.as_deref() {
+            session_configuration.developer_instructions =
+                Self::agent_role_developer_instructions_from_config(
+                    &per_turn_config,
+                    current_agent_role,
+                )
+                .await;
+        }
         let effective_skill_roots = self
             .services
             .plugins_manager
