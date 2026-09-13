@@ -19,7 +19,10 @@ import {
   planFocusedItemScrollAttempt,
   shouldHandleFocusedItemRequest,
 } from "./ConversationVirtualList";
-import { buildConversationEntries } from "../lib/conversation";
+import {
+  buildConversationEntries,
+  buildConversationState,
+} from "../lib/conversation";
 import type { ConversationEntry } from "../types";
 import type { Thread } from "../types";
 
@@ -708,6 +711,91 @@ test("command notification tool rows keep output collapsed inside expanded cards
   assert.doesNotMatch(markup, /<details class="tool-output-block" open/);
   assert.match(markup, /<summary>Output<\/summary>/);
   assert.match(markup, /line one[\s\S]*line two/);
+});
+
+test("command start, output, and exit notifications render in one command cell with selectable output", () => {
+  const state = buildConversationState({
+    id: "thread-1",
+    updatedAt: 1,
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "commandExecution",
+            id: "cmd-1",
+            command: "npm test",
+            cwd: "/tmp/project",
+            status: "running",
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
+          },
+          {
+            type: "commandExecutionNotification",
+            id: "cmd-1:notification:output",
+            commandItemId: "cmd-1",
+            kind: "output",
+            message: "Command output notification received.",
+            output: "stdout line",
+            exitCode: null,
+            createdAtMs: 2_000,
+          },
+          {
+            type: "commandExecutionNotification",
+            id: "cmd-1:notification:exit",
+            commandItemId: "cmd-1",
+            kind: "exit",
+            message: "Command exit notification received.",
+            output: "stderr line",
+            exitCode: 1,
+            createdAtMs: 3_000,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 3,
+        durationMs: 2,
+      },
+    ],
+  } as Thread);
+
+  assert.equal(state.cells.length, 1);
+  assert.deepEqual(
+    state.cells[0]?.entries.map((entry) => entry.id),
+    ["cmd-1", "cmd-1:notification:output", "cmd-1:notification:exit"],
+  );
+
+  const listMarkup = renderToStaticMarkup(
+    <ToolRow entries={state.cells[0]?.entries ?? []} isOpen />,
+  );
+  assert.match(listMarkup, /npm test/);
+  assert.match(listMarkup, /Command notification • output • npm test/);
+  assert.match(listMarkup, /Command notification • exit 1 • npm test/);
+  assert.doesNotMatch(listMarkup, /stdout line/);
+  assert.doesNotMatch(listMarkup, /stderr line/);
+
+  const outputMarkup = renderToStaticMarkup(
+    <ToolRow
+      entries={state.cells[0]?.entries ?? []}
+      isOpen
+      selectedEntryId="cmd-1:notification:output"
+    />,
+  );
+  assert.match(outputMarkup, /<summary>Command output<\/summary>/);
+  assert.match(outputMarkup, /stdout line/);
+
+  const exitMarkup = renderToStaticMarkup(
+    <ToolRow
+      entries={state.cells[0]?.entries ?? []}
+      isOpen
+      selectedEntryId="cmd-1:notification:exit"
+    />,
+  );
+  assert.match(exitMarkup, /<summary>Command exit output<\/summary>/);
+  assert.match(exitMarkup, /stderr line/);
 });
 
 test("expanded poll_event tool rows render current wait progress", () => {

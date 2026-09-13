@@ -610,19 +610,23 @@ test("renders command notifications as structured command tool entries", () => {
       {
         kind: "tool",
         text: "Command notification • output • npm test",
-        toolName: "Command notification",
+        toolName: "npm test",
         toolStatus: "completed",
-        toolCategory: "commandNotification",
+        toolCategory: "command",
         toolDetails:
           "Kind\noutput\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nMessage\nCommand output notification received.",
-        toolOutput: undefined,
+        toolOutput: {
+          label: "Command output",
+          text: "changed",
+          isEmpty: false,
+        },
       },
       {
         kind: "tool",
         text: "Command notification • exit 0 • npm test",
-        toolName: "Command notification",
+        toolName: "npm test",
         toolStatus: "completed",
-        toolCategory: "commandNotification",
+        toolCategory: "command",
         toolDetails:
           "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n0\n\nMessage\nCommand exit notification received.",
         toolOutput: undefined,
@@ -630,12 +634,16 @@ test("renders command notifications as structured command tool entries", () => {
       {
         kind: "tool",
         text: "Command notification • exit 1 • npm test",
-        toolName: "Command notification",
+        toolName: "npm test",
         toolStatus: "failed",
-        toolCategory: "commandNotification",
+        toolCategory: "command",
         toolDetails:
           "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n1\n\nMessage\nCommand exit notification received.",
-        toolOutput: undefined,
+        toolOutput: {
+          label: "Command exit output",
+          text: "  go test failure\n",
+          isEmpty: false,
+        },
       },
     ],
   );
@@ -648,11 +656,11 @@ test("renders command notifications as structured command tool entries", () => {
       entries: cell.entries.map((entry) => entry.id),
     })),
     [
-      { id: "cmd-1", kind: "tool", entries: ["cmd-1"] },
       {
-        id: "cmd-1:notification:output:1",
+        id: "cmd-1",
         kind: "tool",
         entries: [
+          "cmd-1",
           "cmd-1:notification:output:1",
           "cmd-1:notification:exit",
           "cmd-1:notification:exit:failure",
@@ -720,7 +728,7 @@ test("keeps consecutive command notifications grouped in one visible tool cell",
   );
 });
 
-test("keeps command notifications separated from commands and event-driven notifications", () => {
+test("merges contiguous command notifications with their command while keeping event-driven notifications separate", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -775,13 +783,11 @@ test("keeps command notifications separated from commands and event-driven notif
       {
         id: "cmd-1:notification:output:1",
         kind: "tool",
-        entries: ["cmd-1:notification:output:1"],
-      },
-      { id: "cmd-1", kind: "tool", entries: ["cmd-1"] },
-      {
-        id: "cmd-1:notification:exit",
-        kind: "tool",
-        entries: ["cmd-1:notification:exit"],
+        entries: [
+          "cmd-1:notification:output:1",
+          "cmd-1",
+          "cmd-1:notification:exit",
+        ],
       },
       { id: "event-1", kind: "tool", entries: ["event-1"] },
     ],
