@@ -1630,6 +1630,11 @@ impl MessageProcessor {
                     .terminal_session_resize(request_id.clone(), params)
                     .await
             }
+            ClientRequest::TerminalPreferredSizeUpdate { params, .. } => {
+                self.command_exec_processor
+                    .terminal_preferred_size_update(params)
+                    .await
+            }
             ClientRequest::TerminalSessionTerminate { params, .. } => {
                 self.command_exec_processor
                     .terminal_session_terminate(request_id.clone(), params)

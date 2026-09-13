@@ -45,6 +45,7 @@ pub struct ExecRequest {
     pub network_sandbox_policy: NetworkSandboxPolicy,
     pub(crate) windows_sandbox_filesystem_overrides: Option<WindowsSandboxFilesystemOverrides>,
     pub arg0: Option<String>,
+    pub terminal_size: Option<command_service_api::ExecCommandTerminalSize>,
 }
 
 impl ExecRequest {
@@ -81,6 +82,7 @@ impl ExecRequest {
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
             arg0,
+            terminal_size: None,
         }
     }
 
@@ -143,6 +145,7 @@ impl ExecRequest {
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
             arg0,
+            terminal_size: None,
         }
     }
 }

@@ -484,6 +484,14 @@ pub(crate) trait AppServerLiveThreadCommandRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<()>>;
 }
 
+pub(crate) trait AppServerLiveThreadTerminalRuntime: Send + Sync {
+    fn update_live_thread_preferred_terminal_size(
+        &self,
+        thread_id: ThreadId,
+        size: thread_service_api::PreferredTerminalSize,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+}
+
 pub(crate) trait AppServerLiveThreadConversationInjectionRuntime: Send + Sync {
     fn inject_live_thread_conversation_items(
         &self,
@@ -622,6 +630,23 @@ where
     ) -> BoxFuture<'_, CodexResult<()>> {
         Box::pin(
             LiveThreadCommandRuntime::set_live_thread_app_server_client_info(self, thread_id, info),
+        )
+    }
+}
+
+impl<T> AppServerLiveThreadTerminalRuntime for T
+where
+    T: thread_service_api::LiveThreadTerminalRuntime + Send + Sync,
+{
+    fn update_live_thread_preferred_terminal_size(
+        &self,
+        thread_id: ThreadId,
+        size: thread_service_api::PreferredTerminalSize,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(
+            thread_service_api::LiveThreadTerminalRuntime::update_live_thread_preferred_terminal_size(
+                self, thread_id, size,
+            ),
         )
     }
 }

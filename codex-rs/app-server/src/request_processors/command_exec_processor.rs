@@ -1,4 +1,5 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadTerminalRuntime;
 
 #[derive(Clone)]
 pub(crate) struct CommandExecRequestProcessor {
@@ -165,6 +166,24 @@ impl CommandExecRequestProcessor {
         )
         .await?;
         Ok(Some(TerminalSessionResizeResponse {}.into()))
+    }
+
+    pub(crate) async fn terminal_preferred_size_update(
+        &self,
+        params: TerminalPreferredSizeUpdateParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let size = crate::command_exec::terminal_size_from_protocol(params.size)?;
+        self.thread_service
+            .update_live_thread_preferred_terminal_size(
+                params.thread_id,
+                thread_service_api::PreferredTerminalSize {
+                    rows: size.rows,
+                    cols: size.cols,
+                },
+            )
+            .await
+            .map_err(|err| invalid_request(err.to_string()))?;
+        Ok(Some(TerminalPreferredSizeUpdateResponse {}.into()))
     }
 
     pub(crate) async fn terminal_session_terminate(

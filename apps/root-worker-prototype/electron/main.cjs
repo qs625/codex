@@ -851,6 +851,18 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
   return { ok: true };
 });
 
+ipcMain.handle("codex:terminal:updatePreferredSize", async (_event, payload) => {
+  const threadId = typeof payload?.threadId === "string" ? payload.threadId : "";
+  if (!threadId) {
+    throw new Error("Thread id is required to update terminal size");
+  }
+  await appServerClient.request("terminal/preferredSize/update", {
+    threadId,
+    size: normalizeTerminalSize(payload.size),
+  });
+  return { ok: true };
+});
+
 ipcMain.handle("codex:terminal:terminate", async (event, tabId) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, tabId);

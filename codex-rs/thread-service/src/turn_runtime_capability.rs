@@ -128,6 +128,10 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
         )
     }
 
+    fn preferred_terminal_size(&self) -> Option<thread_service_api::PreferredTerminalSize> {
+        self.session_arc().preferred_terminal_size()
+    }
+
     fn shell_env_overrides(&self) -> std::collections::HashMap<String, String> {
         self.explicit_shell_env_overrides()
     }

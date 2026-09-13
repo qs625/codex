@@ -2595,6 +2595,21 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadTerminalRuntime for ThreadServiceState {
+    fn update_live_thread_preferred_terminal_size(
+        &self,
+        thread_id: ThreadId,
+        size: thread_service_api::PreferredTerminalSize,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.codex.session.set_preferred_terminal_size(size);
+            Ok(())
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadConversationRuntime for ThreadServiceState {
     fn append_live_thread_conversation_item(
         &self,
@@ -3072,6 +3087,21 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
             self.state.as_ref(),
             thread_id,
             info,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadTerminalRuntime for ThreadService {
+    fn update_live_thread_preferred_terminal_size(
+        &self,
+        thread_id: ThreadId,
+        size: thread_service_api::PreferredTerminalSize,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadTerminalRuntime::update_live_thread_preferred_terminal_size(
+            self.state.as_ref(),
+            thread_id,
+            size,
         )
     }
 }

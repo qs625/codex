@@ -222,6 +222,7 @@ pub async fn execute_exec_request(
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides,
         arg0,
+        terminal_size: _,
     } = exec_request;
 
     let params = ExecParams {

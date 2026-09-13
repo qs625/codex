@@ -49,6 +49,11 @@ export function TerminalPanel({
   const syncTerminalSizeRef = useRef<(() => void) | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+  const lastPreferredSizeRef = useRef<{
+    threadId: string;
+    rows: number;
+    cols: number;
+  } | null>(null);
   const terminalStateRequestSeqRef = useRef(
     createTerminalStateRequestSequencer(),
   );
@@ -213,6 +218,23 @@ export function TerminalPanel({
           }
           const previous = lastSizeRef.current;
           lastSizeRef.current = next;
+          const threadId = thread?.id ?? null;
+          const previousPreferred = lastPreferredSizeRef.current;
+          if (
+            threadId &&
+            (previousPreferred?.threadId !== threadId ||
+              previousPreferred.rows !== next.rows ||
+              previousPreferred.cols !== next.cols)
+          ) {
+            lastPreferredSizeRef.current = { threadId, ...next };
+            void window.codexDesktop
+              .updateTerminalPreferredSize({ threadId, size: next })
+              .catch(() => {
+                if (lastPreferredSizeRef.current?.threadId === threadId) {
+                  lastPreferredSizeRef.current = previousPreferred;
+                }
+              });
+          }
           if (
             activeTab.canResize &&
             isInteractive(activeTab.status) &&
@@ -302,6 +324,7 @@ export function TerminalPanel({
     activeTab?.generation,
     activeTab?.replayThroughSequence,
     activeTab?.status,
+    thread?.id,
   ]);
 
   useEffect(() => {

@@ -281,6 +281,16 @@ fn exec_server_params_for_request(
     )
 }
 
+fn pty_spawn_terminal_size(
+    size: Option<command_service_api::ExecCommandTerminalSize>,
+) -> codex_utils_pty::TerminalSize {
+    size.map(|size| codex_utils_pty::TerminalSize {
+        rows: size.rows,
+        cols: size.cols,
+    })
+    .unwrap_or_default()
+}
+
 async fn unregister_network_approval_for_entry(entry: &ProcessEntry) {
     if let Some(network_approval) = entry.network_approval.as_ref()
         && let Some(registration_id) = network_approval.registration_id()
@@ -566,13 +576,14 @@ async fn spawn_unified_exec_process(
         request.additional_permissions.clone(),
     )
     .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
-    let exec_request = attempt
+    let mut exec_request = attempt
         .env_for(
             command,
             unified_exec_options(attempt.network_denial_cancellation_token.clone()),
             managed_network,
         )
         .map_err(|err: codex_sandboxing_api::SandboxTransformError| ToolError::Codex(err.into()))?;
+    exec_request.terminal_size = request.terminal_size;
 
     manager
         .open_session_with_exec_env(
@@ -1565,13 +1576,14 @@ impl UnifiedExecProcessManager {
             .split_first()
             .ok_or(UnifiedExecError::MissingCommandLine)?;
         let spawn_result = if tty {
+            let terminal_size = pty_spawn_terminal_size(request.terminal_size);
             codex_utils_pty::pty::spawn_process_with_inherited_fds(
                 program,
                 args,
                 request.cwd.as_path(),
                 &request.env,
                 &request.arg0,
-                codex_utils_pty::TerminalSize::default(),
+                terminal_size,
                 &inherited_fds,
             )
             .await

@@ -17,6 +17,7 @@ use command_service_api::ExecCommandApprovalMode;
 use command_service_api::ExecCommandArgs;
 use command_service_api::ExecCommandRunOutput;
 use command_service_api::ExecCommandRunRequest;
+use command_service_api::ExecCommandTerminalSize;
 use command_service_api::UnifiedExecError;
 use command_service_api::generate_chunk_id;
 use command_service_api::resolve_max_tokens;
@@ -331,6 +332,16 @@ async fn dispatch_exec_command(
 
     turn_capability.emit_unified_exec_tty_metric(tty);
     let process_id = command_state.allocate_process_id().await;
+    let terminal_size = if tty {
+        turn_capability
+            .preferred_terminal_size()
+            .map(|size| ExecCommandTerminalSize {
+                rows: size.rows,
+                cols: size.cols,
+            })
+    } else {
+        None
+    };
     let run_request = ExecCommandRunRequest {
         command,
         shell_type: resolved_command.shell_type,
@@ -342,6 +353,7 @@ async fn dispatch_exec_command(
         sandbox_cwd: turn_environment.sandbox_cwd,
         environment: turn_environment.environment,
         tty,
+        terminal_size,
         sandbox_permissions: effective_additional_permissions.sandbox_permissions,
         additional_permissions: normalized_additional_permissions,
         additional_permissions_preapproved: effective_additional_permissions

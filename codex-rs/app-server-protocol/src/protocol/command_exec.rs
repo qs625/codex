@@ -358,6 +358,21 @@ pub struct TerminalSessionResizeParams {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalPreferredSizeUpdateParams {
+    pub thread_id: protocol::ThreadId,
+    pub size: CommandExecTerminalSize,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct TerminalPreferredSizeUpdateResponse {}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
 pub struct TerminalSessionTerminateParams {
     #[serde(flatten)]
     pub target: TerminalSessionRef,

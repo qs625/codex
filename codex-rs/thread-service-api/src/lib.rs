@@ -288,6 +288,15 @@ pub trait LiveThreadCommandRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
+/// Terminal viewport state surface for live threads.
+pub trait LiveThreadTerminalRuntime: Send + Sync {
+    fn update_live_thread_preferred_terminal_size(
+        &self,
+        thread_id: ThreadId,
+        size: PreferredTerminalSize,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+}
+
 /// Conversation append surface for live threads without exposing concrete handles.
 ///
 /// Implementations enqueue a prebuilt conversation item through the live thread

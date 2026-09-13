@@ -928,6 +928,12 @@ client_request_definitions! {
         serialization: global("terminal-sessions"),
         response: v2::TerminalSessionResizeResponse,
     },
+    /// Update the preferred terminal size used for future PTY spawns in a live thread.
+    TerminalPreferredSizeUpdate => "terminal/preferredSize/update" {
+        params: v2::TerminalPreferredSizeUpdateParams,
+        serialization: global("terminal-sessions"),
+        response: v2::TerminalPreferredSizeUpdateResponse,
+    },
     /// Explicitly terminate a terminal session.
     TerminalSessionTerminate => "terminal/session/terminate" {
         params: v2::TerminalSessionTerminateParams,

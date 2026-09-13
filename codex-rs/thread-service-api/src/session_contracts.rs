@@ -103,6 +103,14 @@ mod pending_input;
 
 pub use pending_input::PendingInputItem;
 
+/// Preferred PTY size in character cells observed by the client for this live
+/// thread.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreferredTerminalSize {
+    pub rows: u16,
+    pub cols: u16,
+}
+
 /// Common runtime capability shared by service APIs that need active-thread or
 /// active-turn context during one tool dispatch.
 ///
@@ -1810,6 +1818,9 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
         model_shell: Option<&RuntimeShell>,
     ) -> Result<ResolvedExecCommand, String>;
 
+    /// Most recent client-observed terminal viewport for initial PTY spawns.
+    fn preferred_terminal_size(&self) -> Option<PreferredTerminalSize>;
+
     /// Environment overrides applied to shell execution.
     fn shell_env_overrides(&self) -> HashMap<String, String>;
 
@@ -1930,6 +1941,10 @@ where
     ) -> Result<ResolvedExecCommand, String> {
         self.as_ref()
             .resolve_exec_command(command, login, model_shell)
+    }
+
+    fn preferred_terminal_size(&self) -> Option<PreferredTerminalSize> {
+        self.as_ref().preferred_terminal_size()
     }
 
     fn shell_env_overrides(&self) -> HashMap<String, String> {

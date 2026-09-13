@@ -144,6 +144,8 @@ use app_server_protocol::SortDirection;
 use app_server_protocol::TerminalSessionDescriptor;
 use app_server_protocol::TerminalSessionListParams;
 use app_server_protocol::TerminalSessionListResponse;
+use app_server_protocol::TerminalPreferredSizeUpdateParams;
+use app_server_protocol::TerminalPreferredSizeUpdateResponse;
 use app_server_protocol::TerminalSessionOrigin;
 use app_server_protocol::TerminalSessionRef;
 use app_server_protocol::TerminalSessionResizeParams;

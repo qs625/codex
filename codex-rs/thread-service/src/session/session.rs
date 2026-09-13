@@ -79,6 +79,8 @@ pub struct Session {
     pub(crate) pending_mcp_server_refresh_config: Mutex<Option<McpServerRefreshConfig>>,
     pub(crate) conversation: Arc<RealtimeConversationManager>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
+    pub(crate) preferred_terminal_size:
+        std::sync::Mutex<Option<thread_service_api::PreferredTerminalSize>>,
     pub(super) mailbox: Mailbox,
     pub(super) mailbox_rx: Mutex<MailboxReceiver>,
     pub(crate) idle_pending_input: Mutex<Vec<crate::PendingInputItem>>,

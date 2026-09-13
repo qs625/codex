@@ -579,6 +579,7 @@ impl Session {
                 pending_mcp_server_refresh_config: Mutex::new(None),
                 conversation: Arc::new(RealtimeConversationManager::new()),
                 active_turn: Mutex::new(None),
+                preferred_terminal_size: std::sync::Mutex::new(None),
                 mailbox,
                 mailbox_rx: Mutex::new(mailbox_rx),
                 idle_pending_input: Mutex::new(Vec::new()),

@@ -1103,6 +1103,17 @@ impl Session {
             .await;
     }
 
+    pub fn set_preferred_terminal_size(
+        &self,
+        size: thread_service_api::PreferredTerminalSize,
+    ) {
+        *self.preferred_terminal_size.lock().expect("mutex poisoned") = Some(size);
+    }
+
+    pub fn preferred_terminal_size(&self) -> Option<thread_service_api::PreferredTerminalSize> {
+        *self.preferred_terminal_size.lock().expect("mutex poisoned")
+    }
+
     pub async fn run_unified_exec_command(
         self: &Arc<Self>,
         turn: Arc<TurnContext>,

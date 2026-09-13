@@ -127,6 +127,7 @@ pub(crate) struct ExecCommandRequest {
     pub environment: Arc<dyn ExecEnvironment>,
     pub network: Option<SharedNetworkProxyRuntime>,
     pub tty: bool,
+    pub terminal_size: Option<command_service_api::ExecCommandTerminalSize>,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
     #[allow(dead_code)]
@@ -156,6 +157,7 @@ impl ExecCommandRequest {
             environment: request.environment,
             network,
             tty: request.tty,
+            terminal_size: request.terminal_size,
             sandbox_permissions: request.sandbox_permissions,
             additional_permissions: request.additional_permissions,
             additional_permissions_preapproved: request.additional_permissions_preapproved,

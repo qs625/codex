@@ -31,3 +31,20 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
     "terminal replay should be written after fitting to the current viewport",
   );
 });
+
+test("TerminalPanel publishes fitted size as thread preferred terminal size", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const fitIndex = source.indexOf("const next = { rows: terminal.rows, cols: terminal.cols };");
+  const preferredIndex = source.indexOf("updateTerminalPreferredSize({ threadId, size: next })");
+  const resizeIndex = source.indexOf(".resizeTerminal({ tabId: activeTab.id, size: next })");
+  const dedupeIndex = source.indexOf("previousPreferred?.threadId !== threadId");
+
+  assert.notEqual(fitIndex, -1);
+  assert.notEqual(preferredIndex, -1);
+  assert.notEqual(resizeIndex, -1);
+  assert.notEqual(dedupeIndex, -1);
+  assert.ok(
+    fitIndex < preferredIndex,
+    "preferred terminal size must come from the fitted xterm viewport",
+  );
+});

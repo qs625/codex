@@ -427,6 +427,10 @@ declare global {
         tabId: string;
         size: { rows: number; cols: number };
       }) => Promise<{ ok: true }>;
+      updateTerminalPreferredSize: (payload: {
+        threadId: string;
+        size: { rows: number; cols: number };
+      }) => Promise<{ ok: true }>;
       terminateTerminal: (tabId: string) => Promise<{ ok: true }>;
       subscribeBrowserState: (
         listener: (state: BrowserPanelState) => void,

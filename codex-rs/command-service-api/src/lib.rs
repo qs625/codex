@@ -11,6 +11,7 @@ pub use command_contracts::ExecCommandApprovalMode;
 pub use command_contracts::ExecCommandArgs;
 pub use command_contracts::ExecCommandRunOutput;
 pub use command_contracts::ExecCommandRunRequest;
+pub use command_contracts::ExecCommandTerminalSize;
 pub use command_types::CommandNotificationFilter;
 pub use command_types::CommandNotificationKind;
 pub use command_types::CommandWaitOutput;

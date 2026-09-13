@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:terminal:write", payload),
   resizeTerminal: (payload) =>
     ipcRenderer.invoke("codex:terminal:resize", payload),
+  updateTerminalPreferredSize: (payload) =>
+    ipcRenderer.invoke("codex:terminal:updatePreferredSize", payload),
   terminateTerminal: (tabId) =>
     ipcRenderer.invoke("codex:terminal:terminate", tabId),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),

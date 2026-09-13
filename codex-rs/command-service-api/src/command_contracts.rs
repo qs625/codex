@@ -18,6 +18,12 @@ pub enum ExecCommandApprovalMode {
     AlreadyApproved,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecCommandTerminalSize {
+    pub rows: u16,
+    pub cols: u16,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ExecCommandArgs {
     pub cmd: String,
@@ -76,6 +82,7 @@ pub struct ExecCommandRunRequest {
     pub sandbox_cwd: AbsolutePathBuf,
     pub environment: Arc<dyn ExecEnvironment>,
     pub tty: bool,
+    pub terminal_size: Option<ExecCommandTerminalSize>,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
     pub additional_permissions_preapproved: bool,
