@@ -43,6 +43,15 @@ function terminalTabSupports(tab, control) {
   }
 }
 
+function terminalTabNeedsLiveSessionRefresh(tab) {
+  return (
+    tab &&
+    tab.origin === "model" &&
+    tab.readOnlyOutput === true &&
+    (tab.status === "running" || tab.status === "starting")
+  );
+}
+
 function mergeTerminalSessions(state, sessions, threadId = null) {
   const activeKeys = new Set();
   for (const descriptor of sessions) {
@@ -586,6 +595,7 @@ module.exports = {
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
+  terminalTabNeedsLiveSessionRefresh,
   terminalTabSupports,
   terminalCommandItemKey,
   terminalSessionKey,

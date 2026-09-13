@@ -131,6 +131,7 @@ const {
   selectTerminalTab,
   terminalPanelSnapshot,
   terminalTabMetadata,
+  terminalTabNeedsLiveSessionRefresh,
   terminalTabSupports,
 } = require("./terminalPanel.cjs");
 
@@ -1280,6 +1281,7 @@ function applyTerminalNotification(panel, notification, allowRefresh) {
       params.deltaBase64 &&
       appendTerminalOutput(tab, params.deltaBase64, params.sequence)
     ) {
+      const needsLiveRefresh = terminalTabNeedsLiveSessionRefresh(tab);
       tab.backgroundActivity = panel.state.activeTabId !== tab.id;
       sendTerminalPanelDelta(panel, {
         type: "delta",
@@ -1287,8 +1289,8 @@ function applyTerminalNotification(panel, notification, allowRefresh) {
         deltaBase64: params.deltaBase64,
         tab: terminalTabMetadata(tab),
       });
-      if (tab.hasSequenceGap && allowRefresh) {
-        void refreshTerminalPanelSessions(panel);
+      if (allowRefresh && (tab.hasSequenceGap || needsLiveRefresh)) {
+        void refreshTerminalPanelSessions(panel, params.threadId);
       }
     } else if (
       !tab &&

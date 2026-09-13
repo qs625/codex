@@ -24,6 +24,7 @@ const {
   terminalPanelSnapshot,
   terminalCommandItemKey,
   terminalSessionKey,
+  terminalTabNeedsLiveSessionRefresh,
   terminalTabSupports,
 } = require("./terminalPanel.cjs");
 
@@ -788,6 +789,56 @@ test("live session merge upgrades read-only fallback with placeholder process id
   assert.equal(fallback.readOnlyOutput, undefined);
   assert.equal(fallback.canResize, true);
   assert.equal(terminalTabSupports(fallback, "resize"), true);
+});
+
+test("read-only model command fallback requests live session refresh while output streams", () => {
+  const state = createTerminalPanelState();
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: null,
+    command: "fly deploy",
+    cwd: "/repo",
+    status: "running",
+  };
+  const fallback = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest(command),
+  );
+
+  assert.equal(fallback.processId, "call");
+  assert.equal(fallback.readOnlyOutput, true);
+  assert.equal(terminalTabNeedsLiveSessionRefresh(fallback), true);
+
+  fallback.processId = "42";
+  appendTerminalOutput(
+    fallback,
+    Buffer.from("==> Verifying app config\r").toString("base64"),
+    1,
+  );
+
+  assert.equal(fallback.readOnlyOutput, true);
+  assert.equal(terminalTabNeedsLiveSessionRefresh(fallback), true);
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:42",
+        generation: "call",
+        commandItemId: "call",
+        processId: "42",
+        title: "fly deploy",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs[0], fallback);
+  assert.equal(fallback.readOnlyOutput, undefined);
+  assert.equal(fallback.canResize, true);
+  assert.equal(terminalTabNeedsLiveSessionRefresh(fallback), false);
 });
 
 test("closed read-only fallback detaches later live descriptor with different process id", () => {
