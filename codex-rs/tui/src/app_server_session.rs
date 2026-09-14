@@ -58,8 +58,6 @@ use app_server_protocol::ThreadGoalGetResponse;
 use app_server_protocol::ThreadGoalSetParams;
 use app_server_protocol::ThreadGoalSetResponse;
 use app_server_protocol::ThreadGoalStatus;
-use app_server_protocol::ThreadInjectItemsParams;
-use app_server_protocol::ThreadInjectItemsResponse;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadLoadedListParams;
@@ -112,7 +110,6 @@ use protocol::ThreadId;
 use protocol::approvals::GuardianAssessmentEvent;
 use protocol::models::ActivePermissionProfile;
 use protocol::models::PermissionProfile;
-use protocol::models::ResponseItem;
 use protocol::openai_models::ModelAvailabilityNux;
 use protocol::openai_models::ModelPreset;
 use protocol::openai_models::ModelServiceTier;
@@ -515,29 +512,6 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/metadata/update failed while syncing git branch")
-    }
-
-    pub(crate) async fn thread_inject_items(
-        &mut self,
-        thread_id: ThreadId,
-        items: Vec<ResponseItem>,
-    ) -> Result<ThreadInjectItemsResponse> {
-        let items = items
-            .into_iter()
-            .map(serde_json::to_value)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .wrap_err("failed to encode thread/inject_items payload")?;
-        let request_id = self.next_request_id();
-        self.client
-            .request_typed(ClientRequest::ThreadInjectItems {
-                request_id,
-                params: ThreadInjectItemsParams {
-                    thread_id: thread_id.to_string(),
-                    items,
-                },
-            })
-            .await
-            .wrap_err("thread/inject_items failed during TUI side conversation setup")
     }
 
     #[allow(clippy::too_many_arguments)]

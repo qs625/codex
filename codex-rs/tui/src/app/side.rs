@@ -9,8 +9,6 @@
 
 use super::*;
 use crate::chatwidget::InterruptedTurnNoticeMode;
-use protocol::models::ContentItem;
-use protocol::models::ResponseItem;
 
 const SIDE_RENAME_BLOCK_MESSAGE: &str = "Side conversations are ephemeral and cannot be renamed.";
 const SIDE_MAIN_THREAD_UNAVAILABLE_MESSAGE: &str =
@@ -105,13 +103,9 @@ mod tests {
 
     #[test]
     fn side_boundary_prompt_marks_inherited_history_reference_only() {
-        let item = App::side_boundary_prompt_item();
-        let ResponseItem::Message { role, content, .. } = item else {
-            panic!("expected hidden side boundary prompt to be a user message");
-        };
-        assert_eq!(role, "user");
-        let [ContentItem::InputText { text }] = content.as_slice() else {
-            panic!("expected hidden side boundary prompt text");
+        let item = App::side_boundary_prompt_input();
+        let app_server_protocol::UserInput::Text { text, .. } = item else {
+            panic!("expected side boundary prompt to be a user text input");
         };
         assert!(text.contains("Side conversation boundary."));
         assert!(text.contains("Everything before this boundary is inherited history"));
@@ -445,14 +439,10 @@ impl App {
         }
     }
 
-    pub(super) fn side_boundary_prompt_item() -> ResponseItem {
-        ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: SIDE_BOUNDARY_PROMPT.to_string(),
-            }],
-            phase: None,
+    pub(super) fn side_boundary_prompt_input() -> app_server_protocol::UserInput {
+        app_server_protocol::UserInput::Text {
+            text: SIDE_BOUNDARY_PROMPT.to_string(),
+            text_elements: Vec::new(),
         }
     }
 
@@ -565,6 +555,7 @@ impl App {
             .await;
 
         let fork_config = self.side_fork_config();
+        let boundary_turn_config = fork_config.clone();
         match app_server.fork_thread(fork_config, parent_thread_id).await {
             Ok(forked) => {
                 let child_thread_id = forked.session.thread_id;
@@ -575,8 +566,35 @@ impl App {
                 }
                 self.side_threads
                     .insert(child_thread_id, SideThreadState::new(parent_thread_id));
+                let permission_profile = boundary_turn_config
+                    .permissions
+                    .effective_permission_profile();
+                let active_permission_profile =
+                    boundary_turn_config.permissions.active_permission_profile();
                 if let Err(err) = app_server
-                    .thread_inject_items(child_thread_id, vec![Self::side_boundary_prompt_item()])
+                    .turn_start(
+                        child_thread_id,
+                        vec![Self::side_boundary_prompt_input()],
+                        boundary_turn_config.cwd.to_path_buf(),
+                        boundary_turn_config
+                            .permissions
+                            .approval_policy
+                            .value()
+                            .into(),
+                        boundary_turn_config.approvals_reviewer,
+                        permission_profile,
+                        active_permission_profile,
+                        boundary_turn_config
+                            .permissions
+                            .user_visible_workspace_roots(),
+                        boundary_turn_config.model.clone().unwrap_or_default(),
+                        boundary_turn_config.model_reasoning_effort,
+                        boundary_turn_config.model_reasoning_summary,
+                        Some(boundary_turn_config.service_tier.clone()),
+                        None,
+                        boundary_turn_config.personality,
+                        None,
+                    )
                     .await
                 {
                     self.discard_side_thread_or_keep_visible(tui, app_server, child_thread_id)

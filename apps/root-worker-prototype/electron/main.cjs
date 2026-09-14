@@ -2150,11 +2150,10 @@ async function recoverRuntimeRestartRecord(record) {
     sourceThreadId: record.requestedByThreadId,
     noticeId: runtimeRestartRecoveryNoticeId(record),
     prompt: expectedRuntimeRestartRecoveryPrompt(record),
-    listThreads: () => listThreads(defaultWorkspace),
     readThread,
     subscribeThread,
-    injectConversationMessage: (thread, message) =>
-      injectThreadAssistantMessage(thread?.id, message),
+    submitRecoveryMessage: (thread, message) =>
+      submitRuntimeRestartRecoveryMessage(thread, message),
   });
 }
 
@@ -2166,31 +2165,26 @@ function runtimeRestartRecoveryNoticeId(record) {
   return `runtime-restart-recovery:${requestId}`;
 }
 
-async function injectThreadAssistantMessage(threadId, message) {
-  if (typeof threadId !== "string" || !threadId.trim()) {
+async function submitRuntimeRestartRecoveryMessage(thread, message) {
+  const threadId = typeof thread?.id === "string" ? thread.id.trim() : "";
+  if (!threadId) {
     throw new Error("recovery notice requires a thread id");
   }
-  const id =
-    typeof message?.id === "string" && message.id.trim()
-      ? message.id.trim()
-      : null;
   const text =
     typeof message?.text === "string" && message.text.trim()
       ? message.text.trim()
       : null;
-  if (!id || !text) {
-    throw new Error("recovery notice requires an id and text");
+  if (!text) {
+    throw new Error("recovery notice requires text");
   }
-  return appServerClient.request("thread/inject_items", {
+  return startThreadTurn({
     threadId,
-    items: [
-      {
-        type: "message",
-        id,
-        role: "assistant",
-        content: [{ type: "output_text", text }],
-      },
-    ],
+    model: thread?.model ?? null,
+    modelProvider: thread?.modelProvider ?? null,
+    effort: thread?.reasoningEffort ?? null,
+    text,
+    skills: [],
+    images: [],
   });
 }
 

@@ -426,8 +426,6 @@ export type { ThreadGoalUpdateGoalStatus } from "./ThreadGoalUpdateGoalStatus";
 export type { ThreadGoalUpdateSource } from "./ThreadGoalUpdateSource";
 export type { ThreadGoalUpdatedNotification } from "./ThreadGoalUpdatedNotification";
 export type { ThreadId } from "./ThreadId";
-export type { ThreadInjectItemsParams } from "./ThreadInjectItemsParams";
-export type { ThreadInjectItemsResponse } from "./ThreadInjectItemsResponse";
 export type { ThreadItem } from "./ThreadItem";
 export type { ThreadLifecycleActiveFlag } from "./ThreadLifecycleActiveFlag";
 export type { ThreadLifecycleFinalStatus } from "./ThreadLifecycleFinalStatus";

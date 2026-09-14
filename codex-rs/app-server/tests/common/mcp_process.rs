@@ -72,10 +72,9 @@ use app_server_protocol::SkillsListParams;
 use app_server_protocol::ThreadApproveGuardianDeniedActionParams;
 use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
+use app_server_protocol::ThreadClientRecoveryRecordParams;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadForkParams;
-use app_server_protocol::ThreadInjectItemsParams;
-use app_server_protocol::ThreadClientRecoveryRecordParams;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadLoadedListParams;
 use app_server_protocol::ThreadMemoryModeSetParams;
@@ -751,15 +750,6 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("turn/start", params).await
-    }
-
-    /// Send a `thread/inject_items` JSON-RPC request.
-    pub async fn send_thread_inject_items_request(
-        &mut self,
-        params: ThreadInjectItemsParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/inject_items", params).await
     }
 
     pub async fn send_client_lifecycle_register_request(

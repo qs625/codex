@@ -5,7 +5,6 @@ use codex_features::Feature;
 use futures::future::BoxFuture;
 use protocol::ThreadId;
 use protocol::error::Result as CodexResult;
-use protocol::models::ResponseItem;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::Event;
 use protocol::protocol::Op;
@@ -20,10 +19,9 @@ use thread_service::NativeThreadSteerRuntime;
 use thread_service::SteerInputError;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::CodexThreadTurnContextOverrides;
+use thread_service_api::LiveThreadClientRecoveryRuntime;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
-use thread_service_api::LiveThreadConversationInjectionRuntime;
-use thread_service_api::LiveThreadClientRecoveryRuntime;
 use thread_service_api::LiveThreadElicitationRuntime;
 use thread_service_api::LiveThreadFeedbackRuntime;
 use thread_service_api::LiveThreadGoalRuntime;
@@ -409,9 +407,7 @@ where
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(
-            self, thread_id,
-        ))
+        Box::pin(LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(self, thread_id))
     }
 
     fn continue_thread_active_goal_if_idle(
@@ -492,14 +488,6 @@ pub(crate) trait AppServerLiveThreadTerminalRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<()>>;
 }
 
-pub(crate) trait AppServerLiveThreadConversationInjectionRuntime: Send + Sync {
-    fn inject_live_thread_conversation_items(
-        &self,
-        thread_id: ThreadId,
-        items: Vec<ResponseItem>,
-    ) -> BoxFuture<'_, CodexResult<()>>;
-}
-
 pub(crate) trait AppServerLiveThreadClientRecoveryRuntime: Send + Sync {
     fn record_live_thread_client_recovery(
         &self,
@@ -520,23 +508,6 @@ where
         Box::pin(
             LiveThreadClientRecoveryRuntime::record_live_thread_client_recovery(
                 self, thread_id, event,
-            ),
-        )
-    }
-}
-
-impl<T> AppServerLiveThreadConversationInjectionRuntime for T
-where
-    T: LiveThreadConversationInjectionRuntime + Send + Sync,
-{
-    fn inject_live_thread_conversation_items(
-        &self,
-        thread_id: ThreadId,
-        items: Vec<ResponseItem>,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(
-            LiveThreadConversationInjectionRuntime::inject_live_thread_conversation_items(
-                self, thread_id, items,
             ),
         )
     }

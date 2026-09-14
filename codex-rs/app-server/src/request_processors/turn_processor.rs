@@ -1,7 +1,6 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadClientRecoveryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
@@ -42,7 +41,6 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_history: Arc<dyn AppServerLiveThreadHistoryRuntime>,
     thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
-    live_thread_injection: Arc<dyn AppServerLiveThreadConversationInjectionRuntime>,
     live_thread_client_recovery: Arc<dyn AppServerLiveThreadClientRecoveryRuntime>,
     live_thread_steer: Arc<dyn AppServerLiveThreadSteerRuntime>,
     live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
@@ -110,7 +108,6 @@ impl TurnRequestProcessor {
             live_thread_history: thread_service.clone(),
             thread_lifecycle_runtime: thread_service.clone(),
             live_thread_command: thread_service.clone(),
-            live_thread_injection: thread_service.clone(),
             live_thread_client_recovery: thread_service.clone(),
             live_thread_steer: thread_service.clone(),
             live_thread_turn: thread_service.clone(),
@@ -151,15 +148,6 @@ impl TurnRequestProcessor {
         )
         .await
         .map(|response| Some(response.into()))
-    }
-
-    pub(crate) async fn thread_inject_items(
-        &self,
-        params: ThreadInjectItemsParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_inject_items_response_inner(params)
-            .await
-            .map(|response| Some(response.into()))
     }
 
     pub(crate) async fn thread_client_recovery_record(
@@ -1055,40 +1043,6 @@ impl TurnRequestProcessor {
             )
             .await;
         Ok(())
-    }
-
-    async fn thread_inject_items_response_inner(
-        &self,
-        params: ThreadInjectItemsParams,
-    ) -> Result<ThreadInjectItemsResponse, JSONRPCErrorError> {
-        let thread_id = ThreadId::from_string(&params.thread_id)
-            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-
-        let items = params
-            .items
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| {
-                serde_json::from_value::<ResponseItem>(value)
-                    .map_err(|err| format!("items[{index}] is not a valid response item: {err}"))
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(invalid_request)?;
-
-        self.reject_external_root_native_only_op(None, thread_id, "thread/inject_items")
-            .await?;
-
-        self.live_thread_injection
-            .inject_live_thread_conversation_items(thread_id, items)
-            .await
-            .map_err(|err| match err {
-                CodexErr::ThreadNotFound(thread_id) => {
-                    invalid_request(format!("thread not found: {thread_id}"))
-                }
-                CodexErr::InvalidRequest(message) => invalid_request(message),
-                err => internal_error(format!("failed to inject response items: {err}")),
-            })?;
-        Ok(ThreadInjectItemsResponse {})
     }
 
     async fn thread_client_recovery_record_response_inner(

@@ -4204,26 +4204,6 @@ class ThreadId(RootModel[str]):
     root: str
 
 
-class ThreadInjectItemsParams(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    items: Annotated[
-        list,
-        Field(
-            description="Raw Responses API items to append to the thread's model-visible history."
-        ),
-    ]
-    thread_id: Annotated[str, Field(alias="threadId")]
-
-
-class ThreadInjectItemsResponse(BaseModel):
-    pass
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-
-
 class HookPromptThreadItem(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -5579,17 +5559,6 @@ class ThreadReadRequest(BaseModel):
     id: RequestId
     method: Annotated[Literal["thread/read"], Field(title="Thread/readRequestMethod")]
     params: ThreadReadParams
-
-
-class ThreadInjectItemsRequest(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    id: RequestId
-    method: Annotated[
-        Literal["thread/inject_items"], Field(title="Thread/injectItemsRequestMethod")
-    ]
-    params: ThreadInjectItemsParams
 
 
 class SkillsListRequest(BaseModel):
@@ -9548,7 +9517,6 @@ class ClientRequest(
         | ThreadListRequest
         | ThreadLoadedListRequest
         | ThreadReadRequest
-        | ThreadInjectItemsRequest
         | SkillsListRequest
         | HooksListRequest
         | MarketplaceAddRequest
@@ -9637,7 +9605,6 @@ class ClientRequest(
         | ThreadListRequest
         | ThreadLoadedListRequest
         | ThreadReadRequest
-        | ThreadInjectItemsRequest
         | SkillsListRequest
         | HooksListRequest
         | MarketplaceAddRequest

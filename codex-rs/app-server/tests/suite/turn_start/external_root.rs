@@ -356,18 +356,6 @@ async fn expect_no_loaded_threads(mcp: &mut McpProcess) -> Result<()> {
     Ok(())
 }
 
-fn injected_assistant_item(text: &str) -> Result<serde_json::Value> {
-    let item = ResponseItem::Message {
-        id: None,
-        role: "assistant".to_string(),
-        content: vec![ContentItem::OutputText {
-            text: text.to_string(),
-        }],
-        phase: None,
-    };
-    Ok(serde_json::to_value(item)?)
-}
-
 async fn read_external_root_item_completed(
     mcp: &mut McpProcess,
     expected_thread_id: &str,
@@ -1131,14 +1119,6 @@ async fn external_root_rejects_native_only_active_ops() -> Result<()> {
         .await?;
     expect_external_root_native_only_error(&mut mcp, detached_review_req, "review/start").await?;
 
-    let inject_req = mcp
-        .send_thread_inject_items_request(ThreadInjectItemsParams {
-            thread_id: thread_id.clone(),
-            items: vec![injected_assistant_item("should not inject")?],
-        })
-        .await?;
-    expect_external_root_native_only_error(&mut mcp, inject_req, "thread/inject_items").await?;
-
     let interrupt_req = mcp
         .send_turn_interrupt_request(TurnInterruptParams {
             thread_id,
@@ -1182,15 +1162,6 @@ async fn persisted_external_root_rejects_turn_processor_native_only_ops() -> Res
         })
         .await?;
     expect_external_root_native_only_error(&mut restarted, review_req, "review/start").await?;
-
-    let inject_req = restarted
-        .send_thread_inject_items_request(ThreadInjectItemsParams {
-            thread_id: thread_id.clone(),
-            items: vec![injected_assistant_item("should not inject after restart")?],
-        })
-        .await?;
-    expect_external_root_native_only_error(&mut restarted, inject_req, "thread/inject_items")
-        .await?;
 
     let interrupt_req = restarted
         .send_turn_interrupt_request(TurnInterruptParams {
