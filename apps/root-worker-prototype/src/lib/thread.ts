@@ -1415,6 +1415,34 @@ function insertTurnItemByTimestamp(items: ThreadItem[], item: ThreadItem) {
   items.splice(insertIndex, 0, item);
 }
 
+function insertTurnByTimestamp(turns: Turn[], turn: Turn) {
+  const timestampSeconds = turnOrderTimestampSeconds(turn);
+  if (timestampSeconds === null) {
+    turns.push(turn);
+    return;
+  }
+  const insertIndex = turns.findIndex((candidate) => {
+    const candidateTimestampSeconds = turnOrderTimestampSeconds(candidate);
+    return (
+      candidateTimestampSeconds !== null &&
+      candidateTimestampSeconds > timestampSeconds
+    );
+  });
+  if (insertIndex === -1) {
+    turns.push(turn);
+    return;
+  }
+  turns.splice(insertIndex, 0, turn);
+}
+
+function turnOrderTimestampSeconds(turn: Turn) {
+  const timestampSeconds = turn.startedAt ?? turn.completedAt;
+  return typeof timestampSeconds === "number" &&
+    Number.isFinite(timestampSeconds)
+    ? timestampSeconds
+    : null;
+}
+
 function threadItemOrderTimestampMs(item: ThreadItem) {
   const timestampMs =
     item.startedAtMs ??
@@ -1444,7 +1472,12 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
 
   for (const turn of existing.turns) {
     if (!nextTurnIds.has(turn.id)) {
-      turns.push(...getRetainedUnmatchedTurn(turn, nextItemsMatcher));
+      for (const retainedTurn of getRetainedUnmatchedTurn(
+        turn,
+        nextItemsMatcher,
+      )) {
+        insertTurnByTimestamp(turns, retainedTurn);
+      }
     }
   }
 

@@ -74,23 +74,24 @@ impl ThreadRequestProcessor {
             threads.push(thread);
         }
 
-        let statuses = if use_state_db_only {
-            Default::default()
-        } else {
-            self.thread_watch_manager
-                .loaded_statuses_for_threads(status_ids)
-                .await
-        };
+        let statuses = self
+            .thread_watch_manager
+            .loaded_statuses_for_threads(status_ids)
+            .await;
 
         let data: Vec<_> = threads
             .into_iter()
             .map(|mut thread| {
                 if let Some(status) = statuses.get(&thread.id) {
-                    set_thread_status_and_interrupt_stale_turns(
-                        &mut thread,
-                        status.clone(),
-                        /*has_live_in_progress_turn*/ false,
-                    );
+                    if !matches!(status, ThreadLifecycleStatus::NotLoaded)
+                        || matches!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded)
+                    {
+                        set_thread_status_and_interrupt_stale_turns(
+                            &mut thread,
+                            status.clone(),
+                            /*has_live_in_progress_turn*/ false,
+                        );
+                    }
                 }
                 thread
             })
@@ -817,7 +818,10 @@ fn active_subscription_item_from_snapshot(
     });
     if let Some(object) = arguments.as_object_mut() {
         if let Some(label) = label {
-            object.insert("label".to_string(), serde_json::Value::String(label.clone()));
+            object.insert(
+                "label".to_string(),
+                serde_json::Value::String(label.clone()),
+            );
         }
         if let Some(message) = message {
             object.insert(
