@@ -1,24 +1,32 @@
 const TERMINAL_DISPLAY_PREFERENCES_STORAGE_KEY =
   "root-worker-prototype:terminal-display-preferences";
 
+const NERD_FONT_FAMILY_STACK =
+  '"CaskaydiaCove Nerd Font Mono", "CaskaydiaMono Nerd Font Mono", "CaskaydiaCove NFM", "CaskaydiaMono NFM", "Cascadia Code NF", "Symbols Nerd Font", "JetBrainsMono Nerd Font Mono"';
+
 export const TERMINAL_FONT_FAMILIES = [
+  {
+    id: "nerd",
+    label: "Nerd Font",
+    value: `${NERD_FONT_FAMILY_STACK}, "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Menlo, monospace`,
+  },
   {
     id: "system",
     label: "System monospace",
     value:
-      '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
+      `${NERD_FONT_FAMILY_STACK}, "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace`,
   },
   {
     id: "cascadia",
     label: "Cascadia Code",
     value:
-      '"Cascadia Code", "SFMono-Regular", "Liberation Mono", Menlo, monospace',
+      '"Cascadia Code NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaMono Nerd Font Mono", "Symbols Nerd Font", "Cascadia Code", "SFMono-Regular", "Liberation Mono", Menlo, monospace',
   },
   {
     id: "jetbrains",
     label: "JetBrains Mono",
     value:
-      '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Menlo, monospace',
+      '"JetBrainsMono Nerd Font Mono", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Menlo, monospace',
   },
 ] as const;
 
@@ -34,7 +42,7 @@ type TerminalDisplayPreferencePatch = Partial<TerminalDisplayPreferences>;
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export const DEFAULT_TERMINAL_DISPLAY_PREFERENCES: TerminalDisplayPreferences = {
-  fontFamily: "system",
+  fontFamily: "nerd",
   fontSize: 12,
   lineHeight: 1.18,
 };
