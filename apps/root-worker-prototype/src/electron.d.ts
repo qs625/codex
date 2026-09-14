@@ -507,6 +507,12 @@ declare global {
                 | "installedArtifactUpdate"
                 | "clientRelaunch";
               phase:
+                | "received"
+                | "executing"
+                | "preparing"
+                | "selected"
+                | "shuttingDownAppServer"
+                | "exiting"
                 | "building"
                 | "updated"
                 | "relaunching"
@@ -516,7 +522,18 @@ declare global {
                 | "completed"
                 | "failed";
               requestId?: string;
+              activationId?: string | null;
+              releaseId?: string | null;
               reason?: string | null;
+            };
+            runtimeRestart?: {
+              requestId?: string | null;
+              requestedByThreadId?: string | null;
+              phase?: string | null;
+              reason?: string | null;
+              createdAtMs?: number | null;
+              updatedAtMs?: number | null;
+              coalescedInto?: string | null;
             };
             relaunch?: {
               ok: boolean;

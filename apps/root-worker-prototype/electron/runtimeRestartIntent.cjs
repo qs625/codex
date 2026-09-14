@@ -362,6 +362,7 @@ function createRuntimeRestartController({
         };
       }
       if (admission.kind === "duplicate") {
+        reportProgress(broadcastStatus, admission.record);
         return {
           ok: admission.record.phase !== "failed",
           duplicate: true,
@@ -370,6 +371,7 @@ function createRuntimeRestartController({
         };
       }
       if (admission.kind === "coalesced") {
+        reportProgress(broadcastStatus, admission.record);
         return {
           ok: true,
           coalesced: true,
@@ -389,6 +391,7 @@ function createRuntimeRestartController({
         requestId: admission.record.requestId,
         store,
       });
+      reportProgress(broadcastStatus, admission.record);
       inFlight.add(execution);
       void execution
         .catch((error) => {
@@ -450,7 +453,8 @@ async function runAcceptedRestart({
   store,
 }) {
   try {
-    await store.updateGroup(requestId, "executing");
+    const executingRecords = await store.updateGroup(requestId, "executing");
+    reportProgress(broadcastStatus, executingRecords[0]);
     const markExpectedRestartHandoffReady = async () => {
       const records = await store.updateGroup(
         requestId,
@@ -458,6 +462,7 @@ async function runAcceptedRestart({
         null,
         hostInstanceId,
       );
+      reportProgress(broadcastStatus, records[0]);
       clearTerminalRecords(records);
       return records;
     };
@@ -474,6 +479,8 @@ async function runAcceptedRestart({
     );
     if (phase === "failed") {
       reportFailure(broadcastStatus, records[0], reason);
+    } else {
+      reportProgress(broadcastStatus, records[0]);
     }
     if (phase === "completed") {
       clearTerminalRecords(records);
@@ -835,6 +842,7 @@ function normalizeStoredRecord(record) {
 
 function reportFailure(broadcastStatus, record, reason) {
   broadcastStatus?.({
+    runtimeRestart: restartProgressSnapshot(record, "failed", reason),
     lifecycle: {
       type: "clientRelaunch",
       phase: "failed",
@@ -847,6 +855,38 @@ function reportFailure(broadcastStatus, record, reason) {
       reason,
     },
   });
+}
+
+function reportProgress(broadcastStatus, record, phase = null, reason = null) {
+  const snapshot = restartProgressSnapshot(record, phase, reason);
+  if (!snapshot) {
+    return;
+  }
+  broadcastStatus?.({ runtimeRestart: snapshot });
+}
+
+function restartProgressSnapshot(record, phase = null, reason = null) {
+  const requestId = normalizeString(record?.requestId);
+  if (!requestId) {
+    return null;
+  }
+  const resolvedPhase = phase ?? effectivePhase(record);
+  return {
+    requestId,
+    requestedByThreadId: normalizeString(record?.requestedByThreadId),
+    phase: resolvedPhase,
+    reason:
+      normalizeString(reason) ??
+      normalizeString(record?.error) ??
+      normalizeString(record?.reason),
+    createdAtMs: Number.isFinite(record?.createdAtMs)
+      ? record.createdAtMs
+      : null,
+    updatedAtMs: Number.isFinite(record?.updatedAtMs)
+      ? record.updatedAtMs
+      : null,
+    coalescedInto: normalizeString(record?.coalescedInto),
+  };
 }
 
 function errorMessage(error) {

@@ -16,6 +16,7 @@ import type {
   WorkflowSummary,
 } from "../types";
 import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
+import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
 import {
   createTerminalStateRequestSequencer,
   isTerminalCommandFocusRequestForThread,
@@ -134,6 +135,7 @@ function renderRightPanel(
     preview?: FilePreview | null;
     previewError?: string | null;
     previewLoading?: boolean;
+    runtimeRestartProgress?: RuntimeRestartProgress | null;
     todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
   },
 ) {
@@ -161,6 +163,7 @@ function renderRightPanel(
       onPauseGoal={() => {}}
       onResumeGoal={() => {}}
       planUpdate={planUpdate}
+      runtimeRestartProgress={options?.runtimeRestartProgress ?? null}
       goal={null}
       goalAction={null}
       goalActionError={null}
@@ -789,6 +792,56 @@ test("renders schedule agenda groups expanded by default", () => {
   assert.match(markup, /Today/);
   assert.match(markup, /standup ping/);
   assert.match(markup, /Every 6 hours/);
+});
+
+test("renders runtime restart progress in thread analysis", () => {
+  const markup = renderRightPanel(makeThread([]), "skills", null, {
+    runtimeRestartProgress: {
+      status: "active",
+      requestId: "restart-1",
+      originThreadId: "thread-1",
+      stage: "shuttingDownAppServer",
+      stageLabel: "Stopping app-server",
+      message: "Stopping the current app-server before switching capsules.",
+      reason: null,
+      activationId: "activation-1",
+      releaseId: "release-1",
+      updatedAtMs: 123,
+    },
+  });
+
+  assert.match(markup, /Runtime Restart/);
+  assert.match(markup, /Stopping app-server/);
+  assert.match(markup, /Running/);
+  assert.match(markup, /restart-1/);
+  assert.match(markup, /thread-1/);
+  assert.match(markup, /release-1/);
+  assert.match(markup, /activation-1/);
+});
+
+test("hides runtime restart progress while idle and surfaces failures", () => {
+  const idleMarkup = renderRightPanel(makeThread([]));
+  assert.doesNotMatch(idleMarkup, /Runtime Restart/);
+
+  const failedMarkup = renderRightPanel(makeThread([]), "skills", null, {
+    runtimeRestartProgress: {
+      status: "failed",
+      requestId: "restart-failed",
+      originThreadId: "thread-1",
+      stage: "failed",
+      stageLabel: "Failed",
+      message: "Build failed",
+      reason: "Build failed",
+      activationId: null,
+      releaseId: null,
+      updatedAtMs: 123,
+    },
+  });
+
+  assert.match(failedMarkup, /Runtime Restart/);
+  assert.match(failedMarkup, /Failed/);
+  assert.match(failedMarkup, /restart-failed/);
+  assert.match(failedMarkup, /Build failed/);
 });
 
 test("renders schedule agenda with an overall disclosure header", () => {

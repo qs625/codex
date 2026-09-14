@@ -29,6 +29,7 @@ import { normalizeBrowserUrl } from "../lib/browserUrl";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
+import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
 import type { TerminalCommandFocusRequest } from "../lib/terminalCommandFocus";
 import {
   buildThreadAnalysis,
@@ -227,6 +228,7 @@ export function RightPanel({
   onCancelGoal,
   onPauseGoal,
   onResumeGoal,
+  runtimeRestartProgress = null,
   filePanelView,
   fileTreeEntriesByPath,
   fileTreeErrorsByPath,
@@ -263,6 +265,7 @@ export function RightPanel({
   onCancelGoal: () => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
+  runtimeRestartProgress?: RuntimeRestartProgress | null;
   filePanelView: FilePanelView;
   fileTreeEntriesByPath: Record<string, FileTreeEntry[]>;
   fileTreeErrorsByPath: Record<string, string>;
@@ -321,6 +324,7 @@ export function RightPanel({
                 onPauseGoal={onPauseGoal}
                 onResumeGoal={onResumeGoal}
                 planUpdate={planUpdate}
+                runtimeRestartProgress={runtimeRestartProgress}
               />
             ) : activeView === "git" ? (
               <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
@@ -1285,6 +1289,7 @@ function ThreadAnalysisPanel({
   onPauseGoal,
   onResumeGoal,
   planUpdate,
+  runtimeRestartProgress,
 }: {
   analysis: ThreadAnalysis;
   goal: ThreadGoal | null;
@@ -1295,6 +1300,7 @@ function ThreadAnalysisPanel({
   onPauseGoal: () => void;
   onResumeGoal: () => void;
   planUpdate: ThreadPlanUpdate | null;
+  runtimeRestartProgress: RuntimeRestartProgress | null;
 }) {
   const { contextUsage, monitors, runtime } = analysis;
   const displayedMonitorSections = monitors.sections;
@@ -1353,6 +1359,8 @@ function ThreadAnalysisPanel({
             tone="blocked"
           />
         </section>
+
+        <RuntimeRestartProgressCard progress={runtimeRestartProgress} />
 
         <GoalDetailPanel
           goal={goal}
@@ -1484,6 +1492,63 @@ function ThreadAnalysisPanel({
       </div>
     </div>
   );
+}
+
+function RuntimeRestartProgressCard({
+  progress,
+}: {
+  progress: RuntimeRestartProgress | null;
+}) {
+  if (!progress) {
+    return null;
+  }
+  const meta = [
+    progress.requestId ? ["Request", progress.requestId] : null,
+    progress.originThreadId ? ["Source", progress.originThreadId] : null,
+    progress.releaseId ? ["Release", progress.releaseId] : null,
+    progress.activationId ? ["Activation", progress.activationId] : null,
+  ].filter((item): item is [string, string] => Boolean(item));
+
+  return (
+    <section className={`context-section-card runtime-restart-card ${progress.status}`}>
+      <div className="context-section-header">
+        <div>
+          <span className="context-section-eyebrow">Runtime Restart</span>
+          <strong>{progress.stageLabel}</strong>
+        </div>
+        <span className={`runtime-restart-pill ${progress.status}`}>
+          {formatRuntimeRestartStatus(progress.status)}
+        </span>
+      </div>
+      <p className="runtime-restart-message">{progress.message}</p>
+      {progress.reason && progress.status === "failed" ? (
+        <p className="runtime-restart-reason">{progress.reason}</p>
+      ) : null}
+      {meta.length > 0 ? (
+        <dl className="runtime-restart-meta">
+          {meta.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd title={value}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </section>
+  );
+}
+
+function formatRuntimeRestartStatus(status: RuntimeRestartProgress["status"]) {
+  switch (status) {
+    case "active":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "recovered":
+      return "Recovered";
+  }
 }
 
 function MonitorRowContent({ monitor }: { monitor: MonitorSummary }) {

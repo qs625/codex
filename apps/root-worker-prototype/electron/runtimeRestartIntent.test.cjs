@@ -82,6 +82,50 @@ test("controller persists received intent before executing restart", async () =>
   });
 });
 
+test("controller broadcasts runtime restart progress snapshots", async () => {
+  await withStore(async (store) => {
+    const statuses = [];
+    let releaseExecution;
+    const execution = new Promise((resolve) => {
+      releaseExecution = resolve;
+    });
+    let markExecutionStarted;
+    const executionStarted = new Promise((resolve) => {
+      markExecutionStarted = resolve;
+    });
+    const controller = createRuntimeRestartController({
+      store,
+      execute: async () => {
+        markExecutionStarted();
+        return execution;
+      },
+      recover: async () => {
+        throw new Error("completed restart must recover after Host restart");
+      },
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: () => {}, warn: () => {} },
+    });
+
+    await controller.handle(notification("restart-1"));
+    await executionStarted;
+    releaseExecution({ ok: true });
+    await controller.waitForIdle();
+
+    assert.deepEqual(
+      statuses.map((status) => status.runtimeRestart?.phase),
+      ["received", "executing", "completed"],
+    );
+    assert.deepEqual(
+      statuses.map((status) => status.runtimeRestart?.requestId),
+      ["restart-1", "restart-1", "restart-1"],
+    );
+    assert.deepEqual(
+      statuses.map((status) => status.runtimeRestart?.requestedByThreadId),
+      ["thread-1", "thread-1", "thread-1"],
+    );
+  });
+});
+
 test("controller can persist completed handoff before expected Host exit", async () => {
   await withStore(async (store) => {
     let markHandoffPersisted;
