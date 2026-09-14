@@ -39,6 +39,13 @@ function browserNavigationDecision(target) {
   };
 }
 
+function normalizeBrowserDebugTarget(target) {
+  if (typeof target === "string" && target.trim() === "about:blank") {
+    return { ok: true, url: null };
+  }
+  return normalizeBrowserTarget(target);
+}
+
 function browserNavigationEventDecision(event, legacyUrl) {
   return browserNavigationDecision(browserNavigationEventTarget(event, legacyUrl));
 }
@@ -95,5 +102,6 @@ module.exports = {
   browserNavigationDecision,
   browserNavigationEventDecision,
   browserNavigationEventTarget,
+  normalizeBrowserDebugTarget,
   normalizeBrowserTarget,
 };

@@ -5,6 +5,7 @@ const {
   browserNavigationDecision,
   browserNavigationEventDecision,
   browserNavigationEventTarget,
+  normalizeBrowserDebugTarget,
   normalizeBrowserTarget,
 } = require("./browserPanelSecurity.cjs");
 
@@ -31,6 +32,21 @@ test("browserNavigationDecision rejects unsafe redirect and frame targets", () =
   ]) {
     const decision = browserNavigationDecision(target);
     assert.equal(decision.allow, false);
+  }
+});
+
+test("normalizeBrowserDebugTarget allows only about:blank as CDP bootstrap", () => {
+  assert.deepEqual(normalizeBrowserDebugTarget("about:blank"), {
+    ok: true,
+    url: null,
+  });
+  assert.deepEqual(normalizeBrowserDebugTarget(" https://example.com "), {
+    ok: true,
+    url: "https://example.com/",
+  });
+
+  for (const target of ["about:srcdoc", "file:///tmp/secret.txt", "javascript:alert(1)"]) {
+    assert.equal(normalizeBrowserDebugTarget(target).ok, false);
   }
 });
 
