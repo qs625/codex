@@ -382,7 +382,7 @@ test("completed restart recovery consumes only after durable /self notice inject
                   {
                     type: "agentMessage",
                     id: message.id,
-                    text: message.text,
+                    content: [{ type: "text", text: message.text }],
                   },
                 ],
               });
@@ -402,9 +402,10 @@ test("completed restart recovery consumes only after durable /self notice inject
         ["read", "self-thread"],
         ["subscribe", "self-thread"],
         ["inject", "self-thread", "runtime-restart-recovery:restart-1"],
+        ["read", "self-thread"],
       ]);
       assert.match(
-        selfThread.turns[0].items[0].text,
+        selfThread.turns[0].items[0].content[0].text,
         /Morpheus 已恢复预期的 Runtime Capsule 重启请求 restart-1/,
       );
 
@@ -412,6 +413,60 @@ test("completed restart recovery consumes only after durable /self notice inject
       assert.equal(duplicate.kind, "duplicate");
       assert.equal(duplicate.record.phase, "consumed");
       assert.equal(duplicate.record.outcomePhase, "completed");
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
+});
+
+test("completed restart recovery releases claim when injected notice is not durable", async () => {
+  await withStore(
+    async (store) => {
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            listThreads: async () => {
+              throw new Error("source /self should be used directly");
+            },
+            readThread: async (threadId) => ({
+              thread: { id: threadId, name: "/self", turns: [] },
+            }),
+            subscribeThread: async () => {},
+            injectConversationMessage: async () => ({}),
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const result = await controller.recoverPending();
+      const [record] = await store.recoverable();
+
+      assert.deepEqual(result.recoveredThreadIds, []);
+      assert.deepEqual(result.failedThreadIds, ["self-thread"]);
+      assert.equal(record.requestId, "restart-1");
+      assert.equal(record.phase, "completed");
+
+      const duplicate = await store.accept(notification("restart-1", "self-thread"));
+      assert.notEqual(duplicate.record.phase, "consumed");
     },
     {
       version: 2,

@@ -6,6 +6,7 @@ const {
   autoResumeFingerprint,
   autoResumeOccurrenceId,
   createThreadAutoResumeCoordinator,
+  isAutoResumeTargetLifecycleStatus,
   isAutoResumeEligibleThread,
   pickAutoResumeCandidates,
   threadHasAutoResumePrompt,
@@ -59,7 +60,7 @@ test("auto-resume selects recoverable project roots and excludes completed/child
         lifecycleStatus: { type: "final", result: { type: "interrupted" } },
       }),
     ),
-    true,
+    false,
   );
   assert.equal(
     isAutoResumeEligibleThread(
@@ -75,6 +76,24 @@ test("auto-resume selects recoverable project roots and excludes completed/child
       projectRootThread({
         id: "shutdown",
         lifecycleStatus: { type: "final", result: { type: "shutdown" } },
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "not-loaded",
+        lifecycleStatus: { type: "notLoaded" },
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "initializing",
+        lifecycleStatus: { type: "initializing" },
       }),
     ),
     false,
@@ -143,7 +162,34 @@ test("auto-resume selects recoverable project roots and excludes completed/child
   );
 });
 
-test("auto-resume candidates are newest first", () => {
+test("auto-resume target lifecycle accepts only active and waiting", () => {
+  assert.equal(
+    isAutoResumeTargetLifecycleStatus({ type: "active", activeFlags: [] }),
+    true,
+  );
+  assert.equal(
+    isAutoResumeTargetLifecycleStatus({ type: "waiting", reason: "command" }),
+    true,
+  );
+  assert.equal(
+    isAutoResumeTargetLifecycleStatus({
+      type: "final",
+      result: { type: "interrupted" },
+    }),
+    false,
+  );
+  assert.equal(
+    isAutoResumeTargetLifecycleStatus({
+      type: "final",
+      result: { type: "completed" },
+    }),
+    false,
+  );
+  assert.equal(isAutoResumeTargetLifecycleStatus({ type: "notLoaded" }), false);
+  assert.equal(isAutoResumeTargetLifecycleStatus({ type: "initializing" }), false);
+});
+
+test("auto-resume candidates are newest first and unique by thread id", () => {
   assert.deepEqual(
     pickAutoResumeCandidates([
       projectRootThread({ id: "old", updatedAt: 1 }),
@@ -152,8 +198,9 @@ test("auto-resume candidates are newest first", () => {
         lifecycleStatus: { type: "final", result: { type: "completed" } },
       }),
       projectRootThread({ id: "new", updatedAt: 3 }),
+      projectRootThread({ id: "old", updatedAt: 5 }),
     ]).map((thread) => thread.id),
-    ["new", "old"],
+    ["old", "new"],
   );
 });
 
@@ -199,7 +246,7 @@ test("restart recovery fanout resumes once and submits recovery input", async ()
   assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
   assert.equal(first.focusThreadId, "thread-a");
   assert.deepEqual(second.resumedThreadIds, []);
-  assert.deepEqual(second.skippedThreadIds, ["thread-a"]);
+  assert.deepEqual(second.skippedThreadIds, []);
   assert.deepEqual(calls, [
     ["read", "thread-a"],
     ["subscribe", "thread-a"],
@@ -322,7 +369,7 @@ test("restart-scoped auto-resume markers allow a later restart with unchanged up
 
   assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
   assert.deepEqual(repeatedFirst.resumedThreadIds, []);
-  assert.deepEqual(repeatedFirst.skippedThreadIds, ["thread-a"]);
+  assert.deepEqual(repeatedFirst.skippedThreadIds, []);
   assert.deepEqual(second.resumedThreadIds, ["thread-a"]);
   assert.deepEqual(calls, [
     ["subscribe", "thread-a"],
@@ -476,6 +523,172 @@ test("failed or interrupted restart facts still fan out generic recovery", async
 
   assert.deepEqual(result.resumedThreadIds, ["thread-1"]);
   assert.deepEqual(calls, ["read", "subscribe", "send"]);
+});
+
+test("same restart occurrence from expected and fallback sources runs one fanout pass", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return { thread: projectRootThread({ id: threadId }) };
+    },
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    sendResumeInput: async (thread) => calls.push(["send", thread.id]),
+    stateStore: {
+      has: async () => {
+        throw new Error("state store unavailable");
+      },
+      mark: async () => {
+        throw new Error("state store unavailable");
+      },
+    },
+    logger: { warn: () => {} },
+  });
+
+  const expected = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread({ id: "thread-a" })],
+    expectedRestart: runtimeRestartRecovery(["system-self"], "restart-1"),
+  });
+  const fallback = await coordinator.runAfterRuntimeRestartRecovery({
+    hasDurableRestartRecovery: true,
+    recoveryOccurrenceId: "runtime-restart:restart-1",
+    threads: [projectRootThread({ id: "thread-a" })],
+    expectedRestart: { expectedThreadIds: [] },
+  });
+
+  assert.deepEqual(expected.resumedThreadIds, ["thread-a"]);
+  assert.deepEqual(fallback.resumedThreadIds, []);
+  assert.deepEqual(calls, [
+    ["read", "thread-a"],
+    ["subscribe", "thread-a"],
+    ["send", "thread-a"],
+  ]);
+});
+
+test("duplicate thread ids in the list are dispatched once in a pass", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return { thread: projectRootThread({ id: threadId }) };
+    },
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    sendResumeInput: async (thread) => calls.push(["send", thread.id]),
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [
+      projectRootThread({ id: "thread-a", updatedAt: 1 }),
+      projectRootThread({ id: "thread-a", updatedAt: 2 }),
+    ],
+    expectedRestart: runtimeRestartRecovery(),
+  });
+
+  assert.deepEqual(result.resumedThreadIds, ["thread-a"]);
+  assert.deepEqual(calls, [
+    ["read", "thread-a"],
+    ["subscribe", "thread-a"],
+    ["send", "thread-a"],
+  ]);
+});
+
+test("duplicate thread ids use the newest snapshot before lifecycle filtering", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return { thread: projectRootThread({ id: threadId }) };
+    },
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    sendResumeInput: async (thread) => calls.push(["send", thread.id]),
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [
+      projectRootThread({ id: "thread-a", updatedAt: 1 }),
+      projectRootThread({
+        id: "thread-a",
+        updatedAt: 2,
+        lifecycleStatus: { type: "final", result: { type: "completed" } },
+      }),
+    ],
+    expectedRestart: runtimeRestartRecovery(),
+  });
+
+  assert.deepEqual(result.resumedThreadIds, []);
+  assert.deepEqual(calls, []);
+});
+
+test("non-target list statuses are not read or dispatched", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return { thread: projectRootThread({ id: threadId }) };
+    },
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    sendResumeInput: async (thread) => calls.push(["send", thread.id]),
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [
+      projectRootThread({
+        id: "interrupted",
+        lifecycleStatus: { type: "final", result: { type: "interrupted" } },
+      }),
+      projectRootThread({
+        id: "completed",
+        lifecycleStatus: { type: "final", result: { type: "completed" } },
+      }),
+      projectRootThread({ id: "not-loaded", lifecycleStatus: { type: "notLoaded" } }),
+      projectRootThread({
+        id: "initializing",
+        lifecycleStatus: { type: "initializing" },
+      }),
+    ],
+    expectedRestart: runtimeRestartRecovery(),
+  });
+
+  assert.deepEqual(result.resumedThreadIds, []);
+  assert.deepEqual(calls, []);
+});
+
+test("read after a list target can only narrow the fanout target", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return {
+        thread: projectRootThread({
+          id: threadId,
+          lifecycleStatus: { type: "final", result: { type: "completed" } },
+        }),
+      };
+    },
+    subscribeThread: async () => {
+      throw new Error("must not subscribe");
+    },
+    sendResumeInput: async () => {
+      throw new Error("must not send");
+    },
+    stateStore: { has: async () => false, mark: async () => {} },
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread({ id: "thread-a" })],
+    expectedRestart: runtimeRestartRecovery(),
+  });
+
+  assert.deepEqual(result.resumedThreadIds, []);
+  assert.deepEqual(result.skippedThreadIds, ["thread-a"]);
+  assert.deepEqual(calls, [["read", "thread-a"]]);
 });
 
 test("payload fallback restart fact fans out without expected intent ids", async () => {

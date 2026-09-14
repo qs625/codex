@@ -15,6 +15,8 @@ function createThreadAutoResumeCoordinator({
 } = {}) {
   const inFlightKeys = new Set();
   const completedKeys = new Set();
+  const inFlightPassKeys = new Set();
+  const completedPassKeys = new Set();
 
   return {
     async runAfterRuntimeRestartRecovery({
@@ -38,7 +40,27 @@ function createThreadAutoResumeCoordinator({
       ) {
         return emptyAutoResumeResult();
       }
-      return run(threads, occurrence);
+      const passKey = autoResumePassFingerprint(occurrence);
+      if (
+        passKey &&
+        (inFlightPassKeys.has(passKey) || completedPassKeys.has(passKey))
+      ) {
+        return emptyAutoResumeResult();
+      }
+      if (passKey) {
+        inFlightPassKeys.add(passKey);
+      }
+      try {
+        const result = await run(threads, occurrence);
+        if (passKey) {
+          completedPassKeys.add(passKey);
+        }
+        return result;
+      } finally {
+        if (passKey) {
+          inFlightPassKeys.delete(passKey);
+        }
+      }
     },
   };
 
@@ -159,13 +181,26 @@ async function markCompletedAutoResume(stateStore, key, logger) {
 }
 
 function pickAutoResumeCandidates(threads = []) {
-  return threads
-    .filter(isAutoResumeEligibleThread)
-    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0));
+  const representatives = new Map();
+  for (const thread of threads) {
+    if (!thread?.id) {
+      continue;
+    }
+    const current = representatives.get(thread.id);
+    if (
+      !current ||
+      (thread.updatedAt ?? 0) > (current.updatedAt ?? 0)
+    ) {
+      representatives.set(thread.id, thread);
+    }
+  }
+  return [...representatives.values()]
+    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))
+    .filter(isAutoResumeEligibleThread);
 }
 
 function isAutoResumeEligibleThread(thread) {
-  if (!thread?.id || !isRecoverableLifecycleStatus(thread.lifecycleStatus)) {
+  if (!thread?.id || !isAutoResumeTargetLifecycleStatus(thread.lifecycleStatus)) {
     return false;
   }
   if (!isProjectRootThread(thread)) {
@@ -183,6 +218,11 @@ function autoResumeFingerprint(thread, occurrenceId = null) {
     return `restart-v2:${occurrence}:${thread.id}`;
   }
   return `${thread.id}:${thread.updatedAt ?? "unknown"}`;
+}
+
+function autoResumePassFingerprint(occurrence = { id: null }) {
+  const occurrenceId = normalizeAutoResumeOccurrenceId(occurrence?.id);
+  return occurrenceId ? `restart-pass:${occurrenceId}` : null;
 }
 
 function autoResumeOccurrenceId({
@@ -261,14 +301,12 @@ function isActiveLifecycleStatus(status) {
   return status?.type === "active";
 }
 
+function isAutoResumeTargetLifecycleStatus(status) {
+  return status?.type === "active" || status?.type === "waiting";
+}
+
 function isRecoverableLifecycleStatus(status) {
-  if (status?.type === "active" || status?.type === "waiting") {
-    return true;
-  }
-  return (
-    status?.type === "final" &&
-    status.result?.type === "interrupted"
-  );
+  return isAutoResumeTargetLifecycleStatus(status);
 }
 
 function isSubAgentSource(source) {
@@ -373,6 +411,7 @@ module.exports = {
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
   hasDurableRuntimeRestartRecovery,
+  isAutoResumeTargetLifecycleStatus,
   isCompletedFinalLifecycleStatus,
   isActiveLifecycleStatus,
   isAutoResumeEligibleThread,
