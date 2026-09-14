@@ -29,6 +29,11 @@ const {
   browserSessionPartition,
 } = require("./browserPanelConfig.cjs");
 const {
+  allowBrowserPanelPermission,
+  allowDefaultSessionPermission,
+  configurePermissionHandlers,
+} = require("./permissionHandlers.cjs");
+const {
   nextBrowserTabIdAfterClose,
   shouldDetachAttachedBrowserPanelView,
 } = require("./browserPanelTabs.cjs");
@@ -1019,11 +1024,15 @@ app.whenReady().then(() => {
   registerLocalFilePreviewProtocol();
   startRemoteDebuggingCompatibilityProxy();
   configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
-    permission === "media" && !isBrowserPanelWebContents(webContents),
+    allowDefaultSessionPermission({
+      webContents,
+      permission,
+      isBrowserPanelWebContents,
+    }),
   );
   configurePermissionHandlers(
     session.fromPartition(browserSessionPartition),
-    () => false,
+    allowBrowserPanelPermission,
   );
   void ensureDefaultWorkspace()
     .then(async () => {
@@ -1948,17 +1957,6 @@ function guardBrowserPanelNavigation(panel, tab, event, target) {
   tab.state.error = decision.reason;
   tab.state.loading = false;
   sendBrowserPanelState(panel);
-}
-
-function configurePermissionHandlers(targetSession, isAllowed) {
-  targetSession.setPermissionCheckHandler((webContents, permission) => {
-    return isAllowed({ webContents, permission });
-  });
-  targetSession.setPermissionRequestHandler(
-    (webContents, permission, callback) => {
-      callback(isAllowed({ webContents, permission }));
-    },
-  );
 }
 
 async function ensureBuiltRenderer() {
