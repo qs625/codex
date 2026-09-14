@@ -29,6 +29,9 @@ const {
   browserSessionPartition,
 } = require("./browserPanelConfig.cjs");
 const {
+  normalizeBrowserBoundsUpdate,
+} = require("./browserPanelBounds.cjs");
+const {
   allowBrowserPanelPermission,
   allowDefaultSessionPermission,
   configurePermissionHandlers,
@@ -1456,10 +1459,12 @@ function browserPanelForWindow(window) {
     throw new Error("This Electron version does not support WebContentsView");
   }
 
+  const initialBoundsUpdate = normalizeBrowserBoundsUpdate(null);
   const panel = {
     window,
     visible: false,
-    bounds: normalizeBrowserBounds(null),
+    bounds: initialBoundsUpdate.bounds,
+    boundsSequence: initialBoundsUpdate.sequence,
     tabs: [],
     activeTabId: null,
     attachedTabId: null,
@@ -1632,7 +1637,12 @@ function destroyBrowserPanel(window) {
 }
 
 function setBrowserPanelBounds(panel, bounds) {
-  panel.bounds = normalizeBrowserBounds(bounds);
+  const update = normalizeBrowserBoundsUpdate(bounds, panel.boundsSequence);
+  panel.boundsSequence = update.sequence;
+  if (!update.apply) {
+    return;
+  }
+  panel.bounds = update.bounds;
   const tab = activeBrowserPanelTab(panel);
   if (
     panel.visible &&
@@ -1642,15 +1652,6 @@ function setBrowserPanelBounds(panel, bounds) {
   ) {
     tab.view.setBounds(panel.bounds);
   }
-}
-
-function normalizeBrowserBounds(bounds) {
-  return {
-    x: Math.max(0, Math.round(Number(bounds?.x) || 0)),
-    y: Math.max(0, Math.round(Number(bounds?.y) || 0)),
-    width: Math.max(0, Math.round(Number(bounds?.width) || 0)),
-    height: Math.max(0, Math.round(Number(bounds?.height) || 0)),
-  };
 }
 
 function sendBrowserPanelState(panel) {

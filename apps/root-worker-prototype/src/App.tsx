@@ -3188,6 +3188,9 @@ function App() {
         />
         <RightPanel
           activeView={rightPanelView}
+          browserNativeOverlayActive={
+            isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+          }
           browserNavigationRequest={browserNavigationRequest}
           onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
           availableSkillCount={availableSkills.length}

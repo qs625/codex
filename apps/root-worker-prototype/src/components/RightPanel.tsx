@@ -65,6 +65,7 @@ type BrowserViewBounds = {
   y: number;
   width: number;
   height: number;
+  sequence?: number;
 };
 
 export type ThreadAnalysisCommandFocusTarget = {
@@ -209,6 +210,7 @@ function formatTokenCount(value: number | null) {
 
 export function RightPanel({
   activeView,
+  browserNativeOverlayActive = false,
   browserNavigationRequest,
   onBrowserNavigationRequestHandled,
   availableSkillCount,
@@ -244,6 +246,7 @@ export function RightPanel({
   todoItems,
 }: {
   activeView: RightPanelView;
+  browserNativeOverlayActive?: boolean;
   browserNavigationRequest?: { url: string; token: number } | null;
   onBrowserNavigationRequestHandled?: (token: number) => void;
   availableSkillCount: number;
@@ -323,6 +326,7 @@ export function RightPanel({
               <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
             ) : activeView === "browser" ? (
               <BrowserPanel
+                nativeOverlayActive={browserNativeOverlayActive}
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
               />
@@ -704,13 +708,16 @@ function formatWorkflowStageStatus(status: WorkflowStageView["status"]) {
 }
 
 function BrowserPanel({
+  nativeOverlayActive,
   navigationRequest,
   onNavigationRequestHandled,
 }: {
+  nativeOverlayActive: boolean;
   navigationRequest: { url: string; token: number } | null;
   onNavigationRequestHandled?: (token: number) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const boundsSequenceRef = useRef(0);
   const [address, setAddress] = useState("");
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -773,19 +780,37 @@ function BrowserPanel({
       return undefined;
     }
 
+    let animationFrame: number | null = null;
+    const measureBounds = () =>
+      browserBoundsFromElement(viewport, ++boundsSequenceRef.current);
     const updateBounds = () => {
-      const bounds = browserBoundsFromElement(viewport);
-      void browserApi
-        .setBrowserViewBounds(bounds)
-        .catch((error) => setLocalError(toBrowserError(error)));
+      if (animationFrame !== null) {
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        if (nativeOverlayActive) {
+          return;
+        }
+        void browserApi
+          .setBrowserViewBounds(measureBounds())
+          .catch((error) => setLocalError(toBrowserError(error)));
+      });
     };
 
-    void browserApi
-      .showBrowserView(browserBoundsFromElement(viewport))
-      .then((nextState) => {
-        applyBrowserState(nextState);
-      })
-      .catch((error) => setLocalError(toBrowserError(error)));
+    if (nativeOverlayActive) {
+      void browserApi
+        .hideBrowserView()
+        .then((nextState) => applyBrowserState(nextState))
+        .catch((error) => setLocalError(toBrowserError(error)));
+    } else {
+      void browserApi
+        .showBrowserView(measureBounds())
+        .then((nextState) => {
+          applyBrowserState(nextState);
+        })
+        .catch((error) => setLocalError(toBrowserError(error)));
+    }
 
     updateBounds();
     const resizeObserver = new ResizeObserver(updateBounds);
@@ -793,11 +818,14 @@ function BrowserPanel({
     window.addEventListener("resize", updateBounds);
 
     return () => {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+      }
       resizeObserver.disconnect();
       window.removeEventListener("resize", updateBounds);
       void browserApi.hideBrowserView();
     };
-  }, []);
+  }, [nativeOverlayActive]);
 
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
@@ -1082,13 +1110,17 @@ export function browserTabLabel(tab: BrowserPanelTabState) {
   }
 }
 
-function browserBoundsFromElement(element: HTMLElement): BrowserViewBounds {
+export function browserBoundsFromElement(
+  element: HTMLElement,
+  sequence?: number,
+): BrowserViewBounds {
   const rect = element.getBoundingClientRect();
   return {
     x: Math.max(0, Math.round(rect.left)),
     y: Math.max(0, Math.round(rect.top)),
     width: Math.max(0, Math.round(rect.width)),
     height: Math.max(0, Math.round(rect.height)),
+    ...(sequence ? { sequence } : {}),
   };
 }
 

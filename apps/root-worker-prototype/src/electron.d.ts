@@ -388,6 +388,7 @@ declare global {
         y: number;
         width: number;
         height: number;
+        sequence?: number;
       }) => Promise<BrowserPanelState>;
       hideBrowserView: () => Promise<BrowserPanelState>;
       setBrowserViewBounds: (bounds: {
@@ -395,6 +396,7 @@ declare global {
         y: number;
         width: number;
         height: number;
+        sequence?: number;
       }) => Promise<BrowserPanelState>;
       navigateBrowserView: (target: string) => Promise<BrowserPanelState>;
       createBrowserTab: (target?: string | null) => Promise<BrowserPanelState>;
