@@ -123,10 +123,7 @@ use tokio::time::sleep;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-#[cfg(windows)]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
-#[cfg(not(windows))]
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
 fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
