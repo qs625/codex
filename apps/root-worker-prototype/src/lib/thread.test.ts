@@ -2373,7 +2373,7 @@ test("mergeThreadSnapshot preserves distinct non-init injected contexts", () => 
     turns: [nextTurn],
   });
 
-  assert.deepEqual(merged.turns, [nextTurn, existing.turns[0]]);
+  assert.deepEqual(merged.turns, [existing.turns[0], nextTurn]);
 });
 
 test("updateThreadTurn preserves item timestamps when a completed turn snapshot arrives", () => {
@@ -3907,6 +3907,61 @@ test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snaps
   });
 
   assert.deepEqual(merged.turns, existing.turns);
+});
+
+test("mergeThreadSnapshot inserts retained local turns by timestamp", () => {
+  const oldLocalTurn: Turn = {
+    id: "local-old-turn",
+    items: [
+      {
+        type: "agentMessage",
+        id: "local-old-item",
+        text: "older local item",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 100,
+    completedAt: 120,
+    durationMs: 20_000,
+  };
+  const newerReadTurn: Turn = {
+    id: "read-new-turn",
+    items: [
+      {
+        type: "agentMessage",
+        id: "read-new-item",
+        text: "newer persisted item",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 200,
+    completedAt: 220,
+    durationMs: 20_000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [oldLocalTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [newerReadTurn],
+    },
+  );
+
+  assert.deepEqual(
+    merged.turns.map((turn) => turn.id),
+    ["local-old-turn", "read-new-turn"],
+  );
 });
 
 test("mergeThreadSnapshot preserves init context when a started snapshot omits turns", () => {

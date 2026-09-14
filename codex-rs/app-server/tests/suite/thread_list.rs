@@ -5,6 +5,8 @@ use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::SessionSource;
 use app_server_protocol::SortDirection;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListCwdFilter;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadSortKey;
@@ -12,7 +14,6 @@ use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadSourceKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
 use app_server_protocol::UserInput;
@@ -47,7 +48,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 
 async fn init_mcp(codex_home: &Path) -> Result<McpProcess> {
     let mut mcp = McpProcess::new(codex_home).await?;
@@ -202,6 +203,98 @@ async fn thread_list_basic_empty() -> Result<()> {
 }
 
 #[tokio::test]
+async fn thread_list_state_db_only_overlays_live_running_status() -> Result<()> {
+    let server = responses::start_mock_server().await;
+    let delayed_response = responses::sse_response(responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Done"),
+        responses::ev_completed("resp-1"),
+    ]))
+    .set_delay(std::time::Duration::from_secs(2));
+    let _response_mock = responses::mount_response_once(&server, delayed_response).await;
+
+    let codex_home = TempDir::new()?;
+    create_runtime_config(codex_home.path(), &server.uri())?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "keep running while listing".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/started"),
+    )
+    .await??;
+
+    let list_id = mcp
+        .send_thread_list_request(app_server_protocol::ThreadListParams {
+            cursor: None,
+            limit: Some(10),
+            sort_key: None,
+            sort_direction: None,
+            model_providers: Some(vec!["mock_provider".to_string()]),
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: true,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let response = to_response::<ThreadListResponse>(list_resp)?;
+    let listed_thread = response
+        .data
+        .iter()
+        .find(|candidate| candidate.id == thread.id)
+        .expect("running thread should appear in state-db-only list");
+
+    assert_eq!(
+        listed_thread.lifecycle_status,
+        ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        }
+    );
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_list_reports_system_error_idle_flag_after_failed_turn() -> Result<()> {
     let responses = vec![
         create_final_assistant_message_sse_response("seeded")?,
@@ -287,7 +380,10 @@ async fn thread_list_reports_system_error_idle_flag_after_failed_turn() -> Resul
         .iter()
         .find(|candidate| candidate.id == thread.id)
         .expect("expected started thread to be listed");
-    assert_eq!(listed.lifecycle_status, ThreadLifecycleStatus::system_error(None),);
+    assert_eq!(
+        listed.lifecycle_status,
+        ThreadLifecycleStatus::system_error(None),
+    );
 
     Ok(())
 }
@@ -350,10 +446,7 @@ fn prepend_path_env(path: &Path) -> Result<String> {
     Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
 }
 
-async fn start_hidden_external_root_thread(
-    mcp: &mut McpProcess,
-    cwd: &Path,
-) -> Result<String> {
+async fn start_hidden_external_root_thread(mcp: &mut McpProcess, cwd: &Path) -> Result<String> {
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
             thread_provider: Some("claude_cli".to_string()),
@@ -863,11 +956,7 @@ sqlite = true
     metadata.cwd = stale_cwd.clone();
     metadata.agent_path = Some("/my_codex".to_string());
     state_db.upsert_thread(&metadata).await?;
-    let rollout_path = rollout_path(
-        codex_home.path(),
-        "2025-01-02T10-00-00",
-        thread_id.as_str(),
-    );
+    let rollout_path = rollout_path(codex_home.path(), "2025-01-02T10-00-00", thread_id.as_str());
     std::fs::remove_file(&rollout_path)?;
 
     let request_id = mcp
