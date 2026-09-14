@@ -28,6 +28,7 @@ const {
   ScheduleAgendaDateGroup,
   beginFilePreviewEdit,
   beginFilePreviewSave,
+  browserBoundsFromElement,
   browserTabLabel,
   buildGitGraphVisualModel,
   cancelFilePreviewEdit,
@@ -307,6 +308,46 @@ test("renders browser panel and rail button", () => {
   assert.match(markup, /Browser URL/);
   assert.match(markup, /class="browser-go-button" disabled=""/);
   assert.match(markup, /Open a page in the right panel/);
+});
+
+test("browserBoundsFromElement measures the visible viewport rect with sequence", () => {
+  const element = {
+    getBoundingClientRect: () => ({
+      left: 820.6,
+      top: 168.5,
+      width: 652.6,
+      height: 782.5,
+    }),
+  } as HTMLElement;
+
+  assert.deepEqual(browserBoundsFromElement(element, 12), {
+    x: 821,
+    y: 169,
+    width: 653,
+    height: 783,
+    sequence: 12,
+  });
+});
+
+test("browser native view hides under app overlays and restores with measured bounds", () => {
+  const rightPanelSource = readFileSync(
+    new URL("./RightPanel.tsx", import.meta.url),
+    "utf8",
+  );
+  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    rightPanelSource,
+    /if \(nativeOverlayActive\) \{[\s\S]*\.hideBrowserView\(\)/,
+  );
+  assert.match(
+    rightPanelSource,
+    /else \{[\s\S]*\.showBrowserView\(measureBounds\(\)\)/,
+  );
+  assert.match(
+    appSource,
+    /browserNativeOverlayActive=\{[\s\S]*isSelfCommandOpen \|\| isSettingsOpen \|\| isCreatingChatThread/,
+  );
 });
 
 test("browser tab helpers preserve active tab state and readable labels", () => {
