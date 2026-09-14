@@ -5199,6 +5199,73 @@ test("mergeThreadSnapshot clears stale active command state when snapshot has no
   );
 });
 
+test("mergeThreadSnapshot preserves running active commands across active stale reads", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const existing = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    activeCommandItems: [commandStart],
+  } satisfies Thread;
+  const next = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    updatedAt: 2,
+    turns: [makeTurn("turn-1", [])],
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, next);
+
+  assert.deepEqual(merged.activeCommandItems, [commandStart]);
+  assert.deepEqual(
+    buildThreadAnalysis(merged, 0).monitors.sections[0]?.monitors.map(
+      (monitor) => monitor.label,
+    ),
+    ["rtk sleep 100"],
+  );
+});
+
+test("mergeThreadSnapshot applies explicit empty active command current-state", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const existing = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    activeCommandItems: [commandStart],
+  } satisfies Thread;
+  const next = {
+    ...markThreadCommandExecutionRunning(makeThread()),
+    updatedAt: 2,
+    turns: [makeTurn("turn-1", [])],
+    activeCommandItems: [],
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, next);
+
+  assert.deepEqual(merged.activeCommandItems, []);
+  assert.deepEqual(
+    buildThreadAnalysis(merged, 0).monitors.sections[0]?.monitors,
+    [],
+  );
+});
+
 test("normalizeThreadSnapshot drops legacy orphan command output placeholders", () => {
   const legacyPlaceholder: ThreadItem = {
     type: "commandExecution",

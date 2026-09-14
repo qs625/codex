@@ -6,6 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   AppErrorFallback,
   formatErrorBoundaryMessage,
+  installRootMountErrorFallback,
+  rootMountErrorFallbackHtml,
 } from "./AppErrorBoundary";
 
 test("app error fallback renders a recoverable renderer crash message", () => {
@@ -24,4 +26,22 @@ test("formatErrorBoundaryMessage falls back when the error has no message", () =
     formatErrorBoundaryMessage(new Error("")),
     "The renderer hit an unexpected error.",
   );
+});
+
+test("root mount fallback renders a visible escaped error outside React", () => {
+  const markup = rootMountErrorFallbackHtml("missing <root> & renderer");
+
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /Root Worker needs a refresh/);
+  assert.match(markup, /missing &lt;root&gt; &amp; renderer/);
+  assert.doesNotMatch(markup, /missing <root>/);
+});
+
+test("installRootMountErrorFallback writes a recoverable page into body", () => {
+  const documentRef = { body: { innerHTML: "" } } as Pick<Document, "body">;
+
+  installRootMountErrorFallback(documentRef, new Error("no root"));
+
+  assert.match(documentRef.body.innerHTML, /Root Worker needs a refresh/);
+  assert.match(documentRef.body.innerHTML, /no root/);
 });
