@@ -2148,20 +2148,49 @@ async function recoverRuntimeRestartRecord(record) {
   }
   return notifyRecoverableRestartErrorOnSelf({
     sourceThreadId: record.requestedByThreadId,
+    noticeId: runtimeRestartRecoveryNoticeId(record),
     prompt: expectedRuntimeRestartRecoveryPrompt(record),
     listThreads: () => listThreads(defaultWorkspace),
     readThread,
     subscribeThread,
-    sendUserInput: (thread, text) =>
-      startThreadTurn({
-        threadId: thread?.id,
-        model: thread?.model ?? null,
-        modelProvider: thread?.modelProvider ?? null,
-        effort: thread?.reasoningEffort ?? null,
-        text,
-        skills: [],
-        images: [],
-      }),
+    injectConversationMessage: (thread, message) =>
+      injectThreadAssistantMessage(thread?.id, message),
+  });
+}
+
+function runtimeRestartRecoveryNoticeId(record) {
+  const requestId =
+    typeof record?.requestId === "string" && record.requestId.trim()
+      ? record.requestId.trim()
+      : "unknown";
+  return `runtime-restart-recovery:${requestId}`;
+}
+
+async function injectThreadAssistantMessage(threadId, message) {
+  if (typeof threadId !== "string" || !threadId.trim()) {
+    throw new Error("recovery notice requires a thread id");
+  }
+  const id =
+    typeof message?.id === "string" && message.id.trim()
+      ? message.id.trim()
+      : null;
+  const text =
+    typeof message?.text === "string" && message.text.trim()
+      ? message.text.trim()
+      : null;
+  if (!id || !text) {
+    throw new Error("recovery notice requires an id and text");
+  }
+  return appServerClient.request("thread/inject_items", {
+    threadId,
+    items: [
+      {
+        type: "message",
+        id,
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+      },
+    ],
   });
 }
 
