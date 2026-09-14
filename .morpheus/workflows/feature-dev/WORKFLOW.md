@@ -15,7 +15,7 @@ inputs:
     description: 要完成的开发目标
   cwd:
     type: string
-    description: 执行 workflow 的 checkout 路径，只能是三个固定开发 checkout 之一：~/Projects/my-codex-dev、~/Projects/my-codex-dev-2、~/Projects/my-codex-dev-3
+    description: 执行 workflow 的 checkout 路径，只能是三个固定开发 checkout 之一：~/.morpheus/source_workspace-dev、~/.morpheus/source_workspace-dev-2、~/.morpheus/source_workspace-dev-3
 ---
 # Feature Development Workflow
 
@@ -37,7 +37,7 @@ Research -> Implement -> Review/Fix -> Verify
 ## 输入
 
 - `objective`：要完成的开发目标。
-- `cwd`：执行 workflow 的 checkout 路径，只能是三个固定开发 checkout 之一：`~/Projects/my-codex-dev`、`~/Projects/my-codex-dev-2`、`~/Projects/my-codex-dev-3`；不要使用主 checkout `~/Projects/my-codex` 承载开发任务，也不要为 workflow 创建额外 checkout 或开发目录。
+- `cwd`：执行 workflow 的 checkout 路径，只能是三个固定开发 checkout 之一：`~/.morpheus/source_workspace-dev`、`~/.morpheus/source_workspace-dev-2`、`~/.morpheus/source_workspace-dev-3`；不要使用主 checkout `~/.morpheus/source_workspace` 承载普通开发任务，也不要为 workflow 创建额外 checkout 或开发目录。
 
 ## Agent Session
 
@@ -47,6 +47,7 @@ workflow 会在当前 workflow run 内创建并复用 agent session：
 - `owner`：负责实现和修复 review findings。
 - `reviewer`：同一 workflow run 内复用一个 reviewer session；修复后通过 followup 请求同一 reviewer 复审。
 - Verify 阶段不创建或复用 tester agent。review 通过后，workflow 把验证要求交给 `owner`，由 `owner` 按 `AGENTS.md` 在所属 checkout 内自行串行运行必要测试和构建，并等待 owner 最终交付。
+- Verify 阶段的 owner 构建验证使用 dev/debug 口径：默认运行 focused tests 和入口匹配的非 release binary 编译。涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时，owner 运行 `cargo build -p app-server --bin app-server`（在 `codex-rs/` 下，非 release）；release build、完整 Runtime Capsule 构建和安装态验证留给 PM 合并 canonical main 后执行。
 
 `Agent(id)` 应在同一 workflow run 的 resume 时绑定回已有 agent session，不重复 spawn。
 这里的 `id` 是 workflow logical stage/binding id，不是 agent canonical path 或 name。runner 会把 `workflowRunId + stageId` 映射到实际 spawned agent path 并持久化 binding；workflow 脚本只引用 `explorer`、`owner`、`reviewer` 这类稳定 stage id，不手写或推导 canonical path。

@@ -24,6 +24,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - PM agent 只维护协作、进度、验收和集成规则；owner/reviewer 的执行细节以及项目架构约束应分别放在对应 agent 文件或项目 memory/AGENTS 文档中，不在此处重复展开。
 - owner 完成后，PM 必须按派发 brief 中的设计意图、不变量、禁止路径、预期实现轮廓和回归矩阵逐项验收；不能只因“测试通过”或“看起来能工作”就视为完成。
 - 如果 owner 提交偏离已给定设计、遗漏必须收口的层、走了 brief 明确禁止的路径，或只做了表面补丁，PM 必须要求返工，直到实现与设计对齐或与用户重新确认设计变更。
+- 普通 dev checkout 的 owner 阶段默认只要求 focused tests 和 debug 构建验证；涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时，让 owner 在所属 checkout 运行非 release 后端编译（如 `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`）。不要要求 owner 在 dev checkout 跑 release build；release build、完整 Runtime Capsule 构建、full restart 与安装态验证由 PM 在合并 canonical main 后执行。
 - PM 决定安装态交付时机。重大 bugfix、feature、Launcher/runtime/安装恢复改动或需真实安装态验收的修改，立即从 canonical 主 checkout 构建完整 Capsule、full restart，并验证 manifest、entrypoint、签名、release、Launcher、payload、app-server 和 control state。低风险修复可批量交付，但 progress file 必须记录 `pending_capsule_delivery`、待交付 commit 与当前 installed release；纯文档/协作规则不触发构建重启。
 
 ## 二、固定 Checkout 与 Owner

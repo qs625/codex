@@ -137,7 +137,7 @@ export default defineWorkflow({
       owner: owner.binding?.agentPath ?? null
     });
     await owner.followup(
-      `reviewer 已无阻塞问题。现在进入 Verify 阶段：请你作为 owner 在当前 checkout 自行串行运行必要验证命令，并在最终交付中写清命令、工作目录、退出状态和关键输出。\n\n默认验证只包含修改模块的单元测试/最小 crate 测试，以及与入口匹配的 binary 编译验证；只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时使用 ${wf.inputs.cwd}/codex-rs 下的 cargo build -p codex-app-server --bin codex-app-server，只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 cargo build -p codex-cli。长命令通过 poll_event 等待 command output 或 command exit 事件。不得创建或复用 tester agent。\n\n最终 review 结论：\n${finalReview.text}`,
+      `reviewer 已无阻塞问题。现在进入 Verify 阶段：请你作为 owner 在当前 checkout 自行串行运行必要验证命令，并在最终交付中写清命令、工作目录、退出状态和关键输出。\n\n默认验证只包含修改模块的单元测试/最小 crate 测试，以及与入口匹配的 debug/non-release binary 编译验证；只涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时，在 ${wf.inputs.cwd}/codex-rs 下运行 cargo build -p app-server --bin app-server（不要加 --release）。只有确实改到 CLI/TUI 或 CLI app-server 子命令包装时才使用 cargo build -p codex-cli。release build、完整 Runtime Capsule 构建和安装态验证由 PM 合并 canonical main 后负责。长命令通过 poll_event 等待 command output 或 command exit 事件。不得创建或复用 tester agent。\n\n最终 review 结论：\n${finalReview.text}`,
     );
     const verification = await waitForAgentResult(owner, "Verify");
     return {

@@ -3,6 +3,9 @@
 ## Stable Preferences
 - Morpheus 自身源码的主 checkout 固定为 `~/.morpheus/source_workspace`；普通开发 worktree 固定使用相邻的 `source_workspace-dev`、`source_workspace-dev-2`、`source_workspace-dev-3`，后续构建也从这套 checkout 执行，不再使用 `~/Projects/my-codex*`。
 - 产品改动要选择合适的构建重启时机：重大 bugfix、重大 feature、Launcher/runtime/安装恢复链路改动，或需要真实安装态验收的修改，应从 `~/.morpheus/source_workspace` 立即构建 Launcher 期望的完整 Runtime Capsule并 full restart；低风险小修复不必每次单独重启，可以记录后与后续改动批量交付。必须区分“已 merge”和“已安装生效”，并持续记录待交付 commit 与当前 installed release。纯文档/协作规则修改无需构建重启。
+- 普通 dev checkout 的 owner 阶段不要求 release 构建；涉及 Rust/app-server/backend 启动路径时，owner 只需跑相关 focused tests 和 debug 后端编译（例如 `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`）。release build、完整 Runtime Capsule 构建、full restart 和安装态 self-debug 验证由 PM 在合并 canonical main 后负责。
+- 任何涉及 Morpheus 客户端、前端 UI、Browser/Terminal 面板、Playwright/CDP/frontend-debug 调试链路，或用户可见安装态行为的修复，在 Runtime Capsule 重启安装生效后，都应使用项目 `self-debug` skill（配合 `frontend-debug` 和 `playwright-cli` 连接当前客户端 CDP）调试当前运行客户端自己做安装态验收；如果 self-debug 发现问题，应继续修改，不要把“已 merge / 已构建 / 已重启”当成完成。
+- 预期 Runtime Capsule 重启恢复提示只应防止为了同一个已完成 restart 请求连续重复调用 `request_runtime_restart`；如果后续又完成新的代码修改或需要交付新的 Runtime Capsule，应按正常构建交付规则继续调用 restart。
 - 全程使用中文进行工作和记录。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
