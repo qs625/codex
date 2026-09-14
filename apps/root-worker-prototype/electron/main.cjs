@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const http = require("node:http");
 const { randomUUID } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const {
@@ -13,11 +14,13 @@ const {
   session,
   shell,
   systemPreferences,
+  webContents: electronWebContents,
   WebContentsView,
 } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const {
   browserNavigationEventDecision,
+  normalizeBrowserDebugTarget,
   normalizeBrowserTarget,
 } = require("./browserPanelSecurity.cjs");
 const {
@@ -111,6 +114,9 @@ const {
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 const {
+  startRemoteDebuggingProxy,
+} = require("./remoteDebuggingProxy.cjs");
+const {
   activeCommandForTerminalFocus,
   addUserTerminal,
   appendCommandOutputCache,
@@ -196,7 +202,8 @@ const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 
-applyRemoteDebuggingConfig(app, process.env, console);
+const remoteDebuggingConfig = applyRemoteDebuggingConfig(app, process.env, console);
+let remoteDebuggingProxy = null;
 
 process.on("uncaughtException", requestFatalPayloadExit);
 process.on("unhandledRejection", requestFatalPayloadExit);
@@ -1009,6 +1016,7 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 
 app.whenReady().then(() => {
   registerLocalFilePreviewProtocol();
+  startRemoteDebuggingCompatibilityProxy();
   configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
     permission === "media" && !isBrowserPanelWebContents(webContents),
   );
@@ -1451,6 +1459,122 @@ function browserPanelForWindow(window) {
   browserPanelsByWindowId.set(window.id, panel);
   createBrowserPanelTab(panel, { activate: true });
   return panel;
+}
+
+function startRemoteDebuggingCompatibilityProxy() {
+  if (!remoteDebuggingConfig.enabled || !remoteDebuggingConfig.proxy?.enabled) {
+    return;
+  }
+  remoteDebuggingProxy = startRemoteDebuggingProxy({
+    ...remoteDebuggingConfig.proxy,
+    createTarget: createBrowserPanelDebugTarget,
+    logger: console,
+  });
+}
+
+async function createBrowserPanelDebugTarget(target) {
+  const targetRequest = normalizeBrowserDebugTarget(target);
+  if (!targetRequest.ok) {
+    throw new Error(targetRequest.reason);
+  }
+
+  const window = firstAvailableWindow();
+  if (!window) {
+    throw new Error("No Root Worker window is available for Browser panel tabs");
+  }
+
+  const panel = browserPanelForWindow(window);
+  const tab = createBrowserPanelTab(panel, { activate: true });
+  try {
+    if (targetRequest.url) {
+      void loadBrowserPanelTabUrl(panel, tab, targetRequest.url).catch((error) => {
+        tab.state.loading = false;
+        tab.state.error = error instanceof Error ? error.message : String(error);
+        sendBrowserPanelState(panel);
+      });
+    }
+    sendBrowserPanelState(panel);
+    const targetId = await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
+    return { targetId, tabId: tab.id };
+  } catch (error) {
+    closeBrowserPanelTab(panel, tab.id);
+    sendBrowserPanelState(panel);
+    throw error;
+  }
+}
+
+async function waitForBrowserPanelDevToolsTarget(webContents) {
+  const deadline = Date.now() + 5_000;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const targets = await fetchRemoteDebuggingJson("/json/list");
+      const target = targets.find((candidate) => {
+        if (!candidate || candidate.type !== "page" || !candidate.id) {
+          return false;
+        }
+        return electronWebContents.fromDevToolsTargetId(candidate.id) === webContents;
+      });
+      if (target) {
+        return target.id;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(100);
+  }
+
+  const suffix = lastError
+    ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+    : "";
+  throw new Error(`Browser panel DevTools target was not published${suffix}`);
+}
+
+function fetchRemoteDebuggingJson(pathname) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: remoteDebuggingConfig.address,
+        port: Number(remoteDebuggingConfig.backendPort),
+        path: pathname,
+        method: "GET",
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          if ((response.statusCode ?? 500) >= 400) {
+            reject(
+              new Error(
+                `remote debugging backend returned HTTP ${response.statusCode}`,
+              ),
+            );
+            return;
+          }
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function firstAvailableWindow() {
+  for (const window of windows) {
+    if (!window.isDestroyed()) {
+      return window;
+    }
+  }
+  return null;
 }
 
 function attachBrowserPanel(panel) {
