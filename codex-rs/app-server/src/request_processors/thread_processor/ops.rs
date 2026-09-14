@@ -3,6 +3,7 @@ use app_server_protocol::ItemCompletedNotification;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleWaitReason;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnCompletedNotification;
@@ -17,6 +18,7 @@ use protocol::AgentPath;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::EventMsg;
 use thread_service_api::ExternalRootThreadInputRoute;
+use thread_service_api::ThreadRuntimeStatus;
 
 pub(in crate::request_processors) fn unsupported_external_root_active_op(
     method: &str,
@@ -157,6 +159,47 @@ fn thread_status_changed_lifecycle_status(
         .or(live_agent_status)
         .map(thread_lifecycle_status_from_agent_status)
         .unwrap_or(resolved_watch_status)
+}
+
+fn runtime_teardown_thread_lifecycle_status(
+    live_agent_status: Option<&AgentStatus>,
+    watch_status: ThreadLifecycleStatus,
+    runtime_status: Option<ThreadRuntimeStatus>,
+) -> ThreadLifecycleStatus {
+    match runtime_status {
+        Some(ThreadRuntimeStatus::Active) => ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        },
+        Some(ThreadRuntimeStatus::IdleWaitCommand) => ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Command,
+        },
+        Some(ThreadRuntimeStatus::IdleWaitChild) => ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Child,
+        },
+        Some(ThreadRuntimeStatus::IdleWaitEventSubscription) => ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        },
+        Some(ThreadRuntimeStatus::Complete) | None => {
+            if let Some(status) = live_agent_status.filter(|status| {
+                matches!(
+                    status,
+                    AgentStatus::Completed(_)
+                        | AgentStatus::Errored(_)
+                        | AgentStatus::Interrupted
+                        | AgentStatus::Shutdown
+                        | AgentStatus::NotFound
+                )
+            }) {
+                return thread_lifecycle_status_from_agent_status(status);
+            }
+            thread_status_changed_lifecycle_status(
+                None,
+                live_agent_status,
+                watch_status,
+                matches!(live_agent_status, Some(AgentStatus::Running)),
+            )
+        }
+    }
 }
 
 fn is_strong_terminal_status(status: &AgentStatus) -> bool {
@@ -333,6 +376,7 @@ impl ThreadRequestProcessor {
     }
 
     pub(crate) async fn shutdown_threads(&self) {
+        self.persist_runtime_teardown_thread_statuses().await;
         let report = self
             .thread_lifecycle_runtime
             .shutdown_all_threads_for_runtime_teardown_bounded(Duration::from_secs(10))
@@ -342,6 +386,32 @@ impl ThreadRequestProcessor {
         }
         for thread_id in report.timed_out {
             warn!("timed out waiting for thread {thread_id} to shut down");
+        }
+    }
+
+    async fn persist_runtime_teardown_thread_statuses(&self) {
+        for thread_id in self.live_thread_inspection.list_live_thread_ids().await {
+            let thread_id_string = thread_id.to_string();
+            let watch_status = self
+                .thread_watch_manager
+                .loaded_status_for_thread(&thread_id_string)
+                .await;
+            let live_agent_status = self
+                .thread_lifecycle_runtime
+                .live_thread_agent_status(thread_id)
+                .await
+                .ok();
+            let runtime_status = self
+                .thread_lifecycle_runtime
+                .live_thread_runtime_status(thread_id)
+                .await
+                .ok();
+            let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+                live_agent_status.as_ref(),
+                watch_status,
+                runtime_status,
+            );
+            self.persist_thread_status(thread_id, &lifecycle_status).await;
         }
     }
 
@@ -2056,6 +2126,68 @@ mod tests {
             ThreadLifecycleStatus::Final {
                 result: ThreadLifecycleFinalStatus::Shutdown,
             }
+        );
+    }
+
+    #[test]
+    fn runtime_teardown_persists_active_runtime_as_recoverable_active() {
+        let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+            Some(&AgentStatus::Running),
+            ThreadLifecycleStatus::completed(None),
+            Some(ThreadRuntimeStatus::Active),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_teardown_persists_waiting_runtime_as_recoverable_waiting() {
+        let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            ThreadLifecycleStatus::completed(None),
+            Some(ThreadRuntimeStatus::IdleWaitChild),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::Child,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_teardown_preserves_completed_when_no_recoverable_fact_exists() {
+        let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            ThreadLifecycleStatus::completed(None),
+            Some(ThreadRuntimeStatus::Complete),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn runtime_teardown_complete_status_overrides_stale_active_watch_status() {
+        let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            Some(ThreadRuntimeStatus::Complete),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
         );
     }
 
