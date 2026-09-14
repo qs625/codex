@@ -896,7 +896,7 @@ async fn thread_read_can_include_turns() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore()
+async fn thread_read_projects_active_schedule_after_compact_without_loaded_list_restore()
 -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -941,8 +941,8 @@ async fn thread_read_restores_active_schedule_after_compact_and_startup_subscrip
     );
     let loaded = list_loaded_threads(&mut mcp).await?;
     assert!(
-        loaded.iter().any(|thread_id| thread_id == &conversation_id),
-        "thread/loaded/list should wait for startup restore before reporting loaded threads"
+        !loaded.iter().any(|thread_id| thread_id == &conversation_id),
+        "thread/loaded/list should not recover missing-status scheduled threads"
     );
 
     let thread = read_thread(&mut mcp, &conversation_id, /*include_turns*/ true).await?;
@@ -973,7 +973,7 @@ async fn thread_read_restores_active_schedule_after_compact_and_startup_subscrip
     });
     assert!(
         schedule_item.is_some(),
-        "thread/read should include restored schedule_subscribe current-state items after startup restore"
+        "thread/read should include schedule_subscribe current-state items from persisted subscriptions"
     );
 
     Ok(())

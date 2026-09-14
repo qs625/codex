@@ -305,6 +305,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use protocol::ThreadId;
     use protocol::protocol::SessionSource;
+    use protocol::protocol::ThreadLifecycleActiveFlag;
+    use protocol::protocol::ThreadLifecycleStatus;
+    use protocol::protocol::ThreadLifecycleWaitReason;
+    use protocol::protocol::ThreadSource;
     use std::fs;
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -416,6 +420,92 @@ mod tests {
             page.items[0].first_user_message.as_deref(),
             Some("plain preview")
         );
+    }
+
+    #[tokio::test]
+    async fn state_db_only_list_preserves_persisted_lifecycle_statuses() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let runtime = state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config.clone(), Some(runtime.clone()));
+        runtime
+            .mark_backfill_complete(/*last_watermark*/ None)
+            .await
+            .expect("backfill should be complete");
+
+        let active = ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        };
+        let waiting = ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Child,
+        };
+        let completed = ThreadLifecycleStatus::completed(Some("done".to_string()));
+        let cases = [
+            (Uuid::from_u128(201), Some(active.clone())),
+            (Uuid::from_u128(202), Some(waiting.clone())),
+            (Uuid::from_u128(203), Some(completed.clone())),
+            (Uuid::from_u128(204), None),
+        ];
+
+        for (index, (uuid, status)) in cases.iter().enumerate() {
+            let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+            let rollout_path = home.path().join(format!("rollout-status-{index}.jsonl"));
+            fs::write(&rollout_path, "").expect("placeholder rollout file");
+            let mut builder = state::ThreadMetadataBuilder::new(
+                thread_id,
+                rollout_path,
+                Utc::now(),
+                SessionSource::Cli,
+            );
+            builder.thread_source = Some(ThreadSource::User);
+            builder.model_provider = Some(config.default_model_provider_id.clone());
+            builder.cwd = home.path().to_path_buf();
+            builder.cli_version = Some("test_version".to_string());
+            let metadata = builder.build(config.default_model_provider_id.as_str());
+            runtime
+                .upsert_thread(&metadata)
+                .await
+                .expect("state db upsert should succeed");
+            if let Some(status) = status.as_ref() {
+                runtime
+                    .set_thread_status(thread_id, Some(status))
+                    .await
+                    .expect("thread status should persist");
+            }
+        }
+
+        let page = store
+            .list_threads(ListThreadsParams {
+                page_size: 10,
+                cursor: None,
+                sort_key: ThreadSortKey::CreatedAt,
+                sort_direction: SortDirection::Desc,
+                allowed_sources: Vec::new(),
+                model_providers: Some(Vec::new()),
+                cwd_filters: None,
+                archived: false,
+                search_term: None,
+                use_state_db_only: true,
+            })
+            .await
+            .expect("thread listing");
+
+        let status_for = |uuid: Uuid| {
+            let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+            page.items
+                .iter()
+                .find(|item| item.thread_id == thread_id)
+                .and_then(|item| item.thread_status.clone())
+        };
+        assert_eq!(status_for(Uuid::from_u128(201)), Some(active));
+        assert_eq!(status_for(Uuid::from_u128(202)), Some(waiting));
+        assert_eq!(status_for(Uuid::from_u128(203)), Some(completed));
+        assert_eq!(status_for(Uuid::from_u128(204)), None);
     }
 
     #[tokio::test]

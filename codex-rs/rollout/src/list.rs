@@ -27,6 +27,7 @@ use protocol::protocol::RolloutItem;
 use protocol::protocol::RolloutLine;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::USER_MESSAGE_BEGIN;
 
@@ -72,6 +73,8 @@ pub struct ThreadItem {
     pub agent_role: Option<String>,
     /// Canonical path from session metadata for thread-spawned sub-agents.
     pub agent_path: Option<String>,
+    /// Persisted lifecycle status from state DB metadata, when available.
+    pub thread_status: Option<ThreadLifecycleStatus>,
     /// Model provider from session metadata.
     pub model_provider: Option<String>,
     /// CLI version from session metadata.
@@ -841,6 +844,7 @@ async fn build_thread_item(
             agent_nickname,
             agent_role,
             agent_path,
+            thread_status: None,
             model_provider,
             cli_version,
             created_at,

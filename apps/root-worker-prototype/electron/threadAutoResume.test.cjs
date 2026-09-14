@@ -76,7 +76,7 @@ test("auto-resume selects recoverable project roots and excludes completed/child
         lifecycleStatus: { type: "final", result: { type: "shutdown" } },
       }),
     ),
-    true,
+    false,
   );
   assert.equal(
     isAutoResumeEligibleThread(

@@ -67,6 +67,7 @@ pub(super) async fn read_thread(
                 rollout_thread.name = thread.name;
             }
             rollout_thread.git_info = thread.git_info;
+            rollout_thread.thread_status = thread.thread_status;
             if rollout_thread.skills.is_empty() {
                 rollout_thread.skills = thread.skills;
             }
@@ -551,6 +552,8 @@ mod tests {
     use protocol::ThreadId;
     use protocol::protocol::EventMsg;
     use protocol::protocol::SessionSource;
+    use protocol::protocol::ThreadLifecycleStatus;
+    use protocol::protocol::ThreadLifecycleWaitReason;
     use state::ThreadMetadataBuilder;
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -764,6 +767,55 @@ mod tests {
         assert_eq!(thread.agent_nickname.as_deref(), Some("atlas"));
         assert_eq!(thread.agent_role.as_deref(), Some("explorer"));
         assert_eq!(thread.agent_path.as_deref(), Some("/root/atlas"));
+    }
+
+    #[tokio::test]
+    async fn read_thread_preserves_sqlite_thread_status_when_using_rollout_summary() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let uuid = Uuid::from_u128(224);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let rollout_path =
+            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
+        let runtime = state::StateRuntime::init(
+            config.sqlite_home.clone(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config.clone(), Some(runtime.clone()));
+        let mut builder = ThreadMetadataBuilder::new(
+            thread_id,
+            rollout_path,
+            Utc::now(),
+            SessionSource::Cli,
+        );
+        builder.model_provider = Some(config.default_model_provider_id.clone());
+        builder.cwd = home.path().to_path_buf();
+        let metadata = builder.build(config.default_model_provider_id.as_str());
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("state db upsert should succeed");
+        let status = ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        };
+        runtime
+            .set_thread_status(thread_id, Some(&status))
+            .await
+            .expect("thread status should persist");
+
+        let thread = store
+            .read_thread(ReadThreadParams {
+                thread_id,
+                include_archived: false,
+                include_history: false,
+            })
+            .await
+            .expect("read thread");
+
+        assert_eq!(thread.preview, "Hello from user");
+        assert_eq!(thread.thread_status, Some(status));
     }
 
     #[tokio::test]
