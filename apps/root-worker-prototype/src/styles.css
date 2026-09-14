@@ -4442,6 +4442,81 @@ svg {
   padding: 12px;
 }
 
+.runtime-restart-card {
+  border-color: rgba(15, 118, 110, 0.18);
+  background: rgba(240, 253, 250, 0.62);
+}
+
+.runtime-restart-card.failed {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: rgba(254, 242, 242, 0.72);
+}
+
+.runtime-restart-message,
+.runtime-restart-reason {
+  margin: 8px 0 0;
+  color: #57534e;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.runtime-restart-reason {
+  color: #991b1b;
+}
+
+.runtime-restart-pill {
+  flex: none;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.runtime-restart-pill.completed,
+.runtime-restart-pill.recovered {
+  border-color: rgba(22, 101, 52, 0.18);
+  background: rgba(240, 253, 244, 0.72);
+  color: #166534;
+}
+
+.runtime-restart-pill.failed {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+
+.runtime-restart-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 10px;
+  margin: 10px 0 0;
+}
+
+.runtime-restart-meta div {
+  min-width: 0;
+}
+
+.runtime-restart-meta dt {
+  color: #78716c;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.runtime-restart-meta dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: #292524;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-scroll {
   display: flex;
   flex-direction: column;

@@ -60,6 +60,11 @@ import {
   readStoredRightPanelView,
   storeRightPanelView,
 } from "./lib/rightPanelView";
+import {
+  runtimeRestartProgressFromBootstrap,
+  runtimeRestartProgressFromStatus,
+  type RuntimeRestartProgress,
+} from "./lib/runtimeRestartProgress";
 import { advanceCompactHistoryRequestToken } from "./lib/compactHistoryRequest";
 import type { RunConfigSelection } from "./lib/runConfig";
 import {
@@ -243,6 +248,8 @@ function App() {
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
   );
+  const [runtimeRestartProgress, setRuntimeRestartProgress] =
+    useState<RuntimeRestartProgress | null>(null);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
   const [browserNavigationRequest, setBrowserNavigationRequest] = useState<{
     url: string;
@@ -932,6 +939,9 @@ function App() {
       const payload =
         (await window.codexDesktop.bootstrap()) as BootstrapResponse;
       setWorkspace(payload.workspace);
+      setRuntimeRestartProgress(
+        runtimeRestartProgressFromBootstrap(payload.expectedRestart),
+      );
       const normalizedThreads = payload.threads.map(normalizeThreadSnapshot);
       touchedProjectCollapseIdsRef.current.clear();
       setCollapsedProjectIds(
@@ -2448,6 +2458,9 @@ function App() {
   function handleStreamEvent(payload: NotificationEnvelope) {
     try {
       if (payload.type === "status" && payload.status) {
+        setRuntimeRestartProgress((current) =>
+          runtimeRestartProgressFromStatus(payload.status, current),
+        );
         const lifecycleFailure = clientLifecycleFailureReason(payload.status);
         if (lifecycleFailure) {
           setError(lifecycleFailure);
@@ -3222,6 +3235,7 @@ function App() {
           onCancelGoal={clearCurrentThreadGoalFromUi}
           onPauseGoal={pauseCurrentThreadGoal}
           onResumeGoal={resumeCurrentThreadGoal}
+          runtimeRestartProgress={runtimeRestartProgress}
           skills={selectedThread?.skills ?? []}
           thread={selectedThread}
           modelContextWindowOverride={
