@@ -1511,8 +1511,43 @@ export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
       contextUsage,
       stats: mergeThreadStats(existing.stats, normalizedNext.stats),
       turns,
-      activeCommandItems: normalizedNext.activeCommandItems ?? [],
+      activeCommandItems: mergeActiveCommandItemsForSnapshot(
+        existing,
+        normalizedNext,
+      ),
     }),
+  );
+}
+
+function mergeActiveCommandItemsForSnapshot(
+  existing: Thread,
+  next: Thread,
+): Thread["activeCommandItems"] {
+  if (next.activeCommandItems) {
+    return next.activeCommandItems;
+  }
+  if (next.activeCommandItems !== undefined) {
+    return shouldPreserveMissingActiveCommandItems(existing, next)
+      ? existing.activeCommandItems
+      : next.activeCommandItems;
+  }
+  return shouldPreserveMissingActiveCommandItems(existing, next)
+    ? existing.activeCommandItems
+    : [];
+}
+
+function shouldPreserveMissingActiveCommandItems(existing: Thread, next: Thread) {
+  return (
+    hasRunningActiveCommandItem(existing) &&
+    !isTerminalThreadLifecycle(next.lifecycleStatus)
+  );
+}
+
+function hasRunningActiveCommandItem(thread: Thread) {
+  return (thread.activeCommandItems ?? []).some(
+    (item) =>
+      item.type === "commandExecution" &&
+      (item.status === "running" || item.status === "inProgress"),
   );
 }
 

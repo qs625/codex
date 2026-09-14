@@ -12,6 +12,25 @@ export function formatErrorBoundaryMessage(error: Error | null) {
   return error?.message?.trim() || "The renderer hit an unexpected error.";
 }
 
+export function rootMountErrorFallbackHtml(message: string) {
+  const escapedMessage = message
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+  return `<main class="app-error-boundary" role="alert"><div class="app-error-boundary-panel"><p class="app-error-boundary-eyebrow">Renderer error</p><h1>Root Worker needs a refresh</h1><p>${escapedMessage}</p><button type="button" onclick="window.location.reload()">Reload</button></div></main>`;
+}
+
+export function installRootMountErrorFallback(
+  documentRef: Pick<Document, "body">,
+  error: Error,
+) {
+  documentRef.body.innerHTML = rootMountErrorFallbackHtml(
+    formatErrorBoundaryMessage(error),
+  );
+}
+
 export function AppErrorFallback({ error }: { error: Error | null }) {
   return (
     <main className="app-error-boundary" role="alert">

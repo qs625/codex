@@ -2,13 +2,24 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "@xterm/xterm/css/xterm.css";
 import App from "./App";
-import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import {
+  AppErrorBoundary,
+  installRootMountErrorFallback,
+} from "./components/AppErrorBoundary";
 import "./styles.css";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-  </React.StrictMode>,
-);
+const rootElement = document.getElementById("root");
+
+if (!rootElement) {
+  const error = new Error("The renderer root element is missing.");
+  console.error("Root Worker renderer failed to mount", error);
+  installRootMountErrorFallback(document, error);
+} else {
+  ReactDOM.createRoot(rootElement).render(
+    <React.StrictMode>
+      <AppErrorBoundary>
+        <App />
+      </AppErrorBoundary>
+    </React.StrictMode>,
+  );
+}
