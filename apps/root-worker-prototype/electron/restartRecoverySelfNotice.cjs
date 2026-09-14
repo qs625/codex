@@ -4,7 +4,6 @@ async function notifyRecoverableRestartErrorOnSelf({
   sourceThreadId,
   noticeId,
   prompt,
-  listThreads,
   readThread,
   subscribeThread,
   injectConversationMessage,
@@ -13,7 +12,6 @@ async function notifyRecoverableRestartErrorOnSelf({
   const itemId = requiredString(noticeId, "recovery notice id");
   const text = requiredString(prompt, "recovery prompt");
   if (
-    typeof listThreads !== "function" ||
     typeof readThread !== "function" ||
     typeof subscribeThread !== "function" ||
     typeof injectConversationMessage !== "function"
@@ -26,14 +24,11 @@ async function notifyRecoverableRestartErrorOnSelf({
   if (sourceThread && sourceThread.id !== originalThreadId) {
     throw new Error("source thread read returned a different thread");
   }
-  const target =
-    sourceThread && isExactSelfThread(sourceThread)
-      ? { thread: sourceThread, threadId: originalThreadId }
-      : await loadCurrentSelfThread({ listThreads, readThread });
-  const { thread, threadId: selfThreadId } = target;
-  if (thread?.id !== selfThreadId || !isExactSelfThread(thread)) {
-    throw new Error("exact /self thread could not be read");
+  if (!sourceThread || !isExactSelfThread(sourceThread)) {
+    throw new Error("source thread is not exact /self");
   }
+  const thread = sourceThread;
+  const selfThreadId = originalThreadId;
   if (threadHasRecoveryNotice(thread, itemId, text)) {
     return {
       selfThreadId,
@@ -46,23 +41,21 @@ async function notifyRecoverableRestartErrorOnSelf({
     id: itemId,
     text,
   });
+  const verifyReadResult = await readThread(selfThreadId, true);
+  const verifiedThread = verifyReadResult?.thread ?? null;
+  if (verifiedThread?.id !== selfThreadId) {
+    throw new Error("self recovery notice verification read mismatched thread");
+  }
+  if (!isExactSelfThread(verifiedThread)) {
+    throw new Error("self recovery notice verification read is not exact /self");
+  }
+  if (!threadHasRecoveryNotice(verifiedThread, itemId, text)) {
+    throw new Error("self recovery notice was not durable after injection");
+  }
   return {
     selfThreadId,
     sourceThreadId: originalThreadId,
     result,
-  };
-}
-
-async function loadCurrentSelfThread({ listThreads, readThread }) {
-  const listResult = await listThreads();
-  const selfThreadId = requiredString(
-    listResult?.selfProjectThreadId,
-    "exact /self thread id",
-  );
-  const readResult = await readThread(selfThreadId, true);
-  return {
-    thread: readResult?.thread ?? null,
-    threadId: selfThreadId,
   };
 }
 
@@ -80,17 +73,27 @@ function threadHasRecoveryNotice(thread, itemId, text) {
       if (item?.id === itemId) {
         return true;
       }
-      if (item?.type === "agentMessage" && item.text === text) {
+      if (itemTextMatches(item, text)) {
         return true;
       }
-      if (item?.type !== "userMessage") {
-        continue;
-      }
-      for (const content of item.content ?? []) {
-        if (content?.type === "text" && content.text === text) {
-          return true;
-        }
-      }
+    }
+  }
+  return false;
+}
+
+function itemTextMatches(item, text) {
+  if (item?.type !== "agentMessage" && item?.type !== "userMessage") {
+    return false;
+  }
+  if (item.text === text) {
+    return true;
+  }
+  for (const content of item.content ?? []) {
+    if (
+      (content?.type === "text" || content?.type === "output_text") &&
+      content.text === text
+    ) {
+      return true;
     }
   }
   return false;
