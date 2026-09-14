@@ -106,8 +106,6 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
-        self.restore_legacy_active_subscription_threads().await?;
-
         let ThreadLoadedListParams { cursor, limit } = params;
         let mut data: Vec<String> = self
             .live_thread_inspection
@@ -149,54 +147,6 @@ impl ThreadRequestProcessor {
             data: page,
             next_cursor,
         })
-    }
-
-    async fn restore_legacy_active_subscription_threads(
-        &self,
-    ) -> Result<(), JSONRPCErrorError> {
-        let thread_ids = self
-            .thread_store
-            .list_thread_ids_with_active_subscriptions()
-            .await
-            .map_err(thread_store_list_error)?;
-
-        for thread_id in thread_ids {
-            if self
-                .live_thread_inspection
-                .is_live_thread_loaded(thread_id)
-                .await
-            {
-                continue;
-            }
-
-            let stored_thread = match self
-                .thread_store
-                .read_thread(StoreReadThreadParams {
-                    thread_id,
-                    include_archived: false,
-                    include_history: false,
-                })
-                .await
-            {
-                Ok(stored_thread) => stored_thread,
-                Err(ThreadStoreError::ThreadNotFound { .. }) => continue,
-                Err(ThreadStoreError::InvalidRequest { message })
-                    if message == format!("no rollout found for thread id {thread_id}") =>
-                {
-                    continue;
-                }
-                Err(err) => return Err(thread_store_list_error(err)),
-            };
-
-            if stored_thread.thread_status.is_some() {
-                continue;
-            }
-
-            self.ensure_persisted_native_thread_loaded(thread_id, /*parent_trace*/ None)
-                .await?;
-        }
-
-        Ok(())
     }
 
     pub(super) async fn thread_read_response_inner(
