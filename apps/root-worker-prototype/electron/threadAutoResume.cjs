@@ -23,11 +23,12 @@ function createThreadAutoResumeCoordinator({
       threads = [],
       expectedRestart,
     } = {}) {
-      const occurrenceId = autoResumeOccurrenceId({
+      const occurrence = autoResumeOccurrence({
         expectedRestart,
         hasDurableRestartRecovery,
         recoveryOccurrenceId,
       });
+      const occurrenceId = occurrence.id;
       if (
         !hasDurableRuntimeRestartRecovery({
           expectedRestart,
@@ -37,11 +38,12 @@ function createThreadAutoResumeCoordinator({
       ) {
         return emptyAutoResumeResult();
       }
-      return run(threads, occurrenceId);
+      return run(threads, occurrence);
     },
   };
 
-  async function run(threads = [], occurrenceId = null) {
+  async function run(threads = [], occurrence = { id: null, source: "none" }) {
+    const occurrenceId = occurrence.id;
     const resumedThreadIds = [];
     const skippedThreadIds = [];
     const failedThreadIds = [];
@@ -67,7 +69,12 @@ function createThreadAutoResumeCoordinator({
           skippedThreadIds.push(thread.id);
           continue;
         }
-        if (!occurrenceId && threadHasAutoResumePrompt(restoredThread)) {
+        if (
+          threadHasAutoResumePrompt(restoredThread, occurrenceId, {
+            allowAnyRecoveryPrompt:
+              !occurrenceId || occurrence.source !== "expected",
+          })
+        ) {
           completedKeys.add(key);
           await markCompletedAutoResume(stateStore, key, logger);
           skippedThreadIds.push(thread.id);
@@ -77,7 +84,7 @@ function createThreadAutoResumeCoordinator({
         await subscribeThread(thread.id);
         await sendResumeInput(
           restoredThread,
-          RESTART_RECOVERY_PROMPTS.projectRootFanout,
+          autoResumePromptForOccurrence(occurrenceId),
         );
         completedKeys.add(key);
         await markCompletedAutoResume(stateStore, key, logger);
@@ -183,20 +190,38 @@ function autoResumeOccurrenceId({
   hasDurableRestartRecovery,
   recoveryOccurrenceId,
 } = {}) {
+  return autoResumeOccurrence({
+    expectedRestart,
+    hasDurableRestartRecovery,
+    recoveryOccurrenceId,
+  }).id;
+}
+
+function autoResumeOccurrence({
+  expectedRestart,
+  hasDurableRestartRecovery,
+  recoveryOccurrenceId,
+} = {}) {
   const explicit = normalizeAutoResumeOccurrenceId(recoveryOccurrenceId);
-  if (explicit) {
-    return explicit;
-  }
   const expected = normalizeAutoResumeOccurrenceId(
     expectedRestart?.recoveryOccurrenceId,
   );
+  if (explicit) {
+    return {
+      id: explicit,
+      source: expected && explicit === expected ? "expected" : "explicit",
+    };
+  }
   if (expected) {
-    return expected;
+    return { id: expected, source: "expected" };
   }
   if (hasDurableRestartRecovery === true) {
-    return normalizeAutoResumeOccurrenceId(expectedRestart?.payloadRecoveryId);
+    return {
+      id: normalizeAutoResumeOccurrenceId(expectedRestart?.payloadRecoveryId),
+      source: "payload",
+    };
   }
-  return null;
+  return { id: null, source: "none" };
 }
 
 function normalizeAutoResumeOccurrenceId(value) {
@@ -254,7 +279,20 @@ function isSubAgentSource(source) {
   );
 }
 
-function threadHasAutoResumePrompt(thread) {
+function autoResumePromptForOccurrence(occurrenceId = null) {
+  const occurrence = normalizeAutoResumeOccurrenceId(occurrenceId);
+  if (!occurrence) {
+    return RESTART_RECOVERY_PROMPTS.projectRootFanout;
+  }
+  return `${RESTART_RECOVERY_PROMPTS.projectRootFanout}\n\n恢复标识：${occurrence}`;
+}
+
+function threadHasAutoResumePrompt(
+  thread,
+  occurrenceId = null,
+  { allowAnyRecoveryPrompt = false } = {},
+) {
+  const expectedPrompt = autoResumePromptForOccurrence(occurrenceId);
   for (const turn of thread.turns ?? []) {
     for (const item of turn.items ?? []) {
       if (item.type !== "userMessage") {
@@ -263,7 +301,9 @@ function threadHasAutoResumePrompt(thread) {
       for (const content of item.content ?? []) {
         if (
           content?.type === "text" &&
-          content.text === RESTART_RECOVERY_PROMPTS.projectRootFanout
+          (content.text === expectedPrompt ||
+            (allowAnyRecoveryPrompt &&
+              isAutoResumeRecoveryPromptText(content.text)))
         ) {
           return true;
         }
@@ -271,6 +311,14 @@ function threadHasAutoResumePrompt(thread) {
     }
   }
   return false;
+}
+
+function isAutoResumeRecoveryPromptText(text) {
+  return (
+    text === RESTART_RECOVERY_PROMPTS.projectRootFanout ||
+    (typeof text === "string" &&
+      text.startsWith(`${RESTART_RECOVERY_PROMPTS.projectRootFanout}\n\n恢复标识：`))
+  );
 }
 
 function errorMessage(error) {
@@ -319,6 +367,7 @@ function createJsonAutoResumeStateStore(filePath, fs) {
 }
 
 module.exports = {
+  autoResumePromptForOccurrence,
   autoResumeFingerprint,
   autoResumeOccurrenceId,
   createJsonAutoResumeStateStore,

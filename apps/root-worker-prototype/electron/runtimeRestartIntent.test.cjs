@@ -13,6 +13,9 @@ const {
 const {
   expectedRuntimeRestartRecoveryPrompt,
 } = require("./restartRecoveryPrompts.cjs");
+const {
+  notifyRecoverableRestartErrorOnSelf,
+} = require("./restartRecoverySelfNotice.cjs");
 
 async function withStore(run, initialState = null) {
   const directory = await fs.mkdtemp(
@@ -341,6 +344,268 @@ test("completed restart is recoverable only from a new Host instance", async () 
     assert.equal(recovered[0].completedByHostInstanceId, "host-1");
     assert.deepEqual(await store.recoverable(), []);
   });
+});
+
+test("completed restart recovery consumes only after durable /self notice injection", async () => {
+  await withStore(
+    async (store) => {
+      const selfThread = {
+        id: "self-thread",
+        name: "/self",
+        turns: [],
+      };
+      const calls = [];
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            listThreads: async () => {
+              throw new Error("source /self should be used directly");
+            },
+            readThread: async (threadId) => {
+              calls.push(["read", threadId]);
+              return { thread: selfThread };
+            },
+            subscribeThread: async (threadId) => {
+              calls.push(["subscribe", threadId]);
+            },
+            injectConversationMessage: async (thread, message) => {
+              calls.push(["inject", thread.id, message.id, message.text]);
+              thread.turns.push({
+                items: [
+                  {
+                    type: "agentMessage",
+                    id: message.id,
+                    text: message.text,
+                  },
+                ],
+              });
+              return {};
+            },
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const result = await controller.recoverPending();
+
+      assert.deepEqual(result.recoveredThreadIds, ["self-thread"]);
+      assert.deepEqual(result.failedThreadIds, []);
+      assert.deepEqual(await store.recoverable(), []);
+      assert.deepEqual(calls.map((call) => call.slice(0, 3)), [
+        ["read", "self-thread"],
+        ["subscribe", "self-thread"],
+        ["inject", "self-thread", "runtime-restart-recovery:restart-1"],
+      ]);
+      assert.match(
+        selfThread.turns[0].items[0].text,
+        /Morpheus 已恢复预期的 Runtime Capsule 重启请求 restart-1/,
+      );
+
+      const duplicate = await store.accept(notification("restart-1", "self-thread"));
+      assert.equal(duplicate.kind, "duplicate");
+      assert.equal(duplicate.record.phase, "consumed");
+      assert.equal(duplicate.record.outcomePhase, "completed");
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
+});
+
+test("completed restart recovery releases claim when durable notice injection fails", async () => {
+  await withStore(
+    async (store) => {
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            listThreads: async () => {
+              throw new Error("source /self should be used directly");
+            },
+            readThread: async (threadId) => ({
+              thread: { id: threadId, name: "/self", turns: [] },
+            }),
+            subscribeThread: async () => {},
+            injectConversationMessage: async () => {
+              throw new Error("durable injection unavailable");
+            },
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const result = await controller.recoverPending();
+      const [record] = await store.recoverable();
+
+      assert.deepEqual(result.recoveredThreadIds, []);
+      assert.deepEqual(result.failedThreadIds, ["self-thread"]);
+      assert.equal(record.requestId, "restart-1");
+      assert.equal(record.phase, "completed");
+      assert.equal(record.completedByHostInstanceId, "host-old");
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
+});
+
+test("completed restart recovery releases claim when source /self read mismatches", async () => {
+  await withStore(
+    async (store) => {
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            listThreads: async () => ({ selfProjectThreadId: "self-thread" }),
+            readThread: async (threadId) => ({
+              thread:
+                threadId === "self-thread"
+                  ? { id: "another-thread", name: "/self", turns: [] }
+                  : { id: threadId, name: "/self", turns: [] },
+            }),
+            subscribeThread: async () => {
+              throw new Error("must not subscribe");
+            },
+            injectConversationMessage: async () => {
+              throw new Error("must not inject");
+            },
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const result = await controller.recoverPending();
+      const [record] = await store.recoverable();
+
+      assert.deepEqual(result.recoveredThreadIds, []);
+      assert.deepEqual(result.failedThreadIds, ["self-thread"]);
+      assert.equal(record.requestId, "restart-1");
+      assert.equal(record.phase, "completed");
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
+});
+
+test("completed restart recovery consumes when the durable notice already exists", async () => {
+  await withStore(
+    async (store) => {
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            listThreads: async () => {
+              throw new Error("source /self should be used directly");
+            },
+            readThread: async (threadId) => ({
+              thread: {
+                id: threadId,
+                name: "/self",
+                turns: [
+                  {
+                    items: [
+                      {
+                        type: "agentMessage",
+                        id: "runtime-restart-recovery:restart-1",
+                        text: "already visible",
+                      },
+                    ],
+                  },
+                ],
+              },
+            }),
+            subscribeThread: async () => {
+              throw new Error("must not subscribe");
+            },
+            injectConversationMessage: async () => {
+              throw new Error("must not inject");
+            },
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const result = await controller.recoverPending();
+
+      assert.deepEqual(result.recoveredThreadIds, ["self-thread"]);
+      assert.deepEqual(await store.recoverable(), []);
+      const duplicate = await store.accept(notification("restart-1", "self-thread"));
+      assert.equal(duplicate.record.phase, "consumed");
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
 });
 
 test("persisted obsolete mode intents are ignored", async () => {

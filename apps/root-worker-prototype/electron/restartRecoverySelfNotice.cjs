@@ -21,14 +21,17 @@ async function notifyRecoverableRestartErrorOnSelf({
     throw new Error("recoverable restart self notification adapter is unavailable");
   }
 
-  const listResult = await listThreads();
-  const selfThreadId = requiredString(
-    listResult?.selfProjectThreadId,
-    "exact /self thread id",
-  );
-  const readResult = await readThread(selfThreadId, true);
-  const thread = readResult?.thread ?? null;
-  if (thread?.id !== selfThreadId) {
+  const sourceReadResult = await readThread(originalThreadId, true);
+  const sourceThread = sourceReadResult?.thread ?? null;
+  if (sourceThread && sourceThread.id !== originalThreadId) {
+    throw new Error("source thread read returned a different thread");
+  }
+  const target =
+    sourceThread && isExactSelfThread(sourceThread)
+      ? { thread: sourceThread, threadId: originalThreadId }
+      : await loadCurrentSelfThread({ listThreads, readThread });
+  const { thread, threadId: selfThreadId } = target;
+  if (thread?.id !== selfThreadId || !isExactSelfThread(thread)) {
     throw new Error("exact /self thread could not be read");
   }
   if (threadHasRecoveryNotice(thread, itemId, text)) {
@@ -48,6 +51,27 @@ async function notifyRecoverableRestartErrorOnSelf({
     sourceThreadId: originalThreadId,
     result,
   };
+}
+
+async function loadCurrentSelfThread({ listThreads, readThread }) {
+  const listResult = await listThreads();
+  const selfThreadId = requiredString(
+    listResult?.selfProjectThreadId,
+    "exact /self thread id",
+  );
+  const readResult = await readThread(selfThreadId, true);
+  return {
+    thread: readResult?.thread ?? null,
+    threadId: selfThreadId,
+  };
+}
+
+function isExactSelfThread(thread) {
+  return (
+    thread?.name === "/self" ||
+    thread?.agentPath === "/self" ||
+    thread?.agent_path === "/self"
+  );
 }
 
 function threadHasRecoveryNotice(thread, itemId, text) {
