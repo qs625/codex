@@ -346,7 +346,7 @@ test("completed restart is recoverable only from a new Host instance", async () 
   });
 });
 
-test("completed restart recovery consumes only after durable /self notice injection", async () => {
+test("completed restart recovery consumes only after durable /self notice recording", async () => {
   await withStore(
     async (store) => {
       const selfThread = {
@@ -375,12 +375,12 @@ test("completed restart recovery consumes only after durable /self notice inject
             subscribeThread: async (threadId) => {
               calls.push(["subscribe", threadId]);
             },
-            injectConversationMessage: async (thread, message) => {
-              calls.push(["inject", thread.id, message.id, message.text]);
+            submitRecoveryMessage: async (thread, message) => {
+              calls.push(["submit", thread.id, message.id, message.text]);
               thread.turns.push({
                 items: [
                   {
-                    type: "agentMessage",
+                    type: "userMessage",
                     id: message.id,
                     content: [{ type: "text", text: message.text }],
                   },
@@ -401,7 +401,7 @@ test("completed restart recovery consumes only after durable /self notice inject
       assert.deepEqual(calls.map((call) => call.slice(0, 3)), [
         ["read", "self-thread"],
         ["subscribe", "self-thread"],
-        ["inject", "self-thread", "runtime-restart-recovery:restart-1"],
+        ["submit", "self-thread", "runtime-restart-recovery:restart-1"],
         ["read", "self-thread"],
       ]);
       assert.match(
@@ -431,7 +431,7 @@ test("completed restart recovery consumes only after durable /self notice inject
   );
 });
 
-test("completed restart recovery releases claim when injected notice is not durable", async () => {
+test("completed restart recovery releases claim when submitted notice is not durable", async () => {
   await withStore(
     async (store) => {
       const controller = createRuntimeRestartController({
@@ -451,7 +451,8 @@ test("completed restart recovery releases claim when injected notice is not dura
               thread: { id: threadId, name: "/self", turns: [] },
             }),
             subscribeThread: async () => {},
-            injectConversationMessage: async () => ({}),
+            submitRecoveryMessage: async () => ({}),
+            verifyAttempts: 1,
           }),
         hostInstanceId: "host-new",
         logger: { error: () => {}, warn: () => {} },
@@ -485,7 +486,166 @@ test("completed restart recovery releases claim when injected notice is not dura
   );
 });
 
-test("completed restart recovery releases claim when durable notice injection fails", async () => {
+test("completed restart recovery retry consumes an already-submitted user notice", async () => {
+  await withStore(
+    async (store) => {
+      let readCount = 0;
+      let submitCount = 0;
+      let submittedItem = null;
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            listThreads: async () => {
+              throw new Error("source /self should be used directly");
+            },
+            readThread: async (threadId) => {
+              readCount += 1;
+              return {
+                thread: {
+                  id: threadId,
+                  name: "/self",
+                  turns:
+                    submittedItem && readCount >= 3
+                      ? [{ items: [submittedItem] }]
+                      : [],
+                },
+              };
+            },
+            subscribeThread: async () => {},
+            submitRecoveryMessage: async (_thread, message) => {
+              submitCount += 1;
+              submittedItem = {
+                type: "userMessage",
+                id: message.id,
+                content: [{ type: "text", text: message.text }],
+              };
+              return { submitted: true };
+            },
+            verifyAttempts: 1,
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const first = await controller.recoverPending();
+      const second = await controller.recoverPending();
+
+      assert.deepEqual(first.recoveredThreadIds, []);
+      assert.deepEqual(first.failedThreadIds, ["self-thread"]);
+      assert.deepEqual(second.recoveredThreadIds, ["self-thread"]);
+      assert.deepEqual(second.failedThreadIds, []);
+      assert.equal(submitCount, 1);
+      assert.deepEqual(await store.recoverable(), []);
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
+});
+
+test("completed restart recovery ignores existing typed client recovery until user message is durable", async () => {
+  await withStore(
+    async (store) => {
+      let submitted = false;
+      const calls = [];
+      const controller = createRuntimeRestartController({
+        store,
+        execute: async () => {
+          throw new Error("recovery must not execute another restart");
+        },
+        recover: (record) =>
+          notifyRecoverableRestartErrorOnSelf({
+            sourceThreadId: record.requestedByThreadId,
+            noticeId: `runtime-restart-recovery:${record.requestId}`,
+            prompt: expectedRuntimeRestartRecoveryPrompt(record),
+            readThread: async (threadId) => ({
+              thread: {
+                id: threadId,
+                name: "/self",
+                turns: [
+                  {
+                    items: [
+                      {
+                        type: "clientRecovery",
+                        id: `runtime-restart-recovery:${record.requestId}`,
+                        reason: expectedRuntimeRestartRecoveryPrompt(record),
+                      },
+                      ...(submitted
+                        ? [
+                            {
+                              type: "userMessage",
+                              id: "submitted-user-message",
+                              content: [
+                                {
+                                  type: "text",
+                                  text: expectedRuntimeRestartRecoveryPrompt(record),
+                                },
+                              ],
+                            },
+                          ]
+                        : []),
+                    ],
+                  },
+                ],
+              },
+            }),
+            subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+            submitRecoveryMessage: async (thread, message) => {
+              calls.push(["submit", thread.id, message.id]);
+              submitted = true;
+              return {};
+            },
+          }),
+        hostInstanceId: "host-new",
+        logger: { error: () => {}, warn: () => {} },
+      });
+
+      const result = await controller.recoverPending();
+
+      assert.deepEqual(result.recoveredThreadIds, ["self-thread"]);
+      assert.deepEqual(result.failedThreadIds, []);
+      assert.deepEqual(calls, [
+        ["subscribe", "self-thread"],
+        ["submit", "self-thread", "runtime-restart-recovery:restart-1"],
+      ]);
+      assert.deepEqual(await store.recoverable(), []);
+    },
+    {
+      version: 2,
+      records: [
+        {
+          requestId: "restart-1",
+          requestedByThreadId: "self-thread",
+          reason: "runtime update",
+          phase: "completed",
+          completedByHostInstanceId: "host-old",
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        },
+      ],
+    },
+  );
+});
+
+test("completed restart recovery releases claim when durable notice submission fails", async () => {
   await withStore(
     async (store) => {
       const controller = createRuntimeRestartController({
@@ -505,8 +665,8 @@ test("completed restart recovery releases claim when durable notice injection fa
               thread: { id: threadId, name: "/self", turns: [] },
             }),
             subscribeThread: async () => {},
-            injectConversationMessage: async () => {
-              throw new Error("durable injection unavailable");
+            submitRecoveryMessage: async () => {
+              throw new Error("durable submission unavailable");
             },
           }),
         hostInstanceId: "host-new",
@@ -562,8 +722,8 @@ test("completed restart recovery releases claim when source /self read mismatche
             subscribeThread: async () => {
               throw new Error("must not subscribe");
             },
-            injectConversationMessage: async () => {
-              throw new Error("must not inject");
+            submitRecoveryMessage: async () => {
+              throw new Error("must not submit");
             },
           }),
         hostInstanceId: "host-new",
@@ -619,9 +779,14 @@ test("completed restart recovery consumes when the durable notice already exists
                   {
                     items: [
                       {
-                        type: "agentMessage",
+                        type: "userMessage",
                         id: "runtime-restart-recovery:restart-1",
-                        text: "already visible",
+                        content: [
+                          {
+                            type: "text",
+                            text: expectedRuntimeRestartRecoveryPrompt(record),
+                          },
+                        ],
                       },
                     ],
                   },
@@ -631,8 +796,8 @@ test("completed restart recovery consumes when the durable notice already exists
             subscribeThread: async () => {
               throw new Error("must not subscribe");
             },
-            injectConversationMessage: async () => {
-              throw new Error("must not inject");
+            submitRecoveryMessage: async () => {
+              throw new Error("must not submit");
             },
           }),
         hostInstanceId: "host-new",

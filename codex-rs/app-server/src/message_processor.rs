@@ -1504,9 +1504,6 @@ impl MessageProcessor {
                     )
                     .await
             }
-            ClientRequest::ThreadInjectItems { params, .. } => {
-                self.turn_processor.thread_inject_items(params).await
-            }
             ClientRequest::ThreadClientRecoveryRecord { params, .. } => {
                 self.turn_processor
                     .thread_client_recovery_record(&request_id, params)

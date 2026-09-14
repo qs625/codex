@@ -1057,22 +1057,6 @@ pub struct ThreadReadResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
-pub struct ThreadInjectItemsParams {
-    pub thread_id: String,
-    /// Raw Responses API items to append to the thread's model-visible history.
-    pub items: Vec<JsonValue>,
-}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(export))]
-pub struct ThreadInjectItemsResponse {}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ThreadClientRecoveryRecordParams {
     pub thread_id: String,
     pub recovery_id: String,

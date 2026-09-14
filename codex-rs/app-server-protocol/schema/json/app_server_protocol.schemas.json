@@ -171,7 +171,7 @@
         },
         "globScanMaxDepth": {
           "format": "uint",
-          "minimum": 1.0,
+          "minimum": 1,
           "type": [
             "integer",
             "null"
@@ -838,7 +838,7 @@
         "limit": {
           "description": "Optional page size; defaults to a reasonable server-side value.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -988,12 +988,12 @@
       "properties": {
         "end": {
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "start": {
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -1661,31 +1661,6 @@
             "params"
           ],
           "title": "Thread/readRequest",
-          "type": "object"
-        },
-        {
-          "description": "Append raw Responses API items to the thread history without starting a user turn.",
-          "properties": {
-            "id": {
-              "$ref": "#/definitions/RequestId"
-            },
-            "method": {
-              "enum": [
-                "thread/inject_items"
-              ],
-              "title": "Thread/injectItemsRequestMethod",
-              "type": "string"
-            },
-            "params": {
-              "$ref": "#/definitions/ThreadInjectItemsParams"
-            }
-          },
-          "required": [
-            "id",
-            "method",
-            "params"
-          ],
-          "title": "Thread/injectItemsRequest",
           "type": "object"
         },
         {
@@ -3472,7 +3447,7 @@
               "properties": {
                 "httpStatusCode": {
                   "format": "uint16",
-                  "minimum": 0.0,
+                  "minimum": 0,
                   "type": [
                     "integer",
                     "null"
@@ -3496,7 +3471,7 @@
               "properties": {
                 "httpStatusCode": {
                   "format": "uint16",
-                  "minimum": 0.0,
+                  "minimum": 0,
                   "type": [
                     "integer",
                     "null"
@@ -3520,7 +3495,7 @@
               "properties": {
                 "httpStatusCode": {
                   "format": "uint16",
-                  "minimum": 0.0,
+                  "minimum": 0,
                   "type": [
                     "integer",
                     "null"
@@ -3544,7 +3519,7 @@
               "properties": {
                 "httpStatusCode": {
                   "format": "uint16",
-                  "minimum": 0.0,
+                  "minimum": 0,
                   "type": [
                     "integer",
                     "null"
@@ -3862,7 +3837,7 @@
         "sequence": {
           "description": "Monotonic byte-chunk sequence within this generation.",
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "stream": {
@@ -3944,7 +3919,7 @@
         "outputBytesCap": {
           "description": "Optional per-stream stdout/stderr capture cap in bytes.\n\nWhen omitted, the server default applies. Cannot be combined with `disableOutputCap`.",
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -4086,13 +4061,13 @@
         "cols": {
           "description": "Terminal width in character cells.",
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "rows": {
           "description": "Terminal height in character cells.",
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -4242,7 +4217,7 @@
         },
         "sequence": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -5111,7 +5086,7 @@
             },
             "timeoutSec": {
               "format": "uint64",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": [
                 "integer",
                 "null"
@@ -5746,7 +5721,7 @@
         },
         "sequence": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -5898,7 +5873,7 @@
         "limit": {
           "description": "Optional page size; defaults to a reasonable server-side value.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -6953,7 +6928,7 @@
         "indices": {
           "items": {
             "format": "uint32",
-            "minimum": 0.0,
+            "minimum": 0,
             "type": "integer"
           },
           "type": [
@@ -6972,7 +6947,7 @@
         },
         "score": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -7263,7 +7238,7 @@
             },
             "port": {
               "format": "uint16",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": "integer"
             },
             "protocol": {
@@ -7532,7 +7507,7 @@
         },
         "timeoutSec": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "trustStatus": {
@@ -8362,7 +8337,7 @@
         "limit": {
           "description": "Optional page size; defaults to a server-defined value.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -8415,7 +8390,7 @@
             },
             "timeout_ms": {
               "format": "uint64",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": [
                 "integer",
                 "null"
@@ -9178,7 +9153,7 @@
         },
         "maxLength": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -9186,7 +9161,7 @@
         },
         "minLength": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -9251,7 +9226,7 @@
         },
         "maxItems": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -9259,7 +9234,7 @@
         },
         "minItems": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -9360,7 +9335,7 @@
         },
         "maxItems": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -9368,7 +9343,7 @@
         },
         "minItems": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -9839,12 +9814,12 @@
       "properties": {
         "lineEnd": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "lineStart": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "note": {
@@ -10166,7 +10141,7 @@
         "limit": {
           "description": "Optional page size; defaults to a reasonable server-side value.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -10465,7 +10440,7 @@
         },
         "httpPort": {
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -10480,7 +10455,7 @@
         },
         "socksPort": {
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -10683,7 +10658,7 @@
             },
             "globScanMaxDepth": {
               "format": "uint",
-              "minimum": 1.0,
+              "minimum": 1,
               "type": [
                 "integer",
                 "null"
@@ -11921,13 +11896,13 @@
         "cols": {
           "description": "Terminal width in character cells.",
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "rows": {
           "description": "Terminal height in character cells.",
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -12688,7 +12663,7 @@
           "properties": {
             "bytes_written": {
               "format": "uint",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": "integer"
             },
             "command_id": {
@@ -16055,7 +16030,7 @@
         "replayThroughSequence": {
           "description": "Sequence of the newest chunk included in `replayBase64`.",
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "replayTruncated": {
@@ -16318,13 +16293,13 @@
         "column": {
           "description": "1-based column number (in Unicode scalar values).",
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "line": {
           "description": "1-based line number.",
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -16792,7 +16767,7 @@
       "properties": {
         "loadedCount": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "skills": {
@@ -16803,7 +16778,7 @@
         },
         "totalCount": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -16823,7 +16798,7 @@
         },
         "loadCount": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "name": {
@@ -17276,28 +17251,6 @@
     "ThreadId": {
       "type": "string"
     },
-    "ThreadInjectItemsParams": {
-      "properties": {
-        "items": {
-          "description": "Raw Responses API items to append to the thread's model-visible history.",
-          "items": true,
-          "type": "array"
-        },
-        "threadId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "items",
-        "threadId"
-      ],
-      "type": "object"
-    },
-    "ThreadInjectItemsResponse": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "ThreadInjectItemsResponse",
-      "type": "object"
-    },
     "ThreadItem": {
       "oneOf": [
         {
@@ -17697,7 +17650,7 @@
           "properties": {
             "bytesWritten": {
               "format": "uint",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": "integer"
             },
             "commandId": {
@@ -18075,7 +18028,7 @@
             },
             "sequence": {
               "format": "uint32",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": [
                 "integer",
                 "null"
@@ -18900,7 +18853,7 @@
         "limit": {
           "description": "Optional page size; defaults to a reasonable server-side value.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -19004,7 +18957,7 @@
         "limit": {
           "description": "Optional page size; defaults to no limit.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -19333,17 +19286,17 @@
         },
         "numChannels": {
           "format": "uint16",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "sampleRate": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "samplesPerChannel": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -19716,7 +19669,7 @@
         "numTurns": {
           "description": "The number of turns to drop from the end of the thread. Must be >= 1.\n\nThis only modifies the thread's history and does not revert local file changes that have been made by the agent. Clients are responsible for reverting these changes.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "threadId": {
@@ -20108,7 +20061,7 @@
         "compactionCount": {
           "description": "Total number of context compactions observed in the persisted thread history.",
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -21337,7 +21290,7 @@
       "properties": {
         "extraCount": {
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "failedScan": {
@@ -21592,7 +21545,7 @@
         "output": true,
         "revision": {
           "format": "uint64",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "runId": {

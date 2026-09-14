@@ -310,20 +310,6 @@ pub trait LiveThreadConversationRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 }
 
-/// Conversation injection surface for live threads without exposing concrete handles.
-///
-/// Implementations record prebuilt conversation items directly into a live
-/// thread's conversation history. Unlike `LiveThreadConversationRuntime`, this
-/// must not enqueue async input or trigger pending work.
-pub trait LiveThreadConversationInjectionRuntime: Send + Sync {
-    /// Inject prebuilt conversation items into a specific live thread.
-    fn inject_live_thread_conversation_items(
-        &self,
-        thread_id: ThreadId,
-        items: Vec<ResponseItem>,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-}
-
 /// Trusted host surface for recording a typed, durable client recovery fact.
 pub trait LiveThreadClientRecoveryRuntime: Send + Sync {
     /// Persist and publish the recovery event. Returns false when recovery_id
@@ -675,9 +661,9 @@ mod tests {
     #[test]
     fn root_execution_provider_id_rejects_non_root_or_non_user_contexts() {
         let mut subagent = snapshot();
-        subagent.session_source = SessionSource::SubAgent(protocol::protocol::SubAgentSource::Other(
-            "worker".to_string(),
-        ));
+        subagent.session_source = SessionSource::SubAgent(
+            protocol::protocol::SubAgentSource::Other("worker".to_string()),
+        );
         assert_eq!(subagent.root_execution_provider_id(), None);
 
         let mut role_root = snapshot();

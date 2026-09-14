@@ -5,7 +5,7 @@ const {
   notifyRecoverableRestartErrorOnSelf,
 } = require("./restartRecoverySelfNotice.cjs");
 
-test("recoverable restart errors inject a durable message on exact /self", async () => {
+test("recoverable restart errors submit a durable recovery user message on exact /self", async () => {
   const calls = [];
   const selfThread = {
     id: "origin-thread",
@@ -27,12 +27,12 @@ test("recoverable restart errors inject a durable message on exact /self", async
       return { thread: selfThread };
     },
     subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
-    injectConversationMessage: async (thread, message) => {
-      calls.push(["inject", thread.id, message.id, message.text]);
+    submitRecoveryMessage: async (thread, message) => {
+      calls.push(["submit", thread.id, message.id, message.text]);
       thread.turns.push({
         items: [
           {
-            type: "agentMessage",
+            type: "userMessage",
             id: message.id,
             content: [{ type: "text", text: message.text }],
           },
@@ -46,7 +46,7 @@ test("recoverable restart errors inject a durable message on exact /self", async
     ["read", "origin-thread"],
     ["subscribe", "origin-thread"],
     [
-      "inject",
+      "submit",
       "origin-thread",
       "runtime-restart-recovery:restart-1",
       "中文恢复通知；原始 thread id：origin-thread。",
@@ -76,8 +76,8 @@ test("recoverable restart errors reject when source is not exact /self", async (
         subscribeThread: async () => {
           throw new Error("must not subscribe");
         },
-        injectConversationMessage: async () => {
-          throw new Error("must not inject");
+        submitRecoveryMessage: async () => {
+          throw new Error("must not submit");
         },
       }),
     /source thread is not exact \/self/,
@@ -86,7 +86,7 @@ test("recoverable restart errors reject when source is not exact /self", async (
   assert.deepEqual(calls, [["read", "project-thread"]]);
 });
 
-test("recoverable restart errors reject when injection is not durably readable", async () => {
+test("recoverable restart errors reject when submission is not durably readable", async () => {
   const calls = [];
   await assert.rejects(
     () =>
@@ -108,23 +108,24 @@ test("recoverable restart errors reject when injection is not durably readable",
           };
         },
         subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
-        injectConversationMessage: async (thread, message) => {
-          calls.push(["inject", thread.id, message.id, message.text]);
+        submitRecoveryMessage: async (thread, message) => {
+          calls.push(["submit", thread.id, message.id, message.text]);
           return {};
         },
+        verifyAttempts: 1,
       }),
-    /self recovery notice was not durable after injection/,
+    /self recovery notice was not durable after submission/,
   );
 
   assert.deepEqual(calls, [
     ["read", "origin-thread"],
     ["subscribe", "origin-thread"],
-    ["inject", "origin-thread", "runtime-restart-recovery:restart-1", "中文恢复通知"],
+    ["submit", "origin-thread", "runtime-restart-recovery:restart-1", "中文恢复通知"],
     ["read", "origin-thread"],
   ]);
 });
 
-test("recoverable restart errors detect an existing agent content notice", async () => {
+test("recoverable restart errors detect an existing user content notice", async () => {
   const result = await notifyRecoverableRestartErrorOnSelf({
     sourceThreadId: "origin-thread",
     noticeId: "runtime-restart-recovery:restart-1",
@@ -140,7 +141,7 @@ test("recoverable restart errors detect an existing agent content notice", async
           {
             items: [
               {
-                type: "agentMessage",
+                type: "userMessage",
                 id: "other-id",
                 content: [{ type: "text", text: "中文恢复通知" }],
               },
@@ -152,8 +153,8 @@ test("recoverable restart errors detect an existing agent content notice", async
     subscribeThread: async () => {
       throw new Error("must not subscribe");
     },
-    injectConversationMessage: async () => {
-      throw new Error("must not inject");
+    submitRecoveryMessage: async () => {
+      throw new Error("must not submit");
     },
   });
 
@@ -177,9 +178,9 @@ test("recoverable restart errors skip an existing durable notice", async () => {
             {
               items: [
                 {
-                  type: "agentMessage",
+                  type: "userMessage",
                   id: "runtime-restart-recovery:restart-1",
-                  text: "中文恢复通知",
+                  content: [{ type: "text", text: "中文恢复通知" }],
                 },
               ],
             },
@@ -190,14 +191,120 @@ test("recoverable restart errors skip an existing durable notice", async () => {
     subscribeThread: async () => {
       throw new Error("must not subscribe");
     },
-    injectConversationMessage: async () => {
-      throw new Error("must not inject");
+    submitRecoveryMessage: async () => {
+      throw new Error("must not submit");
     },
   });
 
   assert.deepEqual(calls, [["read", "origin-thread"]]);
   assert.equal(result.skipped, true);
   assert.equal(result.selfThreadId, "origin-thread");
+});
+
+test("recoverable restart errors wait for submitted user message to become durable", async () => {
+  const calls = [];
+  let readCount = 0;
+  let submitted = false;
+  const result = await notifyRecoverableRestartErrorOnSelf({
+    sourceThreadId: "origin-thread",
+    noticeId: "runtime-restart-recovery:restart-1",
+    prompt: "中文恢复通知",
+    readThread: async (threadId) => {
+      readCount += 1;
+      calls.push(["read", threadId]);
+      return {
+        thread: {
+          id: threadId,
+          name: "/self",
+          turns:
+            submitted && readCount >= 4
+              ? [
+                  {
+                    items: [
+                      {
+                        type: "userMessage",
+                        id: "submitted-user-message",
+                        content: [{ type: "text", text: "中文恢复通知" }],
+                      },
+                    ],
+                  },
+                ]
+              : [],
+        },
+      };
+    },
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    submitRecoveryMessage: async (thread, message) => {
+      calls.push(["submit", thread.id, message.id, message.text]);
+      submitted = true;
+      return {};
+    },
+    verifyAttempts: 3,
+    verifyDelayMs: 0,
+  });
+
+  assert.equal(result.selfThreadId, "origin-thread");
+  assert.deepEqual(calls, [
+    ["read", "origin-thread"],
+    ["subscribe", "origin-thread"],
+    ["submit", "origin-thread", "runtime-restart-recovery:restart-1", "中文恢复通知"],
+    ["read", "origin-thread"],
+    ["read", "origin-thread"],
+    ["read", "origin-thread"],
+  ]);
+});
+
+test("recoverable restart errors do not accept client recovery as durable user notice", async () => {
+  const calls = [];
+  let submitted = false;
+  const result = await notifyRecoverableRestartErrorOnSelf({
+    sourceThreadId: "origin-thread",
+    noticeId: "runtime-restart-recovery:restart-1",
+    prompt: "中文恢复通知",
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return {
+        thread: {
+          id: threadId,
+          name: "/self",
+          turns: [
+            {
+              items: [
+                {
+                  type: "clientRecovery",
+                  id: "runtime-restart-recovery:restart-1",
+                  reason: "中文恢复通知",
+                },
+                ...(submitted
+                  ? [
+                      {
+                        type: "userMessage",
+                        id: "submitted-user-message",
+                        content: [{ type: "text", text: "中文恢复通知" }],
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          ],
+        },
+      };
+    },
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    submitRecoveryMessage: async (thread, message) => {
+      calls.push(["submit", thread.id, message.id, message.text]);
+      submitted = true;
+      return {};
+    },
+  });
+
+  assert.equal(result.selfThreadId, "origin-thread");
+  assert.deepEqual(calls, [
+    ["read", "origin-thread"],
+    ["subscribe", "origin-thread"],
+    ["submit", "origin-thread", "runtime-restart-recovery:restart-1", "中文恢复通知"],
+    ["read", "origin-thread"],
+  ]);
 });
 
 test("recoverable restart errors skip a legacy user-turn notice", async () => {
@@ -226,8 +333,8 @@ test("recoverable restart errors skip a legacy user-turn notice", async () => {
     subscribeThread: async () => {
       throw new Error("must not subscribe");
     },
-    injectConversationMessage: async () => {
-      throw new Error("must not inject");
+    submitRecoveryMessage: async () => {
+      throw new Error("must not submit");
     },
   });
 
@@ -246,8 +353,8 @@ test("recoverable restart errors reject a non-exact /self target", async () => {
         subscribeThread: async () => {
           throw new Error("must not subscribe");
         },
-        injectConversationMessage: async () => {
-          throw new Error("must not inject");
+        submitRecoveryMessage: async () => {
+          throw new Error("must not submit");
         },
       }),
     /source thread is not exact \/self/,
@@ -271,8 +378,8 @@ test("recoverable restart errors reject a mismatched /self read result", async (
         subscribeThread: async () => {
           throw new Error("must not subscribe");
         },
-        injectConversationMessage: async () => {
-          throw new Error("must not inject");
+        submitRecoveryMessage: async () => {
+          throw new Error("must not submit");
         },
       }),
     /source thread read returned a different thread/,
@@ -303,8 +410,8 @@ test("recoverable restart errors reject source mismatch even when fallback /self
         subscribeThread: async () => {
           throw new Error("must not subscribe");
         },
-        injectConversationMessage: async () => {
-          throw new Error("must not inject");
+        submitRecoveryMessage: async () => {
+          throw new Error("must not submit");
         },
       }),
     /source thread read returned a different thread/,

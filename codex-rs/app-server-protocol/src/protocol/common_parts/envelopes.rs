@@ -552,12 +552,6 @@ client_request_definitions! {
         serialization: None,
         response: v2::ThreadTurnsItemsListResponse,
     },
-    /// Append raw Responses API items to the thread history without starting a user turn.
-    ThreadInjectItems => "thread/inject_items" {
-        params: v2::ThreadInjectItemsParams,
-        serialization: thread_id(params.thread_id),
-        response: v2::ThreadInjectItemsResponse,
-    },
     ThreadClientRecoveryRecord => "thread/clientRecovery/record" {
         params: v2::ThreadClientRecoveryRecordParams,
         serialization: thread_id(params.thread_id),
