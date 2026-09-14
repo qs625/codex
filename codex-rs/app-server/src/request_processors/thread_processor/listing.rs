@@ -1,5 +1,4 @@
 use super::*;
-#[cfg(test)]
 use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallStatus;
 use protocol::subscriptions::PersistedSubscription;
@@ -380,6 +379,8 @@ impl ThreadRequestProcessor {
                 .await?;
             prune_turns_to_latest_compaction_boundary(&mut thread.turns);
         }
+        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
+        apply_live_active_command_items_from_active_turn(&mut thread, active_turn.as_ref());
         Ok((thread, has_live_in_progress_turn))
     }
 
@@ -761,6 +762,29 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
 fn apply_runtime_activity_items_from_persisted_turns(thread: &mut Thread) {
     let persisted_turns = thread.turns.clone();
     apply_runtime_activity_items_from_turns(thread, &persisted_turns);
+}
+
+fn apply_live_active_command_items_from_active_turn(
+    thread: &mut Thread,
+    active_turn: Option<&Turn>,
+) {
+    let active_command_items = active_turn
+        .map(active_command_items_from_live_turn)
+        .unwrap_or_default();
+    thread.active_command_items = Some(active_command_items);
+}
+
+fn active_command_items_from_live_turn(turn: &Turn) -> Vec<ThreadItem> {
+    turn.items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::CommandExecution {
+                status: CommandExecutionStatus::InProgress,
+                ..
+            } => Some(item.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn apply_runtime_activity_items_from_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
@@ -1316,6 +1340,82 @@ mod restore_persisted_injected_context_turns_tests {
         assert_eq!(thread.active_subscription_items, Some(Vec::new()));
         assert_eq!(thread.active_command_items, Some(Vec::new()));
         assert_eq!(thread.turns.len(), 1);
+    }
+
+    #[test]
+    fn live_active_command_items_override_persisted_command_current_state_items() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![agent_message_item("msg-1", "thread restored live")],
+        )]);
+        let persisted_turns = vec![turn(
+            "active-commands",
+            vec![command_execution_item(
+                "persisted-exec",
+                CommandExecutionStatus::InProgress,
+            )],
+        )];
+
+        apply_runtime_activity_items_from_turns(&mut thread, &persisted_turns);
+        let live_turn = turn(
+            "turn-live",
+            vec![command_execution_item(
+                "live-exec",
+                CommandExecutionStatus::InProgress,
+            )],
+        );
+        apply_live_active_command_items_from_active_turn(&mut thread, Some(&live_turn));
+
+        assert_eq!(
+            thread.active_command_items,
+            Some(vec![command_execution_item(
+                "live-exec",
+                CommandExecutionStatus::InProgress
+            )])
+        );
+    }
+
+    #[test]
+    fn apply_live_active_command_items_uses_only_live_in_progress_commands() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![agent_message_item("msg-1", "thread restored live")],
+        )]);
+        thread.active_command_items = Some(vec![command_execution_item(
+            "stale-exec",
+            CommandExecutionStatus::InProgress,
+        )]);
+        let live_turn = turn(
+            "turn-live",
+            vec![
+                command_execution_item("exec-running", CommandExecutionStatus::InProgress),
+                command_execution_item("exec-done", CommandExecutionStatus::Completed),
+                schedule_subscribe_item("call-schedule", "sub-schedule", "standup"),
+            ],
+        );
+
+        apply_live_active_command_items_from_active_turn(&mut thread, Some(&live_turn));
+
+        assert_eq!(
+            thread.active_command_items,
+            Some(vec![command_execution_item(
+                "exec-running",
+                CommandExecutionStatus::InProgress
+            )])
+        );
+    }
+
+    #[test]
+    fn apply_live_active_command_items_clears_stale_commands_when_live_has_none() {
+        let mut thread = thread_with_turns(Vec::new());
+        thread.active_command_items = Some(vec![command_execution_item(
+            "stale-exec",
+            CommandExecutionStatus::InProgress,
+        )]);
+
+        apply_live_active_command_items_from_active_turn(&mut thread, None);
+
+        assert_eq!(thread.active_command_items, Some(Vec::new()));
     }
 
     #[test]
