@@ -1775,7 +1775,7 @@ test("command item notifications create a visible running command and complete t
   });
 });
 
-test("conversation display keeps exec command item while hiding output notifications", () => {
+test("conversation display keeps exec command item and typed notification summaries", () => {
   const commandStart: ThreadItem = {
     type: "commandExecution",
     id: "cmd-1",
@@ -1840,9 +1840,26 @@ test("conversation display keeps exec command item while hiding output notificat
         toolDetails:
           "Command\ngit rev-parse --short HEAD\n\nCwd\n/repo\n\nStatus\ncompleted\n\nInitial Wait\n1000 ms\n\nNotify On\nexit\n\nDuration\n12 ms\n\nExit Code\n0",
       },
+      {
+        id: "cmd-1:notification:exit",
+        toolCategory: "command",
+        toolName: "git rev-parse --short HEAD",
+        toolStatus: "completed",
+        text: "Command notification • exit 0 • git rev-parse --short HEAD",
+        toolDetails:
+          "Kind\nexit\n\nCommand\ngit rev-parse --short HEAD\n\nCommand ID\ncmd-1\n\nExit Code\n0\n\nMessage\nCommand cmd-1 has exited with code 0.",
+      },
     ],
   );
-  assert.equal(JSON.stringify(displayCells).includes("889b416d"), false);
+  assert.equal(
+    JSON.stringify(
+      entries.map((entry) => ({
+        text: entry.text,
+        toolDetails: entry.toolDetails,
+      })),
+    ).includes("889b416d"),
+    false,
+  );
 });
 
 test("command output delta without command start does not create a visible placeholder", () => {
