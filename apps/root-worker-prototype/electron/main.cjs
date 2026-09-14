@@ -391,6 +391,9 @@ ipcMain.handle("codex:bootstrap", async () => {
     await getAutoResumeCoordinator().runAfterRuntimeRestartRecovery({
       hasDurableRestartRecovery:
         startupRuntimeRecovery.hasDurableRestartRecovery,
+      recoveryOccurrenceId:
+        expectedRestart.recoveryOccurrenceId ??
+        startupRuntimeRecovery.recoveryOccurrenceId,
       threads: initialThreads,
       expectedRestart,
     });

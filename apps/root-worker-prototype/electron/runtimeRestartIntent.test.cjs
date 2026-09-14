@@ -113,7 +113,12 @@ test("controller can persist completed handoff before expected Host exit", async
     const sameHostRecovery = await controller.recoverPending();
     assert.deepEqual(sameHostRecovery.recoveredThreadIds, []);
     assert.deepEqual(sameHostRecovery.failedThreadIds, []);
+    assert.deepEqual(sameHostRecovery.expectedRequestIds, ["restart-1"]);
     assert.deepEqual(sameHostRecovery.expectedThreadIds, ["thread-1"]);
+    assert.equal(
+      sameHostRecovery.recoveryOccurrenceId,
+      "runtime-restart:restart-1",
+    );
 
     const recovered = [];
     const nextHost = createRuntimeRestartController({
@@ -128,6 +133,11 @@ test("controller can persist completed handoff before expected Host exit", async
     const nextHostRecovery = await nextHost.recoverPending();
 
     assert.deepEqual(nextHostRecovery.recoveredThreadIds, ["thread-1"]);
+    assert.deepEqual(nextHostRecovery.expectedRequestIds, ["restart-1"]);
+    assert.equal(
+      nextHostRecovery.recoveryOccurrenceId,
+      "runtime-restart:restart-1",
+    );
     assert.equal(recovered[0].phase, "completed");
     assert.equal(recovered[0].completedByHostInstanceId, "host-1");
     assert.deepEqual(await store.recoverable(), []);
@@ -259,7 +269,12 @@ test("completed restart is recoverable only from a new Host instance", async () 
     const sameHostRecovery = await currentHost.recoverPending();
     assert.deepEqual(sameHostRecovery.recoveredThreadIds, []);
     assert.deepEqual(sameHostRecovery.failedThreadIds, []);
+    assert.deepEqual(sameHostRecovery.expectedRequestIds, ["restart-1"]);
     assert.deepEqual(sameHostRecovery.expectedThreadIds, ["thread-1"]);
+    assert.equal(
+      sameHostRecovery.recoveryOccurrenceId,
+      "runtime-restart:restart-1",
+    );
 
     const recovered = [];
     const nextHost = createRuntimeRestartController({
@@ -274,6 +289,11 @@ test("completed restart is recoverable only from a new Host instance", async () 
     const nextHostRecovery = await nextHost.recoverPending();
 
     assert.deepEqual(nextHostRecovery.recoveredThreadIds, ["thread-1"]);
+    assert.deepEqual(nextHostRecovery.expectedRequestIds, ["restart-1"]);
+    assert.equal(
+      nextHostRecovery.recoveryOccurrenceId,
+      "runtime-restart:restart-1",
+    );
     assert.equal(recovered[0].completedByHostInstanceId, "host-1");
     assert.deepEqual(await store.recoverable(), []);
   });
@@ -633,6 +653,8 @@ test("failed recovery releases its durable claim for a later retry", async () =>
 
     assert.equal(recoveries, 1);
     assert.deepEqual(retried.recoveredThreadIds, ["thread-1"]);
+    assert.deepEqual(retried.expectedRequestIds, ["restart-1"]);
+    assert.equal(retried.recoveryOccurrenceId, "runtime-restart:restart-1");
     assert.deepEqual(await store.recoverable(), []);
   });
 });
@@ -681,7 +703,12 @@ test("execution outcome update preserves an in-progress recovery claim", async (
     assert.equal(recoveries, 1);
     assert.deepEqual(secondRecovery.recoveredThreadIds, []);
     assert.deepEqual(secondRecovery.failedThreadIds, []);
+    assert.deepEqual(secondRecovery.expectedRequestIds, ["restart-1"]);
     assert.deepEqual(secondRecovery.expectedThreadIds, ["thread-1"]);
+    assert.equal(
+      secondRecovery.recoveryOccurrenceId,
+      "runtime-restart:restart-1",
+    );
 
     releaseRecovery();
     assert.deepEqual((await firstRecovery).recoveredThreadIds, ["thread-1"]);

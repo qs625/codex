@@ -163,6 +163,7 @@ async function recoverPayloadRuntimeFailureIfPresent({
         evidence: true,
         payloadEvidence: true,
         recovered: false,
+        recoveryOccurrenceId: payloadRecoveryEventId(evidence),
       };
     }
     if (delivery.alreadyDelivered) {
@@ -177,6 +178,7 @@ async function recoverPayloadRuntimeFailureIfPresent({
         evidence: true,
         payloadEvidence: true,
         recovered: true,
+        recoveryOccurrenceId: payloadRecoveryEventId(evidence),
       };
     }
     const text = formatPayloadRuntimeRecoveryPrompt({
@@ -206,9 +208,13 @@ async function recoverPayloadRuntimeFailureIfPresent({
       evidence: true,
       payloadEvidence: true,
       recovered: true,
+      recoveryOccurrenceId: payloadRecoveryEventId(evidence),
     };
   } catch (error) {
     error.payloadEvidence = true;
+    if (evidence) {
+      error.recoveryOccurrenceId = payloadRecoveryEventId(evidence);
+    }
     throw error;
   }
 }
@@ -386,12 +392,20 @@ async function recoverLauncherStateAtStartup({
       payloadRecovery?.payloadEvidence === true;
   } catch (error) {
     hasDurableRestartRecovery = error?.payloadEvidence === true;
+    payloadRecovery = error?.recoveryOccurrenceId
+      ? { recoveryOccurrenceId: error.recoveryOccurrenceId }
+      : null;
     logger.error?.(
       "[prototype] payload recovery input failed; evidence retained",
       error,
     );
   }
-  return { hasDurableRestartRecovery, payloadRecovery, recorded };
+  return {
+    hasDurableRestartRecovery,
+    payloadRecovery,
+    recorded,
+    recoveryOccurrenceId: payloadRecovery?.recoveryOccurrenceId ?? null,
+  };
 }
 
 function isPayloadRuntimeRecoveryEvidence(evidence) {

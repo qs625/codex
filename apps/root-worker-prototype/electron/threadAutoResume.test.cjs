@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   autoResumeFingerprint,
+  autoResumeOccurrenceId,
   createThreadAutoResumeCoordinator,
   isAutoResumeEligibleThread,
   pickAutoResumeCandidates,
@@ -28,8 +29,15 @@ function projectRootThread(overrides = {}) {
   };
 }
 
-function runtimeRestartRecovery(expectedThreadIds = ["system-self"]) {
-  return { expectedThreadIds };
+function runtimeRestartRecovery(
+  expectedThreadIds = ["system-self"],
+  requestId = "restart-1",
+) {
+  return {
+    expectedRequestIds: [requestId],
+    expectedThreadIds,
+    recoveryOccurrenceId: `runtime-restart:${requestId}`,
+  };
 }
 
 test("auto-resume selects recoverable project roots and excludes completed/children", () => {
@@ -204,7 +212,82 @@ test("restart recovery fanout resumes once and submits recovery input", async ()
     ],
   ]);
   assert.equal(
-    marked.has(autoResumeFingerprint(projectRootThread({ id: "thread-a" }))),
+    marked.has(
+      autoResumeFingerprint(
+        projectRootThread({ id: "thread-a" }),
+        "runtime-restart:restart-1",
+      ),
+    ),
+    true,
+  );
+});
+
+test("restart-scoped auto-resume markers allow a later restart with unchanged updatedAt", async () => {
+  const calls = [];
+  const marked = new Set();
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async (key) => marked.has(key),
+      mark: async (key) => marked.add(key),
+    },
+    readThread: async (threadId) => ({
+      thread: projectRootThread({
+        id: threadId,
+        updatedAt: 10,
+        turns: [
+          {
+            id: "older-turn",
+            items: [
+              {
+                type: "userMessage",
+                content: [
+                  {
+                    type: "text",
+                    text: RESTART_RECOVERY_PROMPTS.projectRootFanout,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    sendResumeInput: async (thread) => calls.push(["send", thread.id]),
+    logger: { warn: () => {} },
+  });
+  const thread = projectRootThread({ id: "thread-a", updatedAt: 10 });
+
+  const first = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [thread],
+    expectedRestart: runtimeRestartRecovery(["system-self"], "restart-a"),
+  });
+  const repeatedFirst = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [thread],
+    expectedRestart: runtimeRestartRecovery(["system-self"], "restart-a"),
+  });
+  const second = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [thread],
+    expectedRestart: runtimeRestartRecovery(["system-self"], "restart-b"),
+  });
+
+  assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
+  assert.deepEqual(repeatedFirst.resumedThreadIds, []);
+  assert.deepEqual(repeatedFirst.skippedThreadIds, ["thread-a"]);
+  assert.deepEqual(second.resumedThreadIds, ["thread-a"]);
+  assert.deepEqual(calls, [
+    ["subscribe", "thread-a"],
+    ["send", "thread-a"],
+    ["subscribe", "thread-a"],
+    ["send", "thread-a"],
+  ]);
+  assert.equal(marked.has("thread-a:10"), false);
+  assert.equal(
+    marked.has("restart-v2:runtime-restart:restart-a:thread-a"),
+    true,
+  );
+  assert.equal(
+    marked.has("restart-v2:runtime-restart:restart-b:thread-a"),
     true,
   );
 });
@@ -371,12 +454,35 @@ test("auto-resume skips active threads that already contain recovery input", asy
   assert.equal(threadHasAutoResumePrompt(restored), true);
   const result = await coordinator.runAfterRuntimeRestartRecovery({
     threads: [projectRootThread()],
-    expectedRestart: runtimeRestartRecovery(),
+    expectedRestart: { expectedThreadIds: ["system-self"] },
   });
 
   assert.deepEqual(result.resumedThreadIds, []);
   assert.deepEqual(result.skippedThreadIds, ["thread-1"]);
   assert.equal(marked.has(autoResumeFingerprint(projectRootThread())), true);
+});
+
+test("autoResumeOccurrenceId prefers explicit and restart recovery identities", () => {
+  assert.equal(
+    autoResumeOccurrenceId({
+      recoveryOccurrenceId: " explicit ",
+      expectedRestart: runtimeRestartRecovery(),
+    }),
+    "explicit",
+  );
+  assert.equal(
+    autoResumeOccurrenceId({
+      expectedRestart: runtimeRestartRecovery(["system-self"], "restart-z"),
+    }),
+    "runtime-restart:restart-z",
+  );
+  assert.equal(
+    autoResumeOccurrenceId({
+      hasDurableRestartRecovery: true,
+      expectedRestart: { payloadRecoveryId: " payload " },
+    }),
+    "payload",
+  );
 });
 
 test("auto-resume coordinator handles failures without throwing", async () => {
