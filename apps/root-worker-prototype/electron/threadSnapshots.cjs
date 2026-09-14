@@ -26,6 +26,10 @@ function mergeThreadSnapshots(existing, next) {
     tokenUsage,
     contextUsage,
     turns,
+    activeSubscriptionItems:
+      normalizedNext.activeSubscriptionItems ?? existing.activeSubscriptionItems,
+    activeCommandItems:
+      normalizedNext.activeCommandItems ?? existing.activeCommandItems,
   };
 }
 

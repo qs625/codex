@@ -149,6 +149,55 @@ test("mergeThreadSnapshots prefers newer usage snapshots when thread/read has th
   assert.equal(merged.contextUsage?.budgetUsedPercent, 24);
 });
 
+test("mergeThreadSnapshots preserves restored active subscription items when omitted", () => {
+  const restoredSchedule = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    status: "completed",
+    arguments: { label: "standup" },
+    output: { subscription_id: "sub-schedule" },
+  };
+  const restored = makeThread({
+    activeSubscriptionItems: [restoredSchedule],
+  });
+  const readThread = {
+    ...makeThread({ preview: "fresh preview" }),
+    activeSubscriptionItems: undefined,
+  };
+
+  const merged = mergeThreadSnapshots(restored, readThread);
+
+  assert.equal(merged.preview, "fresh preview");
+  assert.deepEqual(merged.activeSubscriptionItems, [restoredSchedule]);
+});
+
+test("mergeThreadSnapshots applies newer active subscription items when present", () => {
+  const restoredSchedule = {
+    type: "builtinToolCall",
+    id: "active-subscription:old-schedule",
+    tool: "schedule_subscribe",
+    status: "completed",
+    arguments: { label: "old" },
+    output: { subscription_id: "old-schedule" },
+  };
+  const updatedSchedule = {
+    type: "builtinToolCall",
+    id: "active-subscription:new-schedule",
+    tool: "schedule_subscribe",
+    status: "completed",
+    arguments: { label: "new" },
+    output: { subscription_id: "new-schedule" },
+  };
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ activeSubscriptionItems: [restoredSchedule] }),
+    makeThread({ activeSubscriptionItems: [updatedSchedule] }),
+  );
+
+  assert.deepEqual(merged.activeSubscriptionItems, [updatedSchedule]);
+});
+
 test("mergeThreadSnapshots preserves same-content items with different ids", () => {
   const turn = {
     id: "turn-1",

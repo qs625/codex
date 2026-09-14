@@ -19,6 +19,8 @@ use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionMeta;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadLifecycleActiveFlag;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnContextItem;
 use protocol::protocol::UserMessageEvent;
@@ -1205,6 +1207,13 @@ async fn list_threads_state_db_only_keeps_metadata_with_missing_rollout_path() -
         .upsert_thread(&metadata)
         .await
         .expect("state db upsert should succeed");
+    let lifecycle_status = ThreadLifecycleStatus::Active {
+        active_flags: vec![ThreadLifecycleActiveFlag::Running],
+    };
+    runtime
+        .set_thread_status(thread_id, Some(&lifecycle_status))
+        .await
+        .expect("thread status should persist");
 
     let page = RolloutRecorder::list_threads_from_state_db(
         Some(runtime.clone()),
@@ -1225,6 +1234,7 @@ async fn list_threads_state_db_only_keeps_metadata_with_missing_rollout_path() -
     assert_eq!(page.items[0].thread_id, Some(thread_id));
     assert_eq!(page.items[0].path, missing_path);
     assert_eq!(page.items[0].agent_path.as_deref(), Some("/my_codex"));
+    assert_eq!(page.items[0].thread_status, Some(lifecycle_status));
     let stored_path = runtime
         .find_rollout_path_by_id(thread_id, Some(false))
         .await
@@ -1781,6 +1791,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         agent_nickname: None,
         agent_role: None,
         agent_path: None,
+        thread_status: None,
         model_provider: None,
         cli_version: None,
         created_at: None,
@@ -1800,6 +1811,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         agent_nickname: Some("state-agent".to_string()),
         agent_role: Some("state-role".to_string()),
         agent_path: Some("/root/state-agent".to_string()),
+        thread_status: None,
         model_provider: Some("state-provider".to_string()),
         cli_version: Some("state-version".to_string()),
         created_at: Some("2025-01-03T16:00:00Z".to_string()),

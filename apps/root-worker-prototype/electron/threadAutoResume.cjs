@@ -242,7 +242,7 @@ function isRecoverableLifecycleStatus(status) {
   }
   return (
     status?.type === "final" &&
-    (status.result?.type === "interrupted" || status.result?.type === "shutdown")
+    status.result?.type === "interrupted"
   );
 }
 

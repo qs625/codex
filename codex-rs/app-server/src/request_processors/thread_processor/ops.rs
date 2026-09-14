@@ -2176,6 +2176,40 @@ mod tests {
     }
 
     #[test]
+    fn runtime_teardown_preserves_interrupted_when_no_active_runtime_fact_exists() {
+        let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+            Some(&AgentStatus::Interrupted),
+            ThreadLifecycleStatus::completed(None),
+            Some(ThreadRuntimeStatus::Complete),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_teardown_preserves_shutdown_as_non_recoverable_final_status() {
+        let lifecycle_status = runtime_teardown_thread_lifecycle_status(
+            Some(&AgentStatus::Shutdown),
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            Some(ThreadRuntimeStatus::Complete),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown,
+            }
+        );
+    }
+
+    #[test]
     fn runtime_teardown_complete_status_overrides_stale_active_watch_status() {
         let lifecycle_status = runtime_teardown_thread_lifecycle_status(
             Some(&AgentStatus::Completed(Some("done".to_string()))),

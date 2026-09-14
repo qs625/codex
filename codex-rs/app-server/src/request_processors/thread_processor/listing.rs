@@ -1,8 +1,8 @@
 use super::*;
 #[cfg(test)]
 use app_server_protocol::CommandExecutionStatus;
-#[cfg(test)]
 use app_server_protocol::DynamicToolCallStatus;
+use protocol::subscriptions::PersistedSubscription;
 
 impl ThreadRequestProcessor {
     pub(super) async fn thread_list_response_inner(
@@ -106,6 +106,8 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadLoadedListParams,
     ) -> Result<ThreadLoadedListResponse, JSONRPCErrorError> {
+        self.restore_legacy_active_subscription_threads().await?;
+
         let ThreadLoadedListParams { cursor, limit } = params;
         let mut data: Vec<String> = self
             .live_thread_inspection
@@ -147,6 +149,54 @@ impl ThreadRequestProcessor {
             data: page,
             next_cursor,
         })
+    }
+
+    async fn restore_legacy_active_subscription_threads(
+        &self,
+    ) -> Result<(), JSONRPCErrorError> {
+        let thread_ids = self
+            .thread_store
+            .list_thread_ids_with_active_subscriptions()
+            .await
+            .map_err(thread_store_list_error)?;
+
+        for thread_id in thread_ids {
+            if self
+                .live_thread_inspection
+                .is_live_thread_loaded(thread_id)
+                .await
+            {
+                continue;
+            }
+
+            let stored_thread = match self
+                .thread_store
+                .read_thread(StoreReadThreadParams {
+                    thread_id,
+                    include_archived: false,
+                    include_history: false,
+                })
+                .await
+            {
+                Ok(stored_thread) => stored_thread,
+                Err(ThreadStoreError::ThreadNotFound { .. }) => continue,
+                Err(ThreadStoreError::InvalidRequest { message })
+                    if message == format!("no rollout found for thread id {thread_id}") =>
+                {
+                    continue;
+                }
+                Err(err) => return Err(thread_store_list_error(err)),
+            };
+
+            if stored_thread.thread_status.is_some() {
+                continue;
+            }
+
+            self.ensure_persisted_native_thread_loaded(thread_id, /*parent_trace*/ None)
+                .await?;
+        }
+
+        Ok(())
     }
 
     pub(super) async fn thread_read_response_inner(
@@ -375,9 +425,52 @@ impl ThreadRequestProcessor {
         if include_turns {
             restore_persisted_display_turns(&mut thread, &persisted_turns);
             apply_runtime_activity_items_from_persisted_turns(&mut thread);
+            self.apply_persisted_subscription_snapshot_items(thread_id, &mut thread)
+                .await?;
             prune_turns_to_latest_compaction_boundary(&mut thread.turns);
         }
         Ok((thread, has_live_in_progress_turn))
+    }
+
+    async fn apply_persisted_subscription_snapshot_items(
+        &self,
+        thread_id: ThreadId,
+        thread: &mut Thread,
+    ) -> Result<(), ThreadReadViewError> {
+        if thread.active_subscription_items.is_some() {
+            return Ok(());
+        }
+
+        match self
+            .thread_store
+            .read_thread_subscriptions(thread_id, /*include_archived*/ true)
+            .await
+        {
+            Ok(Some(subscriptions)) => {
+                thread.active_subscription_items = Some(active_subscription_items_from_snapshot(
+                    subscriptions.as_slice(),
+                ));
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(ThreadStoreError::ThreadNotFound {
+                thread_id: missing_thread_id,
+            }) if missing_thread_id == thread_id => Ok(()),
+            Err(ThreadStoreError::InvalidRequest { message })
+                if message == format!("no rollout found for thread id {thread_id}") =>
+            {
+                Ok(())
+            }
+            Err(ThreadStoreError::InvalidRequest { message }) => {
+                Err(ThreadReadViewError::InvalidRequest(message))
+            }
+            Err(ThreadStoreError::Unsupported { operation }) => {
+                Err(ThreadReadViewError::Unsupported(operation))
+            }
+            Err(err) => Err(ThreadReadViewError::Internal(format!(
+                "failed to read thread subscriptions for {thread_id}: {err}"
+            ))),
+        }
     }
 
     pub(super) async fn apply_thread_read_store_fields(
@@ -747,6 +840,54 @@ fn is_active_subscriptions_turn(turn: &Turn) -> bool {
     turn.id == "active-subscriptions"
 }
 
+fn active_subscription_items_from_snapshot(
+    subscriptions: &[PersistedSubscription],
+) -> Vec<ThreadItem> {
+    subscriptions
+        .iter()
+        .filter_map(active_subscription_item_from_snapshot)
+        .collect()
+}
+
+fn active_subscription_item_from_snapshot(
+    subscription: &PersistedSubscription,
+) -> Option<ThreadItem> {
+    let PersistedSubscription::Schedule {
+        subscription_id,
+        schedule,
+        label,
+        message,
+    } = subscription
+    else {
+        return None;
+    };
+
+    let mut arguments = serde_json::json!({
+        "schedule": schedule,
+    });
+    if let Some(object) = arguments.as_object_mut() {
+        if let Some(label) = label {
+            object.insert("label".to_string(), serde_json::Value::String(label.clone()));
+        }
+        if let Some(message) = message {
+            object.insert(
+                "message".to_string(),
+                serde_json::Value::String(message.clone()),
+            );
+        }
+    }
+
+    Some(ThreadItem::BuiltinToolCall {
+        id: format!("active-subscription:{subscription_id}"),
+        tool: "schedule_subscribe".to_string(),
+        arguments,
+        status: DynamicToolCallStatus::Completed,
+        output: Some(serde_json::json!({
+            "subscription_id": subscription_id,
+        })),
+    })
+}
+
 fn is_active_commands_turn(turn: &Turn) -> bool {
     turn.id == "active-commands"
 }
@@ -1036,6 +1177,40 @@ mod restore_persisted_injected_context_turns_tests {
                 "sub-schedule",
                 "standup"
             )])
+        );
+    }
+
+    #[test]
+    fn active_subscription_items_from_snapshot_projects_schedule_subscribe_item() {
+        let subscriptions = vec![protocol::subscriptions::PersistedSubscription::Schedule {
+            subscription_id: "sub-schedule".to_string(),
+            schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("standup".to_string()),
+            message: Some("Run standup checks".to_string()),
+        }];
+
+        let items = active_subscription_items_from_snapshot(subscriptions.as_slice());
+
+        assert_eq!(
+            items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "active-subscription:sub-schedule".to_string(),
+                tool: "schedule_subscribe".to_string(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60_000,
+                    },
+                    "label": "standup",
+                    "message": "Run standup checks",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                })),
+            }]
         );
     }
 
