@@ -75,6 +75,36 @@ test("TerminalPanel converts LF-only output only for read-only command views", (
   assert.notEqual(convertIndex, -1);
 });
 
+test("TerminalPanel uses a light xterm surface theme", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const themeStart = source.indexOf("const TERMINAL_THEME = {");
+  const themeEnd = source.indexOf("};", themeStart);
+  const constructorIndex = source.indexOf("terminal = new Terminal({");
+  const appliedThemeIndex = source.indexOf("theme: TERMINAL_THEME", constructorIndex);
+  const themeSource = source.slice(themeStart, themeEnd);
+
+  assert.notEqual(themeStart, -1);
+  assert.notEqual(appliedThemeIndex, -1);
+  assert.match(themeSource, /background: "#fbfaf8"/);
+  assert.match(themeSource, /foreground: "#292524"/);
+  assert.doesNotMatch(themeSource, /#111827/);
+});
+
+test("TerminalPanel viewport chrome uses the light panel surface", () => {
+  const source = readFileSync(join(__dirname, "../styles.css"), "utf8");
+  const shellStart = source.indexOf(".terminal-viewport-shell {");
+  const emptyStart = source.indexOf(".terminal-empty {", shellStart);
+  const emptyButtonEnd = source.indexOf(".preview-editor-shell {", emptyStart);
+  const terminalViewportSource = source.slice(shellStart, emptyButtonEnd);
+
+  assert.notEqual(shellStart, -1);
+  assert.notEqual(emptyStart, -1);
+  assert.match(terminalViewportSource, /background: #fbfaf8/);
+  assert.match(terminalViewportSource, /background: #f5f3f0/);
+  assert.match(terminalViewportSource, /scrollbar-color: #d6d3d1 #fbfaf8/);
+  assert.doesNotMatch(terminalViewportSource, /#111827/);
+});
+
 test("TerminalPanel rebuilds xterm when fallback upgrades to live capabilities", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");

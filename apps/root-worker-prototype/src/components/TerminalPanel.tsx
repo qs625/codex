@@ -26,9 +26,33 @@ type TerminalSize = { rows: number; cols: number };
 /*
  * Design brief: a compact operational surface that extends the Browser panel's
  * scrollable tabs and warm-stone chrome. The emulator owns scrolling inside a
- * deep-charcoal viewport; teal marks live activity, amber marks focus, and red
- * marks failed/lost sessions. Narrow layouts keep controls terse and ellipsized.
+ * soft code viewport; teal marks live activity, amber marks focus, and red marks
+ * failed/lost sessions. Narrow layouts keep controls terse and ellipsized.
  */
+
+const TERMINAL_THEME = {
+  background: "#fbfaf8",
+  foreground: "#292524",
+  cursor: "#0f766e",
+  cursorAccent: "#fbfaf8",
+  selectionBackground: "#99f6e466",
+  black: "#292524",
+  red: "#dc2626",
+  green: "#15803d",
+  yellow: "#a16207",
+  blue: "#2563eb",
+  magenta: "#9333ea",
+  cyan: "#0f766e",
+  white: "#57534e",
+  brightBlack: "#78716c",
+  brightRed: "#b91c1c",
+  brightGreen: "#166534",
+  brightYellow: "#854d0e",
+  brightBlue: "#1d4ed8",
+  brightMagenta: "#7e22ce",
+  brightCyan: "#0e7490",
+  brightWhite: "#292524",
+};
 
 const EMPTY_STATE: TerminalPanelState = {
   activeTabId: null,
@@ -198,22 +222,7 @@ export function TerminalPanel({
           fontSize: displayPreferences.fontSize,
           lineHeight: displayPreferences.lineHeight,
           scrollback: 10_000,
-          theme: {
-            background: "#111827",
-            foreground: "#e7e5e4",
-            cursor: "#f59e0b",
-            cursorAccent: "#111827",
-            selectionBackground: "#0f766e66",
-            black: "#1c1917",
-            red: "#f87171",
-            green: "#4ade80",
-            yellow: "#fbbf24",
-            blue: "#60a5fa",
-            magenta: "#c084fc",
-            cyan: "#2dd4bf",
-            white: "#e7e5e4",
-            brightBlack: "#78716c",
-          },
+          theme: TERMINAL_THEME,
         });
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
