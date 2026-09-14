@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  autoResumePromptForOccurrence,
   autoResumeFingerprint,
   autoResumeOccurrenceId,
   createThreadAutoResumeCoordinator,
@@ -208,7 +209,7 @@ test("restart recovery fanout resumes once and submits recovery input", async ()
       "gpt",
       "openai",
       "medium",
-      RESTART_RECOVERY_PROMPTS.projectRootFanout,
+      autoResumePromptForOccurrence("runtime-restart:restart-1"),
     ],
   ]);
   assert.equal(
@@ -220,6 +221,54 @@ test("restart recovery fanout resumes once and submits recovery input", async ()
     ),
     true,
   );
+});
+
+test("restart-scoped auto-resume skips when history already has the occurrence prompt", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async () => {
+        throw new Error("state read unavailable");
+      },
+      mark: async () => {
+        throw new Error("state write unavailable");
+      },
+    },
+    readThread: async (threadId) => ({
+      thread: projectRootThread({
+        id: threadId,
+        turns: [
+          {
+            items: [
+              {
+                type: "userMessage",
+                content: [
+                  {
+                    type: "text",
+                    text: autoResumePromptForOccurrence(
+                      "runtime-restart:restart-1",
+                    ),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+    subscribeThread: async () => calls.push("subscribe"),
+    sendResumeInput: async () => calls.push("send"),
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread({ id: "thread-a" })],
+    expectedRestart: runtimeRestartRecovery(),
+  });
+
+  assert.deepEqual(result.resumedThreadIds, []);
+  assert.deepEqual(result.skippedThreadIds, ["thread-a"]);
+  assert.deepEqual(calls, []);
 });
 
 test("restart-scoped auto-resume markers allow a later restart with unchanged updatedAt", async () => {
@@ -290,6 +339,103 @@ test("restart-scoped auto-resume markers allow a later restart with unchanged up
     marked.has("restart-v2:runtime-restart:restart-b:thread-a"),
     true,
   );
+});
+
+test("fallback recovery skips a thread that already has any restart fanout prompt", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async () => false,
+      mark: async () => {},
+    },
+    readThread: async (threadId) => ({
+      thread: projectRootThread({
+        id: threadId,
+        turns: [
+          {
+            items: [
+              {
+                type: "userMessage",
+                content: [
+                  {
+                    type: "text",
+                    text: autoResumePromptForOccurrence(
+                      "runtime-restart:restart-1",
+                    ),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+    subscribeThread: async () => calls.push("subscribe"),
+    sendResumeInput: async () => calls.push("send"),
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    hasDurableRestartRecovery: true,
+    recoveryOccurrenceId: "payload:restart-1",
+    threads: [projectRootThread()],
+    expectedRestart: { expectedThreadIds: [] },
+  });
+
+  assert.deepEqual(result.resumedThreadIds, []);
+  assert.deepEqual(result.skippedThreadIds, ["thread-1"]);
+  assert.deepEqual(calls, []);
+});
+
+test("expected restart with a different occurrence still fans out once", async () => {
+  const calls = [];
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async () => false,
+      mark: async () => {},
+    },
+    readThread: async (threadId) => ({
+      thread: projectRootThread({
+        id: threadId,
+        turns: [
+          {
+            items: [
+              {
+                type: "userMessage",
+                content: [
+                  {
+                    type: "text",
+                    text: autoResumePromptForOccurrence(
+                      "runtime-restart:restart-a",
+                    ),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+    subscribeThread: async (threadId) => calls.push(["subscribe", threadId]),
+    sendResumeInput: async (thread, text) =>
+      calls.push(["send", thread.id, text]),
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [projectRootThread()],
+    expectedRestart: runtimeRestartRecovery(["system-self"], "restart-b"),
+  });
+
+  assert.deepEqual(result.resumedThreadIds, ["thread-1"]);
+  assert.deepEqual(calls, [
+    ["subscribe", "thread-1"],
+    [
+      "send",
+      "thread-1",
+      autoResumePromptForOccurrence("runtime-restart:restart-b"),
+    ],
+  ]);
 });
 
 test("cold startup without a durable restart fact does not fan out", async () => {
