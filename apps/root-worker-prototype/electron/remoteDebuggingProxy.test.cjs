@@ -170,6 +170,47 @@ test("remote debugging proxy maps Target.createTarget to Browser panel creation"
   assert.deepEqual(backendMessages, []);
 });
 
+test("remote debugging proxy strips unsupported websocket extensions", async (t) => {
+  let backendUpgradeHeaders = null;
+  const backend = await startFakeBackend({
+    upgradeHandler(request, socket) {
+      backendUpgradeHeaders = request.headers;
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Extensions: permessage-deflate\r\n" +
+          "\r\n",
+      );
+    },
+  });
+  t.after(() => backend.close());
+
+  const proxyPort = await getFreePort();
+  const proxy = startRemoteDebuggingProxy({
+    address: "127.0.0.1",
+    port: String(proxyPort),
+    backendPort: String(backend.port),
+    createTarget: async () => ({ targetId: "unused" }),
+    logger: quietLogger(),
+  });
+  t.after(() => proxy.close());
+  await waitForListening(proxy.server);
+
+  const { socket, handshake } = await connectWebSocket(
+    proxyPort,
+    "/devtools/page/page-target",
+    {
+      extensions: "permessage-deflate; client_max_window_bits",
+      includeHandshake: true,
+    },
+  );
+  t.after(() => socket.destroy());
+
+  assert.equal(backendUpgradeHeaders["sec-websocket-extensions"], undefined);
+  assert.doesNotMatch(handshake, /Sec-WebSocket-Extensions/i);
+});
+
 test("remote debugging proxy transparently forwards page target websocket messages", async (t) => {
   const backend = await startFakeBackend({
     upgradeHandler(_request, socket) {
@@ -361,11 +402,14 @@ function fetchJson(url) {
   });
 }
 
-function connectWebSocket(port, path) {
+function connectWebSocket(port, path, options = {}) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, "127.0.0.1");
     let buffer = Buffer.alloc(0);
     socket.on("connect", () => {
+      const extensionHeader = options.extensions
+        ? `Sec-WebSocket-Extensions: ${options.extensions}\r\n`
+        : "";
       socket.write(
         `GET ${path} HTTP/1.1\r\n` +
           `Host: 127.0.0.1:${port}\r\n` +
@@ -373,6 +417,7 @@ function connectWebSocket(port, path) {
           "Connection: Upgrade\r\n" +
           "Sec-WebSocket-Key: test-key\r\n" +
           "Sec-WebSocket-Version: 13\r\n" +
+          extensionHeader +
           "\r\n",
       );
     });
@@ -383,7 +428,8 @@ function connectWebSocket(port, path) {
         return;
       }
       socket.removeListener("data", onData);
-      resolve(socket);
+      const handshake = buffer.subarray(0, headerEnd + 4).toString("latin1");
+      resolve(options.includeHandshake ? { socket, handshake } : socket);
     });
     socket.on("error", reject);
   });

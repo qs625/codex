@@ -14,6 +14,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+const WEBSOCKET_EXTENSION_HEADER = "sec-websocket-extensions";
 
 function startRemoteDebuggingProxy({
   address,
@@ -194,7 +195,9 @@ function proxyWebSocketUpgrade({
       if (headerEnd === -1) {
         return;
       }
-      const header = handshake.subarray(0, headerEnd + 4);
+      const header = rewriteWebSocketUpgradeResponse(
+        handshake.subarray(0, headerEnd + 4),
+      );
       const rest = handshake.subarray(headerEnd + 4);
       socket.write(header);
       handshakeComplete = true;
@@ -413,6 +416,9 @@ function buildBackendUpgradeRequest(request, address, backendPort) {
     if (name.toLowerCase() === "host") {
       continue;
     }
+    if (name.toLowerCase() === WEBSOCKET_EXTENSION_HEADER) {
+      continue;
+    }
     if (Array.isArray(value)) {
       for (const item of value) {
         lines.push(`${name}: ${item}`);
@@ -422,6 +428,21 @@ function buildBackendUpgradeRequest(request, address, backendPort) {
     }
   }
   return `${lines.join("\r\n")}\r\n\r\n`;
+}
+
+function rewriteWebSocketUpgradeResponse(header) {
+  const lines = header.toString("latin1").split("\r\n");
+  const filtered = lines.filter((line) => {
+    const separator = line.indexOf(":");
+    if (separator === -1) {
+      return true;
+    }
+    return (
+      line.slice(0, separator).trim().toLowerCase() !==
+      WEBSOCKET_EXTENSION_HEADER
+    );
+  });
+  return Buffer.from(filtered.join("\r\n"), "latin1");
 }
 
 function createFrameParser({ onFrame }) {
