@@ -147,6 +147,7 @@ test("payload recovery sends formatter output through the exact /self turn path"
         evidence: true,
         payloadEvidence: true,
         recovered: true,
+        recoveryOccurrenceId: "runtime-1:release-current",
       });
       assert.equal(requests.length, 1);
       assert.match(requests[0].payload.text, /signal SIGTERM/);
@@ -185,6 +186,7 @@ test("payload recovery retains evidence and releases its claim when /self input 
         evidence: true,
         payloadEvidence: true,
         recovered: true,
+        recoveryOccurrenceId: "runtime-1:release-current",
       },
     );
     assert.equal(sent, 1);
@@ -221,6 +223,7 @@ test("payload recovery does not send twice when evidence cleanup fails", async (
       evidence: true,
       payloadEvidence: true,
       recovered: true,
+      recoveryOccurrenceId: "runtime-1:release-current",
     });
     assert.equal(sent.length, 1);
     assert.equal(await fileExists(evidencePath), false);
@@ -298,7 +301,9 @@ test("startup records generic recovery before sending a payload /self prompt", a
         evidence: true,
         payloadEvidence: true,
         recovered: true,
+        recoveryOccurrenceId: "runtime-1:release-current",
       },
+      recoveryOccurrenceId: "runtime-1:release-current",
     });
 
     const genericPrompts = [];
@@ -391,6 +396,7 @@ test("startup has zero recovery sends when no evidence exists", async () => {
         payloadEvidence: false,
         recovered: false,
       },
+      recoveryOccurrenceId: null,
     });
     const coordinator = createThreadAutoResumeCoordinator({
       readThread: async () => calls.push("read-thread"),
@@ -435,10 +441,11 @@ test("startup still sends a payload /self prompt when generic recovery is comple
     "payload-self",
     "payload-error",
   ]);
-    assert.deepEqual(result, {
-      hasDurableRestartRecovery: true,
-      payloadRecovery: null,
+  assert.deepEqual(result, {
+    hasDurableRestartRecovery: true,
+    payloadRecovery: null,
     recorded: { recorded: true },
+    recoveryOccurrenceId: null,
   });
 });
 
@@ -478,6 +485,7 @@ test("concurrent payload recovery leaves an in-flight claim alone", async () => 
       evidence: true,
       payloadEvidence: true,
       recovered: false,
+      recoveryOccurrenceId: "runtime-1:release-current",
     });
     assert.equal(await fileExists(evidencePath), true);
     releaseSend();

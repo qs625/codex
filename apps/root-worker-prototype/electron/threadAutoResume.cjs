@@ -19,92 +19,100 @@ function createThreadAutoResumeCoordinator({
   return {
     async runAfterRuntimeRestartRecovery({
       hasDurableRestartRecovery = false,
+      recoveryOccurrenceId = null,
       threads = [],
       expectedRestart,
     } = {}) {
+      const occurrenceId = autoResumeOccurrenceId({
+        expectedRestart,
+        hasDurableRestartRecovery,
+        recoveryOccurrenceId,
+      });
       if (
         !hasDurableRuntimeRestartRecovery({
           expectedRestart,
           hasDurableRestartRecovery,
+          recoveryOccurrenceId: occurrenceId,
         })
       ) {
         return emptyAutoResumeResult();
       }
-      return run(threads);
+      return run(threads, occurrenceId);
     },
   };
 
-  async function run(threads = []) {
-      const resumedThreadIds = [];
-      const skippedThreadIds = [];
-      const failedThreadIds = [];
-      const errors = [];
+  async function run(threads = [], occurrenceId = null) {
+    const resumedThreadIds = [];
+    const skippedThreadIds = [];
+    const failedThreadIds = [];
+    const errors = [];
 
-      for (const thread of pickAutoResumeCandidates(threads)) {
-        const key = autoResumeFingerprint(thread);
-        if (
-          !key ||
-          inFlightKeys.has(key) ||
-          completedKeys.has(key) ||
-          (await hasCompletedAutoResume(stateStore, key, logger))
-        ) {
+    for (const thread of pickAutoResumeCandidates(threads)) {
+      const key = autoResumeFingerprint(thread, occurrenceId);
+      if (
+        !key ||
+        inFlightKeys.has(key) ||
+        completedKeys.has(key) ||
+        (await hasCompletedAutoResume(stateStore, key, logger))
+      ) {
+        skippedThreadIds.push(thread.id);
+        continue;
+      }
+
+      inFlightKeys.add(key);
+      try {
+        const readResult = await readThread(thread.id, true);
+        const restoredThread = readResult?.thread ?? thread;
+        if (!isAutoResumeEligibleThread(restoredThread)) {
+          skippedThreadIds.push(thread.id);
+          continue;
+        }
+        if (!occurrenceId && threadHasAutoResumePrompt(restoredThread)) {
+          completedKeys.add(key);
+          await markCompletedAutoResume(stateStore, key, logger);
           skippedThreadIds.push(thread.id);
           continue;
         }
 
-        inFlightKeys.add(key);
-        try {
-          const readResult = await readThread(thread.id, true);
-          const restoredThread = readResult?.thread ?? thread;
-          if (!isAutoResumeEligibleThread(restoredThread)) {
-            skippedThreadIds.push(thread.id);
-            continue;
-          }
-          if (threadHasAutoResumePrompt(restoredThread)) {
-            completedKeys.add(key);
-            await markCompletedAutoResume(stateStore, key, logger);
-            skippedThreadIds.push(thread.id);
-            continue;
-          }
-
-          await subscribeThread(thread.id);
-          await sendResumeInput(
-            restoredThread,
-            RESTART_RECOVERY_PROMPTS.projectRootFanout,
-          );
-          completedKeys.add(key);
-          await markCompletedAutoResume(stateStore, key, logger);
-          resumedThreadIds.push(thread.id);
-        } catch (error) {
-          failedThreadIds.push(thread.id);
-          const message =
-            error instanceof Error ? error.message : String(error);
-          errors.push({ threadId: thread.id, message });
-          logger.warn?.(
-            "[prototype] failed to fan out restart recovery to project root",
-            JSON.stringify({ threadId: thread.id, message }),
-          );
-        } finally {
-          inFlightKeys.delete(key);
-        }
+        await subscribeThread(thread.id);
+        await sendResumeInput(
+          restoredThread,
+          RESTART_RECOVERY_PROMPTS.projectRootFanout,
+        );
+        completedKeys.add(key);
+        await markCompletedAutoResume(stateStore, key, logger);
+        resumedThreadIds.push(thread.id);
+      } catch (error) {
+        failedThreadIds.push(thread.id);
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push({ threadId: thread.id, message });
+        logger.warn?.(
+          "[prototype] failed to fan out restart recovery to project root",
+          JSON.stringify({ threadId: thread.id, message }),
+        );
+      } finally {
+        inFlightKeys.delete(key);
       }
+    }
 
-      return {
-        resumedThreadIds,
-        skippedThreadIds,
-        failedThreadIds,
-        errors,
-        focusThreadId: resumedThreadIds[0] ?? null,
-      };
+    return {
+      resumedThreadIds,
+      skippedThreadIds,
+      failedThreadIds,
+      errors,
+      focusThreadId: resumedThreadIds[0] ?? null,
+    };
   }
 }
 
 function hasDurableRuntimeRestartRecovery({
   expectedRestart,
   hasDurableRestartRecovery,
+  recoveryOccurrenceId = null,
 }) {
   return (
     hasDurableRestartRecovery === true ||
+    Boolean(recoveryOccurrenceId) ||
     (Array.isArray(expectedRestart?.expectedThreadIds) &&
       expectedRestart.expectedThreadIds.length > 0)
   );
@@ -159,11 +167,40 @@ function isAutoResumeEligibleThread(thread) {
   return true;
 }
 
-function autoResumeFingerprint(thread) {
+function autoResumeFingerprint(thread, occurrenceId = null) {
   if (!thread?.id) {
     return null;
   }
+  const occurrence = normalizeAutoResumeOccurrenceId(occurrenceId);
+  if (occurrence) {
+    return `restart-v2:${occurrence}:${thread.id}`;
+  }
   return `${thread.id}:${thread.updatedAt ?? "unknown"}`;
+}
+
+function autoResumeOccurrenceId({
+  expectedRestart,
+  hasDurableRestartRecovery,
+  recoveryOccurrenceId,
+} = {}) {
+  const explicit = normalizeAutoResumeOccurrenceId(recoveryOccurrenceId);
+  if (explicit) {
+    return explicit;
+  }
+  const expected = normalizeAutoResumeOccurrenceId(
+    expectedRestart?.recoveryOccurrenceId,
+  );
+  if (expected) {
+    return expected;
+  }
+  if (hasDurableRestartRecovery === true) {
+    return normalizeAutoResumeOccurrenceId(expectedRestart?.payloadRecoveryId);
+  }
+  return null;
+}
+
+function normalizeAutoResumeOccurrenceId(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function isInterruptedLifecycleStatus(status) {
@@ -283,6 +320,7 @@ function createJsonAutoResumeStateStore(filePath, fs) {
 
 module.exports = {
   autoResumeFingerprint,
+  autoResumeOccurrenceId,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
   hasDurableRuntimeRestartRecovery,

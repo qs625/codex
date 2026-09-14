@@ -609,7 +609,9 @@ export type BootstrapResponse = {
   expectedRestart?: {
     recoveredThreadIds: string[];
     failedThreadIds: string[];
+    expectedRequestIds: string[];
     expectedThreadIds: string[];
+    recoveryOccurrenceId: string | null;
     focusThreadId: string | null;
   };
   appServer: {

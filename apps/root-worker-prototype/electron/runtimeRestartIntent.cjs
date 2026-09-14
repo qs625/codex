@@ -536,11 +536,30 @@ async function recoverPendingRuntimeRestarts({
   return {
     recoveredThreadIds,
     failedThreadIds,
+    expectedRequestIds: restartRecoveryRequestIds(expectedRecords),
     expectedThreadIds: [
       ...new Set(expectedRecords.map((record) => record.requestedByThreadId)),
     ],
+    recoveryOccurrenceId: restartRecoveryOccurrenceId(expectedRecords),
     focusThreadId: recoveredThreadIds[0] ?? null,
   };
+}
+
+function restartRecoveryRequestIds(records) {
+  return [
+    ...new Set(
+      records
+        .map((record) => normalizeString(record.coalescedInto) ?? record.requestId)
+        .filter(Boolean),
+    ),
+  ].sort();
+}
+
+function restartRecoveryOccurrenceId(records) {
+  const requestIds = restartRecoveryRequestIds(records);
+  return requestIds.length > 0
+    ? `runtime-restart:${requestIds.join(",")}`
+    : null;
 }
 
 function recoverRuntimeRestartAfterThreadTerminal(controller, notification) {
@@ -559,7 +578,9 @@ function emptyRecoveryResult() {
   return {
     recoveredThreadIds: [],
     failedThreadIds: [],
+    expectedRequestIds: [],
     expectedThreadIds: [],
+    recoveryOccurrenceId: null,
     focusThreadId: null,
   };
 }
