@@ -682,7 +682,7 @@ pub(crate) fn thread_from_stored_thread(
         lifecycle_status: thread
             .thread_status
             .clone()
-            .unwrap_or_else(|| ThreadLifecycleStatus::completed(None)),
+            .unwrap_or(ThreadLifecycleStatus::NotLoaded),
         path,
         cwd,
         cli_version: thread.cli_version,
