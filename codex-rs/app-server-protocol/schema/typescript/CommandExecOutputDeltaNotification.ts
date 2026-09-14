@@ -6,8 +6,9 @@ import type { CommandExecOutputStream } from "./CommandExecOutputStream";
 /**
  * Base64-encoded output chunk emitted for a streaming `command/exec` request.
  *
- * These notifications are connection-scoped. If the originating connection
- * closes, the server terminates the process.
+ * These notifications are delivered to the session's currently attached
+ * connection. PTY sessions can rebind delivery through `terminal/session/list`
+ * after reconnect; other streaming commands remain connection-scoped.
  */
 export type CommandExecOutputDeltaNotification = {
 /**
@@ -15,6 +16,14 @@ export type CommandExecOutputDeltaNotification = {
  * `command/exec` request.
  */
 processId: string,
+/**
+ * Runtime generation for this process id.
+ */
+generation: string,
+/**
+ * Monotonic byte-chunk sequence within this generation.
+ */
+sequence: bigint,
 /**
  * Output stream for this chunk.
  */

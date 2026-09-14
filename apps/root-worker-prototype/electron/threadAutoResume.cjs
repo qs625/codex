@@ -150,7 +150,7 @@ function pickAutoResumeCandidates(threads = []) {
 }
 
 function isAutoResumeEligibleThread(thread) {
-  if (!thread?.id || !isActiveLifecycleStatus(thread.lifecycleStatus)) {
+  if (!thread?.id || !isRecoverableLifecycleStatus(thread.lifecycleStatus)) {
     return false;
   }
   if (!isProjectRootThread(thread)) {
@@ -197,6 +197,16 @@ function isCompletedFinalLifecycleStatus(status) {
 
 function isActiveLifecycleStatus(status) {
   return status?.type === "active";
+}
+
+function isRecoverableLifecycleStatus(status) {
+  if (status?.type === "active" || status?.type === "waiting") {
+    return true;
+  }
+  return (
+    status?.type === "final" &&
+    (status.result?.type === "interrupted" || status.result?.type === "shutdown")
+  );
 }
 
 function isSubAgentSource(source) {
@@ -279,6 +289,7 @@ module.exports = {
   isCompletedFinalLifecycleStatus,
   isActiveLifecycleStatus,
   isAutoResumeEligibleThread,
+  isRecoverableLifecycleStatus,
   isInterruptedLifecycleStatus,
   isProjectRootThread,
   pickAutoResumeCandidates,

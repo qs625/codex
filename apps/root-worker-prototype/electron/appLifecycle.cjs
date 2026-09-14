@@ -213,6 +213,7 @@ function createInstalledArtifactUpdateLifecycleAdapter({
   runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
+  gracefulShutdownAppServer,
   logger = console,
 } = {}) {
   let inFlight = null;
@@ -231,6 +232,7 @@ function createInstalledArtifactUpdateLifecycleAdapter({
       inFlight = resolveAndRunInstalledArtifactUpdate({
         appExit,
         cleanupPreparedArtifact,
+        gracefulShutdownAppServer,
         resolvePlan,
         runtimeLauncher,
         updateArtifacts,
@@ -257,6 +259,7 @@ async function resolveAndRunInstalledArtifactUpdate({
   runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
+  gracefulShutdownAppServer,
   logger,
   reason,
   requestId,
@@ -303,6 +306,7 @@ async function resolveAndRunInstalledArtifactUpdate({
     reason,
     requestId,
     markExpectedRestartHandoffReady,
+    gracefulShutdownAppServer,
   });
 }
 
@@ -313,6 +317,7 @@ async function runInstalledArtifactUpdate({
   runtimeLauncher,
   updateArtifacts,
   broadcastStatus,
+  gracefulShutdownAppServer,
   logger,
   reason,
   requestId,
@@ -373,6 +378,26 @@ async function runInstalledArtifactUpdate({
     });
     if (typeof appExit !== "function") {
       throw new Error("Application exit is unavailable after Runtime Capsule selection");
+    }
+    if (typeof gracefulShutdownAppServer === "function") {
+      broadcastStatus?.({
+        lifecycle: {
+          type: "installedArtifactUpdate",
+          phase: "shuttingDownAppServer",
+          activationId: update.activationId,
+          releaseId: update.releaseId,
+          ...requestIdFields(requestId),
+          reason,
+        },
+      });
+      const shutdown = await gracefulShutdownAppServer(
+        reason ?? "Runtime Capsule switch",
+      );
+      if (shutdown && typeof shutdown === "object" && shutdown.ok === false) {
+        throw new Error(
+          shutdown.reason ?? "app-server graceful shutdown did not complete",
+        );
+      }
     }
     if (typeof markExpectedRestartHandoffReady === "function") {
       await markExpectedRestartHandoffReady();

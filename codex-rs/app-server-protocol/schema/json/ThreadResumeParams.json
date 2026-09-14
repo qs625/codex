@@ -660,6 +660,75 @@
         }
       ]
     },
+    "ModelContextQuarantineReference": {
+      "oneOf": [
+        {
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/ModelInputItemKind"
+            },
+            "reference_type": {
+              "enum": [
+                "tool_transaction"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "call_id",
+            "kind",
+            "reference_type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "call_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/ModelInputItemKind"
+            },
+            "reference_type": {
+              "enum": [
+                "model_item"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "fingerprint",
+            "kind",
+            "reference_type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelInputItemKind": {
+      "enum": [
+        "function_call",
+        "tool_search_call",
+        "custom_tool_call",
+        "local_shell_call"
+      ],
+      "type": "string"
+    },
     "Personality": {
       "enum": [
         "none",
@@ -1055,6 +1124,43 @@
             "type"
           ],
           "title": "ThreadGoalUpdateResponseItem",
+          "type": "object"
+        },
+        {
+          "description": "Durable audit fact that excludes one untrusted historical model item or tool transaction from future provider input while preserving the original rollout items.",
+          "properties": {
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "error_param": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/definitions/ModelContextQuarantineReference"
+            },
+            "type": {
+              "enum": [
+                "model_context_quarantine"
+              ],
+              "title": "ModelContextQuarantineResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "target",
+            "type"
+          ],
+          "title": "ModelContextQuarantineResponseItem",
           "type": "object"
         },
         {

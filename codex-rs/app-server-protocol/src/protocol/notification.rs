@@ -78,6 +78,24 @@ pub struct ClientLifecycleRegisterResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ClientLifecycleShutdownParams {
+    /// Optional human-readable reason supplied by the trusted Electron Host.
+    pub reason: Option<String>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ClientLifecycleShutdownResponse {
+    pub shutdown: bool,
+    pub reason: Option<String>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ErrorNotification {
     pub error: TurnError,
     // Set to true if the error is transient and the app-server process will automatically retry.

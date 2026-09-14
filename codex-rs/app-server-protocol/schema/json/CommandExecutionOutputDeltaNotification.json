@@ -4,8 +4,25 @@
     "delta": {
       "type": "string"
     },
+    "deltaBase64": {
+      "type": "string"
+    },
     "itemId": {
       "type": "string"
+    },
+    "processId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sequence": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
     },
     "threadId": {
       "type": "string"
@@ -16,6 +33,7 @@
   },
   "required": [
     "delta",
+    "deltaBase64",
     "itemId",
     "threadId",
     "turnId"

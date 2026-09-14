@@ -52,6 +52,7 @@ use app_server_protocol::ChatgptAuthTokensRefreshParams;
 use app_server_protocol::ChatgptAuthTokensRefreshReason;
 use app_server_protocol::ChatgptAuthTokensRefreshResponse;
 use app_server_protocol::ClientLifecycleRegisterResponse;
+use app_server_protocol::ClientLifecycleShutdownResponse;
 use app_server_protocol::ClientNotification;
 use app_server_protocol::ClientRequest;
 use app_server_protocol::ClientResponsePayload;
@@ -1146,6 +1147,26 @@ impl MessageProcessor {
                             .into(),
                         )),
                     }
+                }
+            }
+            ClientRequest::ClientLifecycleShutdown { params, .. } => {
+                if self.thread_state_manager.host_lifecycle_connection().await
+                    != Some(connection_id)
+                {
+                    Err(invalid_request(
+                        "client/lifecycle/shutdown requires the registered Electron Host connection",
+                    ))
+                } else {
+                    self.clear_all_thread_listeners().await;
+                    self.drain_background_tasks().await;
+                    self.shutdown_threads().await;
+                    Ok(Some(
+                        ClientLifecycleShutdownResponse {
+                            shutdown: true,
+                            reason: params.reason,
+                        }
+                        .into(),
+                    ))
                 }
             }
             ClientRequest::ConfigRead { params, .. } => self

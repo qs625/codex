@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "TerminalSessionOrigin": {
+      "enum": [
+        "user",
+        "model"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "commandItemId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deltaBase64": {
+      "type": "string"
+    },
+    "generation": {
+      "type": "string"
+    },
+    "origin": {
+      "$ref": "#/definitions/TerminalSessionOrigin"
+    },
+    "processId": {
+      "type": "string"
+    },
+    "resumeToken": {
+      "description": "Server-generated capability for a user terminal reattachment.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "deltaBase64",
+    "generation",
+    "origin",
+    "processId",
+    "sessionId"
+  ],
+  "title": "TerminalSessionWriteParams",
+  "type": "object"
+}

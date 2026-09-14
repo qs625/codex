@@ -38,6 +38,9 @@ test("complete candidate selection exits with the capsule switch code", async ()
         manifest: { target: { os: "darwin", arch: "arm64" } },
       };
     },
+    async gracefulShutdownAppServer(reason) {
+      events.push({ type: "shutdown", reason });
+    },
     broadcastStatus(status) {
       events.push({ type: "status", status });
     },
@@ -58,7 +61,16 @@ test("complete candidate selection exits with the capsule switch code", async ()
   assert.deepEqual(exits, [CAPSULE_SWITCH_EXIT_CODE]);
   assert.deepEqual(
     events.map((event) => event.type),
-    ["status", "select", "status", "handoff-ready", "exit", "status"],
+    [
+      "status",
+      "select",
+      "status",
+      "status",
+      "shutdown",
+      "handoff-ready",
+      "exit",
+      "status",
+    ],
   );
   assert.deepEqual(events[0], {
     type: "status",
@@ -92,6 +104,94 @@ test("complete candidate selection exits with the capsule switch code", async ()
       },
     },
   });
+  assert.equal(events[3].status.lifecycle.phase, "shuttingDownAppServer");
+  assert.deepEqual(events[4], { type: "shutdown", reason: "update" });
+});
+
+test("candidate selection fails before handoff when app-server graceful shutdown fails", async () => {
+  let handoffMarkers = 0;
+  let exits = 0;
+  const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
+    appExit() {
+      exits += 1;
+    },
+    async resolvePlan() {
+      return {};
+    },
+    runtimeLauncher: {
+      supported: true,
+      async selectCandidate(request) {
+        return {
+          activationId: request.activationId,
+          releaseId: "release-1",
+        };
+      },
+    },
+    async updateArtifacts() {
+      return {
+        ok: true,
+        activationId: "candidate-1",
+        releaseId: "release-1",
+      };
+    },
+    async gracefulShutdownAppServer() {
+      throw new Error("shutdown timed out");
+    },
+  });
+
+  const result = await lifecycle.requestUpdateAndRelaunch("update", null, {
+    async markExpectedRestartHandoffReady() {
+      handoffMarkers += 1;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /shutdown timed out/);
+  assert.equal(handoffMarkers, 0);
+  assert.equal(exits, 0);
+});
+
+test("candidate selection fails before handoff when app-server graceful shutdown returns not ok", async () => {
+  let handoffMarkers = 0;
+  let exits = 0;
+  const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
+    appExit() {
+      exits += 1;
+    },
+    async resolvePlan() {
+      return {};
+    },
+    runtimeLauncher: {
+      supported: true,
+      async selectCandidate(request) {
+        return {
+          activationId: request.activationId,
+          releaseId: "release-1",
+        };
+      },
+    },
+    async updateArtifacts() {
+      return {
+        ok: true,
+        activationId: "candidate-1",
+        releaseId: "release-1",
+      };
+    },
+    async gracefulShutdownAppServer() {
+      return { ok: false, reason: "shutdown rejected" };
+    },
+  });
+
+  const result = await lifecycle.requestUpdateAndRelaunch("update", null, {
+    async markExpectedRestartHandoffReady() {
+      handoffMarkers += 1;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /shutdown rejected/);
+  assert.equal(handoffMarkers, 0);
+  assert.equal(exits, 0);
 });
 
 test("selection failure removes only the unselected incoming candidate", async () => {

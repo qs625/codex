@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "CommandExecTerminalSize": {
+      "description": "PTY size in character cells for `command/exec` PTY sessions.",
+      "properties": {
+        "cols": {
+          "description": "Terminal width in character cells.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "rows": {
+          "description": "Terminal height in character cells.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cols",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "TerminalSessionDescriptor": {
+      "properties": {
+        "canResize": {
+          "type": "boolean"
+        },
+        "canTerminate": {
+          "type": "boolean"
+        },
+        "canWrite": {
+          "type": "boolean"
+        },
+        "commandItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/definitions/TerminalSessionOrigin"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "replayBase64": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "replayThroughSequence": {
+          "description": "Sequence of the newest chunk included in `replayBase64`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "replayTruncated": {
+          "type": "boolean"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommandExecTerminalSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current PTY size in character cells. Clients use this to replay stored terminal bytes with the same width that produced them before resizing to the visible viewport."
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canResize",
+        "canTerminate",
+        "canWrite",
+        "cwd",
+        "generation",
+        "origin",
+        "processId",
+        "replayThroughSequence",
+        "replayTruncated",
+        "sessionId",
+        "title"
+      ],
+      "type": "object"
+    },
+    "TerminalSessionOrigin": {
+      "enum": [
+        "user",
+        "model"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "data": {
+      "items": {
+        "$ref": "#/definitions/TerminalSessionDescriptor"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "data"
+  ],
+  "title": "TerminalSessionListResponse",
+  "type": "object"
+}

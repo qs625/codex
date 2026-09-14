@@ -32,7 +32,7 @@ function runtimeRestartRecovery(expectedThreadIds = ["system-self"]) {
   return { expectedThreadIds };
 }
 
-test("auto-resume selects active project roots and excludes terminal/waiting/children", () => {
+test("auto-resume selects recoverable project roots and excludes completed/children", () => {
   assert.equal(isAutoResumeEligibleThread(projectRootThread()), true);
   assert.equal(
     isAutoResumeEligibleThread(
@@ -50,7 +50,7 @@ test("auto-resume selects active project roots and excludes terminal/waiting/chi
         lifecycleStatus: { type: "final", result: { type: "interrupted" } },
       }),
     ),
-    false,
+    true,
   );
   assert.equal(
     isAutoResumeEligibleThread(
@@ -59,7 +59,16 @@ test("auto-resume selects active project roots and excludes terminal/waiting/chi
         lifecycleStatus: { type: "waiting", reason: "command" },
       }),
     ),
-    false,
+    true,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "shutdown",
+        lifecycleStatus: { type: "final", result: { type: "shutdown" } },
+      }),
+    ),
+    true,
   );
   assert.equal(
     isAutoResumeEligibleThread(
@@ -309,9 +318,9 @@ test("durable restart fans out exactly once to every eligible project root inclu
         expectedRestart: runtimeRestartRecovery(),
       })
     ).resumedThreadIds,
-    ["system-self", "running"],
+    ["system-self", "running", "waiting"],
   );
-  assert.deepEqual(sent, ["system-self", "running"]);
+  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
   assert.deepEqual(
     (
       await coordinator.runAfterRuntimeRestartRecovery({
@@ -321,7 +330,7 @@ test("durable restart fans out exactly once to every eligible project root inclu
     ).resumedThreadIds,
     [],
   );
-  assert.deepEqual(sent, ["system-self", "running"]);
+  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
 });
 
 test("auto-resume skips active threads that already contain recovery input", async () => {

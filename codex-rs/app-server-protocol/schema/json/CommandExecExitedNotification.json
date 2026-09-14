@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Terminal lifecycle notification for a client-owned command session.",
+  "properties": {
+    "exitCode": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "generation": {
+      "type": "string"
+    },
+    "processId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "exitCode",
+    "generation",
+    "processId"
+  ],
+  "title": "CommandExecExitedNotification",
+  "type": "object"
+}

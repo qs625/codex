@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "reason": {
+      "description": "Optional human-readable reason supplied by the trusted Electron Host.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "ClientLifecycleShutdownParams",
+  "type": "object"
+}

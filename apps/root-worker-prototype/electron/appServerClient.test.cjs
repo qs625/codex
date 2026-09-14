@@ -629,6 +629,30 @@ test("app-server client stop rejects pending requests and terminates owned child
   assert.match(rejectedPending.message, /app-server stopping: application quit/);
 });
 
+test("app-server client graceful shutdown uses lifecycle request without killing child", async () => {
+  const child = new EventEmitter();
+  child.pid = 11;
+  child.exitCode = null;
+  child.kill = () => {
+    throw new Error("graceful shutdown should not signal the child");
+  };
+  const requests = [];
+  const client = new AppServerClient({ autoStart: false });
+  client.child = child;
+  client.request = async (method, params) => {
+    requests.push([method, params]);
+    return { shutdown: true };
+  };
+
+  const result = await client.gracefulShutdown("capsule switch");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requests, [
+    ["client/lifecycle/shutdown", { reason: "capsule switch" }],
+  ]);
+  assert.equal(client.child, child);
+});
+
 test("app-server client treats signal-exited children as stopped", async () => {
   const child = new EventEmitter();
   child.pid = 11;

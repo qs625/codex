@@ -163,6 +163,8 @@ const installedArtifactUpdateLifecycle =
     resolvePlan: () => resolveInstalledArtifactUpdatePlanInWorker(),
     runtimeLauncher,
     updateArtifacts: (plan) => updateInstalledArtifactsInWorker(plan),
+    gracefulShutdownAppServer: (reason) =>
+      appServerClient.gracefulShutdown(reason ?? "Runtime Capsule switch"),
     broadcastStatus: (status) =>
       broadcast("codex:status", {
         ...appServerClient.status,

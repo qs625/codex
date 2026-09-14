@@ -22,6 +22,7 @@ const {
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
 const MOBILE_CONNECTION_REFRESH_INTERVAL_MS = 5_000;
+const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 30_000;
 const PACKAGED_APP_SERVER_FILE_NAME =
   process.platform === "win32" ? "app-server.exe" : "app-server";
 const PACKAGED_APP_SERVER_RELATIVE_PATH = path.join(
@@ -161,6 +162,22 @@ class AppServerClient extends EventEmitter {
       timeoutMs: 5_000,
       forceKill: true,
     });
+  }
+
+  async gracefulShutdown(reason = "runtime restart") {
+    if (!isAppServerChildRunning(this.child)) {
+      return { ok: true, skipped: true, reason: "app-server is not running" };
+    }
+    const timeoutMs = DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS;
+    return await withTimeout(
+      this.request("client/lifecycle/shutdown", { reason }).then((response) => ({
+        ok: Boolean(response?.shutdown),
+        response,
+        reason,
+      })),
+      timeoutMs,
+      `Timed out waiting ${timeoutMs} ms for app-server graceful shutdown`,
+    );
   }
 
   async stopChildProcess({
@@ -454,6 +471,23 @@ module.exports = {
   resolveLanEndpoint,
   writeTokenFile,
 };
+
+function withTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timeout.unref?.();
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
 
 function isAppServerChildRunning(child) {
   return Boolean(

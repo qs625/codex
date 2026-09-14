@@ -396,6 +396,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::ClientLifecycleRegisterResponse,
     },
+    ClientLifecycleShutdown => "client/lifecycle/shutdown" {
+        params: v2::ClientLifecycleShutdownParams,
+        serialization: None,
+        response: v2::ClientLifecycleShutdownResponse,
+    },
 
     /// NEW APIs
     // Thread lifecycle

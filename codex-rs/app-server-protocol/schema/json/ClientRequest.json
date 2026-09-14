@@ -253,6 +253,18 @@
       ],
       "type": "object"
     },
+    "ClientLifecycleShutdownParams": {
+      "properties": {
+        "reason": {
+          "description": "Optional human-readable reason supplied by the trusted Electron Host.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "CollaborationMode": {
       "description": "Collaboration mode for a Codex session.",
       "properties": {
@@ -2084,6 +2096,75 @@
       ],
       "type": "string"
     },
+    "ModelContextQuarantineReference": {
+      "oneOf": [
+        {
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/ModelInputItemKind"
+            },
+            "reference_type": {
+              "enum": [
+                "tool_transaction"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "call_id",
+            "kind",
+            "reference_type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "call_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/ModelInputItemKind"
+            },
+            "reference_type": {
+              "enum": [
+                "model_item"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "fingerprint",
+            "kind",
+            "reference_type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelInputItemKind": {
+      "enum": [
+        "function_call",
+        "tool_search_call",
+        "custom_tool_call",
+        "local_shell_call"
+      ],
+      "type": "string"
+    },
     "ModelListParams": {
       "properties": {
         "cursor": {
@@ -3014,6 +3095,43 @@
           "type": "object"
         },
         {
+          "description": "Durable audit fact that excludes one untrusted historical model item or tool transaction from future provider input while preserving the original rollout items.",
+          "properties": {
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "error_param": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/definitions/ModelContextQuarantineReference"
+            },
+            "type": {
+              "enum": [
+                "model_context_quarantine"
+              ],
+              "title": "ModelContextQuarantineResponseItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "target",
+            "type"
+          ],
+          "title": "ModelContextQuarantineResponseItem",
+          "type": "object"
+        },
+        {
           "properties": {
             "content": {
               "items": {
@@ -3933,6 +4051,180 @@
       },
       "required": [
         "name"
+      ],
+      "type": "object"
+    },
+    "TerminalPreferredSizeUpdateParams": {
+      "properties": {
+        "size": {
+          "$ref": "#/definitions/CommandExecTerminalSize"
+        },
+        "threadId": {
+          "$ref": "#/definitions/ThreadId"
+        }
+      },
+      "required": [
+        "size",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "TerminalSessionListParams": {
+      "properties": {
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "userResumeTokens": {
+          "description": "Server-generated capabilities for user terminals this client is authorized to reattach.\n\nA caller can always see terminals it originally created. A different connection must explicitly prove knowledge of one of these tokens; listing never claims every live user PTY.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "TerminalSessionOrigin": {
+      "enum": [
+        "user",
+        "model"
+      ],
+      "type": "string"
+    },
+    "TerminalSessionResizeParams": {
+      "properties": {
+        "commandItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generation": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/definitions/TerminalSessionOrigin"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "resumeToken": {
+          "description": "Server-generated capability for a user terminal reattachment.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/definitions/CommandExecTerminalSize"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "generation",
+        "origin",
+        "processId",
+        "sessionId",
+        "size"
+      ],
+      "type": "object"
+    },
+    "TerminalSessionTerminateParams": {
+      "properties": {
+        "commandItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generation": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/definitions/TerminalSessionOrigin"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "resumeToken": {
+          "description": "Server-generated capability for a user terminal reattachment.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "generation",
+        "origin",
+        "processId",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "TerminalSessionWriteParams": {
+      "properties": {
+        "commandItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deltaBase64": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/definitions/TerminalSessionOrigin"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "resumeToken": {
+          "description": "Server-generated capability for a user terminal reattachment.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "deltaBase64",
+        "generation",
+        "origin",
+        "processId",
+        "sessionId"
       ],
       "type": "object"
     },
@@ -5623,6 +5915,30 @@
       "type": "object"
     },
     {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "client/lifecycle/shutdown"
+          ],
+          "title": "Client/lifecycle/shutdownRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ClientLifecycleShutdownParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Client/lifecycle/shutdownRequest",
+      "type": "object"
+    },
+    {
       "description": "NEW APIs",
       "properties": {
         "id": {
@@ -7302,6 +7618,131 @@
         "params"
       ],
       "title": "Command/exec/resizeRequest",
+      "type": "object"
+    },
+    {
+      "description": "List terminal-capable sessions visible to this client.",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "terminal/session/list"
+          ],
+          "title": "Terminal/session/listRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/TerminalSessionListParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Terminal/session/listRequest",
+      "type": "object"
+    },
+    {
+      "description": "Write raw bytes to a terminal session.",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "terminal/session/write"
+          ],
+          "title": "Terminal/session/writeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/TerminalSessionWriteParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Terminal/session/writeRequest",
+      "type": "object"
+    },
+    {
+      "description": "Resize a terminal session.",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "terminal/session/resize"
+          ],
+          "title": "Terminal/session/resizeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/TerminalSessionResizeParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Terminal/session/resizeRequest",
+      "type": "object"
+    },
+    {
+      "description": "Update the preferred terminal size used for future PTY spawns in a live thread.",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "terminal/preferredSize/update"
+          ],
+          "title": "Terminal/preferredSize/updateRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/TerminalPreferredSizeUpdateParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Terminal/preferredSize/updateRequest",
+      "type": "object"
+    },
+    {
+      "description": "Explicitly terminate a terminal session.",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "terminal/session/terminate"
+          ],
+          "title": "Terminal/session/terminateRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/TerminalSessionTerminateParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Terminal/session/terminateRequest",
       "type": "object"
     },
     {
