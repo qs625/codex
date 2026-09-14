@@ -20,6 +20,7 @@ const {
 const { AppServerClient } = require("./appServerClient.cjs");
 const {
   browserNavigationEventDecision,
+  browserNavigationEventTarget,
   normalizeBrowserDebugTarget,
   normalizeBrowserTarget,
 } = require("./browserPanelSecurity.cjs");
@@ -1492,6 +1493,8 @@ async function createBrowserPanelDebugTarget(target) {
         tab.state.error = error instanceof Error ? error.message : String(error);
         sendBrowserPanelState(panel);
       });
+    } else {
+      await loadBrowserPanelTabAboutBlankBootstrap(panel, tab);
     }
     sendBrowserPanelState(panel);
     const targetId = await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
@@ -1500,6 +1503,17 @@ async function createBrowserPanelDebugTarget(target) {
     closeBrowserPanelTab(panel, tab.id);
     sendBrowserPanelState(panel);
     throw error;
+  }
+}
+
+async function loadBrowserPanelTabAboutBlankBootstrap(panel, tab) {
+  tab.allowNextAboutBlankNavigation = true;
+  try {
+    await tab.view.webContents.loadURL("about:blank");
+  } finally {
+    tab.allowNextAboutBlankNavigation = false;
+    updateBrowserPanelLocationState(tab);
+    sendBrowserPanelState(panel);
   }
 }
 
@@ -1674,6 +1688,7 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
     id: `browser-tab-${++browserPanelTabCounter}`,
     view,
     state: emptyBrowserPanelTabState(),
+    allowNextAboutBlankNavigation: false,
   };
   panel.tabs.push(tab);
   bindBrowserPanelTab(panel, tab);
@@ -1920,6 +1935,10 @@ function isBrowserPanelWebContents(webContents) {
 }
 
 function guardBrowserPanelNavigation(panel, tab, event, target) {
+  const eventTarget = browserNavigationEventTarget(event, target);
+  if (tab.allowNextAboutBlankNavigation && eventTarget === "about:blank") {
+    return;
+  }
   const decision = browserNavigationEventDecision(event, target);
   if (decision.allow) {
     return;

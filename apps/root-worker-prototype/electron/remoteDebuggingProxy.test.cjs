@@ -170,6 +170,181 @@ test("remote debugging proxy maps Target.createTarget to Browser panel creation"
   assert.deepEqual(backendMessages, []);
 });
 
+test("remote debugging proxy forwards page initialization messages after createTarget", async (t) => {
+  let backendSocket = null;
+  const backendMessages = [];
+  const backend = await startFakeBackend({
+    upgradeHandler(_request, socket) {
+      backendSocket = socket;
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "\r\n",
+      );
+      let buffer = Buffer.alloc(0);
+      socket.on("data", (chunk) => {
+        buffer = Buffer.concat([buffer, chunk]);
+        while (true) {
+          const parsed = parseWebSocketFrame(buffer);
+          if (!parsed) {
+            return;
+          }
+          buffer = buffer.subarray(parsed.frameLength);
+          const message = JSON.parse(parsed.frame.payload.toString("utf8"));
+          backendMessages.push(message);
+          if (message.method === "Page.enable") {
+            socket.write(
+              encodeWebSocketFrame(
+                Buffer.from(JSON.stringify({ id: message.id, result: {}, sessionId: message.sessionId })),
+                0x1,
+                false,
+              ),
+            );
+          } else if (message.method === "Page.getFrameTree") {
+            socket.write(
+              encodeWebSocketFrame(
+                Buffer.from(
+                  JSON.stringify({
+                    id: message.id,
+                    result: {
+                      frameTree: {
+                        frame: {
+                          id: "frame-1",
+                          loaderId: "loader-1",
+                          url: "about:blank",
+                          mimeType: "text/html",
+                          securityOrigin: "://",
+                        },
+                      },
+                    },
+                    sessionId: message.sessionId,
+                  }),
+                ),
+                0x1,
+                false,
+              ),
+            );
+          }
+        }
+      });
+    },
+  });
+  t.after(() => backend.close());
+
+  const proxyPort = await getFreePort();
+  const proxy = startRemoteDebuggingProxy({
+    address: "127.0.0.1",
+    port: String(proxyPort),
+    backendPort: String(backend.port),
+    createTarget: async () => {
+      setImmediate(() => {
+        backendSocket.write(
+          encodeWebSocketFrame(
+            Buffer.from(
+              JSON.stringify({
+                method: "Target.attachedToTarget",
+                params: {
+                  sessionId: "session-1",
+                  targetInfo: {
+                    targetId: "browser-panel-target-1",
+                    type: "page",
+                    url: "about:blank",
+                  },
+                },
+              }),
+            ),
+            0x1,
+            false,
+          ),
+        );
+      });
+      return { targetId: "browser-panel-target-1" };
+    },
+    logger: quietLogger(),
+  });
+  t.after(() => proxy.close());
+  await waitForListening(proxy.server);
+
+  const socket = await connectWebSocket(proxyPort, "/devtools/browser/root");
+  t.after(() => socket.destroy());
+
+  const createMessages = readWebSocketMessages(socket, 2);
+  socket.write(
+    encodeWebSocketFrame(
+      Buffer.from(
+        JSON.stringify({
+          id: 1,
+          method: "Target.createTarget",
+          params: { url: "about:blank" },
+        }),
+      ),
+      0x1,
+      true,
+    ),
+  );
+  await createMessages;
+
+  const pageEnable = readWebSocketMessage(socket);
+  socket.write(
+    encodeWebSocketFrame(
+      Buffer.from(
+        JSON.stringify({
+          id: 2,
+          method: "Page.enable",
+          params: {},
+          sessionId: "session-1",
+        }),
+      ),
+      0x1,
+      true,
+    ),
+  );
+  assert.deepEqual(JSON.parse(await pageEnable), {
+    id: 2,
+    result: {},
+    sessionId: "session-1",
+  });
+
+  const frameTree = readWebSocketMessage(socket);
+  socket.write(
+    encodeWebSocketFrame(
+      Buffer.from(
+        JSON.stringify({
+          id: 3,
+          method: "Page.getFrameTree",
+          params: {},
+          sessionId: "session-1",
+        }),
+      ),
+      0x1,
+      true,
+    ),
+  );
+  assert.deepEqual(JSON.parse(await frameTree), {
+    id: 3,
+    result: {
+      frameTree: {
+        frame: {
+          id: "frame-1",
+          loaderId: "loader-1",
+          url: "about:blank",
+          mimeType: "text/html",
+          securityOrigin: "://",
+        },
+      },
+    },
+    sessionId: "session-1",
+  });
+  assert.deepEqual(
+    backendMessages.map((message) => [message.method, message.sessionId]),
+    [
+      ["Page.enable", "session-1"],
+      ["Page.getFrameTree", "session-1"],
+    ],
+  );
+});
+
 test("remote debugging proxy strips unsupported websocket extensions", async (t) => {
   let backendUpgradeHeaders = null;
   const backend = await startFakeBackend({
