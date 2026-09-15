@@ -459,23 +459,33 @@ impl TurnContext {
     }
 
     pub(crate) fn discovery_context(&self) -> thread_service_api::ThreadDiscoveryContext {
+        let mut project_roots = self
+            .config
+            .config_layer_stack
+            .get_layers(
+                config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                /*include_disabled*/ false,
+            )
+            .into_iter()
+            .filter_map(|entry| match &entry.name {
+                codex_config_types::ConfigLayerSource::Project { dot_codex_folder } => {
+                    Some(dot_codex_folder.join("workflows").to_path_buf())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if project_roots.is_empty() {
+            project_roots.push(
+                self.config
+                    .cwd
+                    .join(codex_config_types::PROJECT_CONFIG_DIR_NAME)
+                    .join("workflows")
+                    .to_path_buf(),
+            );
+        }
         thread_service_api::ThreadDiscoveryContext {
             home_root: self.config.codex_home.join("workflows").to_path_buf(),
-            project_roots: self
-                .config
-                .config_layer_stack
-                .get_layers(
-                    config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                    /*include_disabled*/ false,
-                )
-                .into_iter()
-                .filter_map(|entry| match &entry.name {
-                    codex_config_types::ConfigLayerSource::Project { dot_codex_folder } => {
-                        Some(dot_codex_folder.join("workflows").to_path_buf())
-                    }
-                    _ => None,
-                })
-                .collect(),
+            project_roots,
         }
     }
 

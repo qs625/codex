@@ -2907,8 +2907,9 @@ Use this workflow when feature work needs a structured process.
             .any(|text| text.contains("<workflows_instructions>")
                 && text.contains("- feature-dev (project)")
                 && text.contains("structured feature workflow")
-                && text
-                    .contains("Use this workflow when feature work needs a structured process.")),
+                && text.contains("Use when: feature work")
+                && text.contains("Inputs: objective")
+                && text.contains("Inspect: workflow_describe({\"workflow\": \"feature-dev\"})")),
         "expected project workflow in initial context, got {developer_texts:?}"
     );
 }
