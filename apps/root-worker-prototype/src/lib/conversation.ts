@@ -6,7 +6,10 @@ import type {
   ThreadItem,
   ThreadLifecycleStatus,
 } from "../types";
-import { selectActiveCommandItems } from "./activeCommands";
+import {
+  buildActiveCommandConversationTail,
+  type ConversationFlatItemState,
+} from "./conversationActiveCommands";
 import {
   buildConversationCells,
   type ConversationCellBuildOptions,
@@ -40,7 +43,6 @@ import {
   formatCommandExecutionNotificationDetails,
   formatEventCommandCallDetails,
   formatStructuredToolDetails,
-  isLegacyOrphanCommandOutputPlaceholder,
   statusForCommandExecutionNotification,
   summarizeCommandExecution,
   summarizeCommandExecutionNotification,
@@ -57,17 +59,6 @@ export type ConversationBuildState = {
   flatItems: ConversationFlatItemState[];
   entries: ConversationEntry[];
   cells: ConversationCell[];
-};
-
-type ConversationFlatItemState = {
-  id: string;
-  item: ThreadItem;
-  timestamp: string;
-  entries: ConversationEntry[];
-};
-
-type PreviousActiveCommandFlatItemState = ConversationFlatItemState & {
-  itemSignature: string;
 };
 
 const AGENT_STATUS_PREVIEW_MAX_CHARS = 120;
@@ -107,9 +98,6 @@ export function buildConversationState(
   const commandLookup = buildCommandLookup(thread);
   const canReusePrevious =
     previous?.threadId === thread.id && previous.author === author;
-  const previousActiveCommandFlatItems = canReusePrevious
-    ? buildPreviousActiveCommandFlatItemLookup(previous)
-    : new Map<string, PreviousActiveCommandFlatItemState>();
   const flatItems: ConversationFlatItemState[] = [];
   const entries: ConversationEntry[] = [];
   const historyItemIds = new Set<string>();
@@ -153,40 +141,17 @@ export function buildConversationState(
   }
 
   const activeTimestamp = formatClockTime(thread.updatedAt);
-  for (const item of selectActiveCommandItems(thread)) {
-    if (
-      item.type !== "commandExecution" ||
-      historyItemIds.has(item.id) ||
-      isLegacyOrphanCommandOutputPlaceholder(item)
-    ) {
-      continue;
-    }
-    const previousFlatItem = previousActiveCommandFlatItems.get(item.id);
-    const activeTurnId = activeCommandTurnId(item.id);
-    const rebuiltEntries =
-      previousFlatItem &&
-      previousFlatItem.id === item.id &&
-      previousFlatItem.itemSignature === threadItemSignature(item) &&
-      previousFlatItem.timestamp === activeTimestamp
-        ? previousFlatItem.entries
-        : buildConversationItemEntries(item, {
-            author,
-            timestamp: activeTimestamp,
-            commandLookup,
-          }).map((entry) => ({
-            ...entry,
-            turnId: activeTurnId,
-          }));
-
-    flatItems.push({
-      id: item.id,
-      item,
-      timestamp: activeTimestamp,
-      entries: rebuiltEntries,
-    });
-    entries.push(...rebuiltEntries);
-    flatItemIndex += 1;
-  }
+  const activeTail = buildActiveCommandConversationTail({
+    thread,
+    author,
+    timestamp: activeTimestamp,
+    commandLookup,
+    historyItemIds,
+    previous: canReusePrevious ? previous : null,
+    buildItemEntries: buildConversationItemEntries,
+  });
+  flatItems.push(...activeTail.flatItems);
+  entries.push(...activeTail.entries);
 
   return {
     threadId: thread.id,
@@ -199,34 +164,6 @@ export function buildConversationState(
       options,
     ),
   };
-}
-
-function buildPreviousActiveCommandFlatItemLookup(
-  previous: ConversationBuildState | null | undefined,
-) {
-  const lookup = new Map<string, PreviousActiveCommandFlatItemState>();
-  for (const flatItem of previous?.flatItems ?? []) {
-    if (
-      flatItem.item.type === "commandExecution" &&
-      flatItem.entries.every(
-        (entry) => entry.turnId === activeCommandTurnId(flatItem.id),
-      )
-    ) {
-      lookup.set(flatItem.id, {
-        ...flatItem,
-        itemSignature: threadItemSignature(flatItem.item),
-      });
-    }
-  }
-  return lookup;
-}
-
-function activeCommandTurnId(commandItemId: string) {
-  return `active-command:${commandItemId}`;
-}
-
-function threadItemSignature(item: ThreadItem) {
-  return JSON.stringify(item);
 }
 
 function buildConversationItemEntries(
