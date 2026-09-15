@@ -250,16 +250,23 @@ pub(in crate::request_processors) fn should_preserve_persisted_lifecycle_status_
     thread: &Thread,
 ) -> bool {
     match &thread.lifecycle_status {
+        // A NotLoaded live overlay means the watch manager has no loaded
+        // runtime entry. It should not erase a lifecycle fact that came from
+        // the state DB while building a thread/read view. Persisted active
+        // states can be stale after an unobserved process loss, but projecting
+        // the stored fact in read responses is still more truthful than
+        // claiming the thread has no lifecycle fact; this does not affect
+        // thread/loaded/list or create a live runtime entry.
+        ThreadLifecycleStatus::Active { .. }
+        | ThreadLifecycleStatus::Waiting { .. }
+        | ThreadLifecycleStatus::SystemError { .. } => true,
         ThreadLifecycleStatus::Final {
             result:
                 app_server_protocol::ThreadLifecycleFinalStatus::Shutdown
-                | app_server_protocol::ThreadLifecycleFinalStatus::Interrupted,
-        } => true,
-        ThreadLifecycleStatus::Final {
-            result:
-                app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. }
+                | app_server_protocol::ThreadLifecycleFinalStatus::Interrupted
+                | app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. }
                 | app_server_protocol::ThreadLifecycleFinalStatus::Errored { .. },
-        } => is_external_root_lifecycle_projection_thread(thread),
+        } => true,
         _ => false,
     }
 }
@@ -472,6 +479,59 @@ mod persisted_lifecycle_status_tests {
             completed_thread.lifecycle_status,
             ThreadLifecycleStatus::NotLoaded
         );
+    }
+
+    #[test]
+    fn not_loaded_overlay_preserves_persisted_native_lifecycle_facts() {
+        let preserved_statuses = [
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![app_server_protocol::ThreadLifecycleActiveFlag::Running],
+            },
+            ThreadLifecycleStatus::Waiting {
+                reason: app_server_protocol::ThreadLifecycleWaitReason::Command,
+            },
+            ThreadLifecycleStatus::completed(Some("done".to_string())),
+            ThreadLifecycleStatus::errored(Some("failed".to_string())),
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            },
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown,
+            },
+            ThreadLifecycleStatus::system_error(Some("runtime failed".to_string())),
+        ];
+
+        for status in preserved_statuses {
+            let mut thread = external_root_thread();
+            thread.model_provider = "mock_provider".to_string();
+            thread.lifecycle_status = status;
+
+            assert!(
+                should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(&thread),
+                "status should be preserved: {:?}",
+                thread.lifecycle_status
+            );
+        }
+    }
+
+    #[test]
+    fn not_loaded_overlay_does_not_preserve_missing_or_initializing_lifecycle() {
+        let skipped_statuses = [
+            ThreadLifecycleStatus::NotLoaded,
+            ThreadLifecycleStatus::Initializing,
+        ];
+
+        for status in skipped_statuses {
+            let mut thread = external_root_thread();
+            thread.model_provider = "mock_provider".to_string();
+            thread.lifecycle_status = status;
+
+            assert!(
+                !should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(&thread),
+                "status should not be preserved: {:?}",
+                thread.lifecycle_status
+            );
+        }
     }
 }
 

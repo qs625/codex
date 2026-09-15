@@ -274,6 +274,41 @@ async fn read_thread(
     Ok(thread)
 }
 
+async fn create_fake_rollout_with_persisted_thread_status(
+    codex_home: &Path,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+    preview: &str,
+    source: ProtocolSessionSource,
+    status: ThreadLifecycleStatus,
+) -> Result<String> {
+    let thread_id = create_fake_rollout_with_source(
+        codex_home,
+        filename_ts,
+        meta_rfc3339,
+        preview,
+        Some("mock_provider"),
+        /*git_info*/ None,
+        source.clone(),
+    )?;
+    let state_db =
+        StateRuntime::init(codex_home.to_path_buf(), "mock_provider".to_string()).await?;
+    let thread_uuid = protocol::ThreadId::from_string(&thread_id)?;
+    let rollout_path = rollout_path(codex_home, filename_ts, &thread_id);
+    let mut builder = ThreadMetadataBuilder::new(
+        thread_uuid,
+        rollout_path,
+        chrono::DateTime::parse_from_rfc3339(meta_rfc3339)?.with_timezone(&chrono::Utc),
+        source,
+    );
+    builder.model_provider = Some("mock_provider".to_string());
+    builder.cwd = PathBuf::from("/");
+    let mut metadata = builder.build("mock_provider");
+    metadata.thread_status = Some(status);
+    state_db.upsert_thread(&metadata).await?;
+    Ok(thread_id)
+}
+
 async fn list_threads(mcp: &mut McpProcess) -> Result<Vec<app_server_protocol::Thread>> {
     let list_id = mcp
         .send_thread_list_request(ThreadListParams {
@@ -636,6 +671,79 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
     assert_eq!(thread.git_info, None);
     assert_eq!(thread.turns.len(), 0);
     assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_preserves_cold_persisted_active_status() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let thread_id = create_fake_rollout_with_persisted_thread_status(
+        codex_home.path(),
+        "2025-01-05T12-05-00",
+        "2025-01-05T12:05:00Z",
+        "running persisted thread",
+        ProtocolSessionSource::Cli,
+        ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        },
+    )
+    .await?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let summary = read_thread(&mut mcp, &thread_id, /*include_turns*/ false).await?;
+    assert_eq!(
+        summary.lifecycle_status,
+        ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        }
+    );
+
+    let with_turns = read_thread(&mut mcp, &thread_id, /*include_turns*/ true).await?;
+    assert_eq!(
+        with_turns.lifecycle_status,
+        ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_preserves_cold_persisted_subagent_completed_status() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let parent_thread_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000321")?;
+    let thread_id = create_fake_rollout_with_persisted_thread_status(
+        codex_home.path(),
+        "2025-01-05T12-10-00",
+        "2025-01-05T12:10:00Z",
+        "completed persisted subagent",
+        ProtocolSessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth: 1,
+            agent_path: None,
+            agent_nickname: Some("reviewer".to_string()),
+            agent_role: Some("code-review".to_string()),
+        }),
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
+    )
+    .await?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread = read_thread(&mut mcp, &thread_id, /*include_turns*/ false).await?;
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string()))
+    );
 
     Ok(())
 }
