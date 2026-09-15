@@ -3,6 +3,108 @@ use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallStatus;
 use protocol::subscriptions::PersistedSubscription;
 
+struct ThreadListFilters {
+    model_providers: Option<Vec<String>>,
+    source_kinds: Option<Vec<ThreadSourceKind>>,
+    archived: bool,
+    cwd_filters: Option<Vec<PathBuf>>,
+    search_term: Option<String>,
+    use_state_db_only: bool,
+}
+
+struct ThreadListQuery {
+    requested_page_size: usize,
+    cursor: Option<String>,
+    sort_key: StoreThreadSortKey,
+    sort_direction: SortDirection,
+    model_providers: Option<Vec<String>>,
+    allowed_sources: Vec<protocol::protocol::SessionSource>,
+    source_kind_filter: Option<Vec<ThreadSourceKind>>,
+    archived: bool,
+    cwd_filters: Option<Vec<PathBuf>>,
+    search_term: Option<String>,
+    use_state_db_only: bool,
+}
+
+impl ThreadListQuery {
+    fn new(
+        requested_page_size: usize,
+        cursor: Option<String>,
+        sort_key: StoreThreadSortKey,
+        sort_direction: SortDirection,
+        filters: ThreadListFilters,
+        default_model_providers: Vec<String>,
+    ) -> Self {
+        let ThreadListFilters {
+            model_providers,
+            source_kinds,
+            archived,
+            cwd_filters,
+            search_term,
+            use_state_db_only,
+        } = filters;
+        let model_providers = match model_providers {
+            Some(providers) if providers.is_empty() => None,
+            Some(providers) => Some(providers),
+            None => Some(default_model_providers),
+        };
+        let (allowed_sources, source_kind_filter) = compute_source_filters(source_kinds);
+
+        Self {
+            requested_page_size,
+            cursor,
+            sort_key,
+            sort_direction,
+            model_providers,
+            allowed_sources,
+            source_kind_filter,
+            archived,
+            cwd_filters,
+            search_term,
+            use_state_db_only,
+        }
+    }
+
+    fn store_sort_direction(&self) -> StoreSortDirection {
+        match self.sort_direction {
+            SortDirection::Asc => StoreSortDirection::Asc,
+            SortDirection::Desc => StoreSortDirection::Desc,
+        }
+    }
+
+    fn store_params(&self, page_size: usize, cursor: Option<String>) -> StoreListThreadsParams {
+        StoreListThreadsParams {
+            page_size,
+            cursor,
+            sort_key: self.sort_key,
+            sort_direction: self.store_sort_direction(),
+            allowed_sources: self.allowed_sources.clone(),
+            model_providers: self.model_providers.clone(),
+            cwd_filters: self.cwd_filters.clone(),
+            archived: self.archived,
+            search_term: self.search_term.clone(),
+            use_state_db_only: self.use_state_db_only,
+        }
+    }
+
+    fn accepts_post_store_thread(&self, thread: &StoredThread) -> bool {
+        let source = with_thread_spawn_agent_metadata(
+            thread.source.clone(),
+            thread.agent_nickname.clone(),
+            thread.agent_role.clone(),
+            thread.agent_path.clone(),
+        );
+        self.source_kind_filter
+            .as_ref()
+            .is_none_or(|filter| source_kind_matches(&source, filter))
+            && self.cwd_filters.as_ref().is_none_or(|expected_cwds| {
+                expected_cwds.iter().any(|expected_cwd| {
+                    path_utils::paths_match_after_normalization(&thread.cwd, expected_cwd)
+                })
+            })
+    }
+}
+
 impl ThreadRequestProcessor {
     pub(super) async fn thread_list_response_inner(
         &self,
@@ -50,51 +152,9 @@ impl ThreadRequestProcessor {
         let backwards_cursor = stored_threads.first().and_then(|thread| {
             thread_backwards_cursor_for_sort_key(thread, store_sort_key, sort_direction)
         });
-        let mut threads = Vec::with_capacity(stored_threads.len());
-        let mut status_ids = Vec::with_capacity(stored_threads.len());
-        let fallback_provider = self.config.model_provider_id.clone();
-
-        for stored_thread in stored_threads {
-            let thread_id = stored_thread.thread_id;
-            let (mut thread, history) = thread_from_stored_thread(
-                stored_thread,
-                fallback_provider.as_str(),
-                &self.config.cwd,
-            );
-            if !use_state_db_only
-                && history.is_none()
-                && let Ok(history_items) =
-                    read_thread_history_items(self.thread_store.as_ref(), thread_id).await
-            {
-                apply_persisted_thread_lifecycle_status(&mut thread, &history_items);
-                apply_thread_stats_from_rollout_items(&mut thread, &history_items);
-            }
-            status_ids.push(thread.id.clone());
-            threads.push(thread);
-        }
-
-        let statuses = self
-            .thread_watch_manager
-            .loaded_statuses_for_threads(status_ids)
+        let data = self
+            .project_listed_threads(stored_threads, use_state_db_only)
             .await;
-
-        let data: Vec<_> = threads
-            .into_iter()
-            .map(|mut thread| {
-                if let Some(status) = statuses.get(&thread.id) {
-                    if !matches!(status, ThreadLifecycleStatus::NotLoaded)
-                        || matches!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded)
-                    {
-                        set_thread_status_and_interrupt_stale_turns(
-                            &mut thread,
-                            status.clone(),
-                            /*has_live_in_progress_turn*/ false,
-                        );
-                    }
-                }
-                thread
-            })
-            .collect();
         Ok(ThreadListResponse {
             data,
             next_cursor,
@@ -195,6 +255,126 @@ impl ThreadRequestProcessor {
             thread.active_command_items = Some(Vec::new());
         }
         Ok(ThreadReadResponse { thread })
+    }
+
+    async fn list_threads_common(
+        &self,
+        requested_page_size: usize,
+        cursor: Option<String>,
+        sort_key: StoreThreadSortKey,
+        sort_direction: SortDirection,
+        filters: ThreadListFilters,
+    ) -> Result<(Vec<StoredThread>, Option<String>), JSONRPCErrorError> {
+        let query = ThreadListQuery::new(
+            requested_page_size,
+            cursor,
+            sort_key,
+            sort_direction,
+            filters,
+            self.default_thread_list_model_providers(),
+        );
+        self.fetch_thread_list_pages(query).await
+    }
+
+    async fn project_listed_threads(
+        &self,
+        stored_threads: Vec<StoredThread>,
+        use_state_db_only: bool,
+    ) -> Vec<Thread> {
+        let mut threads = Vec::with_capacity(stored_threads.len());
+        let mut status_ids = Vec::with_capacity(stored_threads.len());
+        let fallback_provider = self.config.model_provider_id.clone();
+
+        for stored_thread in stored_threads {
+            let thread_id = stored_thread.thread_id;
+            let (mut thread, history) = thread_from_stored_thread(
+                stored_thread,
+                fallback_provider.as_str(),
+                &self.config.cwd,
+            );
+            if !use_state_db_only
+                && history.is_none()
+                && let Ok(history_items) =
+                    read_thread_history_items(self.thread_store.as_ref(), thread_id).await
+            {
+                apply_persisted_thread_lifecycle_status(&mut thread, &history_items);
+                apply_thread_stats_from_rollout_items(&mut thread, &history_items);
+            }
+            status_ids.push(thread.id.clone());
+            threads.push(thread);
+        }
+
+        let statuses = self
+            .thread_watch_manager
+            .loaded_statuses_for_threads(status_ids)
+            .await;
+
+        threads
+            .into_iter()
+            .map(|mut thread| {
+                if let Some(status) = statuses.get(&thread.id) {
+                    if !matches!(status, ThreadLifecycleStatus::NotLoaded)
+                        || matches!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded)
+                    {
+                        set_thread_status_and_interrupt_stale_turns(
+                            &mut thread,
+                            status.clone(),
+                            /*has_live_in_progress_turn*/ false,
+                        );
+                    }
+                }
+                thread
+            })
+            .collect()
+    }
+
+    async fn fetch_thread_list_pages(
+        &self,
+        query: ThreadListQuery,
+    ) -> Result<(Vec<StoredThread>, Option<String>), JSONRPCErrorError> {
+        let mut cursor_obj = query.cursor.clone();
+        let mut last_cursor = cursor_obj.clone();
+        let mut remaining = query.requested_page_size;
+        let mut items = Vec::with_capacity(query.requested_page_size);
+        let mut next_cursor: Option<String> = None;
+
+        while remaining > 0 {
+            let page_size = remaining.min(THREAD_LIST_MAX_LIMIT);
+            let page = self
+                .thread_store
+                .list_threads(query.store_params(page_size, cursor_obj.clone()))
+                .await
+                .map_err(thread_store_list_error)?;
+
+            for item in page
+                .items
+                .into_iter()
+                .filter(|thread| query.accepts_post_store_thread(thread))
+                .take(remaining)
+            {
+                items.push(item);
+            }
+            remaining = query.requested_page_size.saturating_sub(items.len());
+
+            next_cursor = page.next_cursor;
+            if remaining == 0 {
+                break;
+            }
+
+            let Some(cursor_val) = next_cursor.clone() else {
+                break;
+            };
+            // Break if our pagination would reuse the same cursor again; this avoids
+            // an infinite loop when filtering drops everything on the page.
+            if last_cursor.as_ref() == Some(&cursor_val) {
+                next_cursor = None;
+                break;
+            }
+            last_cursor = Some(cursor_val.clone());
+            cursor_obj = Some(cursor_val);
+        }
+
+        Ok((items, next_cursor))
     }
 
     /// Builds the API view for `thread/read` from persisted metadata plus optional live state.

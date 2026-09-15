@@ -51,15 +51,6 @@ fn thread_config_snapshot_sandbox_policy(
     )
 }
 
-struct ThreadListFilters {
-    model_providers: Option<Vec<String>>,
-    source_kinds: Option<Vec<ThreadSourceKind>>,
-    archived: bool,
-    cwd_filters: Option<Vec<PathBuf>>,
-    search_term: Option<String>,
-    use_state_db_only: bool,
-}
-
 fn collect_resume_override_mismatches(
     request: &ThreadResumeParams,
     config_snapshot: &ThreadConfigSnapshot,
@@ -802,111 +793,6 @@ impl ThreadRequestProcessor {
         self.thread_approve_guardian_denied_action_inner(request_id, params)
             .await
             .map(|response| Some(response.into()))
-    }
-
-    async fn list_threads_common(
-        &self,
-        requested_page_size: usize,
-        cursor: Option<String>,
-        sort_key: StoreThreadSortKey,
-        sort_direction: SortDirection,
-        filters: ThreadListFilters,
-    ) -> Result<(Vec<StoredThread>, Option<String>), JSONRPCErrorError> {
-        let ThreadListFilters {
-            model_providers,
-            source_kinds,
-            archived,
-            cwd_filters,
-            search_term,
-            use_state_db_only,
-        } = filters;
-        let mut cursor_obj = cursor;
-        let mut last_cursor = cursor_obj.clone();
-        let mut remaining = requested_page_size;
-        let mut items = Vec::with_capacity(requested_page_size);
-        let mut next_cursor: Option<String> = None;
-
-        let model_provider_filter = match model_providers {
-            Some(providers) => {
-                if providers.is_empty() {
-                    None
-                } else {
-                    Some(providers)
-                }
-            }
-            None => Some(self.default_thread_list_model_providers()),
-        };
-        let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
-        let allowed_sources = allowed_sources_vec.as_slice();
-        let store_sort_direction = match sort_direction {
-            SortDirection::Asc => StoreSortDirection::Asc,
-            SortDirection::Desc => StoreSortDirection::Desc,
-        };
-
-        while remaining > 0 {
-            let page_size = remaining.min(THREAD_LIST_MAX_LIMIT);
-            let page = self
-                .thread_store
-                .list_threads(StoreListThreadsParams {
-                    page_size,
-                    cursor: cursor_obj.clone(),
-                    sort_key,
-                    sort_direction: store_sort_direction,
-                    allowed_sources: allowed_sources.to_vec(),
-                    model_providers: model_provider_filter.clone(),
-                    cwd_filters: cwd_filters.clone(),
-                    archived,
-                    search_term: search_term.clone(),
-                    use_state_db_only,
-                })
-                .await
-                .map_err(thread_store_list_error)?;
-
-            let mut filtered = Vec::with_capacity(page.items.len());
-            for it in page.items {
-                let source = with_thread_spawn_agent_metadata(
-                    it.source.clone(),
-                    it.agent_nickname.clone(),
-                    it.agent_role.clone(),
-                    it.agent_path.clone(),
-                );
-                if source_kind_filter
-                    .as_ref()
-                    .is_none_or(|filter| source_kind_matches(&source, filter))
-                    && cwd_filters.as_ref().is_none_or(|expected_cwds| {
-                        expected_cwds.iter().any(|expected_cwd| {
-                            path_utils::paths_match_after_normalization(&it.cwd, expected_cwd)
-                        })
-                    })
-                {
-                    filtered.push(it);
-                    if filtered.len() >= remaining {
-                        break;
-                    }
-                }
-            }
-            items.extend(filtered);
-            remaining = requested_page_size.saturating_sub(items.len());
-
-            next_cursor = page.next_cursor;
-            if remaining == 0 {
-                break;
-            }
-
-            let Some(cursor_val) = next_cursor.clone() else {
-                break;
-            };
-            // Break if our pagination would reuse the same cursor again; this avoids
-            // an infinite loop when filtering drops everything on the page.
-            if last_cursor.as_ref() == Some(&cursor_val) {
-                next_cursor = None;
-                break;
-            }
-            last_cursor = Some(cursor_val.clone());
-            cursor_obj = Some(cursor_val);
-        }
-
-        Ok((items, next_cursor))
     }
 }
 
