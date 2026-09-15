@@ -6,9 +6,7 @@ const RUNTIME_RESTART_REQUEST_ID_PATTERN = /\bcall_[A-Za-z0-9]+\b/;
 export function filterConversationCellsForDisplay(
   cells: ConversationCell[],
 ): ConversationCell[] {
-  const topLevelRecoveryFacts = collectRecoveryFactKeys(
-    cells.flatMap((cell) => cell.entries),
-  );
+  const topLevelRecoveryFacts = collectTopLevelRecoveryFactKeys(cells);
   return filterConversationCellsForDisplayWithState(
     cells,
     {
@@ -29,20 +27,28 @@ function filterConversationCellsForDisplayWithState(
   state: RecoveryFactFilterState,
   isTopLevel: boolean,
 ): ConversationCell[] {
-  return cells.flatMap((cell) => {
-    const entries = cell.entries
-      .filter((entry) =>
-        consumeRecoveryFactIfDuplicate(
+  const displayCells: ConversationCell[] = [];
+  for (const cell of cells) {
+    const entries: ConversationEntry[] = [];
+    for (const entry of cell.entries) {
+      if (
+        !consumeRecoveryFactIfDuplicate(
           entry,
           isTopLevel
             ? state.topLevelSeenRecoveryFacts
             : state.nestedSeenRecoveryFacts,
-        ),
-      )
-      .filter((entry) => entry.toolCategory !== "commandNotification")
-      .map((entry) => filterConversationEntryForDisplay(entry, state));
-    return entries.length > 0 ? [{ ...cell, entries }] : [];
-  });
+        ) ||
+        entry.toolCategory === "commandNotification"
+      ) {
+        continue;
+      }
+      entries.push(filterConversationEntryForDisplay(entry, state));
+    }
+    if (entries.length > 0) {
+      displayCells.push({ ...cell, entries });
+    }
+  }
+  return displayCells;
 }
 
 function filterConversationEntryForDisplay(
@@ -72,12 +78,14 @@ function filterConversationEntryForDisplay(
   };
 }
 
-function collectRecoveryFactKeys(entries: ConversationEntry[]) {
+function collectTopLevelRecoveryFactKeys(cells: ConversationCell[]) {
   const keys = new Set<string>();
-  for (const entry of entries) {
-    const key = restartRecoveryFactKey(entry);
-    if (key) {
-      keys.add(key);
+  for (const cell of cells) {
+    for (const entry of cell.entries) {
+      const key = restartRecoveryFactKey(entry);
+      if (key) {
+        keys.add(key);
+      }
     }
   }
   return keys;
