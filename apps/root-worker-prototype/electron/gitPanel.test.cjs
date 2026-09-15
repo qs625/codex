@@ -17,6 +17,8 @@ const {
   parseGitRefs,
   parseGitStatus,
   readGitFileDiff,
+  readGitSnapshot,
+  readGitStatusSnapshot,
 } = require("./gitPanel.cjs");
 
 test("parseGitGraph reads git graph commit records", () => {
@@ -260,6 +262,59 @@ test("readGitFileDiff reads unstaged modified files from index to working tree",
   assert.equal(diff.newContent, "export const value = 2;\n");
   assert.equal(diff.oldLabel, "Index");
   assert.equal(diff.newLabel, "Working tree");
+});
+
+test("readGitStatusSnapshot reads only the working tree status summary", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/app.ts", "export const value = 1;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  writeRepoFile(repo, "src/app.ts", "export const value = 2;\n");
+
+  const snapshot = await readGitStatusSnapshot(repo);
+
+  assert.equal(snapshot.available, true);
+  assert.equal(snapshot.root, fs.realpathSync(repo));
+  assert.equal(snapshot.treeRoot, repo);
+  assert.deepEqual(snapshot.changes, [
+    {
+      path: "src/app.ts",
+      originalPath: null,
+      stagedStatus: null,
+      unstagedStatus: "M",
+      staged: false,
+      unstaged: true,
+    },
+  ]);
+});
+
+test("readGitSnapshot includes the caller-spelled tree root", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/app.ts", "export const value = 1;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  const snapshot = await readGitSnapshot(repo);
+
+  assert.equal(snapshot.available, true);
+  assert.equal(snapshot.root, fs.realpathSync(repo));
+  assert.equal(snapshot.treeRoot, repo);
+});
+
+test("readGitStatusSnapshot returns typed unavailable outside a repository", async (t) => {
+  requireGit(t);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-git-status-"));
+  t.after(() => {
+    fs.rmSync(directory, { force: true, recursive: true });
+  });
+
+  const snapshot = await readGitStatusSnapshot(directory);
+
+  assert.equal(snapshot.available, false);
+  assert.equal(snapshot.root, null);
+  assert.equal(snapshot.treeRoot, null);
+  assert.deepEqual(snapshot.changes, []);
+  assert.match(snapshot.error ?? "", /Git repository/);
 });
 
 test("readGitFileDiff reads staged modified files from HEAD to index", async (t) => {

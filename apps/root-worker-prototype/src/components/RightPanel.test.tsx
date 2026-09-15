@@ -44,7 +44,10 @@ const {
   GitChangeGroup,
   GitChangeRow,
   GitDiffPreviewPanel,
+  gitDiffTargetForTreePath,
+  gitRelativeTreePath,
   normalizeBrowserPanelState,
+  resolveGitTreeFileOpen,
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
@@ -104,6 +107,14 @@ function makeThread(
       },
     ],
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }
 
 function makeWorkflowProgressItem(
@@ -1256,6 +1267,244 @@ test("git diff preview clears when normal file preview changes target", () => {
   );
 });
 
+test("git tree paths resolve to changed-file diff targets with unstaged priority", () => {
+  const stagedChange = {
+    path: "src/staged.ts",
+    originalPath: null,
+    stagedStatus: "M",
+    unstagedStatus: null,
+    staged: true,
+    unstaged: false,
+  };
+  const unstagedChange = {
+    path: "src/unstaged.ts",
+    originalPath: null,
+    stagedStatus: null,
+    unstagedStatus: "M",
+    staged: false,
+    unstaged: true,
+  };
+  const bothChange = {
+    path: "src/both.ts",
+    originalPath: null,
+    stagedStatus: "M",
+    unstagedStatus: "M",
+    staged: true,
+    unstaged: true,
+  };
+  const snapshot = {
+    available: true,
+    root: "/repo",
+    treeRoot: "/repo",
+    branch: "main",
+    selectedRef: null,
+    refs: [],
+    graph: [],
+    changes: [stagedChange, unstagedChange, bothChange],
+    error: null,
+  };
+
+  assert.deepEqual(gitDiffTargetForTreePath(snapshot, "/repo/src/unstaged.ts"), {
+    change: unstagedChange,
+    mode: "unstaged",
+  });
+  assert.deepEqual(gitDiffTargetForTreePath(snapshot, "/repo/src/staged.ts"), {
+    change: stagedChange,
+    mode: "staged",
+  });
+  assert.deepEqual(gitDiffTargetForTreePath(snapshot, "/repo/src/both.ts"), {
+    change: bothChange,
+    mode: "unstaged",
+  });
+  assert.deepEqual(
+    gitDiffTargetForTreePath(
+      { ...snapshot, root: "/private/var/folders/repo", treeRoot: "/var/folders/repo" },
+      "/var/folders/repo/src/both.ts",
+    ),
+    {
+      change: bothChange,
+      mode: "unstaged",
+    },
+  );
+  assert.equal(gitDiffTargetForTreePath(snapshot, "/repo/src/clean.ts"), null);
+  assert.equal(gitDiffTargetForTreePath({ ...snapshot, available: false }, "/repo/src/both.ts"), null);
+});
+
+test("git tree path normalization keeps repo-relative status matching bounded", () => {
+  assert.equal(gitRelativeTreePath("/repo", "/repo/src/App.tsx"), "src/App.tsx");
+  assert.equal(gitRelativeTreePath("C:\\repo", "C:\\repo\\src\\App.tsx"), "src/App.tsx");
+  assert.equal(gitRelativeTreePath("/repo", "/repo-other/src/App.tsx"), null);
+  assert.equal(gitRelativeTreePath("/repo", "src/App.tsx"), "src/App.tsx");
+  assert.equal(
+    gitRelativeTreePath(
+      "/private/var/folders/repo",
+      "/var/folders/repo/src/App.tsx",
+      "/var/folders/repo",
+    ),
+    "src/App.tsx",
+  );
+});
+
+test("git tree cache miss resolves status before opening modified files", async () => {
+  const modifiedChange = {
+    path: "src/modified.ts",
+    originalPath: null,
+    stagedStatus: null,
+    unstagedStatus: "M",
+    staged: false,
+    unstaged: true,
+  };
+
+  const decision = await resolveGitTreeFileOpen({
+    cachedSnapshot: null,
+    cwd: "/repo",
+    treePath: "/repo/src/modified.ts",
+    scope: 1,
+    isScopeCurrent: (scope: number) => scope === 1,
+    readGitStatusSnapshot: async () => ({
+      available: true,
+      root: "/repo",
+      treeRoot: "/repo",
+      changes: [modifiedChange],
+      error: null,
+    }),
+  });
+
+  assert.deepEqual(decision, {
+    kind: "diff",
+    change: modifiedChange,
+    mode: "unstaged",
+    snapshot: {
+      available: true,
+      root: "/repo",
+      treeRoot: "/repo",
+      changes: [modifiedChange],
+      error: null,
+    },
+  });
+});
+
+test("git tree cache miss opens clean files normally after status resolves", async () => {
+  const decision = await resolveGitTreeFileOpen({
+    cachedSnapshot: null,
+    cwd: "/repo",
+    treePath: "/repo/src/clean.ts",
+    scope: 1,
+    isScopeCurrent: (scope: number) => scope === 1,
+    readGitStatusSnapshot: async () => ({
+      available: true,
+      root: "/repo",
+      treeRoot: "/repo",
+      changes: [],
+      error: null,
+    }),
+  });
+
+  assert.deepEqual(decision, {
+    kind: "file",
+    snapshot: {
+      available: true,
+      root: "/repo",
+      treeRoot: "/repo",
+      changes: [],
+      error: null,
+    },
+  });
+});
+
+test("git tree async status decisions ignore stale clicks", async () => {
+  const modifiedChange = {
+    path: "src/a.ts",
+    originalPath: null,
+    stagedStatus: null,
+    unstagedStatus: "M",
+    staged: false,
+    unstaged: true,
+  };
+  const firstStatus = deferred<{
+    available: boolean;
+    root: string | null;
+    treeRoot: string | null;
+    changes: typeof modifiedChange[];
+    error: string | null;
+  }>();
+  let currentScope = 1;
+
+  const firstDecision = resolveGitTreeFileOpen({
+    cachedSnapshot: null,
+    cwd: "/repo",
+    treePath: "/repo/src/a.ts",
+    scope: 1,
+    isScopeCurrent: (scope: number) => scope === currentScope,
+    readGitStatusSnapshot: async () => firstStatus.promise,
+  });
+
+  currentScope = 2;
+  const secondDecision = await resolveGitTreeFileOpen({
+    cachedSnapshot: null,
+    cwd: "/repo",
+    treePath: "/repo/src/b.ts",
+    scope: 2,
+    isScopeCurrent: (scope: number) => scope === currentScope,
+    readGitStatusSnapshot: async () => ({
+      available: true,
+      root: "/repo",
+      treeRoot: "/repo",
+      changes: [],
+      error: null,
+    }),
+  });
+  firstStatus.resolve({
+    available: true,
+    root: "/repo",
+    treeRoot: "/repo",
+    changes: [modifiedChange],
+    error: null,
+  });
+
+  assert.equal(secondDecision.kind, "file");
+  assert.deepEqual(await firstDecision, { kind: "stale" });
+});
+
+test("git tree async status decisions ignore external preview takeover", async () => {
+  const modifiedChange = {
+    path: "src/a.ts",
+    originalPath: null,
+    stagedStatus: null,
+    unstagedStatus: "M",
+    staged: false,
+    unstaged: true,
+  };
+  const status = deferred<{
+    available: boolean;
+    root: string | null;
+    treeRoot: string | null;
+    changes: typeof modifiedChange[];
+    error: string | null;
+  }>();
+  let currentScope = 1;
+
+  const decision = resolveGitTreeFileOpen({
+    cachedSnapshot: null,
+    cwd: "/repo",
+    treePath: "/repo/src/a.ts",
+    scope: 1,
+    isScopeCurrent: (scope: number) => scope === currentScope,
+    readGitStatusSnapshot: async () => status.promise,
+  });
+
+  currentScope = 2;
+  status.resolve({
+    available: true,
+    root: "/repo",
+    treeRoot: "/repo",
+    changes: [modifiedChange],
+    error: null,
+  });
+
+  assert.deepEqual(await decision, { kind: "stale" });
+});
+
 test("builds a commit-level git graph visual model with a spine and curved branches", () => {
   const graph = [
     makeGitCommit("* ", "merge-a", ["parent-a", "parent-b"], "Merge feature"),
@@ -1323,6 +1572,15 @@ test("git graph styles keep a light theme and full-size visible rail overlay", (
   assert.match(css, /\.git-graph-overlay \{[\s\S]*width: var\(--git-graph-visual-width, 58px\);/);
   assert.match(css, /\.git-graph-overlay \{[\s\S]*height: var\(--git-graph-visual-height, 42px\);/);
   assert.match(css, /\.git-graph-row-main \{[\s\S]*min-height: 42px;/);
+  assert.match(css, /\.git-graph-list,[\s\S]*\.git-changes-list \{[\s\S]*overflow-x: hidden;/);
+  assert.match(css, /\.git-graph-visual-stack \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/);
+  assert.match(
+    css,
+    /\.git-graph-row-main \{[\s\S]*grid-template-columns: var\(--git-graph-visual-width, 58px\) minmax\(0, 1fr\) 28px;/,
+  );
+  assert.match(css, /\.git-graph-copy \{[\s\S]*overflow: hidden;/);
+  assert.match(css, /\.git-commit-file-row \{[\s\S]*grid-template-columns: 20px minmax\(0, 1fr\) 22px;/);
+  assert.match(css, /\.git-change-row \{[\s\S]*grid-template-columns: 22px minmax\(0, 1fr\) 20px;/);
   assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #f8fafc;[\s\S]*stroke-width: 3\.4;/);
   assert.match(css, /\.git-graph-dot\.branch \{[\s\S]*fill: currentColor;/);
   assert.match(css, /\.git-head-ref \{[\s\S]*background: #2563eb;/);
@@ -1349,6 +1607,8 @@ test("renders cwd tree inside the preview panel", () => {
   assert.match(markup, /Thread cwd file tree/);
   assert.match(markup, /README\.md/);
   assert.match(markup, /App\.tsx/);
+  assert.match(markup, /title="\/tmp\/src"/);
+  assert.match(markup, /title="\/tmp\/src\/App\.tsx"/);
 });
 
 test("renders markdown file previews as markdown content", () => {

@@ -20,7 +20,7 @@ async function readGitSnapshot(cwd, options = {}) {
     return unavailableSnapshot("This workspace is not a Git repository.");
   }
 
-  const root = rootResult.stdout.trim();
+  const { root, treeRoot } = await gitRootInfoForCwd(cwd, rootResult.stdout.trim());
   const [branchResult, refsResult, statusResult] = await Promise.all([
     runGit(root, ["branch", "--show-current"]),
     runGit(root, buildGitRefsArgs()),
@@ -35,6 +35,7 @@ async function readGitSnapshot(cwd, options = {}) {
   return {
     available: true,
     root,
+    treeRoot,
     branch: branchResult.ok ? branchResult.stdout.trim() || null : null,
     selectedRef,
     refs,
@@ -65,6 +66,31 @@ async function readGitCommitFiles(cwd, hash) {
   return {
     available: true,
     files: parseGitCommitFiles(result.stdout),
+    error: null,
+  };
+}
+
+async function readGitStatusSnapshot(cwd) {
+  if (typeof cwd !== "string" || !cwd.trim()) {
+    return unavailableStatusSnapshot("No workspace is selected.");
+  }
+
+  const rootResult = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!rootResult.ok) {
+    return unavailableStatusSnapshot("This workspace is not a Git repository.");
+  }
+
+  const { root, treeRoot } = await gitRootInfoForCwd(cwd, rootResult.stdout.trim());
+  const statusResult = await runGit(root, ["status", "--porcelain=v1", "-z"]);
+  if (!statusResult.ok) {
+    return unavailableStatusSnapshot("Failed to read Git status.", root, treeRoot);
+  }
+
+  return {
+    available: true,
+    root,
+    treeRoot,
+    changes: parseGitStatus(statusResult.stdout),
     error: null,
   };
 }
@@ -205,6 +231,7 @@ function unavailableSnapshot(reason) {
   return {
     available: false,
     root: null,
+    treeRoot: null,
     branch: null,
     selectedRef: null,
     refs: [],
@@ -220,6 +247,33 @@ function unavailableCommitFiles(reason) {
     files: [],
     error: reason,
   };
+}
+
+function unavailableStatusSnapshot(reason, root = null, treeRoot = null) {
+  return {
+    available: false,
+    root,
+    treeRoot,
+    changes: [],
+    error: reason,
+  };
+}
+
+async function gitRootInfoForCwd(cwd, root) {
+  const prefixResult = await runGit(cwd, ["rev-parse", "--show-prefix"]);
+  return {
+    root,
+    treeRoot: prefixResult.ok ? gitTreeRootForCwd(cwd, prefixResult.stdout.trim()) : root,
+  };
+}
+
+function gitTreeRootForCwd(cwd, gitPrefix) {
+  const cwdPath = path.resolve(cwd);
+  const prefixParts = gitPrefix.split("/").filter(Boolean);
+  if (prefixParts.length === 0) {
+    return cwdPath;
+  }
+  return path.resolve(cwdPath, ...prefixParts.map(() => ".."));
 }
 
 function unavailableFileDiff(reason, context = {}) {
@@ -570,5 +624,6 @@ module.exports = {
   parseGitStatus,
   readGitFileDiff,
   readGitCommitFiles,
+  readGitStatusSnapshot,
   readGitSnapshot,
 };

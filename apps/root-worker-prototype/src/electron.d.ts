@@ -266,6 +266,7 @@ declare global {
       readGitSnapshot: (cwd: string, options?: { ref?: string | null }) => Promise<{
         available: boolean;
         root: string | null;
+        treeRoot: string | null;
         branch: string | null;
         selectedRef: string | null;
         refs: Array<{
@@ -332,6 +333,20 @@ declare global {
         unifiedDiff: string;
         error: string | null;
         binary: boolean;
+      }>;
+      readGitStatusSnapshot: (cwd: string) => Promise<{
+        available: boolean;
+        root: string | null;
+        treeRoot: string | null;
+        changes: Array<{
+          path: string;
+          originalPath: string | null;
+          stagedStatus: string | null;
+          unstagedStatus: string | null;
+          staged: boolean;
+          unstaged: boolean;
+        }>;
+        error: string | null;
       }>;
       readLocalFile: (target: string) => Promise<{
         path: string;
