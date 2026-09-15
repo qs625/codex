@@ -118,10 +118,8 @@ impl WorkflowRequestProcessor {
             )
             .await
             .map_err(invalid_request)?;
-        self.send_run_updated(run.clone()).await;
-        self.spawn_terminal_run_notification(run.run_id.clone(), updates);
         Ok(WorkflowStartResponse {
-            run: map_workflow_run(run),
+            run: self.finish_started_run(run, updates).await,
         })
     }
 
@@ -157,10 +155,8 @@ impl WorkflowRequestProcessor {
             )
             .await
             .map_err(invalid_request)?;
-        self.send_run_updated(run.clone()).await;
-        self.spawn_terminal_run_notification(run.run_id.clone(), updates);
         Ok(WorkflowResumeResponse {
-            run: map_workflow_run(run),
+            run: self.finish_started_run(run, updates).await,
         })
     }
 
@@ -179,9 +175,8 @@ impl WorkflowRequestProcessor {
             )
             .await
             .map_err(invalid_request)?;
-        self.send_run_updated(run.clone()).await;
         Ok(WorkflowAbortResponse {
-            run: map_workflow_run(run),
+            run: self.finish_run_update(run).await,
         })
     }
 
@@ -222,6 +217,23 @@ impl WorkflowRequestProcessor {
             .await;
     }
 
+    async fn finish_started_run(
+        &self,
+        run: WorkflowRun,
+        updates: Box<dyn codex_workflow_api::WorkflowRunUpdateReceiver>,
+    ) -> ApiWorkflowRun {
+        let response_run = run.clone();
+        self.send_run_updated(run.clone()).await;
+        self.spawn_terminal_run_notification(run.run_id, updates);
+        map_workflow_run(response_run)
+    }
+
+    async fn finish_run_update(&self, run: WorkflowRun) -> ApiWorkflowRun {
+        let response_run = run.clone();
+        self.send_run_updated(run).await;
+        map_workflow_run(response_run)
+    }
+
     fn spawn_terminal_run_notification(
         &self,
         run_id: String,
@@ -236,10 +248,7 @@ impl WorkflowRequestProcessor {
                     Err(WorkflowRunUpdateError::Closed) => break,
                 };
                 if run.run_id == run_id
-                    && matches!(
-                        run.status,
-                        WorkflowRunStatus::Completed | WorkflowRunStatus::Failed
-                    )
+                    && is_terminal_workflow_run_notification_status(run.status)
                 {
                     outgoing
                         .send_server_notification(ServerNotification::WorkflowRunUpdated(
@@ -253,6 +262,13 @@ impl WorkflowRequestProcessor {
             }
         });
     }
+}
+
+fn is_terminal_workflow_run_notification_status(status: WorkflowRunStatus) -> bool {
+    matches!(
+        status,
+        WorkflowRunStatus::Completed | WorkflowRunStatus::Failed
+    )
 }
 
 fn empty_discovery_context() -> WorkflowDiscoveryContext {
@@ -333,5 +349,26 @@ fn map_workflow_source(source: WorkflowSource) -> ApiWorkflowSource {
     match source {
         WorkflowSource::Home => ApiWorkflowSource::Home,
         WorkflowSource::Project => ApiWorkflowSource::Project,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_run_terminal_notification_status_excludes_abort() {
+        assert!(is_terminal_workflow_run_notification_status(
+            WorkflowRunStatus::Completed
+        ));
+        assert!(is_terminal_workflow_run_notification_status(
+            WorkflowRunStatus::Failed
+        ));
+        assert!(!is_terminal_workflow_run_notification_status(
+            WorkflowRunStatus::Running
+        ));
+        assert!(!is_terminal_workflow_run_notification_status(
+            WorkflowRunStatus::Aborted
+        ));
     }
 }
