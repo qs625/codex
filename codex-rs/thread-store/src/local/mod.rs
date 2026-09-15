@@ -3,6 +3,7 @@ mod create_thread;
 mod helpers;
 mod list_threads;
 mod live_writer;
+mod metadata;
 mod read_thread;
 mod unarchive_thread;
 mod update_thread_metadata;

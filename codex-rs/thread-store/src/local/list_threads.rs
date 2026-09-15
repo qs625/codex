@@ -8,9 +8,8 @@ use rollout::find_thread_names_by_ids;
 use rollout::parse_cursor;
 
 use super::LocalThreadStore;
-use super::helpers::distinct_thread_metadata_title;
-use super::helpers::set_thread_name_from_title;
 use super::helpers::stored_thread_from_rollout_item;
+use super::metadata::ThreadMetadataOverlay;
 use super::read_thread;
 use crate::ListThreadsParams;
 use crate::SortDirection;
@@ -18,13 +17,6 @@ use crate::ThreadPage;
 use crate::ThreadSortKey;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
-
-struct ThreadMetadataOverlay {
-    title: Option<String>,
-    agent_nickname: Option<String>,
-    agent_role: Option<String>,
-    agent_path: Option<String>,
-}
 
 pub(super) async fn list_threads(
     store: &LocalThreadStore,
@@ -94,15 +86,7 @@ pub(super) async fn list_threads(
             let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await else {
                 continue;
             };
-            metadata_overlays.insert(
-                thread_id,
-                ThreadMetadataOverlay {
-                    title: distinct_thread_metadata_title(&metadata),
-                    agent_nickname: metadata.agent_nickname,
-                    agent_role: metadata.agent_role,
-                    agent_path: metadata.agent_path,
-                },
-            );
+            metadata_overlays.insert(thread_id, ThreadMetadataOverlay::from_metadata(&metadata));
         }
     }
     if metadata_overlays.len() < thread_ids.len()
@@ -112,30 +96,14 @@ pub(super) async fn list_threads(
         for (thread_id, title) in legacy_names {
             metadata_overlays
                 .entry(thread_id)
-                .or_insert(ThreadMetadataOverlay {
-                    title: Some(title),
-                    agent_nickname: None,
-                    agent_role: None,
-                    agent_path: None,
-                });
+                .or_insert_with(|| ThreadMetadataOverlay::legacy_title(title));
         }
     }
     for thread in &mut items {
         let Some(overlay) = metadata_overlays.remove(&thread.thread_id) else {
             continue;
         };
-        if let Some(title) = overlay.title {
-            set_thread_name_from_title(thread, title);
-        }
-        if thread.agent_nickname.is_none() {
-            thread.agent_nickname = overlay.agent_nickname;
-        }
-        if thread.agent_role.is_none() {
-            thread.agent_role = overlay.agent_role;
-        }
-        if thread.agent_path.is_none() {
-            thread.agent_path = overlay.agent_path;
-        }
+        overlay.apply_to_thread(thread);
     }
 
     Ok(ThreadPage { items, next_cursor })
@@ -146,7 +114,8 @@ pub(super) async fn list_thread_ids_with_active_subscriptions(
 ) -> ThreadStoreResult<Vec<ThreadId>> {
     let mut thread_ids = Vec::new();
     let mut seen = HashSet::<ThreadId>::new();
-    if let Some(state_db_ctx) = store.state_db().await {
+    let state_db_ctx = store.state_db().await;
+    if let Some(state_db_ctx) = state_db_ctx.as_ref() {
         let state_thread_ids = state_db_ctx
             .list_thread_ids_with_active_subscriptions()
             .await
@@ -183,7 +152,7 @@ pub(super) async fn list_thread_ids_with_active_subscriptions(
             if seen.contains(&thread.thread_id) {
                 continue;
             }
-            if let Some(state_db_ctx) = store.state_db().await {
+            if let Some(state_db_ctx) = state_db_ctx.as_ref() {
                 let subscriptions = state_db_ctx
                     .get_thread_subscriptions(thread.thread_id)
                     .await

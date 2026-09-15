@@ -4,7 +4,6 @@ use protocol::protocol::AskForApproval;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionMetaLine;
-use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadSkill;
 use protocol::subscriptions::PersistedSubscription;
 use rollout::RolloutRecorder;
@@ -14,16 +13,18 @@ use rollout::find_thread_path_by_id_str;
 use rollout::read_session_meta_line;
 use rollout::read_thread_item_from_rollout;
 use rollout::resolve_current_segment_path;
-use state::ThreadMetadata;
 
 use super::LocalThreadStore;
-use super::helpers::distinct_thread_metadata_title;
-use super::helpers::git_info_from_parts;
 use super::helpers::matching_rollout_file_name;
 use super::helpers::rollout_path_is_archived;
 use super::helpers::set_thread_name_from_title;
 use super::helpers::stored_thread_from_rollout_item;
 use super::live_writer;
+use super::metadata::apply_sqlite_metadata_overlay_to_rollout_thread;
+use super::metadata::parse_rfc3339_non_optional;
+use super::metadata::prefer_rollout_summary_with_sqlite_metadata;
+use super::metadata::read_sqlite_metadata;
+use super::metadata::stored_thread_from_sqlite_metadata;
 use crate::ReadThreadParams;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
@@ -58,20 +59,12 @@ pub(super) async fn read_thread(
         let mut thread = stored_thread_from_sqlite_metadata(store, metadata).await;
         if !params.include_history
             && let Some(rollout_path) = thread.rollout_path.clone()
-            && let Ok(mut rollout_thread) = read_thread_from_rollout_path(store, rollout_path).await
+            && let Ok(rollout_thread) = read_thread_from_rollout_path(store, rollout_path).await
             && rollout_thread.thread_id == thread_id
             && (params.include_archived || rollout_thread.archived_at.is_none())
             && !rollout_thread.preview.is_empty()
         {
-            if thread.name.is_some() {
-                rollout_thread.name = thread.name;
-            }
-            rollout_thread.git_info = thread.git_info;
-            rollout_thread.thread_status = thread.thread_status;
-            if rollout_thread.skills.is_empty() {
-                rollout_thread.skills = thread.skills;
-            }
-            thread = rollout_thread;
+            thread = prefer_rollout_summary_with_sqlite_metadata(thread, rollout_thread);
         }
         attach_history_if_requested(&mut thread, params.include_history).await?;
         return Ok(thread);
@@ -145,29 +138,7 @@ pub(super) async fn read_thread_by_rollout_path(
         });
     }
     if let Some(metadata) = read_sqlite_metadata(store, thread.thread_id).await {
-        if thread.agent_nickname.is_none() {
-            thread.agent_nickname = metadata.agent_nickname.clone();
-        }
-        if thread.agent_role.is_none() {
-            thread.agent_role = metadata.agent_role.clone();
-        }
-        if thread.agent_path.is_none() {
-            thread.agent_path = metadata.agent_path.clone();
-        }
-        let existing_git_info = thread.git_info.take();
-        let (fallback_sha, fallback_branch, fallback_origin_url) = match existing_git_info {
-            Some(info) => (
-                info.commit_hash.map(|sha| sha.0),
-                info.branch,
-                info.repository_url,
-            ),
-            None => (None, None, None),
-        };
-        thread.git_info = git_info_from_parts(
-            metadata.git_sha.or(fallback_sha),
-            metadata.git_branch.or(fallback_branch),
-            metadata.git_origin_url.or(fallback_origin_url),
-        );
+        apply_sqlite_metadata_overlay_to_rollout_thread(&mut thread, metadata);
     }
     attach_history_if_requested(&mut thread, include_history).await?;
     Ok(thread)
@@ -358,84 +329,6 @@ pub(super) async fn latest_thread_subscriptions_from_rollout_path(
     }))
 }
 
-async fn read_sqlite_metadata(
-    store: &LocalThreadStore,
-    thread_id: protocol::ThreadId,
-) -> Option<ThreadMetadata> {
-    let runtime = store.state_db().await?;
-    runtime.get_thread(thread_id).await.ok().flatten()
-}
-
-async fn stored_thread_from_sqlite_metadata(
-    store: &LocalThreadStore,
-    metadata: ThreadMetadata,
-) -> StoredThread {
-    let name = match distinct_thread_metadata_title(&metadata) {
-        Some(title) => Some(title),
-        None => find_thread_name_by_id(store.config.codex_home.as_path(), &metadata.id)
-            .await
-            .ok()
-            .flatten()
-            .filter(|title| !title.trim().is_empty()),
-    };
-    let session_meta = read_session_meta_line(metadata.rollout_path.as_path())
-        .await
-        .ok()
-        .map(|meta_line| meta_line.meta);
-    let forked_from_id = session_meta.as_ref().and_then(|meta| meta.forked_from_id);
-    let preview = metadata
-        .preview
-        .clone()
-        .or_else(|| metadata.first_user_message.clone())
-        .unwrap_or_default();
-    let skills = rollout::state_db::get_thread_skills(
-        store.state_db().await.as_deref(),
-        metadata.id,
-        "thread_store.read_thread",
-    )
-    .await
-    .unwrap_or_default();
-    StoredThread {
-        thread_id: metadata.id,
-        rollout_path: Some(metadata.rollout_path),
-        forked_from_id,
-        preview,
-        name,
-        model_provider: if metadata.model_provider.is_empty() {
-            store.config.default_model_provider_id.clone()
-        } else {
-            metadata.model_provider
-        },
-        model: metadata.model,
-        reasoning_effort: metadata.reasoning_effort,
-        created_at: metadata.created_at,
-        updated_at: metadata.updated_at,
-        archived_at: metadata.archived_at,
-        cwd: metadata.cwd,
-        cli_version: metadata.cli_version,
-        source: parse_session_source(&metadata.source),
-        thread_source: metadata.thread_source,
-        agent_nickname: metadata.agent_nickname,
-        agent_role: metadata.agent_role,
-        agent_path: metadata.agent_path,
-        git_info: git_info_from_parts(
-            metadata.git_sha,
-            metadata.git_branch,
-            metadata.git_origin_url,
-        ),
-        approval_mode: parse_or_default(&metadata.approval_mode, AskForApproval::OnRequest),
-        sandbox_policy: parse_or_default(
-            &metadata.sandbox_policy,
-            SandboxPolicy::new_read_only_policy(),
-        ),
-        token_usage: None,
-        first_user_message: metadata.first_user_message,
-        thread_status: metadata.thread_status,
-        skills,
-        history: None,
-    }
-}
-
 async fn stored_thread_from_session_meta(
     store: &LocalThreadStore,
     path: std::path::PathBuf,
@@ -519,27 +412,6 @@ async fn load_thread_skills_from_rollout(
             | protocol::protocol::RolloutItem::EventMsg(_) => None,
         })
         .unwrap_or_default())
-}
-
-fn parse_session_source(source: &str) -> SessionSource {
-    serde_json::from_str(source)
-        .or_else(|_| serde_json::from_value(serde_json::Value::String(source.to_string())))
-        .unwrap_or(SessionSource::Unknown)
-}
-
-fn parse_or_default<T>(value: &str, default: T) -> T
-where
-    T: serde::de::DeserializeOwned,
-{
-    serde_json::from_str(value)
-        .or_else(|_| serde_json::from_value(serde_json::Value::String(value.to_string())))
-        .unwrap_or(default)
-}
-
-fn parse_rfc3339_non_optional(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -722,6 +594,9 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let active_path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
+        rollout::append_thread_name(home.path(), thread_id, "Rollout title")
+            .await
+            .expect("append legacy thread name");
         let runtime = state::StateRuntime::init(
             config.sqlite_home.clone(),
             config.default_model_provider_id.clone(),
@@ -740,8 +615,10 @@ mod tests {
         builder.agent_role = Some("explorer".to_string());
         builder.agent_path = Some("/root/atlas".to_string());
         builder.git_branch = Some("sqlite-branch".to_string());
+        let mut metadata = builder.build(config.default_model_provider_id.as_str());
+        metadata.title = "SQLite title".to_string();
         runtime
-            .upsert_thread(&builder.build(config.default_model_provider_id.as_str()))
+            .upsert_thread(&metadata)
             .await
             .expect("state db upsert should succeed");
 
@@ -755,6 +632,7 @@ mod tests {
             .expect("read thread by rollout path");
 
         let git_info = thread.git_info.expect("git info should be present");
+        assert_eq!(thread.name.as_deref(), Some("Rollout title"));
         assert_eq!(git_info.branch.as_deref(), Some("sqlite-branch"));
         assert_eq!(
             git_info.commit_hash.as_ref().map(|sha| sha.0.as_str()),
@@ -784,12 +662,8 @@ mod tests {
         .await
         .expect("state db should initialize");
         let store = LocalThreadStore::new(config.clone(), Some(runtime.clone()));
-        let mut builder = ThreadMetadataBuilder::new(
-            thread_id,
-            rollout_path,
-            Utc::now(),
-            SessionSource::Cli,
-        );
+        let mut builder =
+            ThreadMetadataBuilder::new(thread_id, rollout_path, Utc::now(), SessionSource::Cli);
         builder.model_provider = Some(config.default_model_provider_id.clone());
         builder.cwd = home.path().to_path_buf();
         let metadata = builder.build(config.default_model_provider_id.as_str());
