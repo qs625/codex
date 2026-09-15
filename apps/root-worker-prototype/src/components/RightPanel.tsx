@@ -125,6 +125,7 @@ type GitGraphItem = GitSnapshot["graph"][number];
 type GitGraphCommit = Extract<GitGraphItem, { type: "commit" }>;
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
 type GitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitFileDiff"]>>;
+type GitStatusSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitStatusSnapshot"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
 type GitDiffPreviewState = {
   loading: boolean;
@@ -304,8 +305,11 @@ export function RightPanel({
     diff: null,
     error: null,
   });
+  const [gitTreeSnapshot, setGitTreeSnapshot] = useState<GitStatusSnapshot | null>(null);
   const gitDiffRequestScope = useRef(0);
   const gitDiffBasePreviewKey = useRef<string | null>(null);
+  const gitTreeLookupScope = useRef(0);
+  const gitTreeOpenScope = useRef(0);
 
   const focusCommandMonitor = (monitor: MonitorSummary) => {
     const target = resolveThreadAnalysisCommandFocus(thread, monitor);
@@ -321,20 +325,57 @@ export function RightPanel({
   };
 
   function clearGitDiffPreview() {
+    gitTreeOpenScope.current += 1;
     gitDiffRequestScope.current += 1;
     gitDiffBasePreviewKey.current = null;
     setGitDiffPreview({ loading: false, diff: null, error: null });
   }
 
   function openTreeFileFromPreview(path: string) {
-    clearGitDiffPreview();
-    onOpenTreeFile(path);
+    if (!thread || isChatCompatCwd(thread.cwd)) {
+      clearGitDiffPreview();
+      onOpenTreeFile(path);
+      return;
+    }
+    const cwd = thread.cwd;
+    const scope = gitTreeOpenScope.current + 1;
+    gitTreeOpenScope.current = scope;
+
+    resolveGitTreeFileOpen({
+      cachedSnapshot: gitTreeSnapshot,
+      cwd,
+      treePath: path,
+      scope,
+      isScopeCurrent: () => gitTreeOpenScope.current === scope,
+      readGitStatusSnapshot: window.codexDesktop.readGitStatusSnapshot,
+    })
+      .then((decision) => {
+        if (decision.kind === "stale") {
+          return;
+        }
+        if (decision.snapshot) {
+          setGitTreeSnapshot(decision.snapshot);
+        }
+        if (decision.kind === "diff") {
+          openGitFileDiff(decision.change, decision.mode);
+          return;
+        }
+        clearGitDiffPreview();
+        onOpenTreeFile(path);
+      })
+      .catch(() => {
+        if (gitTreeOpenScope.current === scope) {
+          clearGitDiffPreview();
+          onOpenTreeFile(path);
+        }
+      });
   }
 
   function openGitFileDiff(change: GitChange, mode: "staged" | "unstaged") {
     if (!thread || isChatCompatCwd(thread.cwd)) {
       return;
     }
+    gitTreeOpenScope.current += 1;
     const scope = gitDiffRequestScope.current + 1;
     gitDiffRequestScope.current = scope;
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
@@ -365,6 +406,10 @@ export function RightPanel({
   }
 
   useEffect(() => {
+    gitTreeOpenScope.current += 1;
+  }, [preview?.column, preview?.line, preview?.path, previewRootId]);
+
+  useEffect(() => {
     const gitDiffActive =
       gitDiffPreview.loading ||
       Boolean(gitDiffPreview.diff) ||
@@ -388,6 +433,34 @@ export function RightPanel({
     previewRootId,
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const statusScope = gitTreeLookupScope.current + 1;
+    gitTreeLookupScope.current = statusScope;
+    gitTreeOpenScope.current += 1;
+    setGitTreeSnapshot(null);
+    if (!thread || isChatCompatCwd(thread.cwd)) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    window.codexDesktop
+      .readGitStatusSnapshot(thread.cwd)
+      .then((snapshot) => {
+        if (!cancelled && gitTreeLookupScope.current === statusScope) {
+          setGitTreeSnapshot(snapshot);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && gitTreeLookupScope.current === statusScope) {
+          setGitTreeSnapshot(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [thread?.cwd]);
+
   return (
     <aside className={`right-panel ${isCollapsed ? "collapsed" : ""}`}>
       <div className="right-panel-body">
@@ -409,6 +482,7 @@ export function RightPanel({
             ) : activeView === "git" ? (
               <GitPanel
                 changedFiles={threadAnalysis.changedFiles}
+                onGitSnapshotChange={setGitTreeSnapshot}
                 onOpenDiff={openGitFileDiff}
                 thread={thread}
               />
@@ -2000,10 +2074,12 @@ function formatPlanStatus(status: ThreadPlanStep["status"]) {
 
 function GitPanel({
   changedFiles,
+  onGitSnapshotChange,
   onOpenDiff,
   thread,
 }: {
   changedFiles: ThreadAnalysis["changedFiles"];
+  onGitSnapshotChange: (snapshot: GitStatusSnapshot | null) => void;
   onOpenDiff: (change: GitChange, mode: "staged" | "unstaged") => void;
   thread: Thread | null;
 }) {
@@ -2046,6 +2122,7 @@ function GitPanel({
     }
     gitRequestScope.current += 1;
     setSnapshot(null);
+    onGitSnapshotChange(null);
     setSelectedCommitHash(null);
     setCommitFilesByHash({});
     setCommitFilesLoadingByHash({});
@@ -2061,6 +2138,7 @@ function GitPanel({
       .then((nextSnapshot) => {
         if (!cancelled) {
           setSnapshot(nextSnapshot);
+          onGitSnapshotChange(nextSnapshot);
           if (selectedGraphRef && !nextSnapshot.selectedRef) {
             setSelectedGraphRef(null);
           }
@@ -2068,16 +2146,19 @@ function GitPanel({
       })
       .catch((error) => {
         if (!cancelled) {
-          setSnapshot({
+          const unavailableSnapshot = {
             available: false,
             root: null,
+            treeRoot: null,
             branch: null,
             selectedRef: null,
             refs: [],
             graph: [],
             changes: [],
             error: error instanceof Error ? error.message : "Failed to read Git status.",
-          });
+          };
+          setSnapshot(unavailableSnapshot);
+          onGitSnapshotChange(unavailableSnapshot);
         }
       })
       .finally(() => {
@@ -2089,7 +2170,7 @@ function GitPanel({
     return () => {
       cancelled = true;
     };
-  }, [hasProjectCwd, refreshKey, selectedGraphRef, thread?.cwd]);
+  }, [hasProjectCwd, onGitSnapshotChange, refreshKey, selectedGraphRef, thread?.cwd]);
 
   const stagedChanges = snapshot?.changes.filter((change) => change.staged) ?? [];
   const unstagedChanges = snapshot?.changes.filter((change) => change.unstaged) ?? [];
@@ -3054,6 +3135,102 @@ export function shouldClearGitDiffPreviewForFilePreviewChange({
   return active && currentPreviewKey !== basePreviewKey;
 }
 
+export function gitDiffTargetForTreePath(
+  snapshot:
+    | (Pick<GitStatusSnapshot, "available" | "root" | "changes"> &
+        Partial<Pick<GitStatusSnapshot, "treeRoot">>)
+    | null,
+  treePath: string,
+): { change: GitChange; mode: "staged" | "unstaged" } | null {
+  if (!snapshot?.available || !snapshot.root) {
+    return null;
+  }
+  const relativePath = gitRelativeTreePath(snapshot.root, treePath, snapshot.treeRoot);
+  if (!relativePath) {
+    return null;
+  }
+  const change = snapshot.changes.find((entry) => entry.path === relativePath);
+  if (!change) {
+    return null;
+  }
+  if (change.unstaged) {
+    return { change, mode: "unstaged" };
+  }
+  if (change.staged) {
+    return { change, mode: "staged" };
+  }
+  return null;
+}
+
+export async function resolveGitTreeFileOpen({
+  cachedSnapshot,
+  cwd,
+  treePath,
+  scope,
+  isScopeCurrent,
+  readGitStatusSnapshot,
+}: {
+  cachedSnapshot:
+    | (Pick<GitStatusSnapshot, "available" | "root" | "changes"> &
+        Partial<Pick<GitStatusSnapshot, "treeRoot">>)
+    | null;
+  cwd: string | null;
+  treePath: string;
+  scope: number;
+  isScopeCurrent: (scope: number) => boolean;
+  readGitStatusSnapshot: (cwd: string) => Promise<GitStatusSnapshot>;
+}): Promise<
+  | { kind: "diff"; change: GitChange; mode: "staged" | "unstaged"; snapshot?: GitStatusSnapshot }
+  | { kind: "file"; snapshot?: GitStatusSnapshot }
+  | { kind: "stale" }
+> {
+  const cachedTarget = gitDiffTargetForTreePath(cachedSnapshot, treePath);
+  if (cachedTarget) {
+    return { kind: "diff", ...cachedTarget };
+  }
+  if (cachedSnapshot) {
+    return { kind: "file" };
+  }
+  if (!cwd) {
+    return { kind: "file" };
+  }
+
+  const snapshot = await readGitStatusSnapshot(cwd);
+  if (!isScopeCurrent(scope)) {
+    return { kind: "stale" };
+  }
+  const target = gitDiffTargetForTreePath(snapshot, treePath);
+  if (target) {
+    return { kind: "diff", ...target, snapshot };
+  }
+  return { kind: "file", snapshot };
+}
+
+export function gitRelativeTreePath(root: string, treePath: string, treeRoot?: string | null) {
+  const normalizedTreePath = normalizeGitTreePath(treePath);
+  if (!normalizedTreePath) {
+    return null;
+  }
+  const roots = [root, treeRoot]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => normalizeGitTreePath(value).replace(/\/+$/, ""))
+    .filter(Boolean);
+  for (const normalizedRoot of roots) {
+    if (normalizedTreePath === normalizedRoot) {
+      return null;
+    }
+    const rootPrefix = `${normalizedRoot}/`;
+    if (normalizedTreePath.startsWith(rootPrefix)) {
+      return normalizedTreePath.slice(rootPrefix.length);
+    }
+  }
+  return normalizedTreePath.startsWith("/") ? null : normalizedTreePath;
+}
+
+function normalizeGitTreePath(value: string) {
+  return value.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
 function FilePreviewPanel({
   expandedTreeDirectories,
   filePanelView,
@@ -3810,7 +3987,9 @@ function CwdTreeEntryRow({
             <span className={`cwd-tree-caret ${isExpanded ? "expanded" : ""}`}>
               ▸
             </span>
-            <span className="cwd-tree-name">{entry.name}</span>
+            <span className="cwd-tree-name" title={entry.path}>
+              {entry.name}
+            </span>
           </button>
         ) : (
           <button
@@ -3819,7 +3998,9 @@ function CwdTreeEntryRow({
             onClick={() => onOpenFile(entry.path)}
           >
             <DocumentIcon />
-            <span className="cwd-tree-name">{entry.name}</span>
+            <span className="cwd-tree-name" title={entry.path}>
+              {entry.name}
+            </span>
           </button>
         )}
       </div>

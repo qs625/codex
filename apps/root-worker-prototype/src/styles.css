@@ -6051,8 +6051,10 @@ svg {
 .preview-tree-shell {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
   padding: 0 0 8px;
 }
 
@@ -6066,7 +6068,9 @@ svg {
 
 .cwd-tree-list {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 8px 0;
 }
 
@@ -6077,6 +6081,7 @@ svg {
 .cwd-tree-button {
   display: flex;
   width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   border: 0;
@@ -6091,6 +6096,7 @@ svg {
 .cwd-tree-button.file svg {
   width: 14px;
   height: 14px;
+  flex: 0 0 auto;
   color: #a16207;
 }
 
@@ -6135,6 +6141,7 @@ svg {
 
 .git-section {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
 }
@@ -6200,9 +6207,18 @@ svg {
 }
 
 .git-section-title {
+  flex: 1 1 auto;
+  overflow: hidden;
   color: #292524;
   font-size: 13px;
   font-weight: 700;
+}
+
+.git-section-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-section-header.graph-toolbar .git-section-title {
@@ -6392,8 +6408,10 @@ svg {
 .git-graph-list,
 .git-changes-list {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -6422,8 +6440,9 @@ svg {
 
 .git-graph-visual-stack {
   position: relative;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .git-graph-overlay {
@@ -6441,7 +6460,8 @@ svg {
 .git-graph-row {
   position: relative;
   z-index: 2;
-  width: max-content;
+  width: 100%;
+  max-width: 100%;
   min-width: 100%;
   border-radius: 4px 0 0 4px;
   color: #334155;
@@ -6471,8 +6491,9 @@ svg {
 
 .git-graph-row-main {
   display: grid;
-  grid-template-columns: var(--git-graph-visual-width, 58px) minmax(220px, 1fr) 28px;
+  grid-template-columns: var(--git-graph-visual-width, 58px) minmax(0, 1fr) 28px;
   align-items: center;
+  min-width: 0;
   min-height: 42px;
   column-gap: 6px;
   padding: 0 6px 0 0;
@@ -6483,6 +6504,7 @@ svg {
   display: block;
   align-self: stretch;
   min-width: var(--git-graph-visual-width, 58px);
+  overflow: hidden;
 }
 
 .git-graph-lane-placeholder {
@@ -6568,6 +6590,7 @@ svg {
 
 .git-graph-copy {
   min-width: 0;
+  overflow: hidden;
 }
 
 .git-graph-subject-line {
@@ -6657,6 +6680,7 @@ svg {
   display: inline-grid;
   width: 24px;
   height: 24px;
+  flex: 0 0 auto;
   place-items: center;
   border: 1px solid rgba(100, 116, 139, 0.34);
   border-radius: 5px;
@@ -6680,7 +6704,10 @@ svg {
 
 .git-commit-files,
 .git-commit-files-state {
+  min-width: 0;
+  max-width: calc(100% - var(--git-graph-visual-width, 58px) - 14px);
   margin: 0 8px 6px calc(var(--git-graph-visual-width, 58px) + 6px);
+  overflow: hidden;
   border-left: 1px solid rgba(96, 165, 250, 0.28);
   background: rgba(255, 255, 255, 0.74);
 }
@@ -6702,6 +6729,7 @@ svg {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 22px;
   align-items: center;
+  min-width: 0;
   min-height: 28px;
   gap: 7px;
   padding: 2px 8px;
@@ -6761,6 +6789,7 @@ svg {
 
 .git-change-group {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
 }
@@ -6768,6 +6797,7 @@ svg {
 .git-change-group-header {
   display: flex;
   width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   min-height: 30px;
@@ -6792,6 +6822,7 @@ svg {
 }
 
 .git-change-rows {
+  min-width: 0;
   padding: 4px 0 6px;
 }
 
@@ -6799,6 +6830,7 @@ svg {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) 20px;
   align-items: center;
+  min-width: 0;
   min-height: 28px;
   column-gap: 6px;
   padding: 0 8px;
