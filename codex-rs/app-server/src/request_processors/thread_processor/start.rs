@@ -1298,7 +1298,9 @@ impl ThreadRequestProcessor {
             stored_agent_path,
             stored_agent_role,
         );
-        let lifecycle_status = loaded_thread_initial_lifecycle_status(&stored_thread);
+        let lifecycle_status = self
+            .loaded_thread_initial_lifecycle_status(&stored_thread, thread_id)
+            .await;
         self.thread_watch_manager
             .upsert_thread_silently_with_lifecycle_status(loaded_thread, lifecycle_status)
             .await;
@@ -1337,6 +1339,34 @@ impl ThreadRequestProcessor {
                 }
             }
         }
+    }
+
+    async fn loaded_thread_initial_lifecycle_status(
+        &self,
+        stored_thread: &StoredThread,
+        thread_id: ThreadId,
+    ) -> Option<ThreadLifecycleStatus> {
+        let has_active_subscriptions = match self
+            .thread_store
+            .read_thread_subscriptions(thread_id, /*include_archived*/ true)
+            .await
+        {
+            Ok(Some(subscriptions)) => !subscriptions.is_empty(),
+            Ok(None) => stored_thread_history_has_active_subscriptions(stored_thread),
+            Err(err) => {
+                tracing::warn!(
+                    thread_id = %thread_id,
+                    "failed to read persisted subscriptions for restored thread lifecycle: {err}"
+                );
+                stored_thread_history_has_active_subscriptions(stored_thread)
+            }
+        };
+        if has_active_subscriptions {
+            return Some(ThreadLifecycleStatus::Waiting {
+                reason: app_server_protocol::ThreadLifecycleWaitReason::EventSubscription,
+            });
+        }
+        stored_thread.thread_status.clone()
     }
 
     pub(super) async fn read_stored_thread_for_resume(
@@ -1909,18 +1939,7 @@ impl ThreadRequestProcessor {
     }
 }
 
-fn loaded_thread_initial_lifecycle_status(
-    stored_thread: &StoredThread,
-) -> Option<ThreadLifecycleStatus> {
-    if stored_thread_has_active_subscriptions(stored_thread) {
-        return Some(ThreadLifecycleStatus::Waiting {
-            reason: app_server_protocol::ThreadLifecycleWaitReason::EventSubscription,
-        });
-    }
-    stored_thread.thread_status.clone()
-}
-
-fn stored_thread_has_active_subscriptions(stored_thread: &StoredThread) -> bool {
+fn stored_thread_history_has_active_subscriptions(stored_thread: &StoredThread) -> bool {
     stored_thread
         .history
         .as_ref()
