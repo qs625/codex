@@ -18,6 +18,7 @@ mod start;
 mod support;
 mod thread_read_activity_projection;
 mod thread_read_projection;
+mod thread_turns_projection;
 
 pub(super) use self::ops::unsupported_external_root_active_op;
 pub(crate) use self::runtime::thread_processor_new_thread;
@@ -33,6 +34,7 @@ use self::support::*;
 pub(crate) use self::thread_read_activity_projection::restore_persisted_display_turns_from_rollout_items;
 use self::thread_read_activity_projection::*;
 use self::thread_read_projection::*;
+use self::thread_turns_projection::*;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
 const THREAD_LIST_MAX_LIMIT: usize = 100;

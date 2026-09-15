@@ -724,51 +724,7 @@ impl ThreadRequestProcessor {
             active_turn,
         );
         turns.retain(|turn| !is_active_subscriptions_turn(turn) && !is_active_commands_turn(turn));
-        for turn in &mut turns {
-            match items_view {
-                TurnItemsView::NotLoaded => {
-                    turn.items.clear();
-                    turn.items_view = TurnItemsView::NotLoaded;
-                }
-                TurnItemsView::Summary => {
-                    let first_user_message = turn
-                        .items
-                        .iter()
-                        .find(|item| matches!(item, ThreadItem::UserMessage { .. }))
-                        .cloned();
-                    let final_agent_message = turn
-                        .items
-                        .iter()
-                        .rev()
-                        .find(|item| matches!(item, ThreadItem::AgentMessage { .. }))
-                        .cloned();
-                    let initial_injected_context = turn
-                        .items
-                        .iter()
-                        .find(|item| matches!(item, ThreadItem::InjectedContext { .. }))
-                        .cloned();
-                    turn.items = match (
-                        first_user_message,
-                        final_agent_message,
-                        initial_injected_context,
-                    ) {
-                        (Some(user_message), Some(agent_message), _)
-                            if user_message.id() != agent_message.id() =>
-                        {
-                            vec![user_message, agent_message]
-                        }
-                        (Some(user_message), _, _) => vec![user_message],
-                        (None, Some(agent_message), _) => vec![agent_message],
-                        (None, None, Some(injected_context)) => vec![injected_context],
-                        (None, None, None) => Vec::new(),
-                    };
-                    turn.items_view = TurnItemsView::Summary;
-                }
-                TurnItemsView::Full => {
-                    turn.items_view = TurnItemsView::Full;
-                }
-            }
-        }
+        project_thread_turn_items_view(&mut turns, items_view);
         let page = paginate_thread_turns(
             turns,
             cursor.as_deref(),
