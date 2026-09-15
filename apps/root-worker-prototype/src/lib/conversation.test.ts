@@ -1249,6 +1249,49 @@ test("active command current state participates in conversation reuse state", ()
   assert.strictEqual(secondState.entries[0], firstState.entries[1]);
 });
 
+test("reuses active command entries when command snapshots are rebuilt with same content", () => {
+  const activeCommand = (
+    output: string | null,
+  ): NonNullable<Thread["activeCommandItems"]>[number] => ({
+    type: "commandExecution",
+    id: "exec-1",
+    command: "cargo test",
+    cwd: "/tmp/project",
+    processId: "process-1",
+    source: "agent",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    commandActions: [{ type: "unknown", command: "cargo test" }],
+    aggregatedOutput: output,
+    exitCode: null,
+    durationMs: null,
+  });
+  const firstThread = {
+    ...makeThread([]),
+    activeCommandItems: [activeCommand("running\n")],
+  } satisfies Thread;
+  const firstState = buildConversationState(firstThread);
+  const rebuiltSameThread = {
+    ...makeThread([]),
+    activeCommandItems: [activeCommand("running\n")],
+  } satisfies Thread;
+  const changedThread = {
+    ...makeThread([]),
+    activeCommandItems: [activeCommand("running\nnext\n")],
+  } satisfies Thread;
+
+  const rebuiltSameState = buildConversationState(rebuiltSameThread, firstState);
+  const changedState = buildConversationState(changedThread, rebuiltSameState);
+
+  assert.notEqual(
+    rebuiltSameThread.activeCommandItems?.[0],
+    firstThread.activeCommandItems?.[0],
+  );
+  assert.strictEqual(rebuiltSameState.entries[0], firstState.entries[0]);
+  assert.notStrictEqual(changedState.entries[0], rebuiltSameState.entries[0]);
+});
+
 test("renders command wait and stdin actions as standalone event entries", () => {
   const entries = buildConversationEntries(
     makeThread([

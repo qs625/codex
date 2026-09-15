@@ -49,6 +49,10 @@ type ConversationFlatItemState = {
   entries: ConversationEntry[];
 };
 
+type PreviousActiveCommandFlatItemState = ConversationFlatItemState & {
+  itemSignature: string;
+};
+
 const AGENT_STATUS_PREVIEW_MAX_CHARS = 120;
 const ARTIFACT_SUMMARY_MAX_CHARS = 96;
 
@@ -88,7 +92,7 @@ export function buildConversationState(
     previous?.threadId === thread.id && previous.author === author;
   const previousActiveCommandFlatItems = canReusePrevious
     ? buildPreviousActiveCommandFlatItemLookup(previous)
-    : new Map<string, ConversationFlatItemState>();
+    : new Map<string, PreviousActiveCommandFlatItemState>();
   const flatItems: ConversationFlatItemState[] = [];
   const entries: ConversationEntry[] = [];
   const historyItemIds = new Set<string>();
@@ -145,7 +149,7 @@ export function buildConversationState(
     const rebuiltEntries =
       previousFlatItem &&
       previousFlatItem.id === item.id &&
-      conversationThreadItemsEqual(previousFlatItem.item, item) &&
+      previousFlatItem.itemSignature === threadItemSignature(item) &&
       previousFlatItem.timestamp === activeTimestamp
         ? previousFlatItem.entries
         : buildConversationItemEntries(item, {
@@ -183,7 +187,7 @@ export function buildConversationState(
 function buildPreviousActiveCommandFlatItemLookup(
   previous: ConversationBuildState | null | undefined,
 ) {
-  const lookup = new Map<string, ConversationFlatItemState>();
+  const lookup = new Map<string, PreviousActiveCommandFlatItemState>();
   for (const flatItem of previous?.flatItems ?? []) {
     if (
       flatItem.item.type === "commandExecution" &&
@@ -191,7 +195,10 @@ function buildPreviousActiveCommandFlatItemLookup(
         (entry) => entry.turnId === activeCommandTurnId(flatItem.id),
       )
     ) {
-      lookup.set(flatItem.id, flatItem);
+      lookup.set(flatItem.id, {
+        ...flatItem,
+        itemSignature: threadItemSignature(flatItem.item),
+      });
     }
   }
   return lookup;
@@ -214,8 +221,8 @@ function activeCommandTurnId(commandItemId: string) {
   return `active-command:${commandItemId}`;
 }
 
-function conversationThreadItemsEqual(left: ThreadItem, right: ThreadItem) {
-  return left === right || JSON.stringify(left) === JSON.stringify(right);
+function threadItemSignature(item: ThreadItem) {
+  return JSON.stringify(item);
 }
 
 function buildConversationItemEntries(
