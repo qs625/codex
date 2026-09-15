@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Editor, { DiffEditor } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -30,6 +30,10 @@ import {
 import { isChatCompatCwd } from "../lib/chatCompat";
 import { normalizeBrowserUrl } from "../lib/browserUrl";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
+import {
+  buildGitPanelViewModel,
+  isGitGraphCommit,
+} from "../lib/gitPanelView";
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
 import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
@@ -2205,11 +2209,10 @@ function GitPanel({
     };
   }, [hasProjectCwd, onGitSnapshotChange, refreshKey, selectedGraphRef, thread?.cwd]);
 
-  const stagedChanges = snapshot?.changes.filter((change) => change.staged) ?? [];
-  const unstagedChanges = snapshot?.changes.filter((change) => change.unstaged) ?? [];
-  const changeCount = snapshot?.changes.length ?? changedFiles.length;
-  const graphCommitCount = snapshot?.graph.filter(isGitGraphCommit).length ?? 0;
-  const branchLabel = snapshot?.selectedRef ?? snapshot?.branch ?? "Auto";
+  const gitPanelView = useMemo(
+    () => buildGitPanelViewModel(snapshot, changedFiles),
+    [changedFiles, snapshot],
+  );
 
   function loadCommitFiles(hash: string) {
     if (!thread || !hasProjectCwd || commitFilesByHash[hash] || commitFilesLoadingByHash[hash]) {
@@ -2325,7 +2328,7 @@ function GitPanel({
                     setSelectedGraphRef(event.target.value || null);
                   }}
                   aria-label="Select Git branch or ref"
-                  title={branchLabel}
+                  title={gitPanelView.branchLabel}
                 >
                   <option value="">Auto</option>
                   {(snapshot?.refs ?? []).map((ref) => (
@@ -2358,7 +2361,7 @@ function GitPanel({
             <GitEmptyState message="Loading Git graph..." />
           ) : snapshot?.available === false ? (
             <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
-          ) : snapshot && graphCommitCount > 0 ? (
+          ) : snapshot && gitPanelView.graphCommitCount > 0 ? (
             <GitGraphVisualList
               commitFilesByHash={commitFilesByHash}
               commitFilesLoadingByHash={commitFilesLoadingByHash}
@@ -2398,7 +2401,7 @@ function GitPanel({
       >
         <GitSectionHeader
           collapsed={changesCollapsed}
-          count={changeCount}
+          count={gitPanelView.changeCount}
           onToggle={() => setChangesCollapsed((collapsed) => !collapsed)}
           title="Changes"
           trailing={
@@ -2423,7 +2426,7 @@ function GitPanel({
             ) : snapshot ? (
               <>
                 <GitChangeGroup
-                  changes={stagedChanges}
+                  changes={gitPanelView.stagedChanges}
                   collapsed={stagedChangesCollapsed}
                   mode="staged"
                   onOpenDiff={onOpenDiff}
@@ -2431,7 +2434,7 @@ function GitPanel({
                   title="Staged Changes"
                 />
                 <GitChangeGroup
-                  changes={unstagedChanges}
+                  changes={gitPanelView.unstagedChanges}
                   collapsed={unstagedChangesCollapsed}
                   mode="unstaged"
                   onOpenDiff={onOpenDiff}
@@ -2447,10 +2450,6 @@ function GitPanel({
       </section>
     </div>
   );
-}
-
-function isGitGraphCommit(item: GitGraphItem): item is GitGraphCommit {
-  return item.type === "commit";
 }
 
 function GitSectionHeader({
@@ -2515,12 +2514,16 @@ function GitGraphVisualList({
         Boolean(commitFilesLoadingByHash[selectedCommitHash]),
       )
     : 0;
-  const visualModel = buildGitGraphVisualModel(graph, {
-    expandedHeightsByHash:
-      selectedCommitHash && selectedCommitExtraHeight > 0
-        ? { [selectedCommitHash]: selectedCommitExtraHeight }
-        : undefined,
-  });
+  const visualModel = useMemo(
+    () =>
+      buildGitGraphVisualModel(graph, {
+        expandedHeightsByHash:
+          selectedCommitHash && selectedCommitExtraHeight > 0
+            ? { [selectedCommitHash]: selectedCommitExtraHeight }
+            : undefined,
+      }),
+    [graph, selectedCommitExtraHeight, selectedCommitHash],
+  );
   return (
     <div
       className="git-graph-visual-stack"
