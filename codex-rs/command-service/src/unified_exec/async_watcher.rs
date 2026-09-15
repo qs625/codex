@@ -55,7 +55,7 @@ pub(crate) fn start_streaming_output(
     notify_on: CommandNotificationFilter,
     notification_state: Arc<CommandNotificationState>,
 ) {
-    let mut receiver = process.output_receiver();
+    let receiver = process.output_receiver();
     let output_drained = process.output_drained_notify();
     let exit_token = process.cancellation_token();
 

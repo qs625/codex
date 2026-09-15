@@ -1618,6 +1618,9 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "MCP app context rendering reads through the session-owned manager guard"
     )]
+    // Kept for context/history tests and legacy compact helpers; production
+    // compact refresh uses build_fresh_compact_initial_context.
+    #[allow(dead_code)]
     pub(crate) async fn build_initial_context(
         &self,
         turn_context: &TurnContext,

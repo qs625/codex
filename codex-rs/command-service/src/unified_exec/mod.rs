@@ -314,14 +314,6 @@ impl ProcessEntry {
 
 const RUNNING_COMMAND_CONTEXT_OUTPUT_TAIL_CHARS: usize = 4096;
 
-async fn latest_output_tail(transcript: &Arc<Mutex<HeadTailBuffer>>) -> Option<String> {
-    let output = {
-        let guard = transcript.lock().await;
-        guard.to_bytes()
-    };
-    latest_output_tail_from_bytes(&output)
-}
-
 fn latest_output_tail_from_bytes(output: &[u8]) -> Option<String> {
     if output.is_empty() {
         return None;
