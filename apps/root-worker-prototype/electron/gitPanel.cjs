@@ -187,6 +187,94 @@ async function readGitFileDiff(cwd, options = {}) {
   }
 }
 
+async function readGitCommitFileDiff(cwd, options = {}) {
+  if (typeof cwd !== "string" || !cwd.trim()) {
+    return unavailableFileDiff("No workspace is selected.");
+  }
+
+  const hash = typeof options?.hash === "string" ? options.hash.trim() : "";
+  if (!isValidCommitHash(hash)) {
+    return unavailableFileDiff("Invalid commit hash.");
+  }
+  const requestedPath = normalizeGitPath(options?.path);
+  const requestedOriginalPath = normalizeGitPath(options?.originalPath);
+  if (!requestedPath) {
+    return unavailableFileDiff("Invalid file path.");
+  }
+
+  const rootResult = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!rootResult.ok) {
+    return unavailableFileDiff("This workspace is not a Git repository.");
+  }
+  const root = rootResult.stdout.trim();
+  const commitFilesResult = await runGit(root, buildGitCommitFilesArgs(hash));
+  if (!commitFilesResult.ok) {
+    return unavailableFileDiff("Failed to read commit files.", {
+      root,
+      path: requestedPath,
+      originalPath: requestedOriginalPath,
+      commit: hash,
+    });
+  }
+
+  const files = parseGitCommitFiles(commitFilesResult.stdout);
+  const file = files.find(
+    (entry) =>
+      entry.path === requestedPath &&
+      (requestedOriginalPath === null || entry.originalPath === requestedOriginalPath),
+  );
+  if (!file) {
+    return unavailableFileDiff("This file is not present in the selected commit.", {
+      root,
+      path: requestedPath,
+      originalPath: requestedOriginalPath,
+      commit: hash,
+    });
+  }
+
+  const status = file.status || "M";
+  const originalPath = file.originalPath ?? null;
+  const oldPath = originalPath && (status === "R" || status === "C") ? originalPath : file.path;
+  const shortHash = hash.slice(0, 7);
+  const unifiedDiff = await readCommitUnifiedDiff(root, hash, file);
+  const base = {
+    available: true,
+    root,
+    path: file.path,
+    originalPath,
+    staged: false,
+    status,
+    language: languageFromPath(file.path),
+    oldLabel: `${shortHash}^`,
+    newLabel: shortHash,
+    modeLabel: "commit",
+    commit: hash,
+    parent: `${hash}^`,
+    unifiedDiff,
+    error: null,
+    binary: false,
+  };
+
+  try {
+    const oldContent = status === "A" ? "" : await readGitTextObject(root, `${hash}^:${oldPath}`);
+    const newContent = status === "D" ? "" : await readGitTextObject(root, `${hash}:${file.path}`);
+    return {
+      ...base,
+      oldContent,
+      newContent,
+    };
+  } catch (error) {
+    return {
+      ...base,
+      available: false,
+      oldContent: "",
+      newContent: "",
+      error: error instanceof Error ? error.message : "Failed to read commit file diff.",
+      binary: isBinaryReadError(error),
+    };
+  }
+}
+
 function buildGitLogArgs(ref = null) {
   const args = [
     "log",
@@ -225,6 +313,23 @@ function buildGitCommitFilesArgs(hash) {
     "-z",
     hash,
   ];
+}
+
+function buildGitCommitFileDiffArgs(hash, file) {
+  const args = [
+    "show",
+    "--format=",
+    "--no-ext-diff",
+    "--find-renames",
+    "--find-copies",
+    hash,
+    "--",
+    file.path,
+  ];
+  if (file.originalPath) {
+    args.push(file.originalPath);
+  }
+  return args;
 }
 
 function unavailableSnapshot(reason) {
@@ -403,6 +508,11 @@ async function readUnifiedDiff(root, change, mode) {
     args.push(change.originalPath);
   }
   const result = await runGit(root, args);
+  return result.ok ? result.stdout : "";
+}
+
+async function readCommitUnifiedDiff(root, hash, file) {
+  const result = await runGit(root, buildGitCommitFileDiffArgs(hash, file));
   return result.ok ? result.stdout : "";
 }
 
@@ -614,6 +724,7 @@ module.exports = {
   GIT_REF_MAX_COUNT,
   GIT_DIFF_TEXT_MAX_BYTES,
   buildGitCommitFilesArgs,
+  buildGitCommitFileDiffArgs,
   buildGitLogArgs,
   buildGitRefsArgs,
   isValidCommitHash,
@@ -623,6 +734,7 @@ module.exports = {
   parseGitRefs,
   parseGitStatus,
   readGitFileDiff,
+  readGitCommitFileDiff,
   readGitCommitFiles,
   readGitStatusSnapshot,
   readGitSnapshot,

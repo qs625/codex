@@ -311,6 +311,33 @@ declare global {
         }>;
         error: string | null;
       }>;
+      readGitCommitFileDiff: (
+        cwd: string,
+        options: {
+          hash: string;
+          path: string;
+          originalPath?: string | null;
+          status?: string | null;
+        },
+      ) => Promise<{
+        available: boolean;
+        root: string | null;
+        path: string | null;
+        originalPath: string | null;
+        staged: boolean;
+        status: string | null;
+        language: string;
+        oldLabel: string | null;
+        newLabel: string | null;
+        oldContent: string;
+        newContent: string;
+        unifiedDiff: string;
+        error: string | null;
+        binary: boolean;
+        modeLabel?: string | null;
+        commit?: string | null;
+        parent?: string | null;
+      }>;
       readGitFileDiff: (
         cwd: string,
         options: {

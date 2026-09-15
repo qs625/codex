@@ -52,6 +52,7 @@ const {
 const { writeLocalFileTarget } = require("./localFileWrite.cjs");
 const { languageForFilePath } = require("./filePreviewLanguages.cjs");
 const {
+  readGitCommitFileDiff,
   readGitCommitFiles,
   readGitFileDiff,
   readGitSnapshot,
@@ -931,6 +932,10 @@ ipcMain.handle("codex:readGitSnapshot", async (_event, cwd, options) => {
 
 ipcMain.handle("codex:readGitCommitFiles", async (_event, cwd, hash) => {
   return readGitCommitFiles(cwd, hash);
+});
+
+ipcMain.handle("codex:readGitCommitFileDiff", async (_event, cwd, options) => {
+  return readGitCommitFileDiff(cwd, options);
 });
 
 ipcMain.handle("codex:readGitFileDiff", async (_event, cwd, options) => {
