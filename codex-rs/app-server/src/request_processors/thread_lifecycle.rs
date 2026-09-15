@@ -1125,17 +1125,80 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
     has_live_in_progress_turn: bool,
 ) {
     let status = resolve_thread_status(loaded_status, has_live_in_progress_turn);
-    if !matches!(status, ThreadLifecycleStatus::Active { .. }) {
+    let preserve_persisted_status = matches!(status, ThreadLifecycleStatus::NotLoaded)
+        && should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(thread);
+    let effective_status = if preserve_persisted_status {
+        thread.lifecycle_status.clone()
+    } else {
+        status
+    };
+
+    if !matches!(effective_status, ThreadLifecycleStatus::Active { .. }) {
         for turn in &mut thread.turns {
             if matches!(turn.status, TurnStatus::InProgress) {
                 turn.status = TurnStatus::Interrupted;
             }
         }
     }
-    if matches!(status, ThreadLifecycleStatus::NotLoaded)
-        && should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(thread)
-    {
-        return;
+    if !preserve_persisted_status {
+        thread.lifecycle_status = effective_status;
     }
-    thread.lifecycle_status = status;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread_with_lifecycle_status(lifecycle_status: ThreadLifecycleStatus) -> Thread {
+        Thread {
+            id: "thread-id".to_string(),
+            session_id: "thread-id".to_string(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status,
+            path: None,
+            cwd: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp"))
+                .expect("absolute cwd"),
+            cli_version: "0.0.0".to_string(),
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            source: protocol::protocol::SessionSource::Cli.into(),
+            thread_source: Some(app_server_protocol::ThreadSource::User),
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        }
+    }
+
+    #[test]
+    fn live_non_not_loaded_status_overrides_persisted_status() {
+        let mut thread =
+            thread_with_lifecycle_status(ThreadLifecycleStatus::completed(Some("done".to_string())));
+
+        set_thread_status_and_interrupt_stale_turns(
+            &mut thread,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![app_server_protocol::ThreadLifecycleActiveFlag::Running],
+            },
+            false,
+        );
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![app_server_protocol::ThreadLifecycleActiveFlag::Running],
+            }
+        );
+    }
 }
