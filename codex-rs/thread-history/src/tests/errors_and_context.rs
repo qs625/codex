@@ -172,6 +172,57 @@ use super::*;
     }
 
     #[test]
+    fn recovery_user_response_item_and_event_render_once() {
+        let recovery_message =
+            "Morpheus 已恢复预期的 Runtime Capsule 重启请求 call-recovered；该请求已完成。";
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-a".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".into(),
+                content: vec![ContentItem::InputText {
+                    text: recovery_message.into(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: recovery_message.into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-a".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::UserMessage {
+                id: "item-1".into(),
+                content: vec![UserInput::Text {
+                    text: recovery_message.into(),
+                    text_elements: Vec::new(),
+                }],
+            }]
+        );
+    }
+
+    #[test]
     fn ignores_initial_injected_context_response_items() {
         let items = vec![
             RolloutItem::ResponseItem(ResponseItem::Message {

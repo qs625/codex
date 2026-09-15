@@ -2181,6 +2181,7 @@ type TurnItemIndex = {
   initContextKeys: Set<string>;
   reasoningFragments: Map<string, number>;
   restartRecoveryNoticeIds: Set<string>;
+  restartRecoveryNoticeTexts: Map<string, number>;
   untypedUserMessageTexts: Map<string, number>;
 };
 
@@ -2202,6 +2203,7 @@ function buildTurnItemIndex(
   const initContextKeys = new Set<string>();
   const reasoningFragments = new Map<string, number>();
   const restartRecoveryNoticeIds = new Set<string>();
+  const restartRecoveryNoticeTexts = new Map<string, number>();
   const untypedUserMessageTexts = new Map<string, number>();
 
   for (const { items } of entries) {
@@ -2211,6 +2213,10 @@ function buildTurnItemIndex(
       const restartRecoveryId = restartRecoveryNoticeId(item);
       if (restartRecoveryId) {
         restartRecoveryNoticeIds.add(restartRecoveryId);
+        const userText = userMessageTextKey(item);
+        if (userText) {
+          incrementMapCount(restartRecoveryNoticeTexts, userText);
+        }
       } else {
         const userText = userMessageTextKey(item);
         if (userText) {
@@ -2233,6 +2239,7 @@ function buildTurnItemIndex(
     initContextKeys,
     reasoningFragments,
     restartRecoveryNoticeIds,
+    restartRecoveryNoticeTexts,
     untypedUserMessageTexts,
   };
 }
@@ -2517,22 +2524,34 @@ function consumeMatchingRestartRecoveryNoticeItem(
   item: ThreadItem,
 ) {
   const noticeId = restartRecoveryNoticeId(item);
-  if (!noticeId) {
-    return false;
-  }
-  if (matcher.index.restartRecoveryNoticeIds.has(noticeId)) {
-    matcher.index.restartRecoveryNoticeIds.delete(noticeId);
+  const text = userMessageTextKey(item);
+  if (noticeId) {
+    if (matcher.index.restartRecoveryNoticeIds.has(noticeId)) {
+      matcher.index.restartRecoveryNoticeIds.delete(noticeId);
+      if (text) {
+        decrementMapCount(matcher.index.restartRecoveryNoticeTexts, text, 1);
+      }
+      return true;
+    }
+    if (!text) {
+      return false;
+    }
+    const available = matcher.index.untypedUserMessageTexts.get(text) ?? 0;
+    if (available <= 0) {
+      return false;
+    }
+    decrementMapCount(matcher.index.untypedUserMessageTexts, text, 1);
     return true;
   }
-  const text = userMessageTextKey(item);
+
   if (!text) {
     return false;
   }
-  const available = matcher.index.untypedUserMessageTexts.get(text) ?? 0;
+  const available = matcher.index.restartRecoveryNoticeTexts.get(text) ?? 0;
   if (available <= 0) {
     return false;
   }
-  decrementMapCount(matcher.index.untypedUserMessageTexts, text, 1);
+  decrementMapCount(matcher.index.restartRecoveryNoticeTexts, text, 1);
   return true;
 }
 
