@@ -740,7 +740,12 @@ export const MessageRow = memo(function MessageRow({
     );
 
   return (
-    <article className={`message-row message-row-${firstEntry.role}`}>
+    <article
+      className={`message-row message-row-${firstEntry.role}`}
+      data-conversation-row="message"
+      data-conversation-role={firstEntry.role}
+      data-conversation-entry-ids={entries.map((entry) => entry.id).join(" ")}
+    >
       <div className={`message-avatar ${firstEntry.role}`}>
         {firstEntry.role === "user" ? <UserIcon /> : <RobotIcon />}
       </div>
@@ -852,7 +857,12 @@ export const ToolRow = memo(function ToolRow({
   const icon = getToolIcon(toolCategory);
 
   return (
-    <article className={`tool-row tool-row-${toolCategory}`}>
+    <article
+      className={`tool-row tool-row-${toolCategory}`}
+      data-conversation-row="tool"
+      data-tool-category={toolCategory}
+      data-conversation-entry-ids={entries.map((entry) => entry.id).join(" ")}
+    >
       <div className={`event-icon tool-icon tool-icon-${toolCategory}`}>
         {icon}
       </div>
