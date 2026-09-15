@@ -3160,6 +3160,83 @@ async fn poll_event_returns_immediately_for_existing_pending_command_output() {
 }
 
 #[tokio::test]
+async fn poll_event_existing_pending_events_keep_first_source_event_and_all_events() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-output-1".to_string()),
+            command_item_id: "cmd-output".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            message: "Command output notification received.".to_string(),
+            output: Some("wake".to_string()),
+            exit_code: None,
+            created_at_ms: 1234,
+        },
+    ))
+    .await;
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-exit-1".to_string()),
+            command_item_id: "cmd-exit".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command exit notification received.".to_string(),
+            output: None,
+            exit_code: Some(0),
+            created_at_ms: 1235,
+        },
+    ))
+    .await;
+
+    let result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should succeed");
+
+    assert!(!result.timed_out);
+    assert_eq!(result.waited_ms, 0);
+    assert_eq!(result.source_hint.as_deref(), Some("command_output"));
+    assert!(matches!(
+        result.event,
+        Some(
+            thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+                kind: protocol::models::CommandExecutionNotificationKind::Output,
+                ..
+            }
+        )
+    ));
+    assert_eq!(result.events.len(), 2);
+    assert!(matches!(
+        result.events[0],
+        thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            ..
+        }
+    ));
+    assert!(matches!(
+        result.events[1],
+        thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            ..
+        }
+    ));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn poll_event_wakes_for_child_completion() {
     let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
     sess.spawn_task(

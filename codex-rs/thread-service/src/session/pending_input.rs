@@ -259,6 +259,7 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state reads must remain atomic"
     )]
+    #[cfg(test)]
     pub(crate) async fn find_pending_input<F, R>(&self, mut f: F) -> Option<R>
     where
         F: FnMut(&PendingInputItem) -> Option<R>,
@@ -455,13 +456,6 @@ impl Session {
         }
     }
 
-    pub(crate) async fn pending_thread_poll_event_snapshot(
-        &self,
-    ) -> Option<PendingThreadPollEventSnapshot> {
-        self.find_pending_input(pending_thread_poll_event_snapshot)
-            .await
-    }
-
     pub(crate) async fn pending_thread_poll_event_snapshots(
         &self,
     ) -> Vec<PendingThreadPollEventSnapshot> {
@@ -521,14 +515,14 @@ impl Session {
         let metadata = self.poll_event_timeout_metadata(request).await?;
         let thread_wait = self.thread_wait.clone();
         let watcher = thread_wait.begin_wait();
-        if let Some(snapshot) = self.pending_thread_poll_event_snapshot().await {
-            let snapshots = self.pending_thread_poll_event_snapshots().await;
-            let source_events =
-                poll_events_for_source_from_snapshots(&snapshots, &snapshot.source_hint);
-            let events = poll_events_from_snapshots(&snapshots);
+        let pending_events =
+            PendingThreadPollEventsSnapshot::new(self.pending_thread_poll_event_snapshots().await);
+        if let Some(source_hint) = pending_events.first_source_hint() {
+            let source_events = pending_events.events_for_source(source_hint);
+            let events = pending_events.events();
             thread_wait.reset_after_event().await;
             return Ok(poll_event_result(
-                Some(snapshot.source_hint),
+                Some(source_hint.to_string()),
                 source_events.first().cloned(),
                 events,
                 0,
@@ -671,6 +665,30 @@ fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<
 pub(crate) struct PendingThreadPollEventSnapshot {
     pub(crate) source_hint: String,
     event: Option<thread_service_api::ThreadPollEvent>,
+}
+
+struct PendingThreadPollEventsSnapshot {
+    snapshots: Vec<PendingThreadPollEventSnapshot>,
+}
+
+impl PendingThreadPollEventsSnapshot {
+    fn new(snapshots: Vec<PendingThreadPollEventSnapshot>) -> Self {
+        Self { snapshots }
+    }
+
+    fn first_source_hint(&self) -> Option<&str> {
+        self.snapshots
+            .first()
+            .map(|snapshot| snapshot.source_hint.as_str())
+    }
+
+    fn events(&self) -> Vec<thread_service_api::ThreadPollEvent> {
+        poll_events_from_snapshots(&self.snapshots)
+    }
+
+    fn events_for_source(&self, source_hint: &str) -> Vec<thread_service_api::ThreadPollEvent> {
+        poll_events_for_source_from_snapshots(&self.snapshots, source_hint)
+    }
 }
 
 fn pending_thread_poll_event_snapshot(
