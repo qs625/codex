@@ -82,35 +82,28 @@ function terminalSafeTruncatedReplay(replay) {
 
 function mergeTerminalSessions(state, sessions, threadId = null) {
   const activeKeys = new Set();
+  const tabIndex = indexTerminalTabsForSessionMerge(state.tabs);
   for (const descriptor of sessions) {
     const key = terminalSessionKey(descriptor);
     activeKeys.add(key);
     if (isTerminalSessionDetached(state, descriptor)) {
       continue;
     }
-    const existing = state.tabs.find(
-      (tab) =>
-        terminalSessionKey(tab) === key ||
-        (tab.origin === "model" &&
-          descriptor.origin === "model" &&
-          tab.threadId === descriptor.threadId &&
-          tab.commandItemId != null &&
-          tab.commandItemId === descriptor.commandItemId &&
-          tab.readOnlyOutput === true) ||
-        (tab.origin === "user" &&
-          tab.status === "starting" &&
-          tab.processId === descriptor.processId),
-    );
+    const existing = findTerminalSessionMergeTarget(tabIndex, descriptor);
     if (existing) {
+      removeTerminalTabFromSessionMergeIndex(tabIndex, existing);
       mergeFocusedCommandDescriptor(existing, descriptor);
       existing.status = "running";
       delete existing.readOnlyOutput;
+      addTerminalTabToSessionMergeIndex(tabIndex, existing);
       continue;
     }
-    state.tabs.push(createTerminalTab(descriptor, {
+    const tab = createTerminalTab(descriptor, {
       status: "running",
       lastSequence: normalizeSequence(descriptor.replayThroughSequence),
-    }));
+    });
+    state.tabs.push(tab);
+    addTerminalTabToSessionMergeIndex(tabIndex, tab, state.tabs.length - 1);
   }
   for (const tab of state.tabs) {
     const wasInListedScope =
@@ -128,6 +121,104 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
     state.activeTabId = state.tabs[0]?.id ?? null;
   }
   return state;
+}
+
+function indexTerminalTabsForSessionMerge(tabs) {
+  const index = {
+    bySessionKey: new Map(),
+    readOnlyModelByCommandKey: new Map(),
+    startingUserByProcessId: new Map(),
+    orderByTab: new Map(),
+  };
+  for (const [order, tab] of tabs.entries()) {
+    addTerminalTabToSessionMergeIndex(index, tab, order);
+  }
+  return index;
+}
+
+function addTerminalTabToSessionMergeIndex(
+  index,
+  tab,
+  order = index.orderByTab.get(tab),
+) {
+  const tabOrder = Number.isInteger(order) ? order : index.orderByTab.size;
+  index.orderByTab.set(tab, tabOrder);
+  setTerminalTabIndexValue(
+    index.bySessionKey,
+    terminalSessionKey(tab),
+    tab,
+    tabOrder,
+  );
+  if (tab.origin === "model" && tab.readOnlyOutput === true) {
+    const commandKey = terminalCommandLookupKey(tab.threadId, tab.commandItemId);
+    if (commandKey) {
+      setTerminalTabIndexValue(
+        index.readOnlyModelByCommandKey,
+        commandKey,
+        tab,
+        tabOrder,
+      );
+    }
+  }
+  if (tab.origin === "user" && tab.status === "starting") {
+    setTerminalTabIndexValue(
+      index.startingUserByProcessId,
+      tab.processId,
+      tab,
+      tabOrder,
+    );
+  }
+}
+
+function removeTerminalTabFromSessionMergeIndex(index, tab) {
+  deleteTerminalTabIndexValue(index.bySessionKey, terminalSessionKey(tab), tab);
+  const commandKey = terminalCommandLookupKey(tab.threadId, tab.commandItemId);
+  if (commandKey) {
+    deleteTerminalTabIndexValue(index.readOnlyModelByCommandKey, commandKey, tab);
+  }
+  deleteTerminalTabIndexValue(index.startingUserByProcessId, tab.processId, tab);
+}
+
+function setTerminalTabIndexValue(index, key, tab, order) {
+  const existing = key ? index.get(key) : null;
+  if (key && (!existing || order < existing.order)) {
+    index.set(key, { tab, order });
+  }
+}
+
+function deleteTerminalTabIndexValue(index, key, tab) {
+  if (key && index.get(key)?.tab === tab) {
+    index.delete(key);
+  }
+}
+
+function findTerminalSessionMergeTarget(index, descriptor) {
+  let match = index.bySessionKey.get(terminalSessionKey(descriptor)) ?? null;
+  if (descriptor.origin === "model") {
+    const commandMatch = index.readOnlyModelByCommandKey.get(
+      terminalCommandLookupKey(descriptor.threadId, descriptor.commandItemId),
+    );
+    if (commandMatch) {
+      match = earlierTerminalTabIndexEntry(match, commandMatch);
+    }
+  }
+  if (descriptor.origin === "user") {
+    match = earlierTerminalTabIndexEntry(
+      match,
+      index.startingUserByProcessId.get(descriptor.processId) ?? null,
+    );
+  }
+  return match?.tab ?? null;
+}
+
+function earlierTerminalTabIndexEntry(left, right) {
+  if (!left) {
+    return right;
+  }
+  if (!right) {
+    return left;
+  }
+  return right.order < left.order ? right : left;
 }
 
 function reattachTerminalSessions(state) {
@@ -524,7 +615,19 @@ function terminalCommandItemKey(value) {
   ) {
     return null;
   }
-  return ["model-command", value.threadId, value.commandItemId].join(":");
+  return terminalCommandLookupKey(value.threadId, value.commandItemId);
+}
+
+function terminalCommandLookupKey(threadId, commandItemId) {
+  if (
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    typeof commandItemId !== "string" ||
+    commandItemId.length === 0
+  ) {
+    return null;
+  }
+  return ["model-command", threadId, commandItemId].join(":");
 }
 
 function recordDetachedTerminalSession(state, value) {

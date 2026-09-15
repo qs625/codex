@@ -905,6 +905,155 @@ test("live session merge upgrades read-only fallback with placeholder process id
   assert.equal(terminalTabSupports(fallback, "resize"), true);
 });
 
+test("live session merge finds read-only fallback after unrelated tabs", () => {
+  const state = createTerminalPanelState();
+  addUserTerminal(state, descriptor({
+    sessionId: "user:one",
+    generation: "one",
+    origin: "user",
+    threadId: null,
+    commandItemId: null,
+    processId: "one",
+  }));
+  const fallback = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: null,
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:runtime-process",
+        generation: "call",
+        commandItemId: "call",
+        processId: "runtime-process",
+        title: "npm test",
+        cwd: "/repo",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs.length, 2);
+  assert.equal(state.tabs[1], fallback);
+  assert.equal(fallback.sessionId, "model:thread:call:runtime-process");
+  assert.equal(fallback.processId, "runtime-process");
+  assert.equal(fallback.readOnlyOutput, undefined);
+});
+
+test("live session merge preserves tab-order priority over exact session matches", () => {
+  const fallbackState = createTerminalPanelState();
+  const fallback = focusCommandTerminal(
+    fallbackState,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: null,
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:runtime-process",
+        generation: "call",
+        commandItemId: "call",
+        processId: "runtime-process",
+      }),
+    ],
+    "thread",
+  );
+  const exactSessionTab = state.tabs[0];
+  state.tabs.unshift(fallback);
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:runtime-process",
+        generation: "call",
+        commandItemId: "call",
+        processId: "runtime-process",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs.length, 2);
+  assert.equal(state.tabs[0], fallback);
+  assert.equal(state.tabs[1], exactSessionTab);
+  assert.equal(fallback.sessionId, "model:thread:call:runtime-process");
+  assert.equal(fallback.readOnlyOutput, undefined);
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:runtime-process",
+        generation: "call",
+        commandItemId: "call",
+        processId: "runtime-process",
+        replayBase64: Buffer.from("fresh\n").toString("base64"),
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs.length, 2);
+  assert.equal(fallback.replay.toString(), "fresh\n");
+  assert.equal(exactSessionTab.replay.toString(), "");
+});
+
+test("live session merge does not reuse upgraded fallback for a second process", () => {
+  const state = createTerminalPanelState();
+  focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest({
+      threadId: "thread",
+      commandItemId: "call",
+      processId: null,
+      command: "npm test",
+      cwd: "/repo",
+      status: "running",
+    }),
+  );
+
+  mergeTerminalSessions(
+    state,
+    [
+      descriptor({
+        sessionId: "model:thread:call:runtime-one",
+        generation: "call",
+        commandItemId: "call",
+        processId: "runtime-one",
+      }),
+      descriptor({
+        sessionId: "model:thread:call:runtime-two",
+        generation: "call",
+        commandItemId: "call",
+        processId: "runtime-two",
+      }),
+    ],
+    "thread",
+  );
+
+  assert.equal(state.tabs.length, 2);
+  assert.equal(state.tabs[0].processId, "runtime-one");
+  assert.equal(state.tabs[1].processId, "runtime-two");
+});
+
 test("read-only model command fallback requests live session refresh while output streams", () => {
   const state = createTerminalPanelState();
   const command = {
