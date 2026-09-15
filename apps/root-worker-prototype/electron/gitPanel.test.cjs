@@ -8,6 +8,7 @@ const path = require("node:path");
 const {
   GIT_GRAPH_MAX_COUNT,
   GIT_REF_MAX_COUNT,
+  buildGitCommitFileDiffArgs,
   buildGitCommitFilesArgs,
   buildGitLogArgs,
   buildGitRefsArgs,
@@ -16,6 +17,7 @@ const {
   parseGitGraph,
   parseGitRefs,
   parseGitStatus,
+  readGitCommitFileDiff,
   readGitFileDiff,
   readGitSnapshot,
   readGitStatusSnapshot,
@@ -174,6 +176,25 @@ test("buildGitCommitFilesArgs validates the command shape for one commit", () =>
   assert.equal(isValidCommitHash("--bad"), false);
 });
 
+test("buildGitCommitFileDiffArgs validates the command shape for one commit file", () => {
+  const args = buildGitCommitFileDiffArgs("abc1234", {
+    path: "src/new.ts",
+    originalPath: "src/old.ts",
+  });
+
+  assert.deepEqual(args, [
+    "show",
+    "--format=",
+    "--no-ext-diff",
+    "--find-renames",
+    "--find-copies",
+    "abc1234",
+    "--",
+    "src/new.ts",
+    "src/old.ts",
+  ]);
+});
+
 test("parseGitStatus groups staged and unstaged porcelain entries", () => {
   const changes = parseGitStatus(
     [
@@ -301,6 +322,57 @@ test("readGitSnapshot includes the caller-spelled tree root", async (t) => {
   assert.equal(snapshot.treeRoot, repo);
 });
 
+test("readGitCommitFileDiff reads modified files from a commit", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/app.ts", "export const value = 1;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  writeRepoFile(repo, "src/app.ts", "export const value = 2;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "update app"]);
+  const hash = git(repo, ["rev-parse", "HEAD"]).trim();
+
+  const diff = await readGitCommitFileDiff(repo, {
+    hash,
+    path: "src/app.ts",
+    status: "M",
+  });
+
+  assert.equal(diff.available, true);
+  assert.equal(diff.staged, false);
+  assert.equal(diff.status, "M");
+  assert.equal(diff.modeLabel, "commit");
+  assert.equal(diff.commit, hash);
+  assert.equal(diff.oldLabel, `${hash.slice(0, 7)}^`);
+  assert.equal(diff.newLabel, hash.slice(0, 7));
+  assert.equal(diff.oldContent, "export const value = 1;\n");
+  assert.equal(diff.newContent, "export const value = 2;\n");
+  assert.match(diff.unifiedDiff, /export const value = 2/);
+});
+
+test("readGitCommitFileDiff handles renamed files in a commit", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/old-name.ts", "rename me\n");
+  git(repo, ["add", "src/old-name.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  git(repo, ["mv", "src/old-name.ts", "src/new-name.ts"]);
+  git(repo, ["commit", "-m", "rename app"]);
+  const hash = git(repo, ["rev-parse", "HEAD"]).trim();
+
+  const diff = await readGitCommitFileDiff(repo, {
+    hash,
+    path: "src/new-name.ts",
+    originalPath: "src/old-name.ts",
+    status: "R",
+  });
+
+  assert.equal(diff.available, true);
+  assert.equal(diff.status, "R");
+  assert.equal(diff.originalPath, "src/old-name.ts");
+  assert.equal(diff.oldContent, "rename me\n");
+  assert.equal(diff.newContent, "rename me\n");
+});
+
 test("readGitStatusSnapshot returns typed unavailable outside a repository", async (t) => {
   requireGit(t);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-git-status-"));
@@ -379,6 +451,27 @@ test("readGitFileDiff returns a typed unavailable diff for binary content", asyn
   assert.equal(diff.available, false);
   assert.equal(diff.binary, true);
   assert.equal(diff.status, "A");
+  assert.match(diff.error ?? "", /Binary files/);
+});
+
+test("readGitCommitFileDiff returns a typed unavailable diff for binary content", async (t) => {
+  const repo = createTempGitRepo(t);
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src/blob.bin"), Buffer.from([0, 1, 2, 3]));
+  git(repo, ["add", "src/blob.bin"]);
+  git(repo, ["commit", "-m", "add binary"]);
+  const hash = git(repo, ["rev-parse", "HEAD"]).trim();
+
+  const diff = await readGitCommitFileDiff(repo, {
+    hash,
+    path: "src/blob.bin",
+    status: "A",
+  });
+
+  assert.equal(diff.available, false);
+  assert.equal(diff.binary, true);
+  assert.equal(diff.status, "A");
+  assert.equal(diff.modeLabel, "commit");
   assert.match(diff.error ?? "", /Binary files/);
 });
 

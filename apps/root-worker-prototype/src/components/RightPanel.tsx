@@ -125,11 +125,13 @@ type GitGraphItem = GitSnapshot["graph"][number];
 type GitGraphCommit = Extract<GitGraphItem, { type: "commit" }>;
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
 type GitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitFileDiff"]>>;
+type GitCommitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFileDiff"]>>;
 type GitStatusSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitStatusSnapshot"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
+type GitDiffPreviewSnapshot = GitFileDiffSnapshot | GitCommitFileDiffSnapshot;
 type GitDiffPreviewState = {
   loading: boolean;
-  diff: GitFileDiffSnapshot | null;
+  diff: GitDiffPreviewSnapshot | null;
   error: string | null;
 };
 type GitGraphVisualCommit = {
@@ -405,6 +407,41 @@ export function RightPanel({
       });
   }
 
+  function openGitCommitFileDiff(commit: GitGraphCommit, file: GitCommitFile) {
+    if (!thread || isChatCompatCwd(thread.cwd)) {
+      return;
+    }
+    gitTreeOpenScope.current += 1;
+    const scope = gitDiffRequestScope.current + 1;
+    gitDiffRequestScope.current = scope;
+    gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
+    setGitDiffPreview({ loading: true, diff: null, error: null });
+    onSetFilePanelView("preview");
+    onSetActiveView("preview");
+
+    window.codexDesktop
+      .readGitCommitFileDiff(thread.cwd, {
+        hash: commit.hash,
+        path: file.path,
+        originalPath: file.originalPath,
+        status: file.status,
+      })
+      .then((diff) => {
+        if (gitDiffRequestScope.current === scope) {
+          setGitDiffPreview({ loading: false, diff, error: diff.error });
+        }
+      })
+      .catch((error) => {
+        if (gitDiffRequestScope.current === scope) {
+          setGitDiffPreview({
+            loading: false,
+            diff: null,
+            error: error instanceof Error ? error.message : "Failed to read Git commit diff.",
+          });
+        }
+      });
+  }
+
   useEffect(() => {
     gitTreeOpenScope.current += 1;
   }, [preview?.column, preview?.line, preview?.path, previewRootId]);
@@ -483,6 +520,7 @@ export function RightPanel({
               <GitPanel
                 changedFiles={threadAnalysis.changedFiles}
                 onGitSnapshotChange={setGitTreeSnapshot}
+                onOpenCommitFileDiff={openGitCommitFileDiff}
                 onOpenDiff={openGitFileDiff}
                 thread={thread}
               />
@@ -2075,11 +2113,13 @@ function formatPlanStatus(status: ThreadPlanStep["status"]) {
 function GitPanel({
   changedFiles,
   onGitSnapshotChange,
+  onOpenCommitFileDiff,
   onOpenDiff,
   thread,
 }: {
   changedFiles: ThreadAnalysis["changedFiles"];
   onGitSnapshotChange: (snapshot: GitStatusSnapshot | null) => void;
+  onOpenCommitFileDiff: (commit: GitGraphCommit, file: GitCommitFile) => void;
   onOpenDiff: (change: GitChange, mode: "staged" | "unstaged") => void;
   thread: Thread | null;
 }) {
@@ -2330,6 +2370,7 @@ function GitPanel({
               commitFilesByHash={commitFilesByHash}
               commitFilesLoadingByHash={commitFilesLoadingByHash}
               graph={snapshot.graph}
+              onOpenCommitFileDiff={onOpenCommitFileDiff}
               onToggleCommit={toggleSelectedCommit}
               selectedCommitHash={selectedCommitHash}
             />
@@ -2464,12 +2505,14 @@ function GitGraphVisualList({
   commitFilesByHash,
   commitFilesLoadingByHash,
   graph,
+  onOpenCommitFileDiff,
   onToggleCommit,
   selectedCommitHash,
 }: {
   commitFilesByHash: Record<string, GitCommitFilesSnapshot | undefined>;
   commitFilesLoadingByHash: Record<string, boolean>;
   graph: GitGraphItem[];
+  onOpenCommitFileDiff: (commit: GitGraphCommit, file: GitCommitFile) => void;
   onToggleCommit: (commit: GitGraphCommit) => void;
   selectedCommitHash: string | null;
 }) {
@@ -2531,6 +2574,7 @@ function GitGraphVisualList({
           filesSnapshot={commitFilesByHash[visualCommit.commit.hash]}
           isLoadingFiles={Boolean(commitFilesLoadingByHash[visualCommit.commit.hash])}
           isSelected={selectedCommitHash === visualCommit.commit.hash}
+          onOpenFileDiff={(file) => onOpenCommitFileDiff(visualCommit.commit, file)}
           onToggle={() => onToggleCommit(visualCommit.commit)}
         />
       ))}
@@ -2543,12 +2587,14 @@ function GitGraphRow({
   filesSnapshot,
   isLoadingFiles,
   isSelected,
+  onOpenFileDiff,
   onToggle,
 }: {
   commit: GitGraphCommit;
   filesSnapshot?: GitCommitFilesSnapshot;
   isLoadingFiles: boolean;
   isSelected: boolean;
+  onOpenFileDiff: (file: GitCommitFile) => void;
   onToggle: () => void;
 }) {
   const headRef = commit.refs.find((ref) => ref.startsWith("HEAD -> "));
@@ -2607,7 +2653,11 @@ function GitGraphRow({
         </span>
       </div>
       {isSelected ? (
-        <GitCommitFileList filesSnapshot={filesSnapshot} isLoading={isLoadingFiles} />
+        <GitCommitFileList
+          filesSnapshot={filesSnapshot}
+          isLoading={isLoadingFiles}
+          onOpenFileDiff={onOpenFileDiff}
+        />
       ) : null}
     </article>
   );
@@ -2616,9 +2666,11 @@ function GitGraphRow({
 function GitCommitFileList({
   filesSnapshot,
   isLoading,
+  onOpenFileDiff,
 }: {
   filesSnapshot?: GitCommitFilesSnapshot;
   isLoading: boolean;
+  onOpenFileDiff: (file: GitCommitFile) => void;
 }) {
   if (isLoading && !filesSnapshot) {
     return <div className="git-commit-files-state">Loading commit files...</div>;
@@ -2637,16 +2689,38 @@ function GitCommitFileList({
   return (
     <div className="git-commit-files" aria-label="Commit changed files">
       {filesSnapshot.files.map((file) => (
-        <GitCommitFileRow key={`${file.status}:${file.path}:${file.originalPath ?? ""}`} file={file} />
+        <GitCommitFileRow
+          key={`${file.status}:${file.path}:${file.originalPath ?? ""}`}
+          file={file}
+          onOpenDiff={onOpenFileDiff}
+        />
       ))}
     </div>
   );
 }
 
-function GitCommitFileRow({ file }: { file: GitCommitFile }) {
+export function GitCommitFileRow({
+  file,
+  onOpenDiff,
+}: {
+  file: GitCommitFile;
+  onOpenDiff: (file: GitCommitFile) => void;
+}) {
   const directory = directoryName(file.path);
   return (
-    <article className="git-commit-file-row">
+    <button
+      type="button"
+      className="git-commit-file-row"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpenDiff(file);
+      }}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+      }}
+      aria-label={`Open commit diff for ${file.path}`}
+      title={`Open commit diff for ${file.path}`}
+    >
       <span className={`git-file-kind ${gitStatusClass(file.status)}`} aria-hidden="true">
         {fileIconLabel(file.path)}
       </span>
@@ -2658,7 +2732,7 @@ function GitCommitFileRow({ file }: { file: GitCommitFile }) {
       <span className={`git-commit-file-status ${gitStatusClass(file.status)}`}>
         {gitStatusLabel(file.status)}
       </span>
-    </article>
+    </button>
   );
 }
 
@@ -3759,7 +3833,7 @@ export function GitDiffPreviewPanel({
   error,
   loading,
 }: {
-  diff: GitFileDiffSnapshot | null;
+  diff: GitDiffPreviewSnapshot | null;
   error: string | null;
   loading: boolean;
 }) {
@@ -3785,7 +3859,13 @@ export function GitDiffPreviewPanel({
           </span>
         </div>
         <div className="preview-utility-secondary">
-          <span>{diff.staged ? "staged" : "unstaged"}</span>
+          <span>
+            {"modeLabel" in diff && diff.modeLabel
+              ? diff.modeLabel
+              : diff.staged
+                ? "staged"
+                : "unstaged"}
+          </span>
           {diff.originalPath ? (
             <>
               <span className="preview-utility-separator">•</span>

@@ -43,6 +43,7 @@ const {
   filePreviewSourceEditorVisible,
   GitChangeGroup,
   GitChangeRow,
+  GitCommitFileRow,
   GitDiffPreviewPanel,
   gitDiffTargetForTreePath,
   gitRelativeTreePath,
@@ -1184,6 +1185,55 @@ test("git change groups hide rows when collapsed and expose row diff navigation 
   assert.match(rowMarkup, /tabindex="0"/);
 });
 
+test("git commit file rows expose commit diff navigation without toggling the commit row", () => {
+  const file = {
+    path: "src/thread.ts",
+    originalPath: "src/old-thread.ts",
+    status: "R",
+    score: "91",
+  };
+  let openedFile: typeof file | null = null;
+  let stopped = false;
+  const row = GitCommitFileRow({
+    file,
+    onOpenDiff: (nextFile: typeof file) => {
+      openedFile = nextFile;
+    },
+  }) as React.ReactElement<{
+    "aria-label": string;
+    className: string;
+    onClick: (event: { stopPropagation: () => void }) => void;
+    onKeyDown: (event: { stopPropagation: () => void }) => void;
+    title: string;
+    type: string;
+  }>;
+  const markup = renderToStaticMarkup(
+    <GitCommitFileRow file={file} onOpenDiff={() => {}} />,
+  );
+
+  row.props.onClick({
+    stopPropagation: () => {
+      stopped = true;
+    },
+  });
+  let keyStopped = false;
+  row.props.onKeyDown({
+    stopPropagation: () => {
+      keyStopped = true;
+    },
+  });
+
+  assert.equal(row.props.type, "button");
+  assert.equal(row.props["aria-label"], "Open commit diff for src/thread.ts");
+  assert.equal(row.props.title, "Open commit diff for src/thread.ts");
+  assert.equal(stopped, true);
+  assert.equal(keyStopped, true);
+  assert.equal(openedFile, file);
+  assert.match(markup, /git-commit-file-row/);
+  assert.match(markup, /Open commit diff for src\/thread\.ts/);
+  assert.match(markup, /from src\/old-thread\.ts/);
+});
+
 test("git diff previews render as read-only preview content without edit controls", () => {
   const markup = renderToStaticMarkup(
     <GitDiffPreviewPanel
@@ -1211,6 +1261,37 @@ test("git diff previews render as read-only preview content without edit control
   assert.match(markup, />DIFF</);
   assert.match(markup, />unstaged</);
   assert.doesNotMatch(markup, /preview-edit-action/);
+});
+
+test("git diff previews label commit file diffs as commit scope", () => {
+  const markup = renderToStaticMarkup(
+    <GitDiffPreviewPanel
+      diff={{
+        available: true,
+        root: "/repo",
+        path: "src/thread.ts",
+        originalPath: null,
+        staged: false,
+        status: "M",
+        language: "typescript",
+        oldLabel: "abc1234^",
+        newLabel: "abc1234",
+        oldContent: "before\n",
+        newContent: "after\n",
+        unifiedDiff: "",
+        error: null,
+        binary: false,
+        modeLabel: "commit",
+        commit: "abc1234",
+        parent: "abc1234^",
+      }}
+      error={null}
+      loading={false}
+    />,
+  );
+
+  assert.match(markup, />commit</);
+  assert.doesNotMatch(markup, />unstaged</);
 });
 
 test("git diff preview clears when normal file preview changes target", () => {
