@@ -21,6 +21,7 @@ pub struct TurnDiffTracker {
     baseline_by_path: HashMap<PathBuf, String>,
     current_by_path: HashMap<PathBuf, String>,
     origin_by_current_path: HashMap<PathBuf, PathBuf>,
+    diff_paths: HashSet<PathBuf>,
 }
 
 impl Default for TurnDiffTracker {
@@ -31,6 +32,7 @@ impl Default for TurnDiffTracker {
             baseline_by_path: HashMap::new(),
             current_by_path: HashMap::new(),
             origin_by_current_path: HashMap::new(),
+            diff_paths: HashSet::new(),
         }
     }
 }
@@ -68,28 +70,16 @@ impl TurnDiffTracker {
 
         let rename_pairs = self.rename_pairs();
         let paired_destinations = rename_pairs.values().cloned().collect::<HashSet<_>>();
-        let mut handled = HashSet::new();
-        let mut paths = self
-            .baseline_by_path
-            .keys()
-            .chain(self.current_by_path.keys())
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut paths = self.diff_paths.iter().cloned().collect::<Vec<_>>();
         paths.sort_by_key(|path| self.display_path(path));
-        paths.dedup();
 
         let mut aggregated = String::new();
         for path in paths {
-            if !handled.insert(path.clone()) {
-                continue;
-            }
-
             if paired_destinations.contains(&path) {
                 continue;
             }
 
             let diff = if let Some(dest) = rename_pairs.get(&path) {
-                handled.insert(dest.clone());
                 self.render_rename_diff(&path, dest)
             } else {
                 self.render_path_diff(&path)
@@ -137,9 +127,11 @@ impl TurnDiffTracker {
         {
             self.baseline_by_path
                 .insert(path.to_path_buf(), overwritten_content.to_string());
+            self.track_diff_path(path);
         }
         self.current_by_path
             .insert(path.to_path_buf(), content.to_string());
+        self.track_diff_path(path);
     }
 
     fn apply_delete(&mut self, path: &Path, content: &str) {
@@ -147,8 +139,10 @@ impl TurnDiffTracker {
         {
             self.baseline_by_path
                 .insert(path.to_path_buf(), content.to_string());
+            self.track_diff_path(path);
         }
         self.origin_by_current_path.remove(path);
+        self.refresh_diff_path(path);
     }
 
     fn apply_update(
@@ -164,6 +158,7 @@ impl TurnDiffTracker {
         {
             self.baseline_by_path
                 .insert(source_path.to_path_buf(), old_content.to_string());
+            self.track_diff_path(source_path);
         }
 
         match move_path {
@@ -176,24 +171,44 @@ impl TurnDiffTracker {
                         dest_path.to_path_buf(),
                         overwritten_move_content.to_string(),
                     );
+                    self.track_diff_path(dest_path);
                 }
                 let origin = self
                     .origin_by_current_path
                     .remove(source_path)
                     .unwrap_or_else(|| source_path.to_path_buf());
                 self.current_by_path.remove(source_path);
+                self.refresh_diff_path(source_path);
                 self.current_by_path
                     .insert(dest_path.to_path_buf(), new_content.to_string());
+                self.track_diff_path(dest_path);
                 self.origin_by_current_path.remove(dest_path);
                 if dest_path != origin.as_path() {
                     self.origin_by_current_path
                         .insert(dest_path.to_path_buf(), origin);
+                    self.track_diff_path(dest_path);
                 }
             }
             None => {
                 self.current_by_path
                     .insert(source_path.to_path_buf(), new_content.to_string());
+                self.track_diff_path(source_path);
             }
+        }
+    }
+
+    fn track_diff_path(&mut self, path: &Path) {
+        self.diff_paths.insert(path.to_path_buf());
+    }
+
+    fn refresh_diff_path(&mut self, path: &Path) {
+        if self.baseline_by_path.contains_key(path)
+            || self.current_by_path.contains_key(path)
+            || self.origin_by_current_path.contains_key(path)
+        {
+            self.track_diff_path(path);
+        } else {
+            self.diff_paths.remove(path);
         }
     }
 
@@ -296,5 +311,58 @@ impl TurnDiffTracker {
                 .to_string(),
             None => path.display().to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_then_delete_removes_path_from_diff_projection() {
+        let mut tracker = TurnDiffTracker::new();
+        let path = Path::new("created.txt");
+
+        tracker.apply_add(path, "created\n", None);
+        assert!(tracker.get_unified_diff().is_some());
+
+        tracker.apply_delete(path, "created\n");
+
+        assert_eq!(tracker.get_unified_diff(), None);
+        assert!(tracker.diff_paths.is_empty());
+    }
+
+    #[test]
+    fn chained_rename_projects_original_source_to_final_destination() {
+        let mut tracker = TurnDiffTracker::new();
+
+        tracker.apply_update(
+            Path::new("alpha.txt"),
+            Some(Path::new("beta.txt")),
+            "one\n",
+            None,
+            "two\n",
+        );
+        tracker.apply_update(
+            Path::new("beta.txt"),
+            Some(Path::new("gamma.txt")),
+            "two\n",
+            None,
+            "three\n",
+        );
+
+        let diff = tracker.get_unified_diff().expect("rename diff");
+        assert!(diff.contains("diff --git a/alpha.txt b/gamma.txt"));
+        assert!(!diff.contains("beta.txt"));
+    }
+
+    #[test]
+    fn invalidated_tracker_returns_no_diff() {
+        let mut tracker = TurnDiffTracker::new();
+
+        tracker.apply_add(Path::new("created.txt"), "created\n", None);
+        tracker.invalidate();
+
+        assert_eq!(tracker.get_unified_diff(), None);
     }
 }
