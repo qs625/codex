@@ -44,10 +44,6 @@ type ArtifactRowProps = {
 
 type CompactRowProps = {
   entry: ConversationEntry;
-  isExpanded?: boolean;
-  isLoading?: boolean;
-  loadError?: string | null;
-  onToggleExpanded?: () => void;
   onOpenLocalFile?: (target: string) => void;
   onOpenArtifactUrl?: (url: string) => void;
 };
@@ -1618,123 +1614,21 @@ function formatProgressDuration(totalMilliseconds: number) {
 
 export const CompactRow = memo(function CompactRow({
   entry,
-  isExpanded = false,
-  isLoading = false,
-  loadError = null,
-  onToggleExpanded,
-  onOpenLocalFile,
-  onOpenArtifactUrl,
 }: CompactRowProps) {
-  const replacementCount = entry.replacementHistoryCount;
-  const replacementLabel =
-    replacementCount === null || replacementCount === undefined
-      ? "replacement history unavailable"
-      : `${replacementCount} replacement item${replacementCount === 1 ? "" : "s"}`;
-  const archivedCells = entry.archivedCells ?? [];
-  const replacementHistoryCells = entry.replacementHistoryCells ?? [];
-  const archivedEntryCount = entry.archivedEntryCount ?? 0;
   return (
     <section className="compact-row" aria-label="Context compacted">
       <div className="event-icon compact-icon">
         <ShareIcon />
       </div>
-      <div className="compact-card">
-        <button
-          type="button"
-          className={`compact-summary compact-toggle ${isExpanded ? "expanded" : ""}`}
-          aria-expanded={isExpanded}
-          onClick={onToggleExpanded}
-        >
+      <div className="compact-card compact-marker-card">
+        <div className="compact-summary compact-marker" role="note">
           <div className="compact-copy">
             <strong>Context compacted</strong>
-            <span>{entry.text}</span>
-            {entry.replacementHistoryStatus === "missing" ? (
-              <em>Replacement history is unavailable for this compact event.</em>
-            ) : entry.replacementHistoryStatus === "empty" ? (
-              <em>No replacement history was provided after compacting.</em>
-            ) : (
-              <em>Open this compact round to load the archived conversation and compacted context.</em>
-            )}
           </div>
           <div className="compact-meta">
-            <span>{replacementLabel}</span>
             <time>{entry.timestamp}</time>
           </div>
-        </button>
-        {isExpanded ? (
-          <div className="compact-body">
-            {isLoading ? (
-              <div className="compact-body-note">Loading compact history…</div>
-            ) : loadError ? (
-              <div className="compact-body-note compact-body-error">
-                {loadError}
-              </div>
-            ) : (
-              <>
-                <div className="compact-group-section">
-                  <div className="compact-group-header">
-                    <strong>Previous conversation</strong>
-                    <span>
-                      {archivedEntryCount} archived item
-                      {archivedEntryCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                  {archivedCells.length > 0 ? (
-                    <div className="compact-group-cells">
-                      {archivedCells.map((cell) => (
-                        <div
-                          key={cell.id}
-                          className={`archive-cell archive-cell-${cell.kind}`}
-                        >
-                          {renderNestedConversationCell(
-                            cell,
-                            onOpenLocalFile,
-                            onOpenArtifactUrl,
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="compact-body-note">
-                      No archived items were available for this compact round.
-                    </div>
-                  )}
-                </div>
-                <div className="compact-group-section">
-                  <div className="compact-group-header">
-                    <strong>Compacted context</strong>
-                    <span>{replacementLabel}</span>
-                  </div>
-                  {entry.replacementHistoryStatus === "missing" ? (
-                    <div className="compact-body-note">
-                      Replacement history is unavailable for this compact
-                      round.
-                    </div>
-                  ) : replacementHistoryCells.length > 0 ? (
-                    <div className="compact-group-cells">
-                      {replacementHistoryCells.map((cell) => (
-                        <div
-                          key={cell.id}
-                          className={`archive-cell archive-cell-${cell.kind}`}
-                        >
-                          {renderNestedConversationCell(
-                            cell,
-                            onOpenLocalFile,
-                            onOpenArtifactUrl,
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="compact-body-note">
-                      No replacement history was provided after compacting.
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        ) : null}
+        </div>
       </div>
     </section>
   );
@@ -1828,7 +1722,6 @@ function renderNestedConversationCell(
     return (
       <CompactRow
         entry={cell.entries[0]}
-        isExpanded
         onOpenLocalFile={onOpenLocalFile}
         onOpenArtifactUrl={onOpenArtifactUrl}
       />
@@ -1882,9 +1775,6 @@ function areCompactRowPropsEqual(
 ) {
   return (
     previous.entry === next.entry &&
-    previous.isExpanded === next.isExpanded &&
-    previous.isLoading === next.isLoading &&
-    previous.loadError === next.loadError &&
     previous.onOpenLocalFile === next.onOpenLocalFile &&
     previous.onOpenArtifactUrl === next.onOpenArtifactUrl
   );

@@ -111,7 +111,7 @@ test("estimates archived history rows separately from compact rows", () => {
   assert.ok(estimateConversationCellHeight(compactCell) > 0);
 });
 
-test("expanded compact rows account for loaded round details in height estimates", () => {
+test("compact row height stays marker-only even when details are loaded", () => {
   const collapsedCompactCell: ConversationCell = {
     id: "compact-collapsed",
     kind: "compact",
@@ -145,9 +145,9 @@ test("expanded compact rows account for loaded round details in height estimates
     ],
   };
 
-  assert.ok(
-    estimateConversationCellHeight(expandedCompactCell) >
-      estimateConversationCellHeight(collapsedCompactCell),
+  assert.equal(
+    estimateConversationCellHeight(expandedCompactCell),
+    estimateConversationCellHeight(collapsedCompactCell),
   );
 });
 

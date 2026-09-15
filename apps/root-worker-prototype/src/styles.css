@@ -3678,6 +3678,14 @@ svg {
   overflow: hidden;
 }
 
+.compact-marker-card {
+  flex: 0 1 auto;
+  border-color: rgba(75, 85, 99, 0.14);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.86);
+  box-shadow: none;
+}
+
 .compact-summary,
 .archive-summary {
   display: flex;
@@ -3689,12 +3697,10 @@ svg {
   list-style: none;
 }
 
-.compact-toggle {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
+.compact-marker {
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
 }
 
 .archive-summary {
@@ -3718,6 +3724,10 @@ svg {
   color: #18181b;
   font-size: 14px;
   font-weight: 700;
+}
+
+.compact-marker .compact-copy strong {
+  font-size: 13px;
 }
 
 .compact-copy span,
@@ -3770,53 +3780,6 @@ svg {
 .compact-meta time,
 .archive-meta time {
   flex: 0 0 auto;
-}
-
-.compact-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-  padding: 12px 16px 16px;
-  border-top: 1px solid rgba(16, 24, 40, 0.06);
-}
-
-.compact-body-note {
-  color: #57534e;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.compact-body-error {
-  color: #b42318;
-}
-
-.compact-group-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-
-.compact-group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #57534e;
-  font-size: 12px;
-}
-
-.compact-group-header strong {
-  color: #18181b;
-  font-size: 13px;
-}
-
-.compact-group-cells {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
 }
 
 .archive-body {

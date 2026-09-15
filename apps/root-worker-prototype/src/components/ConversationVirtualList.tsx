@@ -26,12 +26,8 @@ import type { ConversationCell } from "../types";
 
 type ConversationVirtualListProps = {
   cells: ConversationCell[];
-  compactHistoryById: Readonly<
-    Record<string, { isLoading: boolean; isExpanded: boolean; error: string | null }>
-  >;
   containerRef: RefObject<HTMLDivElement | null>;
   focusedItem: { itemId: string; token: number } | null;
-  onToggleCompactHistory: (entryId: string) => void;
   onOpenLocalFile: (target: string) => void;
   onOpenArtifactUrl: (url: string) => void;
   searchCurrentCellId: string | null;
@@ -106,10 +102,8 @@ export function planConversationCellMeasurement({
 
 export function ConversationVirtualList({
   cells,
-  compactHistoryById,
   containerRef,
   focusedItem,
-  onToggleCompactHistory,
   onOpenLocalFile,
   onOpenArtifactUrl,
   searchCurrentCellId,
@@ -462,10 +456,8 @@ export function ConversationVirtualList({
             >
               {renderConversationCell(
                 cell,
-                compactHistoryById[cell.entries[0]?.id ?? cell.id] ?? null,
                 openToolCellIds.has(cell.id),
                 selectedToolEntryIds.get(cell.id) ?? null,
-                onToggleCompactHistory,
                 onOpenLocalFile,
                 onOpenArtifactUrl,
                 handleToolOpenChange,
@@ -509,12 +501,8 @@ function conversationEntryContainsId(
 
 function renderConversationCell(
   cell: ConversationCell,
-  compactHistoryState:
-    | { isLoading: boolean; isExpanded: boolean; error: string | null }
-    | null,
   isToolOpen: boolean,
   selectedToolEntryId: string | null,
-  onToggleCompactHistory: (entryId: string) => void,
   onOpenLocalFile: (target: string) => void,
   onOpenArtifactUrl: (url: string) => void,
   onToolOpenChange: (cellId: string, isOpen: boolean) => void,
@@ -539,10 +527,6 @@ function renderConversationCell(
     return (
       <CompactRow
         entry={entry}
-        isExpanded={compactHistoryState?.isExpanded ?? false}
-        isLoading={compactHistoryState?.isLoading ?? false}
-        loadError={compactHistoryState?.error ?? null}
-        onToggleExpanded={() => onToggleCompactHistory(entry.id)}
         onOpenLocalFile={onOpenLocalFile}
         onOpenArtifactUrl={onOpenArtifactUrl}
       />

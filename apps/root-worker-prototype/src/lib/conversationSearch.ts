@@ -94,27 +94,29 @@ function collectEntrySearchSources(
     );
   });
 
-  entry.replacementHistoryEntries?.forEach((replacementEntry, index) => {
-    collectEntrySearchSources(replacementEntry).forEach((source) => {
-      sources.push({
-        ...source,
-        key: `replacement-${index}-${source.key}`,
-        label: `Replacement ${source.label}`,
-      });
-    });
-  });
-
-  entry.archivedCells?.forEach((cell, cellIndex) => {
-    cell.entries.forEach((archivedEntry, entryIndex) => {
-      collectEntrySearchSources(archivedEntry).forEach((source) => {
+  if (entry.kind !== "compact") {
+    entry.replacementHistoryEntries?.forEach((replacementEntry, index) => {
+      collectEntrySearchSources(replacementEntry).forEach((source) => {
         sources.push({
           ...source,
-          key: `archive-${cellIndex}-${entryIndex}-${source.key}`,
-          label: `Archive ${source.label}`,
+          key: `replacement-${index}-${source.key}`,
+          label: `Replacement ${source.label}`,
         });
       });
     });
-  });
+
+    entry.archivedCells?.forEach((cell, cellIndex) => {
+      cell.entries.forEach((archivedEntry, entryIndex) => {
+        collectEntrySearchSources(archivedEntry).forEach((source) => {
+          sources.push({
+            ...source,
+            key: `archive-${cellIndex}-${entryIndex}-${source.key}`,
+            label: `Archive ${source.label}`,
+          });
+        });
+      });
+    });
+  }
 
   return sources;
 }
