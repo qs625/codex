@@ -121,16 +121,19 @@ pub(super) fn build_post_session_configured_events(config: &Config) -> Vec<Event
     events
 }
 
-#[allow(clippy::await_holding_invalid_type)]
-pub(super) async fn start_session_mcp_runtime(
-    sess: &Arc<Session>,
-    config: &Arc<Config>,
-    session_configuration: &SessionConfiguration,
-    auth_snapshot: Option<RequestAuthSnapshot>,
-    mcp_servers: HashMap<String, EffectiveMcpServer>,
-    auth_statuses: HashMap<String, McpAuthStatusEntry>,
-    tx_event: Sender<Event>,
-) -> anyhow::Result<()> {
+struct SessionMcpStartupPlan {
+    required_mcp_servers: Vec<String>,
+    enabled_mcp_server_count: usize,
+    required_mcp_server_count: usize,
+    host_owned_codex_apps_enabled: bool,
+    client_elicitation_support: McpClientElicitationSupport,
+}
+
+fn derive_session_mcp_startup_plan(
+    features: &ManagedFeatures,
+    auth_snapshot: Option<&RequestAuthSnapshot>,
+    mcp_servers: &HashMap<String, EffectiveMcpServer>,
+) -> SessionMcpStartupPlan {
     let mut required_mcp_servers: Vec<String> = mcp_servers
         .iter()
         .filter(|(_, server)| server.enabled() && server.required())
@@ -142,6 +145,34 @@ pub(super) async fn start_session_mcp_runtime(
         .filter(|server| server.enabled())
         .count();
     let required_mcp_server_count = required_mcp_servers.len();
+    let host_owned_codex_apps_enabled = features.apps_enabled_for_auth(
+        auth_snapshot.is_some_and(codex_auth_types::RequestAuthSnapshot::uses_codex_backend),
+    );
+    let client_elicitation_support = McpClientElicitationSupport::from_auth_elicitation_enabled(
+        features.enabled(Feature::AuthElicitation),
+    );
+
+    SessionMcpStartupPlan {
+        required_mcp_servers,
+        enabled_mcp_server_count,
+        required_mcp_server_count,
+        host_owned_codex_apps_enabled,
+        client_elicitation_support,
+    }
+}
+
+#[allow(clippy::await_holding_invalid_type)]
+pub(super) async fn start_session_mcp_runtime(
+    sess: &Arc<Session>,
+    config: &Arc<Config>,
+    session_configuration: &SessionConfiguration,
+    auth_snapshot: Option<RequestAuthSnapshot>,
+    mcp_servers: HashMap<String, EffectiveMcpServer>,
+    auth_statuses: HashMap<String, McpAuthStatusEntry>,
+    tx_event: Sender<Event>,
+) -> anyhow::Result<()> {
+    let startup_plan =
+        derive_session_mcp_startup_plan(&config.features, auth_snapshot.as_ref(), &mcp_servers);
     let tool_plugin_provenance = sess
         .services
         .mcp_service
@@ -151,14 +182,6 @@ pub(super) async fn start_session_mcp_runtime(
         .services
         .mcp_service
         .codex_apps_auth_context(auth_snapshot.as_ref());
-    let host_owned_codex_apps_enabled = config.features.apps_enabled_for_auth(
-        auth_snapshot
-            .as_ref()
-            .is_some_and(codex_auth_types::RequestAuthSnapshot::uses_codex_backend),
-    );
-    let client_elicitation_support = McpClientElicitationSupport::from_auth_elicitation_enabled(
-        config.features.enabled(Feature::AuthElicitation),
-    );
     {
         let mut cancel_guard = sess.services.mcp_startup_cancellation_token.lock().await;
         cancel_guard.cancel();
@@ -214,8 +237,8 @@ pub(super) async fn start_session_mcp_runtime(
                 codex_apps_tools_cache_key: codex_apps_tools_cache_key(
                     codex_apps_auth_context.as_ref(),
                 ),
-                host_owned_codex_apps_enabled,
-                client_elicitation_support,
+                host_owned_codex_apps_enabled: startup_plan.host_owned_codex_apps_enabled,
+                client_elicitation_support: startup_plan.client_elicitation_support,
                 tool_plugin_provenance,
                 codex_apps_auth_provider: sess
                     .services
@@ -227,8 +250,8 @@ pub(super) async fn start_session_mcp_runtime(
         .instrument(info_span!(
             "session_init.mcp_manager_init",
             otel.name = "session_init.mcp_manager_init",
-            session_init.enabled_mcp_server_count = enabled_mcp_server_count,
-            session_init.required_mcp_server_count = required_mcp_server_count,
+            session_init.enabled_mcp_server_count = startup_plan.enabled_mcp_server_count,
+            session_init.required_mcp_server_count = startup_plan.required_mcp_server_count,
         ))
         .await;
     let mcp_connection_manager = mcp_connection_runtime_start.runtime;
@@ -244,17 +267,17 @@ pub(super) async fn start_session_mcp_runtime(
         }
         *cancel_guard = cancel_token;
     }
-    if !required_mcp_servers.is_empty() {
+    if !startup_plan.required_mcp_servers.is_empty() {
         let failures = sess
             .services
             .mcp_connection_manager
             .read()
             .await
-            .required_startup_failures(&required_mcp_servers)
+            .required_startup_failures(&startup_plan.required_mcp_servers)
             .instrument(info_span!(
                 "session_init.required_mcp_wait",
                 otel.name = "session_init.required_mcp_wait",
-                session_init.required_mcp_server_count = required_mcp_server_count,
+                session_init.required_mcp_server_count = startup_plan.required_mcp_server_count,
             ))
             .await;
         if !failures.is_empty() {
@@ -267,4 +290,107 @@ pub(super) async fn start_session_mcp_runtime(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_auth_types::AuthMode;
+    use codex_auth_types::BearerRequestAuthSnapshot;
+    use codex_config_types::McpServerConfig;
+    use codex_config_types::McpServerTransportConfig;
+    use codex_features::Features;
+
+    fn managed_features(enabled_features: &[Feature]) -> ManagedFeatures {
+        let mut features = Features::with_defaults();
+        for feature in enabled_features {
+            features.enable(*feature);
+        }
+        ManagedFeatures::from(features)
+    }
+
+    fn auth_snapshot(auth_mode: AuthMode) -> RequestAuthSnapshot {
+        RequestAuthSnapshot::Bearer(BearerRequestAuthSnapshot {
+            auth_mode,
+            token: None,
+            account_id: None,
+            chatgpt_user_id: None,
+            is_workspace_account: false,
+            is_fedramp_account: false,
+        })
+    }
+
+    fn mcp_server(enabled: bool, required: bool) -> EffectiveMcpServer {
+        EffectiveMcpServer::configured(McpServerConfig {
+            transport: McpServerTransportConfig::Stdio {
+                command: "mcp-server".to_string(),
+                args: Vec::new(),
+                env: None,
+                env_vars: Vec::new(),
+                cwd: None,
+            },
+            experimental_environment: None,
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            enabled,
+            required,
+            supports_parallel_tool_calls: false,
+            disabled_reason: None,
+            default_tools_approval_mode: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth: None,
+            oauth_resource: None,
+            tools: Default::default(),
+        })
+    }
+
+    #[test]
+    fn mcp_startup_plan_sorts_only_enabled_required_servers() {
+        let features = managed_features(&[]);
+        let mcp_servers = HashMap::from([
+            ("z-required".to_string(), mcp_server(true, true)),
+            ("a-required".to_string(), mcp_server(true, true)),
+            ("disabled-required".to_string(), mcp_server(false, true)),
+            ("optional".to_string(), mcp_server(true, false)),
+        ]);
+
+        let plan = derive_session_mcp_startup_plan(&features, None, &mcp_servers);
+
+        assert_eq!(
+            plan.required_mcp_servers,
+            vec!["a-required".to_string(), "z-required".to_string()]
+        );
+        assert_eq!(plan.enabled_mcp_server_count, 3);
+        assert_eq!(plan.required_mcp_server_count, 2);
+    }
+
+    #[test]
+    fn mcp_startup_plan_derives_auth_and_elicitation_flags() {
+        let features = managed_features(&[Feature::Apps, Feature::AuthElicitation]);
+        let mcp_servers = HashMap::new();
+
+        let chatgpt_plan = derive_session_mcp_startup_plan(
+            &features,
+            Some(&auth_snapshot(AuthMode::Chatgpt)),
+            &mcp_servers,
+        );
+        assert!(chatgpt_plan.host_owned_codex_apps_enabled);
+        assert_eq!(
+            chatgpt_plan.client_elicitation_support,
+            McpClientElicitationSupport::AuthElicitation
+        );
+
+        let api_key_plan = derive_session_mcp_startup_plan(
+            &features,
+            Some(&auth_snapshot(AuthMode::ApiKey)),
+            &mcp_servers,
+        );
+        assert!(!api_key_plan.host_owned_codex_apps_enabled);
+        assert_eq!(
+            api_key_plan.client_elicitation_support,
+            McpClientElicitationSupport::AuthElicitation
+        );
+    }
 }
