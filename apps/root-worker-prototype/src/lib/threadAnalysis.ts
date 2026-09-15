@@ -4,6 +4,10 @@ import {
 } from "./contextUsage";
 import type { Thread, ThreadItem } from "../types";
 import {
+  isRunningCommandExecutionStatus,
+  selectActiveCommandItems,
+} from "./activeCommands";
+import {
   buildScheduleOccurrences,
   formatScheduleArgument,
   formatScheduleRule,
@@ -243,7 +247,7 @@ function buildMonitorSections(
         allowCommandExecutionMonitors: false,
       });
     }
-    for (const item of thread.activeCommandItems ?? []) {
+    for (const item of selectActiveCommandItems(thread)) {
       applyMonitorItem(item, {
         monitors,
         eventsByTool,
@@ -340,7 +344,7 @@ function applyMonitorItem(
     if (!allowCommandExecutionMonitors) {
       return;
     }
-    if (!isRunningCommandStatus(item.status)) {
+    if (!isRunningCommandExecutionStatus(item.status)) {
       removeCommandMonitor(monitors, item.id);
       return;
     }
@@ -414,7 +418,10 @@ function buildCommandMonitorSummary(
   allowLiveCommandMonitors: boolean,
 ): InternalMonitorSummary | null {
   const status = statusLabel(item.status);
-  if (!allowLiveCommandMonitors || !isRunningCommandStatus(item.status)) {
+  if (
+    !allowLiveCommandMonitors ||
+    !isRunningCommandExecutionStatus(item.status)
+  ) {
     return null;
   }
   return {
@@ -427,11 +434,6 @@ function buildCommandMonitorSummary(
     eventCount: 0,
     latestEvent: null,
   };
-}
-
-function isRunningCommandStatus(status: string) {
-  const normalized = status.trim().toLowerCase().replace(/[_-]/g, "");
-  return normalized === "running" || normalized === "inprogress";
 }
 
 function threadAllowsLiveCommandMonitors(thread: Thread | null) {
@@ -697,7 +699,7 @@ function statusLabel(status: string) {
     return "Failed";
   }
 
-  if (isRunningCommandStatus(status)) {
+  if (isRunningCommandExecutionStatus(status)) {
     return "Running";
   }
 

@@ -16,6 +16,7 @@ import {
   isTerminalCommandFocusRequestForThread,
   type TerminalCommandFocusRequest,
 } from "../lib/terminalCommandFocus";
+import { selectRunningActiveCommandItems } from "../lib/activeCommands";
 import type { Thread } from "../types";
 
 type TerminalPanelState = Awaited<
@@ -426,13 +427,7 @@ export function TerminalPanel({
     );
   };
 
-  const liveCommands = (thread?.activeCommandItems ?? []).filter(
-    (item): item is Extract<typeof item, { type: "commandExecution" }> =>
-      item.type === "commandExecution" &&
-      ["running", "inprogress"].includes(
-        item.status.trim().toLowerCase().replace(/[_-]/g, ""),
-      ),
-  );
+  const liveCommands = selectRunningActiveCommandItems(thread);
 
   const focusLiveCommand = (command: (typeof liveCommands)[number]) => {
     if (!thread) {

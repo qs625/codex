@@ -23,6 +23,10 @@ import {
 } from "./icons";
 import { TerminalPanel } from "./TerminalPanel";
 import { LocalImagePreview } from "./Conversation";
+import {
+  countActiveCommandItemsWithProcess,
+  findActiveCommandItem,
+} from "../lib/activeCommands";
 import { isChatCompatCwd } from "../lib/chatCompat";
 import { normalizeBrowserUrl } from "../lib/browserUrl";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
@@ -604,13 +608,7 @@ export function RightPanel({
                 view: "terminal",
                 label: "Terminal",
                 icon: <TerminalIcon />,
-                badge: String(
-                  (thread?.activeCommandItems ?? []).filter(
-                    (item) =>
-                      item.type === "commandExecution" &&
-                      Boolean(item.processId),
-                  ).length || "",
-                ),
+                badge: String(countActiveCommandItemsWithProcess(thread) || ""),
               },
               {
                 view: "workflow",
@@ -680,19 +678,14 @@ export function resolveThreadAnalysisCommandFocus(
   if (!thread) {
     return null;
   }
-  const command = (thread.activeCommandItems ?? []).find(
-    (item) => item.type === "commandExecution" && item.id === monitor.id,
-  );
+  const command = findActiveCommandItem(thread, monitor.id);
   return {
     threadId: thread.id,
     commandItemId: monitor.id,
-    processId:
-      command && command.type === "commandExecution" ? command.processId : null,
-    command:
-      command && command.type === "commandExecution" ? command.command : null,
-    cwd: command && command.type === "commandExecution" ? command.cwd : null,
-    status:
-      command && command.type === "commandExecution" ? command.status : null,
+    processId: command ? command.processId : null,
+    command: command ? command.command : null,
+    cwd: command ? command.cwd : null,
+    status: command ? command.status : null,
   };
 }
 

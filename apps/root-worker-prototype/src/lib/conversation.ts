@@ -6,6 +6,7 @@ import type {
   ThreadItem,
   ThreadLifecycleStatus,
 } from "../types";
+import { selectActiveCommandItems } from "./activeCommands";
 import {
   buildConversationCells,
   type ConversationCellBuildOptions,
@@ -152,7 +153,7 @@ export function buildConversationState(
   }
 
   const activeTimestamp = formatClockTime(thread.updatedAt);
-  for (const item of dedupeActiveCommandItems(thread.activeCommandItems ?? [])) {
+  for (const item of selectActiveCommandItems(thread)) {
     if (
       item.type !== "commandExecution" ||
       historyItemIds.has(item.id) ||
@@ -218,19 +219,6 @@ function buildPreviousActiveCommandFlatItemLookup(
     }
   }
   return lookup;
-}
-
-function dedupeActiveCommandItems(items: ThreadItem[]) {
-  const itemsById = new Map<
-    string,
-    Extract<ThreadItem, { type: "commandExecution" }>
-  >();
-  for (const item of items) {
-    if (item.type === "commandExecution") {
-      itemsById.set(item.id, item);
-    }
-  }
-  return Array.from(itemsById.values());
 }
 
 function activeCommandTurnId(commandItemId: string) {
