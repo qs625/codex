@@ -376,8 +376,14 @@ impl ThreadRequestProcessor {
         } else {
             fallback_thread
         };
+        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
         let has_live_in_progress_turn = match self
-            .apply_thread_read_store_fields(thread_id, &mut thread, include_turns)
+            .apply_thread_read_store_fields(
+                thread_id,
+                &mut thread,
+                include_turns,
+                active_turn.as_ref(),
+            )
             .await
         {
             Ok(has_live_in_progress_turn) => has_live_in_progress_turn,
@@ -396,7 +402,6 @@ impl ThreadRequestProcessor {
                 .await?;
             prune_turns_to_latest_compaction_boundary(&mut thread.turns);
         }
-        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
         apply_live_active_command_items_from_active_turn(&mut thread, active_turn.as_ref());
         Ok((thread, has_live_in_progress_turn))
     }
@@ -447,6 +452,7 @@ impl ThreadRequestProcessor {
         thread_id: ThreadId,
         thread: &mut Thread,
         include_turns: bool,
+        active_turn: Option<&Turn>,
     ) -> Result<bool, ThreadReadViewError> {
         self.attach_thread_name(thread_id, thread).await;
         let history = self
@@ -494,10 +500,9 @@ impl ThreadRequestProcessor {
             thread.context_usage = Some(context_usage.into());
         }
 
-        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
         let has_live_in_progress_turn = active_turn.is_some();
         if include_turns {
-            populate_thread_turns_from_history(thread, &history.items, active_turn.as_ref());
+            populate_thread_turns_from_history(thread, &history.items, active_turn);
         }
 
         Ok(has_live_in_progress_turn)
@@ -1394,6 +1399,33 @@ mod restore_persisted_injected_context_turns_tests {
                 "live-exec",
                 CommandExecutionStatus::InProgress
             )])
+        );
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_preserves_live_command_items() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-live",
+            vec![
+                agent_message_item("msg-1", "thinking"),
+                command_execution_item("exec-running", CommandExecutionStatus::InProgress),
+            ],
+        )]);
+        let persisted_turns = vec![turn(
+            "turn-live",
+            vec![injected_context_item("ctx-1", "restored instructions")],
+        )];
+
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(
+            thread.turns[0].items,
+            vec![
+                injected_context_item("ctx-1", "restored instructions"),
+                agent_message_item("msg-1", "thinking"),
+                command_execution_item("exec-running", CommandExecutionStatus::InProgress),
+            ]
         );
     }
 
