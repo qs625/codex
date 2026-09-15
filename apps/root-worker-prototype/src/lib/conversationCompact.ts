@@ -238,7 +238,11 @@ function shouldMergeConversationEntry(
     previousEntry.role === "agent" &&
     nextEntry.role === "agent"
   ) {
-    if (previousEntry.turnId !== nextEntry.turnId) {
+    if (
+      previousEntry.turnId === undefined ||
+      nextEntry.turnId === undefined ||
+      previousEntry.turnId !== nextEntry.turnId
+    ) {
       return false;
     }
     if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {

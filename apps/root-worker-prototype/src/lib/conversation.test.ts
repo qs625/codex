@@ -992,6 +992,48 @@ test("keeps command notifications separated across replacement history boundarie
   );
 });
 
+test("does not merge agent messages when turn boundary is missing", () => {
+  const entries: ConversationEntry[] = [
+    {
+      id: "agent-1",
+      kind: "message",
+      author: "root",
+      role: "agent",
+      text: "first assistant message",
+      timestamp: "09:41",
+      attachments: [],
+    },
+    {
+      id: "agent-2",
+      kind: "message",
+      author: "root",
+      role: "agent",
+      text: "second assistant message",
+      timestamp: "09:42",
+      attachments: [],
+    },
+  ];
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "agent-1",
+        entries: ["agent-1"],
+      },
+      {
+        id: "agent-2",
+        entries: ["agent-2"],
+      },
+    ],
+  );
+});
+
 test("renders live active command current state as compact command anchors", () => {
   const thread = {
     ...makeThread([
@@ -2500,7 +2542,7 @@ test("renders context compaction as a marker without replacement body", () => {
   assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
-  assert.equal(compactEntry.replacementHistoryEntries, null);
+  assert.equal(compactEntry.replacementHistoryEntries?.length, 3);
   assert.doesNotMatch(compactEntry.text, /recent request/);
   assert.doesNotMatch(compactEntry.text, /compact final output/);
 });
@@ -2520,7 +2562,7 @@ test("omits compact summary body when replacement history is unavailable", () =>
   const compactEntry = entries[0]!;
   assert.equal(compactEntry.kind, "compact");
   assert.equal(compactEntry.text, "Context compacted");
-  assert.equal(compactEntry.compactSummary, null);
+  assert.equal(compactEntry.compactSummary, "## Current Goal\n\n- Preserve compact summary");
   assert.equal(compactEntry.replacementHistoryStatus, "missing");
   assert.equal(compactEntry.replacementHistoryCount, null);
   assert.equal(compactEntry.replacementHistoryEntries, null);
@@ -2557,7 +2599,7 @@ test("keeps replacement init context out of compact display entries", () => {
   assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 1);
-  assert.equal(compactEntry.replacementHistoryEntries, null);
+  assert.equal(compactEntry.replacementHistoryEntries?.length, 1);
 });
 
 test("omits typed context compaction replacement history from display entries", () => {
@@ -2605,7 +2647,7 @@ test("omits typed context compaction replacement history from display entries", 
   assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
-  assert.equal(compactEntry.replacementHistoryEntries, null);
+  assert.equal(compactEntry.replacementHistoryEntries?.length, 3);
 });
 
 test("extracts compact history details with init context replacement cell", () => {
@@ -2667,7 +2709,12 @@ test("extracts compact history details with init context replacement cell", () =
   const details = extractCompactConversationDetails(entries, "compact-1");
 
   assert.equal(details?.archivedEntryCount, 1);
-  assert.deepEqual(details?.replacementHistoryCells, []);
+  assert.deepEqual(
+    details?.replacementHistoryCells.flatMap((cell) =>
+      cell.entries.map((entry) => entry.text),
+    ),
+    ["Fresh initial context", "compact final output"],
+  );
 });
 
 test("pruned compact rows omit archived cells until lazy-loaded details are read", () => {
