@@ -914,6 +914,17 @@ export type ConversationEntry = {
     startedAtMs: number;
     currentTimeoutMs: number;
   };
+  interAgent?: {
+    kind: "followup" | "spawn" | "incoming" | "status" | "completion";
+    direction: "outgoing" | "incoming" | "event";
+    senderPath?: string | null;
+    targetPaths: string[];
+    primaryPath: string;
+    title: string;
+    body?: string | null;
+    status?: string | null;
+    chips?: string[];
+  };
   artifact?: {
     title: string;
     source: ConversationArtifactSource;

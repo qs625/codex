@@ -309,6 +309,115 @@ test("tool rows expose semantic attributes for display diagnostics", () => {
   assert.match(markup, /data-conversation-entry-ids="tool-1"/);
 });
 
+test("inter-agent tool rows render chat-native sender and target presentation", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "send-1",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: "/root -> /root/worker",
+          timestamp: "09:42",
+          attachments: [],
+          toolName: "followup task",
+          toolStatus: "completed",
+          toolDetails:
+            "Tool\nfollowup_task\n\nSender\n/root\n\nReceivers\n/root/worker\n\nPrompt\nplease check this",
+          toolCategory: "multiAgent",
+          interAgent: {
+            kind: "followup",
+            direction: "outgoing",
+            senderPath: "/root",
+            targetPaths: ["/root/worker"],
+            primaryPath: "/root/worker",
+            title: "You -> @/root/worker",
+            body: "please check this",
+            status: "completed",
+            chips: [],
+          },
+        },
+      ]}
+      isOpen
+    />,
+  );
+
+  assert.match(markup, /inter-agent-row/);
+  assert.match(markup, /inter-agent-card/);
+  assert.match(markup, /You/);
+  assert.match(markup, /@\/root\/worker/);
+  assert.match(markup, /please check this/);
+  assert.match(markup, /Tool[\s\S]*followup_task/);
+});
+
+test("grouped inter-agent rows keep each chat item selectable with audit details", () => {
+  const entries: ConversationEntry[] = [
+    {
+      id: "spawn-1",
+      kind: "tool",
+      author: "root",
+      role: "system",
+      text: "/root -> /root/worker",
+      timestamp: "09:41",
+      attachments: [],
+      toolName: "spawn agent",
+      toolStatus: "completed",
+      toolDetails: "Tool\nspawn_agent",
+      toolCategory: "multiAgent",
+      interAgent: {
+        kind: "spawn",
+        direction: "outgoing",
+        senderPath: "/root",
+        targetPaths: ["/root/worker"],
+        primaryPath: "/root/worker",
+        title: "Created @/root/worker",
+        body: "start here",
+        status: "completed",
+        chips: ["gpt-5.6"],
+      },
+    },
+    {
+      id: "send-1",
+      kind: "tool",
+      author: "root",
+      role: "system",
+      text: "/root -> /root/worker",
+      timestamp: "09:42",
+      attachments: [],
+      toolName: "followup task",
+      toolStatus: "completed",
+      toolDetails: "Tool\nfollowup_task",
+      toolCategory: "multiAgent",
+      interAgent: {
+        kind: "followup",
+        direction: "outgoing",
+        senderPath: "/root",
+        targetPaths: ["/root/worker"],
+        primaryPath: "/root/worker",
+        title: "You -> @/root/worker",
+        body: "continue here",
+        status: "completed",
+        chips: [],
+      },
+    },
+  ];
+
+  const collapsedMarkup = renderToStaticMarkup(
+    <ToolRow entries={entries} isOpen selectedEntryId={null} />,
+  );
+  assert.match(collapsedMarkup, /2 inter-agent updates/);
+  assert.match(collapsedMarkup, /Created @\/root\/worker/);
+  assert.match(collapsedMarkup, /You -&gt; @\/root\/worker/);
+  assert.doesNotMatch(collapsedMarkup, /Tool[\s\S]*followup_task/);
+
+  const selectedMarkup = renderToStaticMarkup(
+    <ToolRow entries={entries} isOpen selectedEntryId="send-1" />,
+  );
+  assert.match(selectedMarkup, /Tool[\s\S]*followup_task/);
+  assert.doesNotMatch(selectedMarkup, /Tool[\s\S]*spawn_agent/);
+});
+
 test("artifact row renders html preview in a sandboxed iframe", () => {
   const markup = renderToStaticMarkup(
     <ArtifactRow

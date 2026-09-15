@@ -398,6 +398,7 @@ function buildConversationItemEntries(
         toolStatus: item.status,
         toolDetails: formatCollabAgentToolDetails(item),
         toolCategory: "multiAgent",
+        interAgent: buildCollabAgentToolPresentation(item),
       },
     ];
   }
@@ -860,6 +861,7 @@ function buildCollabAgentMessageEntry(
     toolStatus: "completed",
     toolDetails: formatCollabAgentMessageDetails(item),
     toolCategory: formatCollabAgentMessageCategory(item),
+    interAgent: buildCollabAgentMessagePresentation(item),
   };
 }
 
@@ -1113,6 +1115,57 @@ function summarizeCollabAgentToolCall(
       return `Closed ${receiverLabel}.`;
     default:
       return `${item.tool} for ${receiverLabel}.`;
+  }
+}
+
+function buildCollabAgentToolPresentation(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+): ConversationEntry["interAgent"] {
+  const stateByPath = collabAgentStatesByPath(item);
+  const targetPaths = item.receiverPaths.map((path) =>
+    stringOrFallback(path, "unknown"),
+  );
+  const primaryPath = targetPaths[0] ?? "unknown";
+  const primaryState = stateByPath.get(primaryPath);
+  const providerLabel = collabExternalProviderLabel(primaryState);
+  const status = isToolStatusInProgress(item.status) ? "sending" : item.status;
+
+  switch (item.tool) {
+    case "spawnAgent":
+      return {
+        kind: "spawn",
+        direction: "outgoing",
+        senderPath: stringOrNull(item.senderPath),
+        targetPaths,
+        primaryPath,
+        title: `Created ${formatAgentMention(primaryPath)}`,
+        body: stringOrNull(item.prompt),
+        status,
+        chips: [
+          providerLabel,
+          item.model,
+          item.reasoningEffort,
+          targetPaths.length > 1 ? `${targetPaths.length} agents` : null,
+        ].filter((value): value is string => Boolean(value)),
+      };
+    case "sendInput":
+    case "resumeAgent":
+      return {
+        kind: "followup",
+        direction: "outgoing",
+        senderPath: stringOrNull(item.senderPath),
+        targetPaths,
+        primaryPath,
+        title: `You -> ${formatAgentMention(primaryPath)}`,
+        body: stringOrNull(item.prompt),
+        status,
+        chips: [
+          providerLabel,
+          targetPaths.length > 1 ? `${targetPaths.length} recipients` : null,
+        ].filter((value): value is string => Boolean(value)),
+      };
+    default:
+      return undefined;
   }
 }
 
@@ -1512,6 +1565,47 @@ function summarizeCollabAgentMessage(
   }
 }
 
+function buildCollabAgentMessagePresentation(
+  item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
+): ConversationEntry["interAgent"] {
+  const senderPath = stringOrFallback(item.senderPath, "unknown");
+  const recipientPath = stringOrFallback(item.recipientPath, "unknown");
+  const otherRecipients = item.otherRecipientPaths.map((path) =>
+    stringOrFallback(path, "unknown"),
+  );
+  const content = stringOrNull(item.content);
+
+  if (item.operation === "childCompletion") {
+    return {
+      kind: "completion",
+      direction: "event",
+      senderPath,
+      targetPaths: [recipientPath, ...otherRecipients],
+      primaryPath: senderPath,
+      title: `${formatAgentMention(senderPath)} completed`,
+      body: content,
+      status: "completed",
+      chips: item.triggerTurn ? ["triggered turn"] : [],
+    };
+  }
+
+  const operation = formatCollabAgentMessageOperation(item.operation);
+  return {
+    kind: operation === "spawnAgent" ? "spawn" : "incoming",
+    direction: "incoming",
+    senderPath,
+    targetPaths: [recipientPath, ...otherRecipients],
+    primaryPath: senderPath,
+    title:
+      operation === "spawnAgent"
+        ? `${formatAgentMention(senderPath)} invited this agent`
+        : `${formatAgentMention(senderPath)} -> You`,
+    body: content,
+    status: "received",
+    chips: item.triggerTurn ? ["triggered turn"] : [],
+  };
+}
+
 function formatCollabAgentMessageTitle(
   item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
 ) {
@@ -1574,6 +1668,7 @@ function buildCollabAgentStatusUpdateEntry(
     toolStatus: "completed",
     toolDetails: formatCollabAgentStatusUpdateDetails(item),
     toolCategory: "subagentNotification",
+    interAgent: buildCollabAgentStatusPresentation(item),
   };
 }
 
@@ -1602,6 +1697,32 @@ function summarizeCollabAgentStatusUpdate(
   ]
     .filter((value) => value && value.length > 0)
     .join(" • ");
+}
+
+function buildCollabAgentStatusPresentation(
+  item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
+): ConversationEntry["interAgent"] {
+  const agentPath = stringOrFallback(
+    item.lifecycleStatus.path ?? item.senderPath,
+    "unknown",
+  );
+  const recipientPath = stringOrFallback(item.recipientPath, "unknown");
+  const status = formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus);
+  const providerLabel = collabExternalProviderLabel(item.lifecycleStatus);
+  const isFinal = item.lifecycleStatus.lifecycleStatus.type === "final";
+  return {
+    kind: isFinal ? "completion" : "status",
+    direction: "event",
+    senderPath: stringOrNull(item.senderPath),
+    targetPaths: [recipientPath],
+    primaryPath: agentPath,
+    title: isFinal
+      ? `${formatAgentMention(agentPath)} completed`
+      : `${formatAgentMention(agentPath)} status`,
+    body: stringOrNull(item.lifecycleStatus.message),
+    status,
+    chips: [providerLabel].filter((value): value is string => Boolean(value)),
+  };
 }
 
 function formatCollabAgentStatusUpdateTitle(
@@ -1692,6 +1813,11 @@ const externalProviderLabels: Record<string, string> = {
   claude_cli: "Claude Code",
   opencode: "OpenCode",
 };
+
+function formatAgentMention(path: string) {
+  const value = path.trim() || "unknown";
+  return value.startsWith("@") ? value : `@${value}`;
+}
 
 function formatLifecycleStatus(status: ThreadLifecycleStatus) {
   switch (status.type) {

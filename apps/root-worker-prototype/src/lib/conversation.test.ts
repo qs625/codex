@@ -1588,6 +1588,71 @@ test("keeps ordinary multi-agent tool entries grouped in one visible cell", () =
   );
 });
 
+test("builds chat-native presentation for outgoing inter-agent collaboration", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "spawn-1",
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/worker"],
+        prompt: "please review the change",
+        model: "gpt-5.6",
+        reasoningEffort: "medium",
+        agentsStates: {},
+      },
+      {
+        type: "collabAgentToolCall",
+        id: "send-1",
+        tool: "sendInput",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/worker"],
+        prompt: "one more detail",
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => entry.interAgent),
+    [
+      {
+        kind: "spawn",
+        direction: "outgoing",
+        senderPath: "/root",
+        targetPaths: ["/root/worker"],
+        primaryPath: "/root/worker",
+        title: "Created @/root/worker",
+        body: "please review the change",
+        status: "completed",
+        chips: ["gpt-5.6", "medium"],
+      },
+      {
+        kind: "followup",
+        direction: "outgoing",
+        senderPath: "/root",
+        targetPaths: ["/root/worker"],
+        primaryPath: "/root/worker",
+        title: "You -> @/root/worker",
+        body: "one more detail",
+        status: "completed",
+        chips: [],
+      },
+    ],
+  );
+  assert.match(entries[0]?.toolDetails ?? "", /Tool\nspawn_agent/);
+  assert.match(entries[1]?.toolDetails ?? "", /Tool\nfollowup_task/);
+});
+
 test("shows legacy sendMessage collab messages as follow-up messages", () => {
   const entries = buildConversationEntries(
     makeThread([
@@ -1617,6 +1682,69 @@ test("shows legacy sendMessage collab messages as follow-up messages", () => {
     ],
   );
   assert.match(entries[0]?.toolDetails ?? "", /Operation\nfollowupTask/);
+});
+
+test("builds chat-native presentation for incoming inter-agent messages and completions", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentMessage",
+        id: "msg-1",
+        operation: "followupTask",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        otherRecipientPaths: [],
+        content: "I found the issue",
+        triggerTurn: true,
+      },
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-1",
+        senderThreadId: "thread-2",
+        senderPath: "/root/worker",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        lifecycleStatus: {
+          path: "/root/worker",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
+          message: "done",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => entry.interAgent),
+    [
+      {
+        kind: "incoming",
+        direction: "incoming",
+        senderPath: "/root/worker",
+        targetPaths: ["/root"],
+        primaryPath: "/root/worker",
+        title: "@/root/worker -> You",
+        body: "I found the issue",
+        status: "received",
+        chips: ["triggered turn"],
+      },
+      {
+        kind: "completion",
+        direction: "event",
+        senderPath: "/root/worker",
+        targetPaths: ["/root"],
+        primaryPath: "/root/worker",
+        title: "@/root/worker completed",
+        body: "done",
+        status: "completed",
+        chips: [],
+      },
+    ],
+  );
 });
 
 test("shows typed list_agents collab tool calls", () => {
