@@ -79,23 +79,23 @@ function normalizeThreadSnapshot(thread) {
 }
 
 function normalizeTurnSnapshot(turn) {
+  const itemIndexesById = new Map();
   const items = (turn.items ?? []).reduce((normalizedItems, item) => {
     const normalizedItem = normalizeThreadItemSnapshot(item);
     if (!normalizedItem) {
       return normalizedItems;
     }
-    const existingIndex = findMatchingThreadItemIndex(
-      normalizedItems,
+    const existingIndex = itemIndexesById.get(normalizedItem.id) ?? -1;
+    if (existingIndex === -1) {
+      itemIndexesById.set(normalizedItem.id, normalizedItems.length);
+      normalizedItems.push(normalizedItem);
+      return normalizedItems;
+    }
+    normalizedItems[existingIndex] = mergeThreadItem(
+      normalizedItems[existingIndex],
       normalizedItem,
     );
-    if (existingIndex === -1) {
-      return [...normalizedItems, normalizedItem];
-    }
-    return normalizedItems.map((existing, index) =>
-      index === existingIndex
-        ? mergeThreadItem(existing, normalizedItem)
-        : existing,
-    );
+    return normalizedItems;
   }, []);
 
   if (
@@ -109,10 +109,9 @@ function normalizeTurnSnapshot(turn) {
 
 function mergeTurns(existingTurns, nextTurns) {
   const nextTurnIds = new Set(nextTurns.map((turn) => turn.id));
+  const existingTurnsById = firstTurnById(existingTurns);
   const turns = nextTurns.map((turn) => {
-    const existingTurn = existingTurns.find(
-      (candidate) => candidate.id === turn.id,
-    );
+    const existingTurn = existingTurnsById.get(turn.id);
     return existingTurn ? mergeTurn(existingTurn, turn) : turn;
   });
   const nextItemsIndex = buildTurnItemIndex(
@@ -128,6 +127,16 @@ function mergeTurns(existingTurns, nextTurns) {
   }
 
   return turns;
+}
+
+function firstTurnById(turns) {
+  const turnsById = new Map();
+  for (const turn of turns) {
+    if (!turnsById.has(turn.id)) {
+      turnsById.set(turn.id, turn);
+    }
+  }
+  return turnsById;
 }
 
 function getRetainedUnmatchedTurn(turn, matcher) {
@@ -253,10 +262,6 @@ function mergeThreadItem(existing, next) {
 
 function normalizeThreadItemSnapshot(item) {
   return item;
-}
-
-function findMatchingThreadItemIndex(items, nextItem) {
-  return items.findIndex((item) => item.id === nextItem.id);
 }
 
 function buildTurnItemIndex(entries) {

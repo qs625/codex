@@ -230,6 +230,51 @@ test("mergeThreadSnapshots preserves same-content items with different ids", () 
   assert.deepEqual(merged.turns, [turn]);
 });
 
+test("mergeThreadSnapshots merges duplicate item ids without reordering the turn", () => {
+  const turn = {
+    id: "turn-1",
+    items: [
+      {
+        type: "agentMessage",
+        id: "item-1",
+        text: "partial",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "agentMessage",
+        id: "item-2",
+        text: "middle",
+        phase: null,
+        memoryCitation: null,
+      },
+      {
+        type: "agentMessage",
+        id: "item-1",
+        text: "partial plus tail",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
+
+  assert.deepEqual(
+    merged.turns[0].items.map((item) => [item.id, item.text]),
+    [
+      ["item-1", "partial plus tail"],
+      ["item-2", "middle"],
+    ],
+  );
+});
+
 test("mergeThreadSnapshots preserves repeated terminal collab status updates", () => {
   const turn = {
     id: "turn-1",
