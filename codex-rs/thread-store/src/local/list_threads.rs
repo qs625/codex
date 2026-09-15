@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use protocol::ThreadId;
 use rollout::RolloutConfig;
 use rollout::RolloutRecorder;
+use rollout::StateDbHandle;
 use rollout::find_thread_names_by_ids;
 use rollout::parse_cursor;
 
@@ -13,6 +14,7 @@ use super::metadata::ThreadMetadataOverlay;
 use super::read_thread;
 use crate::ListThreadsParams;
 use crate::SortDirection;
+use crate::StoredThread;
 use crate::ThreadPage;
 use crate::ThreadSortKey;
 use crate::ThreadStoreError;
@@ -48,7 +50,7 @@ pub(super) async fn list_threads(
         generate_memories: false,
     };
     let page = list_rollout_threads(
-        state_db,
+        state_db.clone(),
         &rollout_config,
         store.config.default_model_provider_id.as_str(),
         &params,
@@ -75,13 +77,26 @@ pub(super) async fn list_threads(
         })
         .collect::<Vec<_>>();
 
+    apply_listing_metadata_overlays(store, &mut items, state_db.as_ref()).await;
+
+    Ok(ThreadPage { items, next_cursor })
+}
+
+async fn apply_listing_metadata_overlays(
+    store: &LocalThreadStore,
+    items: &mut [StoredThread],
+    state_db: Option<&StateDbHandle>,
+) {
     let thread_ids = items
         .iter()
         .map(|thread| thread.thread_id)
         .collect::<HashSet<_>>();
+    if thread_ids.is_empty() {
+        return;
+    }
     let mut metadata_overlays =
         HashMap::<ThreadId, ThreadMetadataOverlay>::with_capacity(thread_ids.len());
-    if let Some(state_db_ctx) = store.state_db().await {
+    if let Some(state_db_ctx) = state_db {
         for &thread_id in &thread_ids {
             let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await else {
                 continue;
@@ -99,14 +114,12 @@ pub(super) async fn list_threads(
                 .or_insert_with(|| ThreadMetadataOverlay::legacy_title(title));
         }
     }
-    for thread in &mut items {
+    for thread in items {
         let Some(overlay) = metadata_overlays.remove(&thread.thread_id) else {
             continue;
         };
         overlay.apply_to_thread(thread);
     }
-
-    Ok(ThreadPage { items, next_cursor })
 }
 
 pub(super) async fn list_thread_ids_with_active_subscriptions(
@@ -322,6 +335,62 @@ mod tests {
 
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].model_provider, "test-provider");
+    }
+
+    #[tokio::test]
+    async fn list_threads_applies_sqlite_agent_metadata_to_rollout_summaries() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let uuid = Uuid::from_u128(104);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let rollout_path =
+            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
+        let runtime = state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config.clone(), Some(runtime.clone()));
+        let mut builder = state::ThreadMetadataBuilder::new(
+            thread_id,
+            rollout_path,
+            Utc::now(),
+            SessionSource::Cli,
+        );
+        builder.model_provider = Some(config.default_model_provider_id.clone());
+        builder.cwd = home.path().to_path_buf();
+        builder.cli_version = Some("test_version".to_string());
+        builder.agent_nickname = Some("atlas".to_string());
+        builder.agent_role = Some("explorer".to_string());
+        builder.agent_path = Some("/root/atlas".to_string());
+        let metadata = builder.build(config.default_model_provider_id.as_str());
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("state db upsert should succeed");
+
+        let page = store
+            .list_threads(ListThreadsParams {
+                page_size: 10,
+                cursor: None,
+                sort_key: ThreadSortKey::CreatedAt,
+                sort_direction: SortDirection::Desc,
+                allowed_sources: Vec::new(),
+                model_providers: None,
+                cwd_filters: None,
+                archived: false,
+                search_term: None,
+                use_state_db_only: false,
+            })
+            .await
+            .expect("thread listing");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].thread_id, thread_id);
+        assert_eq!(page.items[0].agent_nickname.as_deref(), Some("atlas"));
+        assert_eq!(page.items[0].agent_role.as_deref(), Some("explorer"));
+        assert_eq!(page.items[0].agent_path.as_deref(), Some("/root/atlas"));
     }
 
     #[tokio::test]
