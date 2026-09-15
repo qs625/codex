@@ -144,6 +144,8 @@ test("tool row renders command summary without command output payload", () => {
     />,
   );
 
+  assert.match(markup, /command-timeline-row/);
+  assert.match(markup, /command-timeline-card/);
   assert.match(markup, /npm test/);
   assert.match(markup, /tmp\/project/);
   assert.match(markup, /Status/);
@@ -151,7 +153,7 @@ test("tool row renders command summary without command output payload", () => {
   assert.doesNotMatch(markup, /tool-output-block/);
 });
 
-test("conversation does not render live active command tail", () => {
+test("conversation renders live active command anchor without active output tail", () => {
   const thread = {
     id: "thread-1",
     updatedAt: 1,
@@ -173,7 +175,26 @@ test("conversation does not render live active command tail", () => {
   } as Thread;
   const entries = buildConversationEntries(thread);
 
-  assert.deepEqual(entries, []);
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+      toolOutput: entry.toolOutput,
+      hasActiveOutputInDetails: entry.toolDetails?.includes("ACTIVE_STDOUT"),
+    })),
+    [
+      {
+        id: "cmd-live",
+        kind: "tool",
+        toolName: "cargo test",
+        toolStatus: "running",
+        toolOutput: undefined,
+        hasActiveOutputInDetails: false,
+      },
+    ],
+  );
 });
 
 const entries: ConversationEntry[] = [
@@ -281,7 +302,8 @@ test("tool rows expose semantic attributes for display diagnostics", () => {
     />,
   );
 
-  assert.match(markup, /class="tool-row tool-row-command"/);
+  assert.match(markup, /class="[^"]*\btool-row\b[^"]*"/);
+  assert.match(markup, /class="[^"]*\btool-row-command\b[^"]*"/);
   assert.match(markup, /data-conversation-row="tool"/);
   assert.match(markup, /data-tool-category="command"/);
   assert.match(markup, /data-conversation-entry-ids="tool-1"/);

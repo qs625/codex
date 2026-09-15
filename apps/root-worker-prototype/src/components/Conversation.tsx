@@ -139,6 +139,14 @@ function toolGroupStatusClass(entries: ConversationEntry[]) {
   return "todo";
 }
 
+function isCommandTimelineEntry(entry: ConversationEntry) {
+  return (
+    entry.kind === "tool" &&
+    (entry.toolCategory === "command" ||
+      entry.toolCategory === "commandNotification")
+  );
+}
+
 function currentLocalImageCacheBytes() {
   let total = 0;
   for (const entry of localImageCache.values()) {
@@ -846,6 +854,9 @@ export const ToolRow = memo(function ToolRow({
   onSelectEntry,
 }: ToolRowProps) {
   const firstEntry = entries[0];
+  const isCommandTimeline = entries.every((entry) =>
+    isCommandTimelineEntry(entry),
+  );
   const hasSingleEntry = entries.length === 1;
   const doneCount = entries.filter(
     (entry) => toolStatusClass(entry.toolStatus) === "done",
@@ -858,7 +869,7 @@ export const ToolRow = memo(function ToolRow({
 
   return (
     <article
-      className={`tool-row tool-row-${toolCategory}`}
+      className={`tool-row tool-row-${toolCategory}${isCommandTimeline ? " command-timeline-row" : ""}`}
       data-conversation-row="tool"
       data-tool-category={toolCategory}
       data-conversation-entry-ids={entries.map((entry) => entry.id).join(" ")}
@@ -867,13 +878,15 @@ export const ToolRow = memo(function ToolRow({
         {icon}
       </div>
       <details
-        className={`tool-card tool-card-${toolCategory}`}
+        className={`tool-card tool-card-${toolCategory}${isCommandTimeline ? " command-timeline-card" : ""}`}
         open={isOpen}
         onToggle={(event) => {
           onToggleOpen?.(event.currentTarget.open);
         }}
       >
-        <summary className="tool-card-summary">
+        <summary
+          className={`tool-card-summary${isCommandTimeline ? " command-timeline-summary" : ""}`}
+        >
           <div className="tool-card-copy">
             <strong>
               {hasSingleEntry

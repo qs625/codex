@@ -3143,6 +3143,50 @@ svg {
   );
 }
 
+.command-timeline-row {
+  gap: 10px;
+}
+
+.command-timeline-row .event-icon {
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+}
+
+.command-timeline-card {
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.command-timeline-card:not([open]) {
+  background: rgba(248, 250, 252, 0.86);
+}
+
+.command-timeline-summary {
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+}
+
+.command-timeline-summary .tool-card-copy {
+  flex-basis: 180px;
+}
+
+.command-timeline-summary .tool-card-copy strong {
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.command-timeline-summary .tool-card-copy span {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.command-timeline-summary .tool-card-meta {
+  gap: 6px;
+}
+
 .tool-card-eventDrivenSubscription {
   border-color: rgba(234, 88, 12, 0.14);
   background: linear-gradient(
