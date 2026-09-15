@@ -867,6 +867,22 @@ export const ToolRow = memo(function ToolRow({
   const toolCategory = firstEntry.toolCategory ?? "external";
   const icon = getToolIcon(toolCategory);
 
+  if (entries.every((entry) => entry.interAgent)) {
+    return (
+      <InterAgentToolRow
+        entries={entries}
+        isOpen={isOpen}
+        onToggleOpen={onToggleOpen}
+        selectedEntryId={selectedEntryId}
+        onSelectEntry={onSelectEntry}
+        toolCategory={toolCategory}
+        icon={icon}
+        summaryStatusClass={summaryStatusClass}
+        doneCount={doneCount}
+      />
+    );
+  }
+
   return (
     <article
       className={`tool-row tool-row-${toolCategory}${isCommandTimeline ? " command-timeline-row" : ""}`}
@@ -956,6 +972,209 @@ export const ToolRow = memo(function ToolRow({
     </article>
   );
 }, areToolRowPropsEqual);
+
+function InterAgentToolRow({
+  entries,
+  isOpen,
+  onToggleOpen,
+  selectedEntryId,
+  onSelectEntry,
+  toolCategory,
+  icon,
+  summaryStatusClass,
+  doneCount,
+}: ToolRowProps & {
+  toolCategory: NonNullable<ConversationEntry["toolCategory"]>;
+  icon: React.ReactNode;
+  summaryStatusClass: string;
+  doneCount: number;
+}) {
+  const firstEntry = entries[0];
+  const hasSingleEntry = entries.length === 1;
+  const firstPresentation = firstEntry.interAgent;
+  const direction = firstPresentation?.direction ?? "event";
+
+  return (
+    <article
+      className={`tool-row tool-row-${toolCategory} inter-agent-row inter-agent-row-${direction}`}
+      data-conversation-row="tool"
+      data-tool-category={toolCategory}
+      data-conversation-entry-ids={entries.map((entry) => entry.id).join(" ")}
+    >
+      <div className={`event-icon tool-icon tool-icon-${toolCategory}`}>
+        {icon}
+      </div>
+      <details
+        className={`tool-card tool-card-${toolCategory} inter-agent-card inter-agent-card-${direction}`}
+        open={isOpen}
+        onToggle={(event) => {
+          onToggleOpen?.(event.currentTarget.open);
+        }}
+      >
+        <summary
+          className="tool-card-summary inter-agent-summary"
+          aria-label={
+            hasSingleEntry
+              ? firstPresentation?.title
+              : `${entries.length} inter-agent updates`
+          }
+        >
+          {hasSingleEntry ? (
+            <InterAgentSummaryContent entry={firstEntry} />
+          ) : (
+            <div className="inter-agent-main">
+              <strong>{entries.length} inter-agent updates</strong>
+              <span>
+                {firstPresentation?.title ??
+                  firstEntry.toolName ??
+                  firstEntry.author}{" "}
+                and {entries.length - 1} more
+              </span>
+            </div>
+          )}
+          <div className="tool-card-meta inter-agent-meta">
+            <span className={`tool-status-badge ${summaryStatusClass}`}>
+              {hasSingleEntry
+                ? (firstPresentation?.status ?? firstEntry.toolStatus ?? "unknown")
+                : `${doneCount}/${entries.length} done`}
+            </span>
+            <time>{entries.at(-1)?.timestamp ?? firstEntry.timestamp}</time>
+          </div>
+        </summary>
+        {hasSingleEntry ? (
+          isOpen && hasToolBody(firstEntry) ? (
+            <div className="tool-card-body tool-card-item-body inter-agent-audit">
+              <ToolEntryBody entry={firstEntry} />
+            </div>
+          ) : null
+        ) : (
+          <div className="tool-card-list inter-agent-list">
+            {entries.map((entry) => {
+              const isSelected = selectedEntryId === entry.id;
+              return (
+                <section key={entry.id} className="tool-card-item">
+                  <button
+                    type="button"
+                    className={`tool-card-item-head inter-agent-list-item ${isSelected ? "selected" : ""}`}
+                    onClick={() =>
+                      onSelectEntry?.(isSelected ? null : entry.id)
+                    }
+                  >
+                    <InterAgentSummaryContent entry={entry} compact />
+                    <div className="tool-card-meta inter-agent-meta">
+                      <span
+                        className={`tool-status-badge ${toolStatusClass(entry.toolStatus)}`}
+                      >
+                        {entry.interAgent?.status ??
+                          entry.toolStatus ??
+                          "unknown"}
+                      </span>
+                      <time>{entry.timestamp}</time>
+                    </div>
+                  </button>
+                  {isSelected && hasToolBody(entry) ? (
+                    <div className="tool-card-body tool-card-item-body inter-agent-audit">
+                      <ToolEntryBody entry={entry} />
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </details>
+    </article>
+  );
+}
+
+function InterAgentSummaryContent({
+  entry,
+  compact = false,
+}: {
+  entry: ConversationEntry;
+  compact?: boolean;
+}) {
+  const presentation = entry.interAgent;
+  if (!presentation) {
+    return (
+      <div className="inter-agent-main">
+        <strong>{entry.toolName ?? entry.author}</strong>
+        <span>{entry.text}</span>
+      </div>
+    );
+  }
+  const body = presentation.body?.trim() || entry.text;
+  return (
+    <div className={`inter-agent-main${compact ? " compact" : ""}`}>
+      <div className="inter-agent-route">
+        {renderInterAgentRoute(presentation)}
+      </div>
+      <strong>{presentation.title}</strong>
+      {body ? <span className="inter-agent-body">{body}</span> : null}
+      {presentation.chips && presentation.chips.length > 0 ? (
+        <div className="inter-agent-chips">
+          {presentation.chips.map((chip) => (
+            <span key={chip} className="inter-agent-chip">
+              {chip}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function renderInterAgentRoute(
+  presentation: NonNullable<ConversationEntry["interAgent"]>,
+) {
+  const targetPaths =
+    presentation.targetPaths.length > 0
+      ? presentation.targetPaths
+      : [presentation.primaryPath];
+  if (presentation.direction === "outgoing") {
+    return (
+      <>
+        <span className="inter-agent-self">You</span>
+        <span className="inter-agent-route-arrow">-&gt;</span>
+        {targetPaths.map((path) => (
+          <InterAgentPathChip key={path} path={path} />
+        ))}
+      </>
+    );
+  }
+  if (presentation.direction === "incoming") {
+    return (
+      <>
+        <InterAgentPathChip path={presentation.primaryPath} />
+        <span className="inter-agent-route-arrow">-&gt;</span>
+        <span className="inter-agent-self">You</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <InterAgentPathChip path={presentation.primaryPath} />
+      <span className="inter-agent-route-arrow">-&gt;</span>
+      {targetPaths.map((path) => (
+        <InterAgentPathChip key={path} path={path} />
+      ))}
+    </>
+  );
+}
+
+function InterAgentPathChip({ path }: { path: string }) {
+  const label = formatAgentMention(path);
+  return (
+    <span className="inter-agent-path-chip" title={path}>
+      {label}
+    </span>
+  );
+}
+
+function formatAgentMention(path: string) {
+  const value = path.trim() || "unknown";
+  return value.startsWith("@") ? value : `@${value}`;
+}
 
 export const ArtifactRow = memo(function ArtifactRow({
   entry,

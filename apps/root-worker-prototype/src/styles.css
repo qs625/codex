@@ -3255,6 +3255,19 @@ svg {
   );
 }
 
+.inter-agent-card {
+  border-color: rgba(20, 184, 166, 0.18);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.inter-agent-card[open] {
+  background: linear-gradient(
+    180deg,
+    rgba(240, 253, 250, 0.95),
+    rgba(255, 255, 255, 0.82)
+  );
+}
+
 .tool-card-summary {
   display: flex;
   align-items: flex-start;
@@ -3293,6 +3306,107 @@ svg {
   font-size: 13px;
   overflow-wrap: anywhere;
   word-break: normal;
+}
+
+.inter-agent-summary {
+  gap: 12px;
+}
+
+.inter-agent-main {
+  display: grid;
+  gap: 5px;
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.inter-agent-main strong {
+  color: #18181b;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.inter-agent-main .inter-agent-body {
+  display: -webkit-box;
+  margin-top: 0;
+  max-width: 100%;
+  color: #44403c;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.inter-agent-main.compact .inter-agent-body {
+  -webkit-line-clamp: 2;
+}
+
+.inter-agent-route,
+.inter-agent-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.inter-agent-route {
+  color: #57534e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inter-agent-route-arrow {
+  color: #78716c;
+}
+
+.inter-agent-self,
+.inter-agent-path-chip,
+.inter-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(100%, 34ch);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.inter-agent-self,
+.inter-agent-path-chip {
+  padding: 3px 8px;
+  border: 1px solid rgba(20, 184, 166, 0.24);
+  background: rgba(240, 253, 250, 0.88);
+  color: #115e59;
+  font-family: "SF Mono", "Menlo", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inter-agent-chip {
+  padding: 2px 7px;
+  background: rgba(245, 245, 244, 0.92);
+  color: #57534e;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inter-agent-list .tool-card-item-head {
+  align-items: flex-start;
+}
+
+.inter-agent-list-item.selected {
+  background: rgba(240, 253, 250, 0.78);
+}
+
+.inter-agent-audit {
+  border-top-color: rgba(20, 184, 166, 0.16);
 }
 
 .tool-card-childCompletion .tool-card-copy span,
