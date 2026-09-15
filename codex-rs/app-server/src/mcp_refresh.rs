@@ -38,6 +38,11 @@ impl McpRefreshRuntime for ThreadService {
     }
 }
 
+struct McpRefreshQueueItem {
+    thread_id: ThreadId,
+    config: McpServerRefreshConfig,
+}
+
 pub(crate) async fn queue_strict_refresh<R>(
     runtime: &R,
     config_manager: &ConfigManager,
@@ -51,14 +56,15 @@ where
     config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await?;
-    let mut refreshes = Vec::new();
+    let mut refresh_plan = Vec::new();
     for thread_id in runtime.list_live_thread_ids().await {
         let refresh_snapshot = live_thread_config_refresh_snapshot(runtime, thread_id).await?;
-        let config = build_refresh_config(runtime, config_manager, &refresh_snapshot).await?;
-        refreshes.push((thread_id, config));
+        refresh_plan.push(
+            build_refresh_queue_item(runtime, config_manager, thread_id, &refresh_snapshot).await?,
+        );
     }
-    for (thread_id, config) in refreshes {
-        queue_refresh(runtime, thread_id, config).await?;
+    for item in refresh_plan {
+        queue_refresh_item(runtime, item).await?;
     }
     Ok(())
 }
@@ -78,17 +84,33 @@ where
                 continue;
             }
         };
-        let config = match build_refresh_config(runtime, config_manager, &refresh_snapshot).await {
-            Ok(config) => config,
-            Err(err) => {
-                warn!("failed to build MCP refresh config for thread {thread_id}: {err}");
-                continue;
-            }
-        };
-        if let Err(err) = queue_refresh(runtime, thread_id, config).await {
+        let item =
+            match build_refresh_queue_item(runtime, config_manager, thread_id, &refresh_snapshot)
+                .await
+            {
+                Ok(item) => item,
+                Err(err) => {
+                    warn!("failed to build MCP refresh config for thread {thread_id}: {err}");
+                    continue;
+                }
+            };
+        if let Err(err) = queue_refresh_item(runtime, item).await {
             warn!("{err}");
         }
     }
+}
+
+async fn build_refresh_queue_item<R>(
+    runtime: &R,
+    config_manager: &ConfigManager,
+    thread_id: ThreadId,
+    refresh_snapshot: &LiveThreadConfigRefreshSnapshot,
+) -> io::Result<McpRefreshQueueItem>
+where
+    R: McpRefreshRuntime + ?Sized,
+{
+    let config = build_refresh_config(runtime, config_manager, &refresh_snapshot).await?;
+    Ok(McpRefreshQueueItem { thread_id, config })
 }
 
 async fn live_thread_config_refresh_snapshot(
@@ -117,6 +139,13 @@ async fn build_refresh_config(
         )
         .map_err(io::Error::other)?,
     })
+}
+
+async fn queue_refresh_item(
+    runtime: &(impl AppServerLiveThreadCommandRuntime + ?Sized),
+    item: McpRefreshQueueItem,
+) -> io::Result<()> {
+    queue_refresh(runtime, item.thread_id, item.config).await
 }
 
 async fn queue_refresh(
@@ -154,8 +183,8 @@ mod tests {
     use config_service::ThreadConfigLoader;
     use config_service::ThreadConfigSource;
     use pretty_assertions::assert_eq;
-    use protocol::protocol::SessionSource;
     use protocol::error::Result as CodexResult;
+    use protocol::protocol::SessionSource;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
@@ -230,6 +259,61 @@ mod tests {
         queue_strict_refresh(&runtime, &config_manager).await?;
 
         assert_eq!(runtime.submitted_thread_ids(), vec![native_thread_id]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn strict_refresh_plans_all_threads_before_queueing_any_refresh() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let good_cwd = temp_dir.path().join("good");
+        let bad_cwd = temp_dir.path().join("bad");
+        std::fs::create_dir_all(&good_cwd)?;
+        std::fs::create_dir_all(&bad_cwd)?;
+        let loader = Arc::new(CountingThreadConfigLoader {
+            good_cwd: AbsolutePathBuf::try_from(good_cwd.clone())?,
+            bad_cwd: AbsolutePathBuf::try_from(bad_cwd.clone())?,
+            good_loads: AtomicUsize::new(0),
+            bad_loads: AtomicUsize::new(0),
+        });
+        let config_manager = ConfigManager::new(
+            temp_dir.path().to_path_buf(),
+            Vec::new(),
+            LoaderOverrides::without_managed_config_for_tests(),
+            /*strict_config*/ false,
+            CloudRequirementsLoader::default(),
+            Arg0DispatchPaths::default(),
+            loader,
+        );
+        let good_thread_id = ThreadId::new();
+        let bad_thread_id = ThreadId::new();
+        let runtime = FakeRefreshRuntime {
+            live_thread_ids: vec![good_thread_id, bad_thread_id],
+            refresh_snapshots: HashMap::from([
+                (
+                    good_thread_id,
+                    LiveThreadConfigRefreshSnapshot {
+                        cwd: AbsolutePathBuf::try_from(good_cwd)?,
+                        session_layers: Vec::new(),
+                    },
+                ),
+                (
+                    bad_thread_id,
+                    LiveThreadConfigRefreshSnapshot {
+                        cwd: AbsolutePathBuf::try_from(bad_cwd)?,
+                        session_layers: Vec::new(),
+                    },
+                ),
+            ]),
+            rejected_thread_id: ThreadId::new(),
+            submitted_thread_ids: Mutex::new(Vec::new()),
+        };
+
+        let err = queue_strict_refresh(&runtime, &config_manager)
+            .await
+            .expect_err("strict refresh should fail before queueing");
+
+        assert_eq!(err.to_string(), "failed to load refresh config");
+        assert_eq!(runtime.submitted_thread_ids(), Vec::<ThreadId>::new());
         Ok(())
     }
 
