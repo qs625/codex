@@ -32,6 +32,7 @@ import {
   attachmentsFromUserInput,
   formatUserInputContent,
 } from "./conversationUserInput";
+import { buildReplacementHistoryEntries } from "./conversationReplacementHistory";
 
 export type ConversationBuildState = {
   threadId: string | null;
@@ -773,6 +774,14 @@ function buildContextCompactionEntry(
       : replacementHistory.length > 0
         ? "available"
         : "empty";
+  const replacementHistoryEntries =
+    replacementHistory === null
+      ? null
+      : buildReplacementHistoryEntries(replacementHistory, {
+          author,
+          timestamp,
+          parentId: item.id,
+        });
 
   return {
     id: item.id,
@@ -782,8 +791,8 @@ function buildContextCompactionEntry(
     text: "Context compacted",
     timestamp,
     attachments: [],
-    compactSummary: null,
-    replacementHistoryEntries: null,
+    compactSummary: item.summary ?? null,
+    replacementHistoryEntries,
     replacementHistoryStatus,
     replacementHistoryCount,
   };
