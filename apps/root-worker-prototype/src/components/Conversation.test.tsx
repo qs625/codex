@@ -253,8 +253,38 @@ test("message rows expose role classes for chat alignment", () => {
 
   assert.match(userMarkup, /class="message-row message-row-user"/);
   assert.match(userMarkup, /class="message-avatar user"/);
+  assert.match(userMarkup, /data-conversation-row="message"/);
+  assert.match(userMarkup, /data-conversation-role="user"/);
+  assert.match(userMarkup, /data-conversation-entry-ids="user-1"/);
   assert.match(agentMarkup, /class="message-row message-row-agent"/);
   assert.match(agentMarkup, /class="message-avatar agent"/);
+  assert.match(agentMarkup, /data-conversation-role="agent"/);
+});
+
+test("tool rows expose semantic attributes for display diagnostics", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "tool-1",
+          kind: "tool",
+          author: "Codex",
+          role: "system",
+          text: "tmp/project • exit 0",
+          timestamp: "09:42",
+          attachments: [],
+          toolName: "npm test",
+          toolStatus: "completed",
+          toolCategory: "command",
+        },
+      ]}
+    />,
+  );
+
+  assert.match(markup, /class="tool-row tool-row-command"/);
+  assert.match(markup, /data-conversation-row="tool"/);
+  assert.match(markup, /data-tool-category="command"/);
+  assert.match(markup, /data-conversation-entry-ids="tool-1"/);
 });
 
 test("artifact row renders html preview in a sandboxed iframe", () => {

@@ -540,6 +540,106 @@ test("renders command execution summary without command output payload", () => {
   assert.equal(entries[0]?.toolOutput, undefined);
 });
 
+test("counts restart recovery prompts in command audit output separately from user bubbles", () => {
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求 call_qvYY0rlSBHFYifg2B3QEz3Do。";
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "userMessage",
+        id: "recovery-user",
+        content: [{ type: "text", text: prompt }],
+      },
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: `playwright-cli --raw eval "document.body.innerText.includes('${prompt}')"`,
+        cwd: "/tmp/project",
+        status: "completed",
+        aggregatedOutput: `${prompt}\n`,
+        exitCode: 0,
+        durationMs: 10,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:exit",
+        commandItemId: "cmd-1",
+        kind: "exit",
+        message: "Command exit notification received.",
+        output: `${prompt}\n`,
+        exitCode: 0,
+        createdAtMs: 1,
+      },
+    ]),
+  );
+
+  const matchingUserMessages = entries.filter(
+    (entry) =>
+      entry.kind === "message" && entry.role === "user" && entry.text === prompt,
+  );
+  const matchingToolEntries = entries.filter(
+    (entry) =>
+      entry.kind === "tool" &&
+      (entry.toolName?.includes(prompt) ||
+        entry.toolOutput?.text.includes(prompt)),
+  );
+
+  assert.equal(matchingUserMessages.length, 1);
+  assert.equal(matchingToolEntries.length, 2);
+});
+
+test("preserves independent same-text user messages as separate bubbles", () => {
+  const prompt = "repeatable user request";
+  const entries = buildConversationEntries(
+    makeThreadWithTurns([
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-1",
+            content: [{ type: "text", text: prompt }],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-2",
+            content: [{ type: "text", text: prompt }],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries
+      .filter(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.role === "user" &&
+          entry.text === prompt,
+      )
+      .map((entry) => entry.id),
+    ["user-1", "user-2"],
+  );
+});
+
 test("renders command notifications as structured command tool entries", () => {
   const entries = buildConversationEntries(
     makeThread([
