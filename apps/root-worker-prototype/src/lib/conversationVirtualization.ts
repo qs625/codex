@@ -145,25 +145,8 @@ function estimateToolCellHeight(entries: ConversationEntry[]) {
 }
 
 function estimateCompactCellHeight(entry: ConversationEntry | undefined) {
-  let height = DEFAULT_COMPACT_ROW_HEIGHT;
-  if (!entry) {
-    return height;
-  }
-
-  const archivedCells = entry.archivedCells ?? [];
-  const replacementHistoryCells = entry.replacementHistoryCells ?? [];
-
-  if (archivedCells.length > 0) {
-    height += 96;
-    height += estimateNestedCellsHeight(archivedCells);
-  }
-
-  if (replacementHistoryCells.length > 0) {
-    height += 96;
-    height += estimateNestedCellsHeight(replacementHistoryCells);
-  }
-
-  return height;
+  void entry;
+  return DEFAULT_COMPACT_ROW_HEIGHT;
 }
 
 function estimateNestedCellsHeight(cells: ConversationCell[]) {

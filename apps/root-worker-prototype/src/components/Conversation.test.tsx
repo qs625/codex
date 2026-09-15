@@ -532,10 +532,8 @@ test("virtual list renders url artifacts with browser action", () => {
           ],
         },
       ]}
-      compactHistoryById={{}}
       containerRef={React.createRef<HTMLDivElement>()}
       focusedItem={null}
-      onToggleCompactHistory={() => {}}
       onOpenLocalFile={() => {}}
       onOpenArtifactUrl={() => {}}
       searchCurrentCellId={null}
@@ -547,7 +545,7 @@ test("virtual list renders url artifacts with browser action", () => {
   assert.match(markup, />Open<\/button>/);
 });
 
-test("expanded compact rows render archived artifacts inline", () => {
+test("compact rows do not render archived artifacts inline", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -555,7 +553,7 @@ test("expanded compact rows render archived artifacts inline", () => {
         kind: "compact",
         author: "Root",
         role: "system",
-        text: "Previous conversation was archived.",
+        text: "Context compacted",
         timestamp: "09:43",
         attachments: [],
         replacementHistoryStatus: "available",
@@ -571,13 +569,13 @@ test("expanded compact rows render archived artifacts inline", () => {
         ],
         replacementHistoryCells: [],
       }}
-      isExpanded
     />,
   );
 
-  assert.match(markup, /class="artifact-row"/);
-  assert.match(markup, /Inline artifact/);
-  assert.match(markup, /<iframe /);
+  assert.match(markup, /Context compacted/);
+  assert.doesNotMatch(markup, /class="artifact-row"/);
+  assert.doesNotMatch(markup, /Inline artifact/);
+  assert.doesNotMatch(markup, /<iframe /);
   assert.doesNotMatch(markup, /Archived item/);
 });
 
@@ -640,7 +638,7 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
         kind: "compact",
         author: "Root",
         role: "system",
-        text: longPath,
+        text: "Context compacted",
         timestamp: "09:43",
         attachments: [],
         replacementHistoryStatus: "available",
@@ -670,7 +668,6 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
         ],
         replacementHistoryCells: [],
       }}
-      isExpanded
     />,
   );
   const artifactMarkup = renderToStaticMarkup(
@@ -714,8 +711,10 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(toolMarkup, new RegExp(longMethod));
   assert.match(toolMarkup, /completed_with_extremely_long_status_identifier/);
   assert.match(toolMarkup, /Session ID/);
-  assert.match(compactMarkup, /archive-tool-stack/);
-  assert.match(compactMarkup, new RegExp(longMethod));
+  assert.match(compactMarkup, /Context compacted/);
+  assert.doesNotMatch(compactMarkup, /archive-tool-stack/);
+  assert.doesNotMatch(compactMarkup, new RegExp(longMethod));
+  assert.doesNotMatch(compactMarkup, new RegExp(longPath));
   assert.match(artifactMarkup, /class="artifact-card-copy"/);
   assert.match(artifactMarkup, new RegExp(longMethod));
   assert.match(approvalMarkup, /class="approval-request-metadata"/);
@@ -1178,7 +1177,7 @@ test("conversation measurements mark rows measured even when height matches the 
   );
 });
 
-test("compact rows point to replacement history in the active chat list", () => {
+test("compact rows render only a compact marker in the active chat list", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1186,27 +1185,44 @@ test("compact rows point to replacement history in the active chat list", () => 
         kind: "compact",
         author: "Root",
         role: "system",
-        text: "Previous conversation was archived; compacted model context continues below.",
+        text: "Context compacted",
         timestamp: "09:43",
         attachments: [],
         replacementHistoryStatus: "available",
         replacementHistoryCount: 2,
         replacementHistoryEntries: [],
+        replacementHistoryCells: [
+          {
+            id: "replacement-message",
+            kind: "message",
+            entries: [
+              {
+                id: "replacement-message",
+                kind: "message",
+                author: "You",
+                role: "user",
+                text: "recent request",
+                timestamp: "09:42",
+                attachments: [],
+              },
+            ],
+          },
+        ],
       }}
     />,
   );
 
   assert.match(markup, /Context compacted/);
-  assert.match(markup, /2 replacement items/);
-  assert.match(
-    markup,
-    /load the archived conversation and compacted context/,
-  );
+  assert.match(markup, /09:43/);
+  assert.doesNotMatch(markup, /button/);
+  assert.doesNotMatch(markup, /2 replacement items/);
+  assert.doesNotMatch(markup, /replacement history/);
+  assert.doesNotMatch(markup, /load the archived conversation/);
   assert.doesNotMatch(markup, /recent request/);
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
 
-test("compact rows explain unavailable replacement history", () => {
+test("compact rows omit summary and unavailable replacement diagnostics", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1225,12 +1241,13 @@ test("compact rows explain unavailable replacement history", () => {
     />,
   );
 
-  assert.match(markup, /replacement history unavailable/);
-  assert.match(markup, /Preserve compact summary/);
-  assert.match(markup, /Replacement history is unavailable/);
+  assert.match(markup, /Context compacted/);
+  assert.doesNotMatch(markup, /replacement history unavailable/);
+  assert.doesNotMatch(markup, /Preserve compact summary/);
+  assert.doesNotMatch(markup, /Replacement history is unavailable/);
 });
 
-test("compact rows render a grouped history body only when expanded", () => {
+test("compact rows do not render grouped history body when expanded", () => {
   const collapsedMarkup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1318,17 +1335,17 @@ test("compact rows render a grouped history body only when expanded", () => {
           },
         ],
       }}
-      isExpanded
     />,
   );
 
-  assert.match(expandedMarkup, /Previous conversation/);
-  assert.match(expandedMarkup, /Compacted context/);
-  assert.match(expandedMarkup, /old request/);
-  assert.match(expandedMarkup, /recent request/);
+  assert.match(expandedMarkup, /Context compacted/);
+  assert.doesNotMatch(expandedMarkup, /Previous conversation/);
+  assert.doesNotMatch(expandedMarkup, /Compacted context/);
+  assert.doesNotMatch(expandedMarkup, /old request/);
+  assert.doesNotMatch(expandedMarkup, /recent request/);
 });
 
-test("expanded compact rows preserve nested compact groups inside archived history", () => {
+test("expanded compact rows do not render nested compact groups from archived history", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1400,13 +1417,12 @@ test("expanded compact rows preserve nested compact groups inside archived histo
           },
         ],
       }}
-      isExpanded
     />,
   );
 
-  assert.ok((markup.match(/Context compacted/g)?.length ?? 0) >= 2);
-  assert.match(markup, /first replacement/);
-  assert.match(markup, /old request/);
+  assert.match(markup, /Context compacted/);
+  assert.doesNotMatch(markup, /first replacement/);
+  assert.doesNotMatch(markup, /old request/);
 });
 
 test("archived history rows collapse previous conversation by default", () => {

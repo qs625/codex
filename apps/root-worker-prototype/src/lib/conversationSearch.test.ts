@@ -142,7 +142,7 @@ test("keeps same text in different thread item entries as separate results", () 
   );
 });
 
-test("searches replacement history and archived cell text", () => {
+test("does not search hidden compact replacement or archived body text", () => {
   const replacementEntry = makeEntry("replacement-1", "replacement needle");
   const archivedEntry = makeEntry("archived-1", "archived needle");
   const cells = [
@@ -159,24 +159,13 @@ test("searches replacement history and archived cell text", () => {
     ),
   ];
 
+  assert.deepEqual(buildConversationSearchResults(cells, "needle"), []);
   assert.deepEqual(
-    buildConversationSearchResults(cells, "needle").map((result) => ({
+    buildConversationSearchResults(cells, "current").map((result) => ({
       entryId: result.entryId,
       source: result.source,
-      sourceLabel: result.sourceLabel,
     })),
-    [
-      {
-        entryId: "compact-entry",
-        source: "replacement-0-text",
-        sourceLabel: "Replacement Text",
-      },
-      {
-        entryId: "compact-entry",
-        source: "archive-0-0-text",
-        sourceLabel: "Archive Text",
-      },
-    ],
+    [{ entryId: "compact-entry", source: "text" }],
   );
 });
 

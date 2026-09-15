@@ -28,7 +28,6 @@ import {
   stringOrFallback,
   stringOrNull,
 } from "./conversationFormatting";
-import { buildReplacementHistoryEntries } from "./conversationReplacementHistory";
 import {
   attachmentsFromUserInput,
   formatUserInputContent,
@@ -767,37 +766,24 @@ function buildContextCompactionEntry(
   const replacementHistory = Array.isArray(item.replacementHistory)
     ? item.replacementHistory
     : null;
-  const replacementHistoryEntries = replacementHistory
-    ? buildReplacementHistoryEntries(replacementHistory, {
-        author,
-        timestamp,
-        parentId: item.id,
-      })
-    : null;
-  const replacementHistoryCount = replacementHistoryEntries?.length ?? null;
+  const replacementHistoryCount = replacementHistory?.length ?? null;
   const replacementHistoryStatus =
     replacementHistory === null
       ? "missing"
-      : replacementHistoryEntries && replacementHistoryEntries.length > 0
+      : replacementHistory.length > 0
         ? "available"
         : "empty";
-  const compactSummary =
-    typeof item.summary === "string" && item.summary.trim()
-      ? item.summary.trim()
-      : null;
 
   return {
     id: item.id,
     kind: "compact",
     author,
     role: "system",
-    text:
-      compactSummary ??
-      "Previous conversation was archived; compacted model context continues below.",
+    text: "Context compacted",
     timestamp,
     attachments: [],
-    compactSummary,
-    replacementHistoryEntries,
+    compactSummary: null,
+    replacementHistoryEntries: null,
     replacementHistoryStatus,
     replacementHistoryCount,
   };

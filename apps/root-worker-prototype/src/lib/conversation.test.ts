@@ -2461,7 +2461,7 @@ test("keeps ordinary child completion JSON in event-driven tools as event text",
   );
 });
 
-test("renders context compaction replacement history with init context", () => {
+test("renders context compaction as a marker without replacement body", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2496,23 +2496,16 @@ test("renders context compaction replacement history with init context", () => {
   assert.equal(entries.length, 1);
   const compactEntry = entries[0]!;
   assert.equal(compactEntry.kind, "compact");
+  assert.equal(compactEntry.text, "Context compacted");
+  assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
-  assert.deepEqual(
-    compactEntry.replacementHistoryEntries?.map((entry) => [
-      entry.kind,
-      entry.toolName ?? entry.author,
-      entry.text,
-    ]),
-    [
-      ["tool", "Init Context", "Permissions and AGENTS.md instructions"],
-      ["message", "You", "recent request"],
-      ["message", "root", "compact final output"],
-    ],
-  );
+  assert.equal(compactEntry.replacementHistoryEntries, null);
+  assert.doesNotMatch(compactEntry.text, /recent request/);
+  assert.doesNotMatch(compactEntry.text, /compact final output/);
 });
 
-test("renders compact summary even when replacement history is unavailable", () => {
+test("omits compact summary body when replacement history is unavailable", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2526,20 +2519,16 @@ test("renders compact summary even when replacement history is unavailable", () 
 
   const compactEntry = entries[0]!;
   assert.equal(compactEntry.kind, "compact");
-  assert.equal(
-    compactEntry.text,
-    "## Current Goal\n\n- Preserve compact summary",
-  );
-  assert.equal(
-    compactEntry.compactSummary,
-    "## Current Goal\n\n- Preserve compact summary",
-  );
+  assert.equal(compactEntry.text, "Context compacted");
+  assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "missing");
   assert.equal(compactEntry.replacementHistoryCount, null);
   assert.equal(compactEntry.replacementHistoryEntries, null);
+  assert.doesNotMatch(compactEntry.text, /Current Goal/);
+  assert.doesNotMatch(compactEntry.text, /Preserve compact summary/);
 });
 
-test("renders replacement init context even when compact summary is missing", () => {
+test("keeps replacement init context out of compact display entries", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2564,24 +2553,14 @@ test("renders replacement init context even when compact summary is missing", ()
   );
 
   const compactEntry = entries[0]!;
-  assert.equal(
-    compactEntry.text,
-    "Previous conversation was archived; compacted model context continues below.",
-  );
+  assert.equal(compactEntry.text, "Context compacted");
   assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 1);
-  assert.deepEqual(
-    compactEntry.replacementHistoryEntries?.map((entry) => [
-      entry.kind,
-      entry.toolName,
-      entry.text,
-    ]),
-    [["tool", "Init Context", "AGENTS.md"]],
-  );
+  assert.equal(compactEntry.replacementHistoryEntries, null);
 });
 
-test("renders typed context compaction replacement history", () => {
+test("omits typed context compaction replacement history from display entries", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2622,20 +2601,11 @@ test("renders typed context compaction replacement history", () => {
   );
 
   const compactEntry = entries[0]!;
+  assert.equal(compactEntry.text, "Context compacted");
+  assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
-  assert.deepEqual(
-    compactEntry.replacementHistoryEntries?.map((entry) => [
-      entry.kind,
-      entry.toolName ?? entry.author,
-      entry.text,
-    ]),
-    [
-      ["tool", "Init Context", "AGENTS.md • Environment"],
-      ["message", "You", "recent request"],
-      ["message", "root", "compact final output"],
-    ],
-  );
+  assert.equal(compactEntry.replacementHistoryEntries, null);
 });
 
 test("extracts compact history details with init context replacement cell", () => {
@@ -2697,17 +2667,7 @@ test("extracts compact history details with init context replacement cell", () =
   const details = extractCompactConversationDetails(entries, "compact-1");
 
   assert.equal(details?.archivedEntryCount, 1);
-  assert.deepEqual(
-    details?.replacementHistoryCells.map((cell) => [
-      cell.kind,
-      cell.entries[0]?.toolName ?? cell.entries[0]?.author,
-      cell.entries[0]?.text,
-    ]),
-    [
-      ["tool", "Init Context", "Fresh initial context"],
-      ["message", "root", "compact final output"],
-    ],
-  );
+  assert.deepEqual(details?.replacementHistoryCells, []);
 });
 
 test("pruned compact rows omit archived cells until lazy-loaded details are read", () => {

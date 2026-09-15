@@ -1146,7 +1146,6 @@ export function ConversationPanel({
   availableSkills,
   availableWorkflows,
   approvalRequests,
-  compactHistoryById,
   conversationCells,
   conversationScrollRef,
   draft,
@@ -1166,7 +1165,6 @@ export function ConversationPanel({
   onDraftChange,
   onHandleComposerPaste,
   onHandleImageSelection,
-  onToggleCompactHistory,
   onOpenLocalFile,
   onOpenArtifactUrl,
   onPauseGoal,
@@ -1187,9 +1185,6 @@ export function ConversationPanel({
   availableSkills: ThreadSkill[];
   availableWorkflows: WorkflowSummary[];
   approvalRequests: ApprovalRequest[];
-  compactHistoryById: Readonly<
-    Record<string, { isLoading: boolean; isExpanded: boolean; error: string | null }>
-  >;
   conversationCells: ConversationCell[];
   conversationScrollRef: RefObject<HTMLDivElement | null>;
   draft: string;
@@ -1209,7 +1204,6 @@ export function ConversationPanel({
   onDraftChange: (value: string) => void;
   onHandleComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onHandleImageSelection: (event: ChangeEvent<HTMLInputElement>) => void;
-  onToggleCompactHistory: (entryId: string) => void;
   onOpenLocalFile: (target: string) => void;
   onOpenArtifactUrl: (url: string) => void;
   onPauseGoal: () => void;
@@ -1576,10 +1570,8 @@ export function ConversationPanel({
             <ConversationVirtualList
               key={selectedThreadId}
               cells={conversationCells}
-              compactHistoryById={compactHistoryById}
               containerRef={conversationScrollRef}
               focusedItem={focusedConversationListItem}
-              onToggleCompactHistory={onToggleCompactHistory}
               onOpenLocalFile={onOpenLocalFile}
               onOpenArtifactUrl={onOpenArtifactUrl}
               searchCurrentCellId={activeSearchResult?.cellId ?? null}
