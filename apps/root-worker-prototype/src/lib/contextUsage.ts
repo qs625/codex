@@ -251,6 +251,19 @@ export function getContextUsageCategoryColor(categoryId: ContextUsageCategoryId)
   return CATEGORY_COLORS[categoryId];
 }
 
+function buildEmptyTurnTrend(): ContextUsageAnalysis["turnTrend"] {
+  return {
+    turns: [],
+    rows: CATEGORY_ORDER.map((category) => ({
+      id: category.id,
+      label: category.label,
+      shortLabel: category.shortLabel,
+      color: getContextUsageCategoryColor(category.id),
+      cells: [],
+    })),
+  };
+}
+
 export function buildContextUsageAnalysis(
   thread: Thread | null,
   totalSkillMetadataCount: number,
@@ -276,16 +289,7 @@ export function buildContextUsageAnalysis(
       ),
       toolBreakdown: [],
       loadedConcreteSkills: [],
-      turnTrend: {
-        turns: [],
-        rows: CATEGORY_ORDER.map((category) => ({
-          id: category.id,
-          label: category.label,
-          shortLabel: category.shortLabel,
-          color: getContextUsageCategoryColor(category.id),
-          cells: [],
-        })),
-      },
+      turnTrend: buildEmptyTurnTrend(),
     };
   }
 
@@ -589,12 +593,7 @@ function sortLoadedSkills(skillLoads: Map<string, LoadedSkillSummary>) {
   );
 }
 
-function buildTurnTrend(thread: Thread) {
-  return collectThreadUsage(thread).turnTrend;
-}
-
 function collectThreadUsage(thread: Thread) {
-  const categoryUnits = initializeCategoryUnits();
   const turnCategoryUnits: Array<{
     turnId: string;
     label: string;
@@ -623,10 +622,6 @@ function collectThreadUsage(thread: Thread) {
       accumulateItemUnits(item, perTurnUnits, skillLoads);
     }
 
-    for (const category of CATEGORY_ORDER) {
-      categoryUnits[category.id] += perTurnUnits[category.id];
-    }
-
     turnCategoryUnits.push({
       turnId: turn.id,
       label: String(index + 1),
@@ -635,7 +630,6 @@ function collectThreadUsage(thread: Thread) {
   });
 
   return {
-    categoryUnits,
     skillLoads,
     turnTrend: buildTurnTrendRows(turnCategoryUnits),
   };
@@ -655,17 +649,25 @@ function buildTurnTrendRows(
   }>,
 ) {
   const visibleTurns = turns.slice(-MAX_TREND_TURNS);
-  const trendCategories = CATEGORY_ORDER.filter(
-    (category) =>
-      !isToolBucketCategory(category.id) ||
-      visibleTurns.some((turn) => turn.units[category.id] > 0),
-  );
-  const maxCategoryUnits = Math.max(
-    ...visibleTurns.flatMap((turn) =>
-      trendCategories.map((category) => turn.units[category.id]),
-    ),
-    0,
-  );
+  let maxCategoryUnits = 0;
+  const trendCategories = CATEGORY_ORDER.filter((category) => {
+    if (!isToolBucketCategory(category.id)) {
+      for (const turn of visibleTurns) {
+        maxCategoryUnits = Math.max(maxCategoryUnits, turn.units[category.id]);
+      }
+      return true;
+    }
+
+    let hasUnits = false;
+    for (const turn of visibleTurns) {
+      const units = turn.units[category.id];
+      if (units > 0) {
+        hasUnits = true;
+      }
+      maxCategoryUnits = Math.max(maxCategoryUnits, units);
+    }
+    return hasUnits;
+  });
 
   return {
     turns: visibleTurns.map((turn) => ({
