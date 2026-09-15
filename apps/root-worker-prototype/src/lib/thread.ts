@@ -1006,14 +1006,18 @@ function isCompactItemSnapshotAfterLatestCompact(
 function hasMatchingThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
   return items.some(
     (item) =>
-      item.id === nextItem.id || isEquivalentInitContextItem(item, nextItem),
+      item.id === nextItem.id ||
+      isEquivalentInitContextItem(item, nextItem) ||
+      isEquivalentRestartRecoveryNoticeItem(item, nextItem),
   );
 }
 
 function appendOrMergeThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
   const existingItemIndex = items.findIndex(
     (item) =>
-      item.id === nextItem.id || isEquivalentInitContextItem(item, nextItem),
+      item.id === nextItem.id ||
+      isEquivalentInitContextItem(item, nextItem) ||
+      isEquivalentRestartRecoveryNoticeItem(item, nextItem),
   );
   return existingItemIndex === -1
     ? [...items, nextItem]
@@ -1916,9 +1920,12 @@ export function applyPendingThreadUpdates(
     return thread;
   }
   pendingUpdates.delete(thread.id);
-  const updated = dropDuplicatePendingAgentTurns(
+  const updated = dropDuplicatePendingRestartRecoveryNotices(
     thread,
-    updates.reduce((updated, update) => update(updated), thread),
+    dropDuplicatePendingAgentTurns(
+      thread,
+      updates.reduce((updated, update) => update(updated), thread),
+    ),
   );
   return dropDuplicatePendingReasoningItems(thread, updated);
 }
@@ -2164,6 +2171,8 @@ type TurnItemIndex = {
   itemsById: Map<string, ThreadItem>;
   initContextKeys: Set<string>;
   reasoningFragments: Map<string, number>;
+  restartRecoveryNoticeIds: Set<string>;
+  untypedUserMessageTexts: Map<string, number>;
 };
 
 type TurnItemMatcher = {
@@ -2183,11 +2192,22 @@ function buildTurnItemIndex(
   const itemsById = new Map<string, ThreadItem>();
   const initContextKeys = new Set<string>();
   const reasoningFragments = new Map<string, number>();
+  const restartRecoveryNoticeIds = new Set<string>();
+  const untypedUserMessageTexts = new Map<string, number>();
 
   for (const { items } of entries) {
     for (const item of items) {
       ids.add(item.id);
       itemsById.set(item.id, item);
+      const restartRecoveryId = restartRecoveryNoticeId(item);
+      if (restartRecoveryId) {
+        restartRecoveryNoticeIds.add(restartRecoveryId);
+      } else {
+        const userText = userMessageTextKey(item);
+        if (userText) {
+          incrementMapCount(untypedUserMessageTexts, userText);
+        }
+      }
       const key = initContextItemKey(item);
       if (key) {
         initContextKeys.add(key);
@@ -2198,7 +2218,14 @@ function buildTurnItemIndex(
     }
   }
 
-  return { ids, itemsById, initContextKeys, reasoningFragments };
+  return {
+    ids,
+    itemsById,
+    initContextKeys,
+    reasoningFragments,
+    restartRecoveryNoticeIds,
+    untypedUserMessageTexts,
+  };
 }
 
 function consumeMatchingTurnItem(
@@ -2214,7 +2241,8 @@ function consumeMatchingTurnItem(
   }
   return (
     hasMatchingInitContextItem(matcher, item) ||
-    consumeMatchingReasoningItem(matcher, item)
+    consumeMatchingReasoningItem(matcher, item) ||
+    consumeMatchingRestartRecoveryNoticeItem(matcher, item)
   );
 }
 
@@ -2288,6 +2316,46 @@ function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
     ];
   });
   return { ...updated, turns };
+}
+
+function dropDuplicatePendingRestartRecoveryNotices(
+  snapshot: Thread,
+  updated: Thread,
+) {
+  const snapshotTurnsById = new Map(
+    snapshot.turns.map((turn) => [turn.id, normalizeTurnSnapshot(turn)]),
+  );
+  const matcher = createTurnItemMatcher(
+    buildTurnItemIndex(
+      [...snapshotTurnsById.values()].map((turn) => ({
+        turn,
+        items: turn.items,
+      })),
+    ),
+  );
+  let changed = false;
+  const turns = updated.turns.flatMap((turn) => {
+    const snapshotTurn = snapshotTurnsById.get(turn.id);
+    const snapshotItemIds = new Set(
+      snapshotTurn?.items.map((item) => item.id) ?? [],
+    );
+    const items = turn.items.filter((item) => {
+      if (snapshotItemIds.has(item.id)) {
+        return true;
+      }
+      const keep = !consumeMatchingRestartRecoveryNoticeItem(matcher, item);
+      if (!keep) {
+        changed = true;
+      }
+      return keep;
+    });
+    if (items.length === 0 && turn.items.length > 0) {
+      changed = true;
+      return [];
+    }
+    return items.length === turn.items.length ? [turn] : [{ ...turn, items }];
+  });
+  return changed ? { ...updated, turns } : updated;
 }
 
 function dropDuplicatePendingReasoningItems(snapshot: Thread, updated: Thread) {
@@ -2415,6 +2483,69 @@ function decrementMapCount(
 function isEquivalentInitContextItem(left: ThreadItem, right: ThreadItem) {
   const leftKey = initContextItemKey(left);
   return leftKey !== null && leftKey === initContextItemKey(right);
+}
+
+const RESTART_RECOVERY_NOTICE_ID_PREFIX = "runtime-restart-recovery:";
+
+function isEquivalentRestartRecoveryNoticeItem(
+  left: ThreadItem,
+  right: ThreadItem,
+) {
+  const leftId = restartRecoveryNoticeId(left);
+  const rightId = restartRecoveryNoticeId(right);
+  if (!leftId && !rightId) {
+    return false;
+  }
+  if (leftId && rightId) {
+    return leftId === rightId;
+  }
+  const leftText = userMessageTextKey(left);
+  return leftText !== null && leftText === userMessageTextKey(right);
+}
+
+function consumeMatchingRestartRecoveryNoticeItem(
+  matcher: TurnItemMatcher,
+  item: ThreadItem,
+) {
+  const noticeId = restartRecoveryNoticeId(item);
+  if (!noticeId) {
+    return false;
+  }
+  if (matcher.index.restartRecoveryNoticeIds.has(noticeId)) {
+    matcher.index.restartRecoveryNoticeIds.delete(noticeId);
+    return true;
+  }
+  const text = userMessageTextKey(item);
+  if (!text) {
+    return false;
+  }
+  const available = matcher.index.untypedUserMessageTexts.get(text) ?? 0;
+  if (available <= 0) {
+    return false;
+  }
+  decrementMapCount(matcher.index.untypedUserMessageTexts, text, 1);
+  return true;
+}
+
+function restartRecoveryNoticeId(item: ThreadItem) {
+  if (
+    item.type !== "userMessage" ||
+    !item.id.startsWith(RESTART_RECOVERY_NOTICE_ID_PREFIX)
+  ) {
+    return null;
+  }
+  return item.id;
+}
+
+function userMessageTextKey(item: ThreadItem) {
+  if (item.type !== "userMessage") {
+    return null;
+  }
+  const text = item.content
+    .map((content) => ("text" in content ? content.text : ""))
+    .join("\n")
+    .trim();
+  return text.length > 0 ? text : null;
 }
 
 function initContextItemKey(item: ThreadItem) {
