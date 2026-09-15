@@ -107,15 +107,10 @@ function mergeTerminalSessions(state, sessions, threadId = null) {
       delete existing.readOnlyOutput;
       continue;
     }
-    state.tabs.push({
-      ...normalizeDescriptor(descriptor),
-      id: descriptor.sessionId,
+    state.tabs.push(createTerminalTab(descriptor, {
       status: "running",
-      replay: replayBufferFromDescriptor(descriptor),
       lastSequence: normalizeSequence(descriptor.replayThroughSequence),
-      hasSequenceGap: false,
-      backgroundActivity: false,
-    });
+    }));
   }
   for (const tab of state.tabs) {
     const wasInListedScope =
@@ -142,15 +137,10 @@ function reattachTerminalSessions(state) {
 }
 
 function addUserTerminal(state, descriptor) {
-  const tab = {
-    ...normalizeDescriptor(descriptor),
-    id: descriptor.sessionId,
+  const tab = createTerminalTab(descriptor, {
     status: "starting",
-    replay: replayBufferFromDescriptor(descriptor),
     lastSequence: null,
-    hasSequenceGap: false,
-    backgroundActivity: false,
-  };
+  });
   state.tabs.push(tab);
   state.activeTabId = tab.id;
   return tab;
@@ -172,19 +162,30 @@ function focusCommandTerminal(state, descriptor) {
     mergeFocusedCommandDescriptor(existing, descriptor);
     return existing;
   }
-  const tab = {
-    ...normalizeDescriptor(descriptor),
-    id: descriptor.sessionId,
+  const tab = createTerminalTab(descriptor, {
     status: "running",
-    replay: replayBufferFromDescriptor(descriptor),
     lastSequence: normalizeSequence(descriptor.replayThroughSequence),
-    hasSequenceGap: false,
-    backgroundActivity: false,
     readOnlyOutput: true,
-  };
+  });
   state.tabs.push(tab);
   state.activeTabId = tab.id;
   return tab;
+}
+
+function createTerminalTab(
+  descriptor,
+  { status, lastSequence, readOnlyOutput = false },
+) {
+  return {
+    ...normalizeDescriptor(descriptor),
+    id: descriptor.sessionId,
+    status,
+    replay: replayBufferFromDescriptor(descriptor),
+    lastSequence,
+    hasSequenceGap: false,
+    backgroundActivity: false,
+    ...(readOnlyOutput ? { readOnlyOutput: true } : {}),
+  };
 }
 
 function mergeFocusedCommandDescriptor(tab, descriptor) {
