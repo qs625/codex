@@ -694,6 +694,37 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
         )
         .await??;
 
+        let thread_read_id = first_mcp
+            .send_thread_read_request(ThreadReadParams {
+                thread_id: thread.id.clone(),
+                include_turns: true,
+            })
+            .await?;
+        let thread_read_resp: JSONRPCResponse = timeout(
+            DEFAULT_READ_TIMEOUT,
+            first_mcp.read_stream_until_response_message(RequestId::Integer(thread_read_id)),
+        )
+        .await??;
+        let ThreadReadResponse {
+            thread: persisted_thread,
+        } = to_response(thread_read_resp)?;
+        assert_eq!(
+            persisted_thread.lifecycle_status,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            },
+            "first app-server should persist event-subscription waiting status before restart"
+        );
+        let persisted_subscription_count = persisted_thread
+            .active_subscription_items
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or_default();
+        assert!(
+            persisted_subscription_count > 0,
+            "first app-server should expose a persisted active subscription snapshot before restart"
+        );
+
         thread.id
     };
 
@@ -747,10 +778,31 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
         {
             break;
         }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "app-server restart should load persisted subscription thread and persist waiting status, loaded={loaded}, lifecycle={lifecycle_status:?}"
-        );
+        if tokio::time::Instant::now() >= deadline {
+            let read_id = second_mcp
+                .send_thread_read_request(ThreadReadParams {
+                    thread_id: thread_id.clone(),
+                    include_turns: true,
+                })
+                .await?;
+            let read_resp: JSONRPCResponse = timeout(
+                DEFAULT_READ_TIMEOUT,
+                second_mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+            )
+            .await??;
+            let ThreadReadResponse {
+                thread: read_thread,
+            } = to_response(read_resp)?;
+            let read_subscription_count = read_thread
+                .active_subscription_items
+                .as_ref()
+                .map(Vec::len)
+                .unwrap_or_default();
+            anyhow::bail!(
+                "app-server restart should load persisted subscription thread and persist waiting status; loaded={loaded}, lifecycle={lifecycle_status:?}, read_lifecycle={:?}, read_subscription_count={read_subscription_count}",
+                read_thread.lifecycle_status,
+            );
+        }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
