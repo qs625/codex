@@ -761,23 +761,23 @@ pub(super) async fn handle_pending_thread_resume_request(
         active_turn_status = ?active_turn.as_ref().map(|turn| &turn.status),
         "composing running thread resume response"
     );
-    let has_live_running_status = match thread_lifecycle_runtime
+    let live_agent_status = match thread_lifecycle_runtime
         .live_thread_agent_status(conversation_id)
         .await
     {
-        Ok(status) => matches!(status, AgentStatus::Running),
+        Ok(status) => Some(status),
         Err(err) => {
             tracing::warn!(
                 thread_id = %conversation_id,
                 "failed to read live thread agent status while composing resume response: {err}"
             );
-            false
+            None
         }
     };
-    let has_live_in_progress_turn = has_live_running_status
-        || active_turn
-            .as_ref()
-            .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
+    let status_facts = RunningThreadResumeStatusFacts::from_live_state(
+        live_agent_status.as_ref(),
+        active_turn.as_ref(),
+    );
 
     let request_id = pending.request_id;
     let connection_id = request_id.connection_id;
@@ -793,12 +793,14 @@ pub(super) async fn handle_pending_thread_resume_request(
         &usage_source,
     )
     .await;
-    let thread_status = thread_watch_manager.loaded_status_for_thread(&thread.id).await;
+    let thread_status = thread_watch_manager
+        .loaded_status_for_thread(&thread.id)
+        .await;
     let projection = finish_running_thread_resume_projection(
         thread,
         pending.include_turns,
         thread_status,
-        has_live_in_progress_turn,
+        status_facts.has_live_in_progress_turn,
     );
     let mut thread = projection.thread;
     let token_usage_thread = projection.token_usage_thread;

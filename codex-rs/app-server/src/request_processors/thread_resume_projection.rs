@@ -9,6 +9,26 @@ pub(super) struct RunningThreadResumeProjection {
     pub(super) token_usage_thread: Option<Thread>,
 }
 
+pub(super) struct RunningThreadResumeStatusFacts {
+    pub(super) has_live_in_progress_turn: bool,
+}
+
+impl RunningThreadResumeStatusFacts {
+    pub(super) fn from_live_state(
+        live_agent_status: Option<&AgentStatus>,
+        active_turn: Option<&Turn>,
+    ) -> Self {
+        let has_live_running_status =
+            live_agent_status.is_some_and(|status| matches!(status, AgentStatus::Running));
+        let has_active_in_progress_turn = active_turn
+            .as_ref()
+            .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
+        Self {
+            has_live_in_progress_turn: has_live_running_status || has_active_in_progress_turn,
+        }
+    }
+}
+
 pub(super) async fn project_running_thread_resume_content(
     mut thread: Thread,
     history_items: &[RolloutItem],
@@ -221,5 +241,112 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
     }
     if !preserve_persisted_status {
         thread.lifecycle_status = effective_status;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::protocol::AgentStatus;
+
+    fn turn_with_status(status: TurnStatus) -> Turn {
+        Turn {
+            id: "turn-1".to_string(),
+            items: Vec::new(),
+            items_view: TurnItemsView::Full,
+            error: None,
+            status,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        }
+    }
+
+    fn thread_with_in_progress_turn() -> Thread {
+        Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            path: None,
+            cwd: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp")).expect("absolute cwd"),
+            cli_version: "0.0.0".to_string(),
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            source: protocol::protocol::SessionSource::Cli.into(),
+            thread_source: Some(app_server_protocol::ThreadSource::User),
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: vec![turn_with_status(TurnStatus::InProgress)],
+            active_subscription_items: None,
+            active_command_items: None,
+        }
+    }
+
+    #[test]
+    fn running_resume_status_facts_track_live_agent_or_active_turn() {
+        assert!(
+            RunningThreadResumeStatusFacts::from_live_state(Some(&AgentStatus::Running), None)
+                .has_live_in_progress_turn
+        );
+        assert!(
+            RunningThreadResumeStatusFacts::from_live_state(
+                Some(&AgentStatus::Completed(None)),
+                Some(&turn_with_status(TurnStatus::InProgress)),
+            )
+            .has_live_in_progress_turn
+        );
+        assert!(
+            !RunningThreadResumeStatusFacts::from_live_state(
+                Some(&AgentStatus::Completed(None)),
+                Some(&turn_with_status(TurnStatus::Completed)),
+            )
+            .has_live_in_progress_turn
+        );
+    }
+
+    #[test]
+    fn running_resume_projection_keeps_live_in_progress_turn_active() {
+        let projection = finish_running_thread_resume_projection(
+            thread_with_in_progress_turn(),
+            /*include_turns*/ true,
+            ThreadLifecycleStatus::completed(None),
+            RunningThreadResumeStatusFacts::from_live_state(Some(&AgentStatus::Running), None)
+                .has_live_in_progress_turn,
+        );
+
+        assert!(matches!(
+            projection.thread.turns[0].status,
+            TurnStatus::InProgress
+        ));
+        assert!(projection.token_usage_thread.is_some());
+    }
+
+    #[test]
+    fn running_resume_projection_interrupts_stale_in_progress_turn() {
+        let projection = finish_running_thread_resume_projection(
+            thread_with_in_progress_turn(),
+            /*include_turns*/ true,
+            ThreadLifecycleStatus::completed(None),
+            RunningThreadResumeStatusFacts::from_live_state(
+                Some(&AgentStatus::Completed(None)),
+                None,
+            )
+            .has_live_in_progress_turn,
+        );
+
+        assert_eq!(projection.thread.turns[0].status, TurnStatus::Interrupted);
     }
 }
