@@ -4386,6 +4386,131 @@ test("mergeThreadSnapshot preserves distinct in-flight items with matching conte
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });
 
+test("mergeThreadSnapshot drops live restart recovery notice restored by thread read", () => {
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求 restart-1；该请求已完成。";
+  const liveTurn = {
+    id: "live-recovery-turn",
+    items: [
+      {
+        type: "userMessage" as const,
+        id: "runtime-restart-recovery:restart-1",
+        content: [{ type: "text" as const, text: prompt }],
+      },
+    ],
+    itemsView: "full" as const,
+    status: "running" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: null,
+    durationMs: null,
+  };
+  const readTurn = {
+    id: "read-recovery-turn",
+    items: [
+      {
+        type: "userMessage" as const,
+        id: "backend-user-message",
+        content: [{ type: "text" as const, text: prompt }],
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [liveTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(
+    merged.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage" ? [item.id] : [],
+      ),
+    ),
+    ["backend-user-message"],
+  );
+  assert.deepEqual(
+    buildConversationEntries(merged)
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => entry.text),
+    [prompt],
+  );
+});
+
+test("mergeThreadSnapshot preserves independent same-text user messages", () => {
+  const prompt = "same user text";
+  const liveTurn = {
+    id: "live-user-turn",
+    items: [
+      {
+        type: "userMessage" as const,
+        id: "live-user-message",
+        content: [{ type: "text" as const, text: prompt }],
+      },
+    ],
+    itemsView: "full" as const,
+    status: "running" as const,
+    error: null,
+    startedAt: 20,
+    completedAt: null,
+    durationMs: null,
+  };
+  const readTurn = {
+    id: "read-user-turn",
+    items: [
+      {
+        type: "userMessage" as const,
+        id: "read-user-message",
+        content: [{ type: "text" as const, text: prompt }],
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [liveTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(
+    merged.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage" ? [item.id] : [],
+      ),
+    ),
+    ["read-user-message", "live-user-message"],
+  );
+  assert.deepEqual(
+    buildConversationEntries(merged)
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => entry.text),
+    [prompt, prompt],
+  );
+});
+
 test("updateThreadTurn preserves in-flight items when a completed turn arrives with new ids", () => {
   const runningTurn = {
     id: "running-turn",
