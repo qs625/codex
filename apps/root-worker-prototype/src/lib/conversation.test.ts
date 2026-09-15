@@ -2353,6 +2353,72 @@ test("renders context compaction replacement history with init context", () => {
   );
 });
 
+test("renders compact summary even when replacement history is unavailable", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-summary-only",
+        summary: "## Current Goal\n\n- Preserve compact summary",
+        replacementHistory: null,
+      },
+    ]),
+  );
+
+  const compactEntry = entries[0]!;
+  assert.equal(compactEntry.kind, "compact");
+  assert.equal(compactEntry.text, "## Current Goal\n\n- Preserve compact summary");
+  assert.equal(
+    compactEntry.compactSummary,
+    "## Current Goal\n\n- Preserve compact summary",
+  );
+  assert.equal(compactEntry.replacementHistoryStatus, "missing");
+  assert.equal(compactEntry.replacementHistoryCount, null);
+  assert.equal(compactEntry.replacementHistoryEntries, null);
+});
+
+test("renders replacement init context even when compact summary is missing", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-init-only",
+        replacementHistory: [
+          {
+            type: "injectedContext",
+            id: "ctx-1",
+            title: "Init Context",
+            preview: "AGENTS.md",
+            sections: [
+              {
+                label: "AGENTS.md",
+                text: "Persisted project instructions",
+              },
+            ],
+          },
+        ],
+      },
+    ]),
+  );
+
+  const compactEntry = entries[0]!;
+  assert.equal(
+    compactEntry.text,
+    "Previous conversation was archived; compacted model context continues below.",
+  );
+  assert.equal(compactEntry.compactSummary, null);
+  assert.equal(compactEntry.replacementHistoryStatus, "available");
+  assert.equal(compactEntry.replacementHistoryCount, 1);
+  assert.deepEqual(
+    compactEntry.replacementHistoryEntries?.map((entry) => [
+      entry.kind,
+      entry.toolName,
+      entry.text,
+    ]),
+    [["tool", "Init Context", "AGENTS.md"]],
+  );
+});
+
 test("renders typed context compaction replacement history", () => {
   const entries = buildConversationEntries(
     makeThread([

@@ -503,7 +503,12 @@ pub enum ThreadItem {
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
     ContextCompaction {
         id: String,
-        replacement_history: Vec<ContextCompactionReplacementItem>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        replacement_history: Option<Vec<ContextCompactionReplacementItem>>,
     },
 }
 

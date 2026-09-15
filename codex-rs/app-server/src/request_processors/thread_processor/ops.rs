@@ -411,7 +411,8 @@ impl ThreadRequestProcessor {
                 watch_status,
                 runtime_status,
             );
-            self.persist_thread_status(thread_id, &lifecycle_status).await;
+            self.persist_thread_status(thread_id, &lifecycle_status)
+                .await;
         }
     }
 

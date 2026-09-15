@@ -755,14 +755,18 @@ fn assert_context_compaction_lifecycle(
 ) -> Result<()> {
     let ThreadItem::ContextCompaction {
         id: started_id,
+        summary: started_summary,
         replacement_history: started_replacement_history,
+        ..
     } = started.item
     else {
         unreachable!("started item should be context compaction");
     };
     let ThreadItem::ContextCompaction {
         id: completed_id,
+        summary: completed_summary,
         replacement_history: completed_replacement_history,
+        ..
     } = completed.item
     else {
         unreachable!("completed item should be context compaction");
@@ -771,10 +775,18 @@ fn assert_context_compaction_lifecycle(
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
-    assert!(started_replacement_history.is_empty());
+    assert!(
+        started_replacement_history
+            .as_ref()
+            .is_none_or(Vec::is_empty)
+    );
+    assert_eq!(started_summary, None);
+    assert_eq!(completed_summary.as_deref(), Some(expected_final_output));
 
     assert!(
-        !completed_replacement_history.is_empty(),
+        completed_replacement_history
+            .as_ref()
+            .is_some_and(|history| !history.is_empty()),
         "replacement history should preserve at least one item after compaction"
     );
     let completed_replacement_history_json = serde_json::to_string(&completed_replacement_history)?;

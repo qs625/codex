@@ -348,11 +348,14 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> Option<ThreadItem> {
         }
         CoreTurnItem::ContextCompaction(compaction) => Some(ThreadItem::ContextCompaction {
             id: compaction.id,
-            replacement_history: compaction
-                .replacement_history
-                .into_iter()
-                .map(context_compaction_replacement_item_from_core)
-                .collect(),
+            summary: compaction.summary,
+            replacement_history: Some(
+                compaction
+                    .replacement_history
+                    .into_iter()
+                    .map(context_compaction_replacement_item_from_core)
+                    .collect(),
+            ),
         }),
     }
 }

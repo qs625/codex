@@ -5299,6 +5299,9 @@
               },
               "type": "array"
             },
+            "summary": {
+              "type": "string"
+            },
             "type": {
               "enum": [
                 "contextCompaction"
@@ -5309,7 +5312,6 @@
           },
           "required": [
             "id",
-            "replacementHistory",
             "type"
           ],
           "title": "ContextCompactionThreadItem",

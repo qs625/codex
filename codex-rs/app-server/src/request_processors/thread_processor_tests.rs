@@ -744,7 +744,8 @@ mod thread_processor_behavior_tests {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".to_string(),
-                    replacement_history: Vec::new(),
+                    summary: Some("summary".to_string()),
+                    replacement_history: Some(Vec::new()),
                 },
                 ThreadItem::AgentMessage {
                     id: "item-2".to_string(),
@@ -872,8 +873,7 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
-    fn thread_turns_list_reconstruction_does_not_prune_with_live_compaction_boundary_after_merge()
-    {
+    fn thread_turns_list_reconstruction_does_not_prune_with_live_compaction_boundary_after_merge() {
         let persisted_items = vec![
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".to_string(),
@@ -903,7 +903,8 @@ mod thread_processor_behavior_tests {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".to_string(),
-                    replacement_history: Vec::new(),
+                    summary: Some("summary".to_string()),
+                    replacement_history: Some(Vec::new()),
                 },
                 ThreadItem::AgentMessage {
                     id: "item-2".to_string(),

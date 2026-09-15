@@ -37,7 +37,8 @@ impl ThreadHistoryBuilder {
             .items
             .push(ThreadItem::ContextCompaction {
                 id,
-                replacement_history: Vec::new(),
+                summary: None,
+                replacement_history: None,
             });
     }
 
@@ -230,27 +231,25 @@ impl ThreadHistoryBuilder {
     }
 
     pub(super) fn handle_compacted(&mut self, payload: &CompactedItem) {
-        let replacement_history = payload
-            .replacement_history
-            .as_ref()
-            .map(|history| {
-                let visible_len = payload
-                    .visible_replacement_history_len
-                    .unwrap_or(history.len())
-                    .min(history.len());
-                context_compaction_replacement_items_from_response_items(
-                    history[..visible_len].to_vec(),
-                )
-                    .into_iter()
-                    .map(context_compaction_replacement_item_from_core)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let summary = compact_summary(payload);
+        let replacement_history = payload.replacement_history.as_ref().map(|history| {
+            let visible_len = payload
+                .visible_replacement_history_len
+                .unwrap_or(history.len())
+                .min(history.len());
+            context_compaction_replacement_items_from_response_items(
+                history[..visible_len].to_vec(),
+            )
+            .into_iter()
+            .map(context_compaction_replacement_item_from_core)
+            .collect()
+        });
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;
 
             if let Some(ThreadItem::ContextCompaction {
+                summary: existing_summary,
                 replacement_history: existing_replacement_history,
                 ..
             }) = turn
@@ -259,6 +258,7 @@ impl ThreadHistoryBuilder {
                 .rev()
                 .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
             {
+                *existing_summary = summary;
                 *existing_replacement_history = replacement_history;
                 return;
             }
@@ -268,6 +268,7 @@ impl ThreadHistoryBuilder {
         let turn = self.ensure_turn();
         turn.items.push(ThreadItem::ContextCompaction {
             id,
+            summary,
             replacement_history,
         });
     }
@@ -285,4 +286,12 @@ impl ThreadHistoryBuilder {
         let item_count: usize = self.turns.iter().map(|t| t.items.len()).sum();
         self.next_item_index = i64::try_from(item_count.saturating_add(1)).unwrap_or(i64::MAX);
     }
+}
+
+fn compact_summary(compacted: &CompactedItem) -> Option<String> {
+    let summary = compacted.message.trim();
+    if summary.is_empty() {
+        return None;
+    }
+    Some(summary.to_string())
 }
