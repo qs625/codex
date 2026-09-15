@@ -424,6 +424,44 @@ test("command output cache hydrates focused running command replay", () => {
   assert.equal(tab.canResize, false);
 });
 
+test("focused read-only command hydrates replay when active output arrives later", () => {
+  const state = createTerminalPanelState();
+  const command = {
+    threadId: "thread",
+    commandItemId: "call",
+    processId: "42",
+    command: "npm test",
+    cwd: "/repo",
+    status: "running",
+  };
+  const fallback = focusCommandTerminal(
+    state,
+    commandFocusDescriptorFromRequest(command),
+  );
+
+  assert.equal(fallback.replay.toString(), "");
+  assert.equal(fallback.lastSequence, 0);
+
+  const hydrated = focusCommandTerminal(
+    state,
+    commandFocusDescriptor(command, {
+      type: "commandExecution",
+      id: "call",
+      command: "npm test",
+      cwd: "/repo",
+      processId: "42",
+      status: "running",
+      aggregatedOutput: "cached output\n",
+    }),
+  );
+
+  assert.equal(hydrated, fallback);
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.activeTabId, fallback.id);
+  assert.equal(hydrated.replay.toString(), "cached output\n");
+  assert.equal(hydrated.lastSequence, 0);
+});
+
 test("command output cache can be shared before terminal panel opens", () => {
   const sharedCache = new Map();
   const notificationOnlyState = { commandOutputCache: sharedCache };

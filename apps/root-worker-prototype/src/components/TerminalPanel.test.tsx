@@ -116,6 +116,18 @@ test("TerminalPanel rebuilds xterm when fallback upgrades to live capabilities",
   assert.match(dependencies, /activeTab\?\.readOnlyOutput/);
 });
 
+test("TerminalPanel rebuilds xterm when a focused command receives replay output", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");
+  const dependencyEnd = source.indexOf("  ]);", dependencyStart);
+  const dependencies = source.slice(dependencyStart, dependencyEnd);
+
+  assert.match(dependencies, /activeTab\?\.replayBase64/);
+  assert.match(dependencies, /activeTab\?\.replayTruncated/);
+  assert.match(dependencies, /activeTab\?\.hasSequenceGap/);
+  assert.match(dependencies, /activeTab\?\.replayThroughSequence/);
+});
+
 test("TerminalPanel publishes preferred size while idle with no active tab", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const idleEffectIndex = source.indexOf(
