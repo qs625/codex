@@ -1298,11 +1298,9 @@ impl ThreadRequestProcessor {
             stored_agent_path,
             stored_agent_role,
         );
+        let lifecycle_status = loaded_thread_initial_lifecycle_status(&stored_thread);
         self.thread_watch_manager
-            .upsert_thread_silently_with_lifecycle_status(
-                loaded_thread,
-                stored_thread.thread_status.clone(),
-            )
+            .upsert_thread_silently_with_lifecycle_status(loaded_thread, lifecycle_status)
             .await;
         Ok(())
     }
@@ -1909,4 +1907,31 @@ impl ThreadRequestProcessor {
             .await;
         Ok(())
     }
+}
+
+fn loaded_thread_initial_lifecycle_status(
+    stored_thread: &StoredThread,
+) -> Option<ThreadLifecycleStatus> {
+    if stored_thread_has_active_subscriptions(stored_thread) {
+        return Some(ThreadLifecycleStatus::Waiting {
+            reason: app_server_protocol::ThreadLifecycleWaitReason::EventSubscription,
+        });
+    }
+    stored_thread.thread_status.clone()
+}
+
+fn stored_thread_has_active_subscriptions(stored_thread: &StoredThread) -> bool {
+    stored_thread
+        .history
+        .as_ref()
+        .and_then(|history| {
+            history.items.iter().rev().find_map(|item| match item {
+                RolloutItem::SessionMeta(meta_line) => meta_line.meta.subscriptions.as_ref(),
+                RolloutItem::TurnContext(_)
+                | RolloutItem::ResponseItem(_)
+                | RolloutItem::Compacted(_)
+                | RolloutItem::EventMsg(_) => None,
+            })
+        })
+        .is_some_and(|subscriptions| !subscriptions.is_empty())
 }
