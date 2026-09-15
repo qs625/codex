@@ -588,6 +588,14 @@ impl MessageProcessor {
             state_db.clone(),
             Arc::clone(&skills_watcher),
         );
+        {
+            let thread_processor = thread_processor.clone();
+            tokio::spawn(async move {
+                thread_processor
+                    .restore_active_event_subscription_threads_on_startup()
+                    .await;
+            });
+        }
         let turn_processor = TurnRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_service),

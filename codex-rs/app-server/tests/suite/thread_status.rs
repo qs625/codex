@@ -632,7 +632,7 @@ async fn after_turn_event_subscription_waiting_thread_becomes_active_when_new_me
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn startup_keeps_waiting_subscription_metadata_without_auto_loading() -> Result<()> {
+async fn startup_restores_waiting_subscription_thread() -> Result<()> {
     let codex_home = TempDir::new()?;
     let schedule_args = serde_json::to_string(&json!({
         "schedule": {
@@ -700,19 +700,26 @@ async fn startup_keeps_waiting_subscription_metadata_without_auto_loading() -> R
         McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
     timeout(DEFAULT_READ_TIMEOUT, second_mcp.initialize()).await??;
 
-    let loaded_list_id = second_mcp
-        .send_thread_loaded_list_request(ThreadLoadedListParams::default())
-        .await?;
-    let loaded_list_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        second_mcp.read_stream_until_response_message(RequestId::Integer(loaded_list_id)),
-    )
-    .await??;
-    let ThreadLoadedListResponse { data, .. } = to_response(loaded_list_resp)?;
-    assert!(
-        !data.contains(&thread_id),
-        "app-server restart should not auto-load persisted waiting threads"
-    );
+    let deadline = tokio::time::Instant::now() + DEFAULT_READ_TIMEOUT;
+    loop {
+        let loaded_list_id = second_mcp
+            .send_thread_loaded_list_request(ThreadLoadedListParams::default())
+            .await?;
+        let loaded_list_resp: JSONRPCResponse = timeout(
+            DEFAULT_READ_TIMEOUT,
+            second_mcp.read_stream_until_response_message(RequestId::Integer(loaded_list_id)),
+        )
+        .await??;
+        let ThreadLoadedListResponse { data, .. } = to_response(loaded_list_resp)?;
+        if data.contains(&thread_id) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "app-server restart should restore persisted waiting subscription threads"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 
     let list_id = second_mcp
         .send_thread_list_request(ThreadListParams {

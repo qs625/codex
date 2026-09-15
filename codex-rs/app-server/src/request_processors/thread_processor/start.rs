@@ -1307,6 +1307,40 @@ impl ThreadRequestProcessor {
         Ok(())
     }
 
+    pub(super) async fn restore_active_event_subscription_threads_on_startup_inner(&self) {
+        let thread_ids = match self
+            .thread_store
+            .list_thread_ids_with_active_subscriptions()
+            .await
+        {
+            Ok(thread_ids) => thread_ids,
+            Err(err) => {
+                tracing::warn!("failed to list persisted active subscription threads: {err}");
+                return;
+            }
+        };
+
+        for thread_id in thread_ids {
+            match self
+                .ensure_persisted_native_thread_loaded(thread_id, /*parent_trace*/ None)
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        thread_id = %thread_id,
+                        "restored persisted event subscriptions on app-server startup"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        thread_id = %thread_id,
+                        "failed to restore persisted event subscriptions on app-server startup: {err:?}"
+                    );
+                }
+            }
+        }
+    }
+
     pub(super) async fn read_stored_thread_for_resume(
         &self,
         thread_id: &str,
