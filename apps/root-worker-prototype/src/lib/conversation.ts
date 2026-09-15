@@ -86,8 +86,12 @@ export function buildConversationState(
   const commandLookup = buildCommandLookup(thread);
   const canReusePrevious =
     previous?.threadId === thread.id && previous.author === author;
+  const previousActiveCommandFlatItems = canReusePrevious
+    ? buildPreviousActiveCommandFlatItemLookup(previous)
+    : new Map<string, ConversationFlatItemState>();
   const flatItems: ConversationFlatItemState[] = [];
   const entries: ConversationEntry[] = [];
+  const historyItemIds = new Set<string>();
   let flatItemIndex = 0;
 
   for (const turn of thread.turns) {
@@ -96,6 +100,7 @@ export function buildConversationState(
     );
 
     for (const item of turn.items) {
+      historyItemIds.add(item.id);
       const timestamp = formatItemTimestamp(item) ?? turnTimestamp;
       const previousFlatItem = canReusePrevious
         ? previous.flatItems[flatItemIndex]
@@ -126,6 +131,42 @@ export function buildConversationState(
     }
   }
 
+  const activeTimestamp = formatClockTime(thread.updatedAt);
+  for (const item of dedupeActiveCommandItems(thread.activeCommandItems ?? [])) {
+    if (
+      item.type !== "commandExecution" ||
+      historyItemIds.has(item.id) ||
+      isLegacyOrphanCommandOutputPlaceholder(item)
+    ) {
+      continue;
+    }
+    const previousFlatItem = previousActiveCommandFlatItems.get(item.id);
+    const activeTurnId = activeCommandTurnId(item.id);
+    const rebuiltEntries =
+      previousFlatItem &&
+      previousFlatItem.id === item.id &&
+      conversationThreadItemsEqual(previousFlatItem.item, item) &&
+      previousFlatItem.timestamp === activeTimestamp
+        ? previousFlatItem.entries
+        : buildConversationItemEntries(item, {
+            author,
+            timestamp: activeTimestamp,
+            commandLookup,
+          }).map((entry) => ({
+            ...entry,
+            turnId: activeTurnId,
+          }));
+
+    flatItems.push({
+      id: item.id,
+      item,
+      timestamp: activeTimestamp,
+      entries: rebuiltEntries,
+    });
+    entries.push(...rebuiltEntries);
+    flatItemIndex += 1;
+  }
+
   return {
     threadId: thread.id,
     author,
@@ -137,6 +178,44 @@ export function buildConversationState(
       options,
     ),
   };
+}
+
+function buildPreviousActiveCommandFlatItemLookup(
+  previous: ConversationBuildState | null | undefined,
+) {
+  const lookup = new Map<string, ConversationFlatItemState>();
+  for (const flatItem of previous?.flatItems ?? []) {
+    if (
+      flatItem.item.type === "commandExecution" &&
+      flatItem.entries.every(
+        (entry) => entry.turnId === activeCommandTurnId(flatItem.id),
+      )
+    ) {
+      lookup.set(flatItem.id, flatItem);
+    }
+  }
+  return lookup;
+}
+
+function dedupeActiveCommandItems(items: ThreadItem[]) {
+  const itemsById = new Map<
+    string,
+    Extract<ThreadItem, { type: "commandExecution" }>
+  >();
+  for (const item of items) {
+    if (item.type === "commandExecution") {
+      itemsById.set(item.id, item);
+    }
+  }
+  return Array.from(itemsById.values());
+}
+
+function activeCommandTurnId(commandItemId: string) {
+  return `active-command:${commandItemId}`;
+}
+
+function conversationThreadItemsEqual(left: ThreadItem, right: ThreadItem) {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
 }
 
 function buildConversationItemEntries(
@@ -1671,7 +1750,7 @@ function summarizeCommandExecution(
   const cwd = trimPath(item.cwd);
   const exitCode =
     item.exitCode === null || item.exitCode === undefined
-      ? "running"
+      ? item.status || "running"
       : `exit ${item.exitCode}`;
   return `${cwd} • ${exitCode}`;
 }
@@ -1772,6 +1851,17 @@ function commandExecutionNotificationOutput(
     isEmpty: item.output.length === 0,
     terminalEmulated: true,
   };
+}
+
+function isLegacyOrphanCommandOutputPlaceholder(
+  item: Extract<ThreadItem, { type: "commandExecution" }>,
+) {
+  return (
+    item.command === "Command output" &&
+    item.cwd === "cwd pending" &&
+    (item.status === "running" || item.status === "inProgress") &&
+    item.exitCode === null
+  );
 }
 
 function buildCommandLookup(thread: Thread) {

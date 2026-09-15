@@ -992,7 +992,7 @@ test("keeps command notifications separated across replacement history boundarie
   );
 });
 
-test("does not render live active command current state as a transient conversation tail", () => {
+test("renders live active command current state as compact command anchors", () => {
   const thread = {
     ...makeThread([
       {
@@ -1090,10 +1090,27 @@ test("does not render live active command current state as a transient conversat
       entry.toolName,
       entry.turnId,
       entry.toolDetails?.includes("STDOUT") ?? false,
+      entry.toolStatus,
     ]),
     [
-      ["compact-1", "compact", undefined, "turn-1", false],
-      ["exec-existing", "tool", "pnpm lint", "turn-1", false],
+      ["compact-1", "compact", undefined, "turn-1", false, undefined],
+      ["exec-existing", "tool", "pnpm lint", "turn-1", false, "running"],
+      [
+        "exec-1",
+        "tool",
+        "cargo test",
+        "active-command:exec-1",
+        false,
+        "running",
+      ],
+      [
+        "exec-2",
+        "tool",
+        "bun dev",
+        "active-command:exec-2",
+        false,
+        "completed",
+      ],
     ],
   );
   assert.deepEqual(
@@ -1112,6 +1129,16 @@ test("does not render live active command current state as a transient conversat
         id: "exec-existing",
         kind: "tool",
         entries: ["exec-existing"],
+      },
+      {
+        id: "exec-1",
+        kind: "tool",
+        entries: ["exec-1"],
+      },
+      {
+        id: "exec-2",
+        kind: "tool",
+        entries: ["exec-2"],
       },
     ],
   );
@@ -1137,7 +1164,7 @@ test("does not render legacy orphan command output placeholder as active tail", 
   assert.deepEqual(buildConversationEntries(thread), []);
 });
 
-test("active command current state stays out of conversation reuse state", () => {
+test("active command current state participates in conversation reuse state", () => {
   const activeCommand = (
     id: string,
     command: string,
@@ -1171,9 +1198,13 @@ test("active command current state stays out of conversation reuse state", () =>
 
   const secondState = buildConversationState(secondThread, firstState);
 
-  assert.deepEqual(firstState.entries, []);
-  assert.deepEqual(secondState.entries, []);
-  assert.deepEqual(secondState.flatItems, []);
+  assert.deepEqual(
+    firstState.entries.map((entry) => entry.id),
+    ["exec-1", "exec-2"],
+  );
+  assert.deepEqual(secondState.entries.map((entry) => entry.id), ["exec-2"]);
+  assert.deepEqual(secondState.flatItems.map((item) => item.id), ["exec-2"]);
+  assert.strictEqual(secondState.entries[0], firstState.entries[1]);
 });
 
 test("renders command wait and stdin actions as standalone event entries", () => {
