@@ -1078,6 +1078,17 @@ pub(super) fn merge_turn_history_with_active_turn(turns: &mut Vec<Turn>, active_
             }
             continue;
         }
+        if let Some(existing_index) = persisted_turn.items.iter().position(|existing_item| {
+            is_generated_agent_message_duplicate(existing_item, &active_item)
+        }) {
+            if should_prefer_active_agent_message(
+                &persisted_turn.items[existing_index],
+                &active_item,
+            ) {
+                persisted_turn.items[existing_index] = active_item;
+            }
+            continue;
+        }
         if persisted_turn
             .items
             .iter()
@@ -1110,6 +1121,39 @@ fn unique_live_item_id(existing_items: &[ThreadItem]) -> String {
 fn is_generated_thread_item_id(id: &str) -> bool {
     id.strip_prefix("item-")
         .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn is_generated_agent_message_duplicate(left: &ThreadItem, right: &ThreadItem) -> bool {
+    let (
+        ThreadItem::AgentMessage {
+            id: left_id,
+            text: left_text,
+            phase: left_phase,
+            memory_citation: left_memory_citation,
+        },
+        ThreadItem::AgentMessage {
+            id: right_id,
+            text: right_text,
+            phase: right_phase,
+            memory_citation: right_memory_citation,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+
+    is_generated_thread_item_id(left_id) != is_generated_thread_item_id(right_id)
+        && left_text == right_text
+        && left_phase == right_phase
+        && left_memory_citation == right_memory_citation
+}
+
+fn should_prefer_active_agent_message(
+    existing_item: &ThreadItem,
+    active_item: &ThreadItem,
+) -> bool {
+    is_generated_thread_item_id(existing_item.id())
+        && !is_generated_thread_item_id(active_item.id())
 }
 
 fn rename_thread_item_id(item: ThreadItem, next_id: String) -> Option<ThreadItem> {
@@ -1161,8 +1205,7 @@ mod tests {
             updated_at: 0,
             lifecycle_status,
             path: None,
-            cwd: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp"))
-                .expect("absolute cwd"),
+            cwd: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp")).expect("absolute cwd"),
             cli_version: "0.0.0".to_string(),
             agent_nickname: None,
             agent_role: None,
@@ -1183,8 +1226,9 @@ mod tests {
 
     #[test]
     fn live_non_not_loaded_status_overrides_persisted_status() {
-        let mut thread =
-            thread_with_lifecycle_status(ThreadLifecycleStatus::completed(Some("done".to_string())));
+        let mut thread = thread_with_lifecycle_status(ThreadLifecycleStatus::completed(Some(
+            "done".to_string(),
+        )));
 
         set_thread_status_and_interrupt_stale_turns(
             &mut thread,

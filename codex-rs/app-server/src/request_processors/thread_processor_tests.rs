@@ -678,10 +678,254 @@ mod thread_processor_behavior_tests {
                 if id == "live-item-1" && text == "live agent suffix"
         ));
         assert!(matches!(
-            &thread.turns[0].items[3],
-            ThreadItem::AgentMessage { id, text, .. }
-                if id == "live-item-2" && text == "second live agent suffix"
+        &thread.turns[0].items[3],
+        ThreadItem::AgentMessage { id, text, .. }
+            if id == "live-item-2" && text == "second live agent suffix"
         ));
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_prefers_stable_active_agent_message_duplicate() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "same assistant message".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ];
+        let active_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![
+                ThreadItem::AgentMessage {
+                    id: "msg_123".to_string(),
+                    text: "same assistant message".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                ThreadItem::AgentMessage {
+                    id: "msg_456".to_string(),
+                    text: "next assistant message".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["msg_123", "msg_456"]
+        );
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ThreadItem::AgentMessage { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec!["same assistant message", "next assistant message"]
+        );
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_keeps_same_text_across_turns() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "repeated assistant message".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ];
+        let active_turn = Turn {
+            id: "turn-2".to_string(),
+            items: vec![ThreadItem::AgentMessage {
+                id: "msg_123".to_string(),
+                text: "repeated assistant message".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(2),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
+
+        assert_eq!(
+            thread
+                .turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["turn-1", "turn-2"]
+        );
+        assert_eq!(
+            thread
+                .turns
+                .iter()
+                .flat_map(|turn| turn.items.iter())
+                .filter(|item| matches!(item, ThreadItem::AgentMessage { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn merge_turn_history_with_active_turn_does_not_dedupe_tool_items_by_generated_id() {
+        let mut turns = vec![Turn {
+            id: "turn-1".to_string(),
+            items: vec![ThreadItem::CommandExecution {
+                id: "item-1".to_string(),
+                command: "cargo test".to_string(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("persisted-process".to_string()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::InProgress,
+                initial_wait_ms: None,
+                notify_on: None,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "cargo test".to_string(),
+                }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            }],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        }];
+        let active_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![ThreadItem::CommandExecution {
+                id: "exec-1".to_string(),
+                command: "cargo test".to_string(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("live-process".to_string()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::InProgress,
+                initial_wait_ms: None,
+                notify_on: None,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "cargo test".to_string(),
+                }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            }],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        merge_turn_history_with_active_turn(&mut turns, active_turn);
+
+        assert_eq!(
+            turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-1", "exec-1"]
+        );
     }
 
     #[test]
