@@ -162,8 +162,22 @@ impl ThreadRequestProcessor {
         let thread_uuid = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
-        self.ensure_persisted_native_thread_loaded(thread_uuid, /*parent_trace*/ None)
-            .await?;
+        let mut auto_resume_skipped_for_unknown_agent_role = false;
+        if let Err(err) = self
+            .ensure_persisted_native_thread_loaded(thread_uuid, /*parent_trace*/ None)
+            .await
+        {
+            if is_unknown_agent_type_resume_error(&err) {
+                auto_resume_skipped_for_unknown_agent_role = true;
+                tracing::warn!(
+                    thread_id = %thread_uuid,
+                    error = %err.message,
+                    "thread/read could not auto-resume stored agent role; returning persisted read-only view"
+                );
+            } else {
+                return Err(err);
+            }
+        }
         if self
             .live_thread_inspection
             .is_live_thread_loaded(thread_uuid)
@@ -173,10 +187,13 @@ impl ThreadRequestProcessor {
                 .await?;
         }
 
-        let thread = self
+        let mut thread = self
             .read_thread_view(thread_uuid, include_turns)
             .await
             .map_err(thread_read_view_error)?;
+        if auto_resume_skipped_for_unknown_agent_role && thread.active_command_items.is_none() {
+            thread.active_command_items = Some(Vec::new());
+        }
         Ok(ThreadReadResponse { thread })
     }
 
@@ -785,6 +802,11 @@ fn active_command_items_from_live_turn(turn: &Turn) -> Vec<ThreadItem> {
             _ => None,
         })
         .collect()
+}
+
+fn is_unknown_agent_type_resume_error(err: &JSONRPCErrorError) -> bool {
+    err.code == crate::error_code::INVALID_REQUEST_ERROR_CODE
+        && err.message.starts_with("unknown agent_type ")
 }
 
 fn apply_runtime_activity_items_from_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
