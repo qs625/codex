@@ -1,3 +1,4 @@
+use anyhow::Context;
 use anyhow::Result;
 use app_server_protocol::ClientInfo;
 use app_server_protocol::DynamicToolCallStatus;
@@ -653,9 +654,11 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
     create_config_toml(codex_home.path(), &server.uri())?;
 
     let thread_id = {
-        let mut first_mcp =
-            McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
-        timeout(DEFAULT_READ_TIMEOUT, first_mcp.initialize()).await??;
+        let mut first_mcp = McpProcess::new(codex_home.path()).await?;
+        timeout(DEFAULT_READ_TIMEOUT, first_mcp.initialize())
+            .await
+            .context("timed out waiting for first app-server initialize")?
+            .context("first app-server initialize failed")?;
 
         let thread_start_id = first_mcp
             .send_thread_start_request(ThreadStartParams {
@@ -667,7 +670,9 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
             DEFAULT_READ_TIMEOUT,
             first_mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
         )
-        .await??;
+        .await
+        .context("timed out waiting for first thread/start response")?
+        .context("first thread/start response read failed")?;
         let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
 
         let turn_start_id = first_mcp
@@ -685,14 +690,18 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
             DEFAULT_READ_TIMEOUT,
             first_mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
         )
-        .await??;
+        .await
+        .context("timed out waiting for first turn/start response")?
+        .context("first turn/start response read failed")?;
         let _: TurnStartResponse = to_response(turn_start_resp)?;
 
         timeout(
             DEFAULT_READ_TIMEOUT,
             first_mcp.read_stream_until_notification_message("turn/completed"),
         )
-        .await??;
+        .await
+        .context("timed out waiting for first turn/completed notification")?
+        .context("first turn/completed notification read failed")?;
 
         let thread_read_id = first_mcp
             .send_thread_read_request(ThreadReadParams {
@@ -704,7 +713,9 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
             DEFAULT_READ_TIMEOUT,
             first_mcp.read_stream_until_response_message(RequestId::Integer(thread_read_id)),
         )
-        .await??;
+        .await
+        .context("timed out waiting for first persisted thread/read response")?
+        .context("first persisted thread/read response read failed")?;
         let ThreadReadResponse {
             thread: persisted_thread,
         } = to_response(thread_read_resp)?;
@@ -728,9 +739,11 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
         thread.id
     };
 
-    let mut second_mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
-    timeout(DEFAULT_READ_TIMEOUT, second_mcp.initialize()).await??;
+    let mut second_mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, second_mcp.initialize())
+        .await
+        .context("timed out waiting for second app-server initialize")?
+        .context("second app-server initialize failed")?;
 
     let deadline = tokio::time::Instant::now() + DEFAULT_READ_TIMEOUT;
     loop {
@@ -741,7 +754,9 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
             DEFAULT_READ_TIMEOUT,
             second_mcp.read_stream_until_response_message(RequestId::Integer(loaded_list_id)),
         )
-        .await??;
+        .await
+        .context("timed out waiting for second thread/loaded/list response")?
+        .context("second thread/loaded/list response read failed")?;
         let ThreadLoadedListResponse { data, .. } = to_response(loaded_list_resp)?;
         let loaded = data.contains(&thread_id);
 
@@ -763,7 +778,9 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
             DEFAULT_READ_TIMEOUT,
             second_mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
         )
-        .await??;
+        .await
+        .context("timed out waiting for second state-db-only thread/list response")?
+        .context("second state-db-only thread/list response read failed")?;
         let ThreadListResponse { data, .. } = to_response(list_resp)?;
         let lifecycle_status = data
             .into_iter()
@@ -789,7 +806,9 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
                 DEFAULT_READ_TIMEOUT,
                 second_mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
             )
-            .await??;
+            .await
+            .context("timed out waiting for deadline diagnostic thread/read response")?
+            .context("deadline diagnostic thread/read response read failed")?;
             let ThreadReadResponse {
                 thread: read_thread,
             } = to_response(read_resp)?;
