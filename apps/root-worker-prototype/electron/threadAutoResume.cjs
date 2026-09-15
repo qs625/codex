@@ -203,7 +203,10 @@ function isAutoResumeEligibleThread(thread) {
   if (!thread?.id || !isAutoResumeTargetLifecycleStatus(thread.lifecycleStatus)) {
     return false;
   }
-  if (!isProjectRootThread(thread)) {
+  if (isExactSelfThread(thread) || isChatCompatThread(thread)) {
+    return false;
+  }
+  if (thread.ephemeral) {
     return false;
   }
   return true;
@@ -290,6 +293,19 @@ function isProjectRootThread(thread) {
     cwd.length > 0 &&
     !cwd.startsWith("codex://") &&
     path.basename(cwd) !== CHAT_COMPAT_CWD_BASENAME
+  );
+}
+
+function isChatCompatThread(thread) {
+  const cwd = typeof thread?.cwd === "string" ? thread.cwd.trim() : "";
+  return path.basename(cwd) === CHAT_COMPAT_CWD_BASENAME;
+}
+
+function isExactSelfThread(thread) {
+  return (
+    thread?.name === "/self" ||
+    thread?.agentPath === "/self" ||
+    thread?.agent_path === "/self"
   );
 }
 

@@ -42,7 +42,7 @@ function runtimeRestartRecovery(
   };
 }
 
-test("auto-resume selects recoverable project roots and excludes completed/children", () => {
+test("auto-resume selects recoverable threads and excludes completed/self/chat", () => {
   assert.equal(isAutoResumeEligibleThread(projectRootThread()), true);
   assert.equal(
     isAutoResumeEligibleThread(
@@ -115,7 +115,7 @@ test("auto-resume selects recoverable project roots and excludes completed/child
         agentPath: "/root/worker",
       }),
     ),
-    false,
+    true,
   );
   assert.equal(
     isAutoResumeEligibleThread(
@@ -142,7 +142,7 @@ test("auto-resume selects recoverable project roots and excludes completed/child
         parentThreadId: "parent-1",
       }),
     ),
-    false,
+    true,
   );
   assert.equal(
     isAutoResumeEligibleThread(projectRootThread({ id: "ephemeral", ephemeral: true })),
@@ -152,13 +152,34 @@ test("auto-resume selects recoverable project roots and excludes completed/child
     isAutoResumeEligibleThread(
       projectRootThread({ id: "source-subagent", source: { subAgent: true } }),
     ),
-    false,
+    true,
   );
   assert.equal(
     isAutoResumeEligibleThread(
       projectRootThread({ id: "snake-case-child", parent_thread_id: "parent-2" }),
     ),
+    true,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({ id: "system-self", name: "/self" }),
+    ),
     false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({ id: "agent-self", agentPath: "/self" }),
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoResumeEligibleThread(
+      projectRootThread({
+        id: "self-owner",
+        agentPath: "/self/owner_dev_3",
+      }),
+    ),
+    true,
   );
 });
 
@@ -711,7 +732,7 @@ test("payload fallback restart fact fans out without expected intent ids", async
   assert.deepEqual(calls, ["read", "subscribe", "send"]);
 });
 
-test("durable restart fans out exactly once to every eligible project root including /self", async () => {
+test("durable restart fans out exactly once to eligible affected threads except /self", async () => {
   const sent = [];
   const marked = new Set();
   const coordinator = createThreadAutoResumeCoordinator({
@@ -749,6 +770,7 @@ test("durable restart fans out exactly once to every eligible project root inclu
     }),
     projectRootThread({
       id: "system-self",
+      name: "/self",
       updatedAt: 5,
     }),
   ];
@@ -760,9 +782,9 @@ test("durable restart fans out exactly once to every eligible project root inclu
         expectedRestart: runtimeRestartRecovery(),
       })
     ).resumedThreadIds,
-    ["system-self", "running", "waiting"],
+    ["child", "running", "waiting"],
   );
-  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
+  assert.deepEqual(sent, ["child", "running", "waiting"]);
   assert.deepEqual(
     (
       await coordinator.runAfterRuntimeRestartRecovery({
@@ -772,7 +794,7 @@ test("durable restart fans out exactly once to every eligible project root inclu
     ).resumedThreadIds,
     [],
   );
-  assert.deepEqual(sent, ["system-self", "running", "waiting"]);
+  assert.deepEqual(sent, ["child", "running", "waiting"]);
 });
 
 test("auto-resume skips active threads that already contain recovery input", async () => {

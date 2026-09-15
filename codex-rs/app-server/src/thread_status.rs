@@ -205,6 +205,7 @@ impl ThreadWatchManager {
             runtime.post_turn_wait_command = false;
             runtime.post_turn_wait_event_subscription = false;
             runtime.has_system_error = false;
+            runtime.final_status = None;
         })
         .await;
     }
@@ -231,7 +232,15 @@ impl ThreadWatchManager {
     }
 
     pub(crate) async fn note_turn_interrupted(&self, thread_id: &str) {
-        self.clear_active_state(thread_id).await;
+        self.update_runtime_for_thread(thread_id, |runtime| {
+            runtime.running = false;
+            runtime.pending_permission_requests = 0;
+            runtime.pending_user_input_requests = 0;
+            runtime.final_status = Some(ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            });
+        })
+        .await;
     }
 
     pub(crate) async fn note_thread_shutdown(&self, thread_id: &str) {
@@ -579,6 +588,7 @@ struct RuntimeFacts {
     post_turn_wait_child: bool,
     post_turn_wait_event_subscription: bool,
     has_system_error: bool,
+    final_status: Option<ThreadLifecycleStatus>,
 }
 
 impl RuntimeFacts {
@@ -619,6 +629,7 @@ impl RuntimeFacts {
             }
             ThreadLifecycleStatus::Final { .. } => {
                 self.is_loaded = true;
+                self.final_status = Some(lifecycle_status.clone());
             }
             ThreadLifecycleStatus::SystemError { .. } => {
                 self.is_loaded = true;
@@ -650,6 +661,10 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadLifecycleStatus {
 
     if runtime.has_system_error {
         return ThreadLifecycleStatus::system_error(None);
+    }
+
+    if let Some(status) = runtime.final_status.as_ref() {
+        return status.clone();
     }
 
     if runtime.post_turn_wait_child {
@@ -745,6 +760,62 @@ mod tests {
             },
         );
         assert_eq!(manager.running_turn_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn persisted_interrupted_status_survives_loaded_status_projection() {
+        let manager = ThreadWatchManager::new();
+        let interrupted = ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        };
+        manager
+            .upsert_thread_silently_with_lifecycle_status(
+                test_thread(
+                    INTERACTIVE_THREAD_ID,
+                    app_server_protocol::SessionSource::Cli,
+                ),
+                Some(interrupted.clone()),
+            )
+            .await;
+
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            interrupted,
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_interrupted_projects_final_interrupted_until_continuation_starts() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+
+        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
+        manager.note_turn_interrupted(INTERACTIVE_THREAD_ID).await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            },
+        );
+
+        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+        );
     }
 
     #[tokio::test]

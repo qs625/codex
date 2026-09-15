@@ -340,12 +340,8 @@ test("startup records generic recovery before sending a payload /self prompt", a
       expectedRestart: { expectedThreadIds: [] },
     });
 
-    assert.deepEqual(autoResume.resumedThreadIds, ["system-self", "project-a"]);
+    assert.deepEqual(autoResume.resumedThreadIds, ["project-a"]);
     assert.deepEqual(genericPrompts, [
-      {
-        threadId: "system-self",
-        text: RESTART_RECOVERY_PROMPTS.projectRootFanout,
-      },
       {
         threadId: "project-a",
         text: RESTART_RECOVERY_PROMPTS.projectRootFanout,

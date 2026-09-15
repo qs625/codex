@@ -102,15 +102,24 @@ function isExactSelfThread(thread) {
   );
 }
 
-function threadHasRecoveryNotice(thread, _itemId, text) {
+function threadHasRecoveryNotice(thread, itemId, text) {
   for (const turn of thread?.turns ?? []) {
     for (const item of turn.items ?? []) {
-      if (itemTextMatches(item, text)) {
+      if (itemIdMatches(item, itemId) || itemTextMatches(item, text)) {
         return true;
       }
     }
   }
   return false;
+}
+
+function itemIdMatches(item, itemId) {
+  return (
+    item?.type === "userMessage" &&
+    typeof itemId === "string" &&
+    itemId.length > 0 &&
+    item.id === itemId
+  );
 }
 
 function itemTextMatches(item, text) {

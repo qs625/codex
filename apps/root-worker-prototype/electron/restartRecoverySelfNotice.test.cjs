@@ -201,6 +201,44 @@ test("recoverable restart errors skip an existing durable notice", async () => {
   assert.equal(result.selfThreadId, "origin-thread");
 });
 
+test("recoverable restart errors skip an existing durable notice by typed id", async () => {
+  const calls = [];
+  const result = await notifyRecoverableRestartErrorOnSelf({
+    sourceThreadId: "origin-thread",
+    noticeId: "runtime-restart-recovery:restart-1",
+    prompt: "新版恢复通知",
+    readThread: async (threadId) => {
+      calls.push(["read", threadId]);
+      return {
+        thread: {
+          id: threadId,
+          name: "/self",
+          turns: [
+            {
+              items: [
+                {
+                  type: "userMessage",
+                  id: "runtime-restart-recovery:restart-1",
+                  content: [{ type: "text", text: "旧版恢复通知" }],
+                },
+              ],
+            },
+          ],
+        },
+      };
+    },
+    subscribeThread: async () => {
+      throw new Error("must not subscribe");
+    },
+    submitRecoveryMessage: async () => {
+      throw new Error("must not submit");
+    },
+  });
+
+  assert.deepEqual(calls, [["read", "origin-thread"]]);
+  assert.equal(result.skipped, true);
+});
+
 test("recoverable restart errors wait for submitted user message to become durable", async () => {
   const calls = [];
   let readCount = 0;
