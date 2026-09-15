@@ -769,6 +769,86 @@ pub(crate) fn thread_from_stored_thread(
     (thread, history)
 }
 
+pub(crate) fn apply_stored_agent_metadata_to_loaded_thread(
+    loaded_thread: &mut Thread,
+    stored_agent_path: Option<String>,
+    stored_agent_role: Option<String>,
+) {
+    if stored_agent_path.is_some() {
+        loaded_thread.agent_path = stored_agent_path;
+    }
+    if stored_agent_role.is_some() {
+        loaded_thread.agent_role = stored_agent_role;
+    }
+}
+
+#[cfg(test)]
+mod stored_agent_metadata_tests {
+    use super::*;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+
+    fn loaded_thread() -> Thread {
+        Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: codex_utils_absolute_path::test_support::test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: app_server_protocol::SessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        }
+    }
+
+    #[test]
+    fn stored_agent_metadata_preserves_snapshot_path_when_stored_path_is_missing() {
+        let mut thread = loaded_thread();
+        thread.agent_path = Some("/root/legacy_child".to_string());
+        thread.agent_role = Some("default".to_string());
+
+        apply_stored_agent_metadata_to_loaded_thread(
+            &mut thread,
+            None,
+            Some("feature-owner".to_string()),
+        );
+
+        assert_eq!(thread.agent_path.as_deref(), Some("/root/legacy_child"));
+        assert_eq!(thread.agent_role.as_deref(), Some("feature-owner"));
+    }
+
+    #[test]
+    fn stored_agent_metadata_overrides_snapshot_path_when_stored_path_exists() {
+        let mut thread = loaded_thread();
+        thread.agent_path = Some("/root/from_source".to_string());
+
+        apply_stored_agent_metadata_to_loaded_thread(
+            &mut thread,
+            Some("/root/from_metadata".to_string()),
+            None,
+        );
+
+        assert_eq!(thread.agent_path.as_deref(), Some("/root/from_metadata"));
+    }
+}
+
 #[cfg(test)]
 pub(super) async fn sync_active_event_subscriptions(
     active_event_subscriptions: &ActiveEventSubscriptionTracker,

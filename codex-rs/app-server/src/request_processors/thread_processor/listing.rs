@@ -903,19 +903,6 @@ impl ThreadRequestProcessor {
     }
 }
 
-pub(crate) fn apply_stored_agent_metadata_to_loaded_thread(
-    loaded_thread: &mut Thread,
-    stored_agent_path: Option<String>,
-    stored_agent_role: Option<String>,
-) {
-    if stored_agent_path.is_some() {
-        loaded_thread.agent_path = stored_agent_path;
-    }
-    if stored_agent_role.is_some() {
-        loaded_thread.agent_role = stored_agent_role;
-    }
-}
-
 fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
     restore_persisted_injected_context_turns(thread, persisted_turns);
 }
@@ -1680,35 +1667,5 @@ mod restore_persisted_injected_context_turns_tests {
                 "sub-schedule"
             )]
         );
-    }
-
-    #[test]
-    fn stored_agent_metadata_preserves_snapshot_path_when_stored_path_is_missing() {
-        let mut thread = thread_with_turns(Vec::new());
-        thread.agent_path = Some("/root/legacy_child".to_string());
-        thread.agent_role = Some("default".to_string());
-
-        apply_stored_agent_metadata_to_loaded_thread(
-            &mut thread,
-            None,
-            Some("feature-owner".to_string()),
-        );
-
-        assert_eq!(thread.agent_path.as_deref(), Some("/root/legacy_child"));
-        assert_eq!(thread.agent_role.as_deref(), Some("feature-owner"));
-    }
-
-    #[test]
-    fn stored_agent_metadata_overrides_snapshot_path_when_stored_path_exists() {
-        let mut thread = thread_with_turns(Vec::new());
-        thread.agent_path = Some("/root/from_source".to_string());
-
-        apply_stored_agent_metadata_to_loaded_thread(
-            &mut thread,
-            Some("/root/from_metadata".to_string()),
-            None,
-        );
-
-        assert_eq!(thread.agent_path.as_deref(), Some("/root/from_metadata"));
     }
 }

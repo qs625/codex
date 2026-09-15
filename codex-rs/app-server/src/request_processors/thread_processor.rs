@@ -17,11 +17,11 @@ mod runtime;
 mod start;
 mod support;
 
-pub(crate) use self::listing::apply_stored_agent_metadata_to_loaded_thread;
 pub(crate) use self::listing::restore_persisted_display_turns_from_rollout_items;
 pub(super) use self::ops::unsupported_external_root_active_op;
 pub(crate) use self::runtime::thread_processor_new_thread;
 use self::runtime::*;
+pub(crate) use self::support::apply_stored_agent_metadata_to_loaded_thread;
 pub(crate) use self::support::build_thread_from_snapshot;
 pub(super) use self::support::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
 pub(crate) use self::support::stored_thread_root_agent_metadata;
