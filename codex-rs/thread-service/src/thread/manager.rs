@@ -1843,22 +1843,6 @@ impl ThreadServiceState {
             })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) async fn register_external_live_thread_snapshot(
-        &self,
-        thread_id: ThreadId,
-        snapshot: LiveThreadSnapshot,
-        status: AgentStatus,
-    ) {
-        self.register_external_live_thread_snapshot_with_features(
-            thread_id,
-            snapshot,
-            codex_features::Features::with_defaults(),
-            status,
-        )
-        .await;
-    }
-
     pub(crate) async fn register_external_live_thread_snapshot_with_features(
         &self,
         thread_id: ThreadId,
@@ -3464,6 +3448,24 @@ fn thread_store_metadata_update_error(thread_id: ThreadId, err: ThreadStoreError
         err => CodexErr::Fatal(format!(
             "failed to update thread metadata {thread_id}: {err}"
         )),
+    }
+}
+
+#[cfg(test)]
+impl ThreadServiceState {
+    pub(crate) async fn register_external_live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+        snapshot: LiveThreadSnapshot,
+        status: AgentStatus,
+    ) {
+        self.register_external_live_thread_snapshot_with_features(
+            thread_id,
+            snapshot,
+            codex_features::Features::with_defaults(),
+            status,
+        )
+        .await;
     }
 }
 

@@ -72,7 +72,7 @@ use codex_agent_runtime::select_forked_rollout_items;
 use codex_agent_runtime::should_ignore_descendant_shutdown_error;
 use codex_agent_runtime::should_release_agent_after_thread_request_error;
 use codex_agent_runtime::thread_lifecycle_is_active;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 use codex_agent_runtime::thread_spawn_depth;
 use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
@@ -1978,139 +1978,6 @@ impl AgentControl {
                 options.environments.clone(),
             )
             .await
-    }
-
-    /// Resume an existing agent thread from a recorded rollout file.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) async fn resume_agent_from_rollout(
-        &self,
-        config: config_service::Config,
-        thread_id: ThreadId,
-        session_source: SessionSource,
-    ) -> CodexResult<ThreadId> {
-        let root_depth = thread_spawn_depth(&session_source).unwrap_or(0);
-        let resumed_thread_id = Box::pin(self.resume_single_agent_from_rollout(
-            config.clone(),
-            thread_id,
-            session_source,
-        ))
-        .await?;
-        let state = self.upgrade()?;
-        let Some(state_db_ctx) = state.thread_state_runtime() else {
-            return Ok(resumed_thread_id);
-        };
-
-        let tree_root_thread_id = self
-            .persisted_thread_spawn_root(thread_id)
-            .await
-            .unwrap_or(thread_id);
-        let mut resume_queue = VecDeque::from([(thread_id, root_depth)]);
-        while let Some((parent_thread_id, parent_depth)) = resume_queue.pop_front() {
-            let child_ids = match state_db_ctx
-                .list_thread_spawn_children_with_status(
-                    parent_thread_id,
-                    DirectionalThreadSpawnEdgeStatus::Open,
-                )
-                .await
-            {
-                Ok(child_ids) => child_ids,
-                Err(err) => {
-                    warn!(
-                        "failed to load persisted thread-spawn children for {parent_thread_id}: {err}"
-                    );
-                    continue;
-                }
-            };
-
-            for child_thread_id in child_ids {
-                if !self
-                    .persisted_child_is_auto_resumable_generation(
-                        tree_root_thread_id,
-                        child_thread_id,
-                        state_db_ctx.as_ref(),
-                    )
-                    .await
-                {
-                    continue;
-                }
-                let child_depth = parent_depth + 1;
-                let child_resumed = if state
-                    .live_thread_config_snapshot(child_thread_id)
-                    .await
-                    .is_ok()
-                {
-                    true
-                } else {
-                    let child_session_source =
-                        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                            parent_thread_id,
-                            depth: child_depth,
-                            agent_path: None,
-                            agent_nickname: None,
-                            agent_role: None,
-                        });
-                    match self
-                        .resume_single_agent_from_rollout(
-                            config.clone(),
-                            child_thread_id,
-                            child_session_source,
-                        )
-                        .await
-                    {
-                        Ok(_) => true,
-                        Err(err) => {
-                            warn!("failed to resume descendant thread {child_thread_id}: {err}");
-                            false
-                        }
-                    }
-                };
-                if child_resumed {
-                    resume_queue.push_back((child_thread_id, child_depth));
-                }
-            }
-        }
-
-        Ok(resumed_thread_id)
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    async fn persisted_child_is_auto_resumable_generation(
-        &self,
-        tree_root_thread_id: ThreadId,
-        child_thread_id: ThreadId,
-        state_db_ctx: &dyn state_api::ThreadStateRuntime,
-    ) -> bool {
-        let Some(metadata) = state_db_ctx
-            .get_thread(child_thread_id)
-            .await
-            .ok()
-            .flatten()
-        else {
-            return false;
-        };
-        if metadata.archived_at.is_some() {
-            return false;
-        }
-        let Some(agent_path) = metadata
-            .agent_path
-            .and_then(|path| AgentPath::from_string(path).ok())
-        else {
-            return true;
-        };
-        match self
-            .persisted_agent_target_for_path(tree_root_thread_id, &agent_path)
-            .await
-        {
-            Ok(Some(target)) => target.thread_id == child_thread_id,
-            Ok(None) => false,
-            Err(err) => {
-                warn!(
-                    "skipping persisted child {child_thread_id}: failed to resolve selected generation for path {}: {err}",
-                    agent_path.as_str()
-                );
-                false
-            }
-        }
     }
 
     async fn resume_single_agent_from_rollout(
@@ -4715,6 +4582,140 @@ fn sanitize_root_agent_path_segment(value: &str) -> Option<String> {
         None
     } else {
         Some(trimmed)
+    }
+}
+
+#[cfg(test)]
+impl AgentControl {
+    /// Resume an existing agent thread from a recorded rollout file in lifecycle tests.
+    pub(crate) async fn resume_agent_from_rollout(
+        &self,
+        config: config_service::Config,
+        thread_id: ThreadId,
+        session_source: SessionSource,
+    ) -> CodexResult<ThreadId> {
+        let root_depth = thread_spawn_depth(&session_source).unwrap_or(0);
+        let resumed_thread_id = Box::pin(self.resume_single_agent_from_rollout(
+            config.clone(),
+            thread_id,
+            session_source,
+        ))
+        .await?;
+        let state = self.upgrade()?;
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(resumed_thread_id);
+        };
+
+        let tree_root_thread_id = self
+            .persisted_thread_spawn_root(thread_id)
+            .await
+            .unwrap_or(thread_id);
+        let mut resume_queue = VecDeque::from([(thread_id, root_depth)]);
+        while let Some((parent_thread_id, parent_depth)) = resume_queue.pop_front() {
+            let child_ids = match state_db_ctx
+                .list_thread_spawn_children_with_status(
+                    parent_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+            {
+                Ok(child_ids) => child_ids,
+                Err(err) => {
+                    warn!(
+                        "failed to load persisted thread-spawn children for {parent_thread_id}: {err}"
+                    );
+                    continue;
+                }
+            };
+
+            for child_thread_id in child_ids {
+                if !self
+                    .persisted_child_is_auto_resumable_generation(
+                        tree_root_thread_id,
+                        child_thread_id,
+                        state_db_ctx.as_ref(),
+                    )
+                    .await
+                {
+                    continue;
+                }
+                let child_depth = parent_depth + 1;
+                let child_resumed = if state
+                    .live_thread_config_snapshot(child_thread_id)
+                    .await
+                    .is_ok()
+                {
+                    true
+                } else {
+                    let child_session_source =
+                        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                            parent_thread_id,
+                            depth: child_depth,
+                            agent_path: None,
+                            agent_nickname: None,
+                            agent_role: None,
+                        });
+                    match self
+                        .resume_single_agent_from_rollout(
+                            config.clone(),
+                            child_thread_id,
+                            child_session_source,
+                        )
+                        .await
+                    {
+                        Ok(_) => true,
+                        Err(err) => {
+                            warn!("failed to resume descendant thread {child_thread_id}: {err}");
+                            false
+                        }
+                    }
+                };
+                if child_resumed {
+                    resume_queue.push_back((child_thread_id, child_depth));
+                }
+            }
+        }
+
+        Ok(resumed_thread_id)
+    }
+
+    async fn persisted_child_is_auto_resumable_generation(
+        &self,
+        tree_root_thread_id: ThreadId,
+        child_thread_id: ThreadId,
+        state_db_ctx: &dyn state_api::ThreadStateRuntime,
+    ) -> bool {
+        let Some(metadata) = state_db_ctx
+            .get_thread(child_thread_id)
+            .await
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        if metadata.archived_at.is_some() {
+            return false;
+        }
+        let Some(agent_path) = metadata
+            .agent_path
+            .and_then(|path| AgentPath::from_string(path).ok())
+        else {
+            return true;
+        };
+        match self
+            .persisted_agent_target_for_path(tree_root_thread_id, &agent_path)
+            .await
+        {
+            Ok(Some(target)) => target.thread_id == child_thread_id,
+            Ok(None) => false,
+            Err(err) => {
+                warn!(
+                    "skipping persisted child {child_thread_id}: failed to resolve selected generation for path {}: {err}",
+                    agent_path.as_str()
+                );
+                false
+            }
+        }
     }
 }
 
