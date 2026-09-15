@@ -9,6 +9,7 @@ use tokio::io::BufReader;
 use tokio::process::Child;
 use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
+use tokio::sync::OnceCell;
 
 use anyhow::Context;
 use app_server_protocol::AppsListParams;
@@ -117,6 +118,27 @@ pub struct McpProcess {
 pub const DEFAULT_CLIENT_NAME: &str = "codex-app-server-tests";
 pub const DISABLE_PLUGIN_STARTUP_TASKS_ARG: &str = "--disable-plugin-startup-tasks-for-tests";
 const DISABLE_MANAGED_CONFIG_ENV_VAR: &str = "CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG";
+static APP_SERVER_BINARY_PREWARMED: OnceCell<()> = OnceCell::const_new();
+
+async fn prewarm_app_server_binary(program: &Path) -> anyhow::Result<()> {
+    APP_SERVER_BINARY_PREWARMED
+        .get_or_try_init(|| async {
+            let status = Command::new(program)
+                .arg("--help")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await
+                .context("app-server binary prewarm should start")?;
+            if !status.success() {
+                anyhow::bail!("app-server binary prewarm failed with status {status}");
+            }
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+}
 
 impl McpProcess {
     pub async fn new(codex_home: &Path) -> anyhow::Result<Self> {
@@ -177,6 +199,7 @@ impl McpProcess {
     ) -> anyhow::Result<Self> {
         let program = codex_utils_cargo_bin::cargo_bin("app-server")
             .context("should find binary for app-server")?;
+        prewarm_app_server_binary(&program).await?;
         let mut cmd = Command::new(program);
 
         cmd.stdin(Stdio::piped());
