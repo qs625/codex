@@ -290,6 +290,7 @@ export type ThreadItem = ThreadItemTimestamps &
   | {
       type: "contextCompaction";
       id: string;
+      summary?: string | null;
       replacementHistory?: CompactReplacementHistoryItem[] | ResponseItem[] | null;
       replacementHistoryStatus?: "missing" | "empty" | "available";
       replacementHistoryCount?: number | null;
@@ -937,6 +938,7 @@ export type ConversationEntry = {
   replacementHistoryEntries?: ConversationEntry[] | null;
   replacementHistoryStatus?: "missing" | "empty" | "available";
   replacementHistoryCount?: number | null;
+  compactSummary?: string | null;
   archivedCells?: ConversationCell[];
   archivedEntryCount?: number;
   isReplacementHistory?: boolean;

@@ -111,10 +111,7 @@ impl CommandExecRequestProcessor {
             data.extend(commands.into_iter().map(|command| {
                 let process_id = command.process_id.to_string();
                 TerminalSessionDescriptor {
-                    session_id: format!(
-                        "model:{thread_id}:{}:{process_id}",
-                        command.call_id
-                    ),
+                    session_id: format!("model:{thread_id}:{}:{process_id}", command.call_id),
                     generation: command.call_id.clone(),
                     origin: TerminalSessionOrigin::Model,
                     thread_id: Some(thread_id.clone()),
@@ -128,7 +125,9 @@ impl CommandExecRequestProcessor {
                     }),
                     replay_truncated: command.replay_truncated,
                     replay_through_sequence: command.replay_through_sequence,
-                    size: command.terminal_size.map(command_exec_terminal_size_from_command),
+                    size: command
+                        .terminal_size
+                        .map(command_exec_terminal_size_from_command),
                     can_resize: command.can_resize,
                     can_write: true,
                     can_terminate: true,
@@ -532,11 +531,7 @@ impl CommandExecRequestProcessor {
                     }
                     TerminalControl::Terminate => {
                         self.thread_service
-                            .terminate_live_terminal(
-                                parsed_thread_id,
-                                process_id,
-                                &command_item_id,
-                            )
+                            .terminate_live_terminal(parsed_thread_id, process_id, &command_item_id)
                             .await
                     }
                 };

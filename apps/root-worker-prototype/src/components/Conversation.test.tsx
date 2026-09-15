@@ -1083,9 +1083,10 @@ test("compact rows explain unavailable replacement history", () => {
         kind: "compact",
         author: "Root",
         role: "system",
-        text: "Previous conversation was archived; compacted model context continues below.",
+        text: "## Current Goal\n\n- Preserve compact summary",
         timestamp: "09:43",
         attachments: [],
+        compactSummary: "## Current Goal\n\n- Preserve compact summary",
         replacementHistoryStatus: "missing",
         replacementHistoryCount: null,
         replacementHistoryEntries: null,
@@ -1094,6 +1095,7 @@ test("compact rows explain unavailable replacement history", () => {
   );
 
   assert.match(markup, /replacement history unavailable/);
+  assert.match(markup, /Preserve compact summary/);
   assert.match(markup, /Replacement history is unavailable/);
 });
 

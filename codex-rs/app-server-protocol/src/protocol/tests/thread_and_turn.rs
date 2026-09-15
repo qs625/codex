@@ -94,7 +94,8 @@ fn thread_turns_items_list_round_trips() {
             },
             ThreadItem::ContextCompaction {
                 id: "item_2".to_string(),
-                replacement_history: Vec::new(),
+                summary: None,
+                replacement_history: None,
             },
         ],
         next_cursor: None,
@@ -121,7 +122,7 @@ fn thread_turns_items_list_round_trips() {
                         }
                     ]
                 },
-                {"type": "contextCompaction", "id": "item_2", "replacementHistory": []}
+                {"type": "contextCompaction", "id": "item_2"}
             ],
             "nextCursor": null,
             "backwardsCursor": "cursor_0",
@@ -158,13 +159,14 @@ fn thread_provider_capabilities_serializes_fork_thread_as_camel_case() {
 fn context_compaction_serializes_replacement_history() {
     let item = ThreadItem::ContextCompaction {
         id: "item_3".to_string(),
-        replacement_history: vec![ContextCompactionReplacementItem::UserMessage {
+        summary: Some("compact summary".to_string()),
+        replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
             id: "recent-user".to_string(),
             content: vec![UserInput::Text {
                 text: "recent request".to_string(),
                 text_elements: Vec::new(),
             }],
-        }],
+        }]),
     };
 
     assert_eq!(
@@ -172,6 +174,7 @@ fn context_compaction_serializes_replacement_history() {
         json!({
             "type": "contextCompaction",
             "id": "item_3",
+            "summary": "compact summary",
             "replacementHistory": [
                 {
                     "type": "userMessage",
@@ -1256,21 +1259,21 @@ fn client_recovery_projects_to_non_tool_thread_item() {
 
     assert_eq!(
         crate::protocol::event_item_projection::project_event_msg_item(&event),
-        Some(crate::protocol::event_item_projection::ProjectedEventItem::Completed {
-            turn_id: "activation-1".to_string(),
-            item: ThreadItem::ClientRecovery {
-                id: "recovery-1".to_string(),
-                activation_id: "activation-1".to_string(),
-                release_id: "release-2".to_string(),
-                reason: "health check failed".to_string(),
-                occurred_at: "2026-09-09T08:30:00.000Z".to_string(),
-                fallback_release_id: Some("release-1".to_string()),
-            },
-            completed_at_ms: chrono::DateTime::parse_from_rfc3339(
-                "2026-09-09T08:30:00.000Z",
-            )
-            .expect("valid timestamp")
-            .timestamp_millis(),
-        })
+        Some(
+            crate::protocol::event_item_projection::ProjectedEventItem::Completed {
+                turn_id: "activation-1".to_string(),
+                item: ThreadItem::ClientRecovery {
+                    id: "recovery-1".to_string(),
+                    activation_id: "activation-1".to_string(),
+                    release_id: "release-2".to_string(),
+                    reason: "health check failed".to_string(),
+                    occurred_at: "2026-09-09T08:30:00.000Z".to_string(),
+                    fallback_release_id: Some("release-1".to_string()),
+                },
+                completed_at_ms: chrono::DateTime::parse_from_rfc3339("2026-09-09T08:30:00.000Z",)
+                    .expect("valid timestamp")
+                    .timestamp_millis(),
+            }
+        )
     );
 }

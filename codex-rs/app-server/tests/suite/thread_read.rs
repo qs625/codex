@@ -899,8 +899,7 @@ async fn thread_read_unknown_agent_role_returns_persisted_read_only_view() -> Re
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
-    let parent_thread_id =
-        protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000321")?;
+    let parent_thread_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000321")?;
     let source = ProtocolSessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id,
         depth: 1,
@@ -925,10 +924,7 @@ async fn thread_read_unknown_agent_role_returns_persisted_read_only_view() -> Re
 
     assert_eq!(thread.id, thread_id);
     assert_eq!(thread.agent_nickname.as_deref(), Some("reviewer"));
-    assert_eq!(
-        thread.agent_role.as_deref(),
-        Some("missing-reviewer-role")
-    );
+    assert_eq!(thread.agent_role.as_deref(), Some("missing-reviewer-role"));
     assert!(
         !thread.turns.is_empty(),
         "thread/read should preserve persisted history when auto-resume cannot load an agent role"
@@ -989,7 +985,10 @@ async fn thread_read_projects_active_schedule_after_compact_without_loaded_list_
 
     let thread = read_thread(&mut mcp, &conversation_id, /*include_turns*/ true).await?;
     assert!(
-        thread.turns.iter().all(|turn| turn.id != "active-subscriptions"),
+        thread
+            .turns
+            .iter()
+            .all(|turn| turn.id != "active-subscriptions"),
         "thread/read should keep active subscription snapshots out of ordinary turns"
     );
     let schedule_item = thread
@@ -1012,7 +1011,7 @@ async fn thread_read_projects_active_schedule_after_compact_without_loaded_list_
                         .and_then(|value| value.as_str())
                         == Some("sub-schedule")
             )
-    });
+        });
     assert!(
         schedule_item.is_some(),
         "thread/read should include schedule_subscribe current-state items from persisted subscriptions"
@@ -3632,7 +3631,7 @@ fn append_compacted_item(
         item: RolloutItem::Compacted(CompactedItem {
             message: "old display history compacted".to_string(),
             replacement_history: Some(Vec::new()),
-                visible_replacement_history_len: None,
+            visible_replacement_history_len: None,
         }),
     })?;
     let mut file = std::fs::OpenOptions::new().append(true).open(file_path)?;
@@ -3822,8 +3821,11 @@ fn thread_visible_texts(thread: &app_server_protocol::Thread) -> Vec<String> {
                 replacement_history,
                 ..
             } => replacement_history
+                .as_deref()
+                .unwrap_or(&[])
                 .iter()
-                .flat_map(|replacement| match replacement {
+                .flat_map(|replacement| {
+                    match replacement {
                     app_server_protocol::ContextCompactionReplacementItem::InjectedContext {
                         sections,
                         ..
@@ -3849,6 +3851,7 @@ fn thread_visible_texts(thread: &app_server_protocol::Thread) -> Vec<String> {
                         content,
                         ..
                     } => vec![content.clone()],
+                }
                 })
                 .collect(),
             _ => Vec::new(),

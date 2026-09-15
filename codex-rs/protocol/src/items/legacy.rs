@@ -33,6 +33,7 @@ impl ContextCompactionItem {
     pub fn new() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            summary: None,
             replacement_history: Vec::new(),
         }
     }

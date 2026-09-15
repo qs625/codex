@@ -672,12 +672,13 @@ mod build_api_turns_from_rollout_items_tests {
     fn context_compaction(id: &str) -> ThreadItem {
         ThreadItem::ContextCompaction {
             id: id.into(),
-            replacement_history: vec![ContextCompactionReplacementItem::AgentMessage {
+            summary: Some("summary".into()),
+            replacement_history: Some(vec![ContextCompactionReplacementItem::AgentMessage {
                 id: "replacement-agent".into(),
                 text: "summary".into(),
                 phase: None,
                 memory_citation: None,
-            }],
+            }]),
         }
     }
 
@@ -759,7 +760,7 @@ mod build_api_turns_from_rollout_items_tests {
             ThreadItem::ContextCompaction {
                 replacement_history,
                 ..
-            } if !replacement_history.is_empty()
+            } if replacement_history.as_ref().is_some_and(|history| !history.is_empty())
         ));
     }
 
@@ -793,13 +794,37 @@ mod build_api_turns_from_rollout_items_tests {
         assert!(matches!(
             &turns[0].items[0],
             ThreadItem::ContextCompaction {
+                summary,
                 replacement_history,
                 ..
-            } if replacement_history.iter().any(|item| matches!(
+            } if summary.as_deref() == Some("summary") && replacement_history.as_ref().is_some_and(|history| history.iter().any(|item| matches!(
                 item,
                 ContextCompactionReplacementItem::AgentMessage { text, .. }
                     if text == "summary"
-            ))
+            )))
+        ));
+    }
+
+    #[test]
+    fn compacted_item_projects_summary_independently_from_replacement_history() {
+        let turns = build_api_turns_from_rollout_items(&[RolloutItem::Compacted(
+            protocol::protocol::CompactedItem {
+                message: "## Current Goal\n\n- Compact summary".to_string(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            },
+        )]);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                summary,
+                replacement_history,
+                ..
+            } if summary.as_deref() == Some("## Current Goal\n\n- Compact summary")
+                && replacement_history.is_none()
         ));
     }
 

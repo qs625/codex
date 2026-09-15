@@ -701,15 +701,22 @@ function buildContextCompactionEntry(
       : replacementHistoryEntries && replacementHistoryEntries.length > 0
         ? "available"
         : "empty";
+  const compactSummary =
+    typeof item.summary === "string" && item.summary.trim()
+      ? item.summary.trim()
+      : null;
 
   return {
     id: item.id,
     kind: "compact",
     author,
     role: "system",
-    text: "Previous conversation was archived; compacted model context continues below.",
+    text:
+      compactSummary ??
+      "Previous conversation was archived; compacted model context continues below.",
     timestamp,
     attachments: [],
+    compactSummary,
     replacementHistoryEntries,
     replacementHistoryStatus,
     replacementHistoryCount,

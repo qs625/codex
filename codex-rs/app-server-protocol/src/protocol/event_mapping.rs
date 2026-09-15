@@ -1088,12 +1088,15 @@ mod tests {
                 completed_at_ms: event.completed_at_ms,
                 item: ThreadItem::ContextCompaction {
                     id: "compact-1".to_string(),
-                    replacement_history: vec![ContextCompactionReplacementItem::AgentMessage {
-                        id: "compact-seed".to_string(),
-                        text: "LOCAL_SUMMARY".to_string(),
-                        phase: None,
-                        memory_citation: None,
-                    }],
+                    summary: None,
+                    replacement_history: Some(vec![
+                        ContextCompactionReplacementItem::AgentMessage {
+                            id: "compact-seed".to_string(),
+                            text: "LOCAL_SUMMARY".to_string(),
+                            phase: None,
+                            memory_citation: None,
+                        },
+                    ]),
                 },
             },
         );

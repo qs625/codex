@@ -477,6 +477,7 @@ async fn run_compact_task_inner_impl(
         replacement_history_tail,
     ));
     let compaction_item = ContextCompactionItem {
+        summary: Some(compacted_message.clone()),
         replacement_history: replacement_history_items,
         ..compaction_item
     };
