@@ -1092,6 +1092,56 @@ mod tests {
         }
     }
 
+    struct CapturingSubscriptionRuntime {
+        subscriptions: Vec<PersistedSubscription>,
+        trigger_tx: mpsc::UnboundedSender<EventDrivenToolTrigger>,
+    }
+
+    impl FileSubscriptionThreadRuntime for CapturingSubscriptionRuntime {
+        fn update_active_subscription_count<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _active_count: usize,
+        ) -> SubscriptionRuntimeFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn append_event_driven_tool<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            trigger: EventDrivenToolTrigger,
+        ) -> SubscriptionRuntimeFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                self.trigger_tx
+                    .send(trigger)
+                    .map_err(|_| "trigger receiver dropped".to_string())
+            })
+        }
+
+        fn append_event_command_event<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _event: EventCommandEvent,
+        ) -> SubscriptionRuntimeFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn persist_subscriptions<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _subscriptions: Vec<PersistedSubscription>,
+        ) -> SubscriptionRuntimeFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn load_persisted_subscriptions<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> SubscriptionRuntimeFuture<'a, Result<Vec<PersistedSubscription>, String>> {
+            Box::pin(async { Ok(self.subscriptions.clone()) })
+        }
+    }
+
     fn unavailable_runtime() -> Arc<UnavailableFileSubscriptionThreadRuntime> {
         Arc::new(UnavailableFileSubscriptionThreadRuntime)
     }
@@ -1280,6 +1330,35 @@ mod tests {
                 message: Some("Clean checkout targets and report the result.".to_string()),
             }]
         );
+        registry.cancel_all_for_thread(thread_id).await;
+    }
+
+    #[tokio::test]
+    async fn restore_thread_subscriptions_restarts_schedule_timer() {
+        let thread_id = ThreadId::new();
+        let (trigger_tx, mut trigger_rx) = mpsc::unbounded_channel();
+        let runtime = Arc::new(CapturingSubscriptionRuntime {
+            subscriptions: vec![PersistedSubscription::Schedule {
+                subscription_id: "schedule-sub".to_string(),
+                schedule: ScheduleSpec::EveryInterval { interval_ms: 20 },
+                label: Some("heartbeat".to_string()),
+                message: Some("Check backend health".to_string()),
+            }],
+            trigger_tx,
+        });
+        let registry = FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), runtime, None);
+
+        registry.restore_thread_subscriptions(thread_id).await;
+
+        let trigger = timeout(Duration::from_secs(1), trigger_rx.recv())
+            .await
+            .expect("restored schedule should fire")
+            .expect("restored schedule should send a trigger");
+        assert_eq!(trigger.tool, "schedule_subscribe");
+        assert_eq!(trigger.title, "Schedule triggered");
+        assert!(trigger.text.contains("[Schedule subscription (heartbeat)]"));
+        assert!(trigger.text.contains("Task:\nCheck backend health"));
+        assert_eq!(registry.active_subscriptions(thread_id).await.len(), 1);
         registry.cancel_all_for_thread(thread_id).await;
     }
 

@@ -577,6 +577,11 @@ impl ThreadRequestProcessor {
         .map(|()| None)
     }
 
+    pub(crate) async fn restore_active_event_subscription_threads_on_startup(&self) {
+        self.restore_active_event_subscription_threads_on_startup_inner()
+            .await;
+    }
+
     pub(crate) async fn thread_fork(
         &self,
         request_id: ConnectionRequestId,
