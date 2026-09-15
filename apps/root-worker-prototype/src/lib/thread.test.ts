@@ -2512,6 +2512,81 @@ test("mergeThreadSnapshot preserves same-content items with different ids", () =
   assert.deepEqual(merged.turns, thread.turns);
 });
 
+test("mergeThreadSnapshot preserves same-turn user messages across compact snapshots", () => {
+  const firstPrompt =
+    "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";
+  const followupPrompt = "等下刚才发送的user message没显示";
+  const existing = {
+    ...makeThread(),
+    turns: [
+      {
+        ...makeTurn("turn-active", [makeUserMessage("item-12", firstPrompt)]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+  const snapshot = {
+    ...makeThread(),
+    turns: [
+      {
+        ...makeTurn("turn-active", [
+          makeUserMessage("item-12", firstPrompt),
+          makeAgentMessage("item-13", "Summarizing previous context."),
+          {
+            type: "contextCompaction" as const,
+            id: "compact-1",
+            replacementHistory: [
+              {
+                type: "message" as const,
+                role: "assistant" as const,
+                content: [{ type: "output_text" as const, text: "summary" }],
+              },
+            ],
+          },
+          makeUserMessage("item-16", followupPrompt),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(existing, snapshot);
+
+  assert.deepEqual(
+    merged.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage"
+          ? [
+              [
+                item.id,
+                item.content
+                  .map((content) => ("text" in content ? content.text : ""))
+                  .join("\n"),
+              ],
+            ]
+          : [],
+      ),
+    ),
+    [
+      ["item-12", firstPrompt],
+      ["item-16", followupPrompt],
+    ],
+  );
+  assert.deepEqual(
+    buildConversationEntries(merged)
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => [entry.id, entry.text]),
+    [
+      ["item-12", firstPrompt],
+      ["item-16", followupPrompt],
+    ],
+  );
+});
+
 test("mergeThreadSnapshot preserves prefix-compatible agent messages in the same snapshot", () => {
   const thread = {
     ...makeThread(),
@@ -3583,9 +3658,14 @@ test("non-active compact head rejects old user turn snapshots without a timestam
 test("compact head replays pending live user item when snapshot arrives later", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
-    updateThreadItem(thread, "turn-live", makeUserMessage("user-live", "new request"), {
-      completedAtMs: 3_000,
-    }),
+    updateThreadItem(
+      thread,
+      "turn-live",
+      makeUserMessage("user-live", "new request"),
+      {
+        completedAtMs: 3_000,
+      },
+    ),
   );
   const compact = {
     ...makeCompactItem("compact-1"),
@@ -5341,7 +5421,10 @@ test("normalizeThreadSnapshot drops legacy orphan command output placeholders", 
     ],
   });
 
-  assert.deepEqual(normalized.turns.map((turn) => turn.id), ["turn-1"]);
+  assert.deepEqual(
+    normalized.turns.map((turn) => turn.id),
+    ["turn-1"],
+  );
   assert.deepEqual(normalized.turns[0]?.items, [
     realCommand,
     commandOutputNamedCommand,
@@ -5382,18 +5465,21 @@ test("mergeThreadSnapshot preserves live active command items from thread read",
   const merged = mergeThreadSnapshot(existing, next);
 
   assert.deepEqual(merged.activeCommandItems, [commandStart]);
-  assert.deepEqual(buildThreadAnalysis(merged, 0).monitors.sections[0]?.monitors, [
-    {
-      id: "cmd-1",
-      subscriptionId: "cmd-1",
-      kind: "command",
-      label: "rtk sleep 100",
-      detail: "/repo",
-      status: "Running",
-      eventCount: 0,
-      latestEvent: null,
-    },
-  ]);
+  assert.deepEqual(
+    buildThreadAnalysis(merged, 0).monitors.sections[0]?.monitors,
+    [
+      {
+        id: "cmd-1",
+        subscriptionId: "cmd-1",
+        kind: "command",
+        label: "rtk sleep 100",
+        detail: "/repo",
+        status: "Running",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
 });
 
 test("upsertThreadMetadataPreservingTurns applies live active command metadata", () => {
@@ -5411,7 +5497,9 @@ test("upsertThreadMetadataPreservingTurns applies live active command metadata",
   };
   const existing = {
     ...markThreadCommandExecutionRunning(makeThread()),
-    turns: [makeTurn("turn-1", [{ type: "userMessage", id: "msg-1", content: [] }])],
+    turns: [
+      makeTurn("turn-1", [{ type: "userMessage", id: "msg-1", content: [] }]),
+    ],
     activeCommandItems: [],
   } satisfies Thread;
   const metadata = {
