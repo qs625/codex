@@ -310,6 +310,29 @@ declare global {
         }>;
         error: string | null;
       }>;
+      readGitFileDiff: (
+        cwd: string,
+        options: {
+          path: string;
+          originalPath?: string | null;
+          staged?: boolean;
+        },
+      ) => Promise<{
+        available: boolean;
+        root: string | null;
+        path: string | null;
+        originalPath: string | null;
+        staged: boolean;
+        status: string | null;
+        language: string;
+        oldLabel: string | null;
+        newLabel: string | null;
+        oldContent: string;
+        newContent: string;
+        unifiedDiff: string;
+        error: string | null;
+        binary: boolean;
+      }>;
       readLocalFile: (target: string) => Promise<{
         path: string;
         displayPath: string;

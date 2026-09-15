@@ -51,7 +51,7 @@ const {
 } = require("./localFilePreview.cjs");
 const { writeLocalFileTarget } = require("./localFileWrite.cjs");
 const { languageForFilePath } = require("./filePreviewLanguages.cjs");
-const { readGitCommitFiles, readGitSnapshot } = require("./gitPanel.cjs");
+const { readGitCommitFiles, readGitFileDiff, readGitSnapshot } = require("./gitPanel.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 const {
   normalizeThreadLifecycleStatus,
@@ -926,6 +926,10 @@ ipcMain.handle("codex:readGitSnapshot", async (_event, cwd, options) => {
 
 ipcMain.handle("codex:readGitCommitFiles", async (_event, cwd, hash) => {
   return readGitCommitFiles(cwd, hash);
+});
+
+ipcMain.handle("codex:readGitFileDiff", async (_event, cwd, options) => {
+  return readGitFileDiff(cwd, options);
 });
 
 ipcMain.handle("codex:lspDefinition", async (_event, payload) => {

@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
   GIT_GRAPH_MAX_COUNT,
@@ -12,6 +16,7 @@ const {
   parseGitGraph,
   parseGitRefs,
   parseGitStatus,
+  readGitFileDiff,
 } = require("./gitPanel.cjs");
 
 test("parseGitGraph reads git graph commit records", () => {
@@ -223,3 +228,139 @@ test("parseGitStatus groups staged and unstaged porcelain entries", () => {
     },
   ]);
 });
+
+test("parseGitStatus reads unstaged rename entries", () => {
+  const changes = parseGitStatus([" R src/new.ts", "src/old.ts", ""].join("\0"));
+
+  assert.deepEqual(changes, [
+    {
+      path: "src/new.ts",
+      originalPath: "src/old.ts",
+      stagedStatus: null,
+      unstagedStatus: "R",
+      staged: false,
+      unstaged: true,
+    },
+  ]);
+});
+
+test("readGitFileDiff reads unstaged modified files from index to working tree", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/app.ts", "export const value = 1;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  writeRepoFile(repo, "src/app.ts", "export const value = 2;\n");
+
+  const diff = await readGitFileDiff(repo, { path: "src/app.ts", staged: false });
+
+  assert.equal(diff.available, true);
+  assert.equal(diff.staged, false);
+  assert.equal(diff.status, "M");
+  assert.equal(diff.oldContent, "export const value = 1;\n");
+  assert.equal(diff.newContent, "export const value = 2;\n");
+  assert.equal(diff.oldLabel, "Index");
+  assert.equal(diff.newLabel, "Working tree");
+});
+
+test("readGitFileDiff reads staged modified files from HEAD to index", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/app.ts", "export const value = 1;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  writeRepoFile(repo, "src/app.ts", "export const value = 2;\n");
+  git(repo, ["add", "src/app.ts"]);
+
+  const diff = await readGitFileDiff(repo, { path: "src/app.ts", staged: true });
+
+  assert.equal(diff.available, true);
+  assert.equal(diff.staged, true);
+  assert.equal(diff.status, "M");
+  assert.equal(diff.oldContent, "export const value = 1;\n");
+  assert.equal(diff.newContent, "export const value = 2;\n");
+  assert.equal(diff.oldLabel, "HEAD");
+  assert.equal(diff.newLabel, "Index");
+});
+
+test("readGitFileDiff handles added, deleted, and renamed staged files", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/delete-me.ts", "delete me\n");
+  writeRepoFile(repo, "src/old-name.ts", "rename me\n");
+  git(repo, ["add", "src/delete-me.ts", "src/old-name.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  writeRepoFile(repo, "src/added.ts", "new file\n");
+  git(repo, ["rm", "src/delete-me.ts"]);
+  git(repo, ["mv", "src/old-name.ts", "src/new-name.ts"]);
+  git(repo, ["add", "src/added.ts"]);
+
+  const added = await readGitFileDiff(repo, { path: "src/added.ts", staged: true });
+  const deleted = await readGitFileDiff(repo, { path: "src/delete-me.ts", staged: true });
+  const renamed = await readGitFileDiff(repo, {
+    path: "src/new-name.ts",
+    originalPath: "src/old-name.ts",
+    staged: true,
+  });
+
+  assert.equal(added.status, "A");
+  assert.equal(added.oldContent, "");
+  assert.equal(added.newContent, "new file\n");
+  assert.equal(deleted.status, "D");
+  assert.equal(deleted.oldContent, "delete me\n");
+  assert.equal(deleted.newContent, "");
+  assert.equal(renamed.status, "R");
+  assert.equal(renamed.originalPath, "src/old-name.ts");
+  assert.equal(renamed.oldContent, "rename me\n");
+  assert.equal(renamed.newContent, "rename me\n");
+});
+
+test("readGitFileDiff returns a typed unavailable diff for binary content", async (t) => {
+  const repo = createTempGitRepo(t);
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src/blob.bin"), Buffer.from([0, 1, 2, 3]));
+  git(repo, ["add", "src/blob.bin"]);
+
+  const diff = await readGitFileDiff(repo, { path: "src/blob.bin", staged: true });
+
+  assert.equal(diff.available, false);
+  assert.equal(diff.binary, true);
+  assert.equal(diff.status, "A");
+  assert.match(diff.error ?? "", /Binary files/);
+});
+
+function createTempGitRepo(t) {
+  requireGit(t);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-git-panel-"));
+  t.after(() => {
+    fs.rmSync(repo, { force: true, recursive: true });
+  });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test User"]);
+  return repo;
+}
+
+function requireGit(t) {
+  try {
+    execFileSync("git", ["--version"], { stdio: "ignore" });
+  } catch {
+    t.skip("git is required for readGitFileDiff integration coverage");
+  }
+}
+
+function writeRepoFile(repo, relativePath, content) {
+  const target = path.join(repo, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
+}
+
+function git(repo, args) {
+  return execFileSync("git", args, {
+    cwd: repo,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z",
+      GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z",
+    },
+  });
+}

@@ -1,10 +1,13 @@
 const { execFile } = require("node:child_process");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 5000;
 const GIT_GRAPH_MAX_COUNT = 120;
 const GIT_REF_MAX_COUNT = 200;
+const GIT_DIFF_TEXT_MAX_BYTES = 1024 * 1024;
 const GRAPH_RECORD_SEPARATOR = "\x1f";
 
 async function readGitSnapshot(cwd, options = {}) {
@@ -64,6 +67,98 @@ async function readGitCommitFiles(cwd, hash) {
     files: parseGitCommitFiles(result.stdout),
     error: null,
   };
+}
+
+async function readGitFileDiff(cwd, options = {}) {
+  if (typeof cwd !== "string" || !cwd.trim()) {
+    return unavailableFileDiff("No workspace is selected.");
+  }
+
+  const mode = options?.staged ? "staged" : "unstaged";
+  const requestedPath = normalizeGitPath(options?.path);
+  const requestedOriginalPath = normalizeGitPath(options?.originalPath);
+  if (!requestedPath) {
+    return unavailableFileDiff("Invalid file path.");
+  }
+
+  const rootResult = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!rootResult.ok) {
+    return unavailableFileDiff("This workspace is not a Git repository.");
+  }
+  const root = rootResult.stdout.trim();
+
+  const statusResult = await runGit(root, ["status", "--porcelain=v1", "-z"]);
+  if (!statusResult.ok) {
+    return unavailableFileDiff("Failed to read Git status.");
+  }
+
+  const changes = parseGitStatus(statusResult.stdout);
+  const change = changes.find((entry) =>
+    entry.path === requestedPath &&
+    (requestedOriginalPath === null || entry.originalPath === requestedOriginalPath) &&
+    (mode === "staged" ? entry.staged : entry.unstaged),
+  );
+  if (!change) {
+    return unavailableFileDiff("This file is no longer present in the Git changes list.", {
+      root,
+      path: requestedPath,
+      originalPath: requestedOriginalPath,
+      staged: mode === "staged",
+    });
+  }
+
+  const status =
+    (mode === "staged" ? change.stagedStatus : change.unstagedStatus) ??
+    change.stagedStatus ??
+    change.unstagedStatus ??
+    "M";
+  const originalPath = change.originalPath ?? null;
+  const oldPath = originalPath && (status === "R" || status === "C") ? originalPath : change.path;
+  const unifiedDiff = await readUnifiedDiff(root, change, mode);
+  const base = {
+    available: true,
+    root,
+    path: change.path,
+    originalPath,
+    staged: mode === "staged",
+    status,
+    language: languageFromPath(change.path),
+    oldLabel: mode === "staged" ? "HEAD" : "Index",
+    newLabel: mode === "staged" ? "Index" : "Working tree",
+    unifiedDiff,
+    error: null,
+    binary: false,
+  };
+
+  try {
+    const oldContent =
+      status === "A" || status === "?"
+        ? ""
+        : mode === "staged"
+          ? await readGitTextObject(root, `HEAD:${oldPath}`)
+          : await readGitTextObject(root, `:${oldPath}`);
+    const newContent =
+      status === "D"
+        ? ""
+        : mode === "staged"
+          ? await readGitTextObject(root, `:${change.path}`)
+          : await readWorkingTreeText(root, change.path);
+
+    return {
+      ...base,
+      oldContent,
+      newContent,
+    };
+  } catch (error) {
+    return {
+      ...base,
+      available: false,
+      oldContent: "",
+      newContent: "",
+      error: error instanceof Error ? error.message : "Failed to read file diff.",
+      binary: isBinaryReadError(error),
+    };
+  }
 }
 
 function buildGitLogArgs(ref = null) {
@@ -127,6 +222,25 @@ function unavailableCommitFiles(reason) {
   };
 }
 
+function unavailableFileDiff(reason, context = {}) {
+  return {
+    available: false,
+    root: context.root ?? null,
+    path: context.path ?? null,
+    originalPath: context.originalPath ?? null,
+    staged: Boolean(context.staged),
+    status: null,
+    language: "plaintext",
+    oldLabel: null,
+    newLabel: null,
+    oldContent: "",
+    newContent: "",
+    unifiedDiff: "",
+    error: reason,
+    binary: false,
+  };
+}
+
 function isValidCommitHash(value) {
   return typeof value === "string" && /^[0-9a-fA-F]{7,64}$/.test(value);
 }
@@ -164,6 +278,78 @@ async function runGit(cwd, args) {
       stderr: typeof error?.stderr === "string" ? error.stderr : "",
     };
   }
+}
+
+async function runGitBuffer(cwd, args) {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      encoding: "buffer",
+      maxBuffer: GIT_DIFF_TEXT_MAX_BYTES,
+      timeout: GIT_TIMEOUT_MS,
+    });
+    return { ok: true, stdout };
+  } catch (error) {
+    return {
+      ok: false,
+      stdout: Buffer.isBuffer(error?.stdout) ? error.stdout : Buffer.alloc(0),
+      stderr: Buffer.isBuffer(error?.stderr)
+        ? error.stderr.toString("utf8")
+        : typeof error?.stderr === "string"
+          ? error.stderr
+          : "",
+      code: error?.code ?? null,
+    };
+  }
+}
+
+async function readGitTextObject(root, spec) {
+  const result = await runGitBuffer(root, ["show", spec]);
+  if (!result.ok) {
+    throw new Error("Failed to read Git object content.");
+  }
+  return bufferToGitPreviewText(result.stdout);
+}
+
+async function readWorkingTreeText(root, gitPath) {
+  const target = path.resolve(root, gitPath);
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Git path escapes the repository root.");
+  }
+  const stat = await fs.stat(target);
+  if (!stat.isFile()) {
+    throw new Error("Changed path is not a file.");
+  }
+  if (stat.size > GIT_DIFF_TEXT_MAX_BYTES) {
+    throw new Error("File is too large to preview as a diff.");
+  }
+  return bufferToGitPreviewText(await fs.readFile(target));
+}
+
+function bufferToGitPreviewText(buffer) {
+  if (buffer.includes(0)) {
+    const error = new Error("Binary files cannot be previewed as side-by-side text.");
+    error.code = "ERR_GIT_DIFF_BINARY";
+    throw error;
+  }
+  return buffer.toString("utf8");
+}
+
+function isBinaryReadError(error) {
+  return error?.code === "ERR_GIT_DIFF_BINARY";
+}
+
+async function readUnifiedDiff(root, change, mode) {
+  const args =
+    mode === "staged"
+      ? ["diff", "--cached", "--no-ext-diff", "--find-renames", "--", change.path]
+      : ["diff", "--no-ext-diff", "--find-renames", "--", change.path];
+  if (change.originalPath) {
+    args.push(change.originalPath);
+  }
+  const result = await runGit(root, args);
+  return result.ok ? result.stdout : "";
 }
 
 function parseGitGraph(stdout) {
@@ -221,7 +407,8 @@ function parseGitStatus(stdout) {
     const stagedCode = entry[0];
     const unstagedCode = entry[1];
     const path = entry.slice(3);
-    const renamed = stagedCode === "R" || stagedCode === "C";
+    const renamed =
+      stagedCode === "R" || stagedCode === "C" || unstagedCode === "R" || unstagedCode === "C";
     const originalPath = renamed ? entries[index + 1] ?? null : null;
     if (renamed) {
       index += 1;
@@ -238,6 +425,66 @@ function parseGitStatus(stdout) {
   }
 
   return changes;
+}
+
+function normalizeGitPath(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const gitPath = value.trim();
+  if (
+    !gitPath ||
+    gitPath.length > 4096 ||
+    gitPath.startsWith("/") ||
+    gitPath.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/.test(gitPath) ||
+    gitPath.split(/[\\/]/).some((part) => part === "..") ||
+    /[\x00-\x1f\x7f]/.test(gitPath)
+  ) {
+    return null;
+  }
+  return gitPath;
+}
+
+function languageFromPath(filePath) {
+  const extension = filePath.split(".").pop()?.toLowerCase() ?? "";
+  switch (extension) {
+    case "cjs":
+    case "js":
+    case "mjs":
+      return "javascript";
+    case "css":
+      return "css";
+    case "go":
+      return "go";
+    case "html":
+      return "html";
+    case "json":
+      return "json";
+    case "md":
+    case "mdx":
+      return "markdown";
+    case "py":
+      return "python";
+    case "rs":
+      return "rust";
+    case "sh":
+      return "shell";
+    case "tsx":
+      return "typescript";
+    case "ts":
+      return "typescript";
+    case "xml":
+      return "xml";
+    case "yaml":
+    case "yml":
+      return "yaml";
+    default:
+      return "plaintext";
+  }
 }
 
 function parseGitRefs(stdout) {
@@ -311,14 +558,17 @@ function parseGitCommitFiles(stdout) {
 module.exports = {
   GIT_GRAPH_MAX_COUNT,
   GIT_REF_MAX_COUNT,
+  GIT_DIFF_TEXT_MAX_BYTES,
   buildGitCommitFilesArgs,
   buildGitLogArgs,
   buildGitRefsArgs,
   isValidCommitHash,
+  languageFromPath,
   parseGitCommitFiles,
   parseGitGraph,
   parseGitRefs,
   parseGitStatus,
+  readGitFileDiff,
   readGitCommitFiles,
   readGitSnapshot,
 };
