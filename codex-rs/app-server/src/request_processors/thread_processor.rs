@@ -16,8 +16,8 @@ mod ops;
 mod runtime;
 mod start;
 mod support;
+mod thread_read_activity_projection;
 
-pub(crate) use self::listing::restore_persisted_display_turns_from_rollout_items;
 pub(super) use self::ops::unsupported_external_root_active_op;
 pub(crate) use self::runtime::thread_processor_new_thread;
 use self::runtime::*;
@@ -29,6 +29,8 @@ pub(crate) use self::support::stored_thread_session_source_with_agent_metadata;
 pub(crate) use self::support::thread_from_stored_thread;
 pub(crate) use self::support::thread_store_resume_read_error;
 use self::support::*;
+pub(crate) use self::thread_read_activity_projection::restore_persisted_display_turns_from_rollout_items;
+use self::thread_read_activity_projection::*;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
 const THREAD_LIST_MAX_LIMIT: usize = 100;
