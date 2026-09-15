@@ -538,21 +538,10 @@ impl ThreadRequestProcessor {
             ));
         }
         let fallback_thread = build_thread_from_live_snapshot(thread_id, live_snapshot);
-        let mut persisted_turns = persisted_thread
-            .as_ref()
-            .map(|thread| thread.turns.clone())
-            .unwrap_or_default();
-        prune_turns_to_latest_compaction_boundary(&mut persisted_turns);
-        let mut thread = if let Some(mut thread) = persisted_thread {
-            if thread.path.is_none() {
-                thread.path = fallback_thread.path.clone();
-            }
-            thread.session_id.clone_from(&fallback_thread.session_id);
-            thread.ephemeral = fallback_thread.ephemeral;
-            thread
-        } else {
-            fallback_thread
-        };
+        let LiveThreadReadProjectionBase {
+            mut thread,
+            persisted_turns,
+        } = live_thread_read_projection_base(fallback_thread, persisted_thread);
         let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
         let has_live_in_progress_turn = match self
             .apply_thread_read_store_fields(
