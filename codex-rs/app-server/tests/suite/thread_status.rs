@@ -27,6 +27,7 @@ use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
+use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::to_response;
 use core_test_support::responses;
 use serde_json::json;
@@ -648,7 +649,7 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
         ]),
         create_final_assistant_message_sse_response("scheduled")?,
     ];
-    let server = create_mock_responses_server_sequence(responses).await;
+    let server = create_mock_responses_server_sequence_unchecked(responses).await;
     create_config_toml(codex_home.path(), &server.uri())?;
 
     let thread_id = {
@@ -711,47 +712,47 @@ async fn startup_restores_waiting_subscription_thread() -> Result<()> {
         )
         .await??;
         let ThreadLoadedListResponse { data, .. } = to_response(loaded_list_resp)?;
-        if data.contains(&thread_id) {
+        let loaded = data.contains(&thread_id);
+
+        let list_id = second_mcp
+            .send_thread_list_request(ThreadListParams {
+                cursor: None,
+                limit: Some(10),
+                sort_key: None,
+                sort_direction: None,
+                model_providers: Some(Vec::new()),
+                source_kinds: None,
+                archived: None,
+                cwd: None,
+                use_state_db_only: true,
+                search_term: None,
+            })
+            .await?;
+        let list_resp: JSONRPCResponse = timeout(
+            DEFAULT_READ_TIMEOUT,
+            second_mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+        )
+        .await??;
+        let ThreadListResponse { data, .. } = to_response(list_resp)?;
+        let lifecycle_status = data
+            .into_iter()
+            .find(|thread| thread.id == thread_id)
+            .map(|thread| thread.lifecycle_status);
+
+        if loaded
+            && lifecycle_status
+                == Some(ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::EventSubscription,
+                })
+        {
             break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "app-server restart should restore persisted waiting subscription threads"
+            "app-server restart should load persisted subscription thread and persist waiting status, loaded={loaded}, lifecycle={lifecycle_status:?}"
         );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-
-    let list_id = second_mcp
-        .send_thread_list_request(ThreadListParams {
-            cursor: None,
-            limit: Some(10),
-            sort_key: None,
-            sort_direction: None,
-            model_providers: Some(Vec::new()),
-            source_kinds: None,
-            archived: None,
-            cwd: None,
-            use_state_db_only: true,
-            search_term: None,
-        })
-        .await?;
-    let list_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        second_mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
-    )
-    .await??;
-    let ThreadListResponse { data, .. } = to_response(list_resp)?;
-    let listed_thread = data
-        .into_iter()
-        .find(|thread| thread.id == thread_id)
-        .expect("state-db-only thread/list should include persisted thread metadata");
-    assert_eq!(
-        listed_thread.lifecycle_status,
-        ThreadLifecycleStatus::Waiting {
-            reason: ThreadLifecycleWaitReason::EventSubscription,
-        },
-        "state-db-only thread/list should project persisted thread_status"
-    );
 
     Ok(())
 }

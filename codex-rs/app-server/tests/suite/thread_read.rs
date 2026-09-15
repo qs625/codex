@@ -49,6 +49,7 @@ use app_server_protocol::TurnStartResponse;
 use app_server_protocol::TurnStatus;
 use app_server_protocol::UserInput;
 use app_test_support::McpProcess;
+use app_test_support::create_fake_rollout_with_source;
 use app_test_support::create_fake_rollout_with_text_elements;
 use app_test_support::create_fake_rollout_with_token_usage;
 use app_test_support::create_mock_responses_server_repeating_assistant;
@@ -84,6 +85,7 @@ use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionMeta;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource as ProtocolSessionSource;
+use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use protocol::protocol::ThreadContextUsageLoadedSkills;
@@ -889,6 +891,49 @@ async fn thread_read_can_include_turns() -> Result<()> {
     }
     assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_unknown_agent_role_returns_persisted_read_only_view() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let parent_thread_id =
+        protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000321")?;
+    let source = ProtocolSessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id,
+        depth: 1,
+        agent_path: None,
+        agent_nickname: Some("reviewer".to_string()),
+        agent_role: Some("missing-reviewer-role".to_string()),
+    });
+    let thread_id = create_fake_rollout_with_source(
+        codex_home.path(),
+        "2025-01-05T12-20-00",
+        "2025-01-05T12:20:00Z",
+        "review history",
+        Some("mock_provider"),
+        /*git_info*/ None,
+        source,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread = read_thread(&mut mcp, &thread_id, /*include_turns*/ true).await?;
+
+    assert_eq!(thread.id, thread_id);
+    assert_eq!(thread.agent_nickname.as_deref(), Some("reviewer"));
+    assert_eq!(
+        thread.agent_role.as_deref(),
+        Some("missing-reviewer-role")
+    );
+    assert!(
+        !thread.turns.is_empty(),
+        "thread/read should preserve persisted history when auto-resume cannot load an agent role"
+    );
+    assert_eq!(thread.active_command_items, Some(Vec::new()));
     Ok(())
 }
 
