@@ -6674,6 +6674,132 @@ test("pending thread updates preserve same-content items with different ids", ()
   ]);
 });
 
+test("pending restart recovery notice merges with durable same-text user message", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求 restart-1；该请求已完成。";
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(thread, "turn-pending-recovery", {
+      type: "userMessage",
+      id: "runtime-restart-recovery:restart-1",
+      content: [{ type: "text", text: prompt }],
+    }),
+  );
+  const snapshot = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-durable-recovery",
+        items: [
+          {
+            type: "userMessage" as const,
+            id: "backend-user-message",
+            content: [{ type: "text" as const, text: prompt }],
+          },
+          {
+            type: "commandExecution" as const,
+            id: "cmd-audit",
+            command: "audit recovery text",
+            cwd: "/tmp",
+            status: "completed" as const,
+            initialWaitMs: null,
+            notifyOn: null,
+            aggregatedOutput: `${prompt}\n`,
+            exitCode: 0,
+            durationMs: 10,
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+  const entries = buildConversationEntries(updated);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(
+    updated.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage" ? [item.id] : [],
+      ),
+    ),
+    ["backend-user-message"],
+  );
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => entry.text),
+    [prompt],
+  );
+  assert.equal(
+    entries.some(
+      (entry) =>
+        entry.kind === "tool" && entry.toolName === "audit recovery text",
+    ),
+    true,
+  );
+});
+
+test("pending restart recovery notices preserve distinct request identities", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  const prompt = "same recovery prompt text";
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(thread, "turn-recovery-2", {
+      type: "userMessage",
+      id: "runtime-restart-recovery:restart-2",
+      content: [{ type: "text", text: prompt }],
+    }),
+  );
+  const snapshot = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-recovery-1",
+        items: [
+          {
+            type: "userMessage" as const,
+            id: "runtime-restart-recovery:restart-1",
+            content: [{ type: "text" as const, text: prompt }],
+          },
+        ],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(
+    updated.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage" ? [item.id] : [],
+      ),
+    ),
+    [
+      "runtime-restart-recovery:restart-1",
+      "runtime-restart-recovery:restart-2",
+    ],
+  );
+  assert.deepEqual(
+    buildConversationEntries(updated)
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => entry.text),
+    [prompt, prompt],
+  );
+});
+
 test("pending agent deltas preserve same-content completed assistant blocks with different ids", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
