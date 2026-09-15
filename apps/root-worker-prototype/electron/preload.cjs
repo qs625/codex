@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:readGitSnapshot", cwd, options),
   readGitCommitFiles: (cwd, hash) =>
     ipcRenderer.invoke("codex:readGitCommitFiles", cwd, hash),
+  readGitFileDiff: (cwd, options) =>
+    ipcRenderer.invoke("codex:readGitFileDiff", cwd, options),
   lspDefinition: (payload) =>
     ipcRenderer.invoke("codex:lspDefinition", payload),
   lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
 import {
@@ -10,7 +10,6 @@ import {
   ChevronDownIcon,
   DocumentIcon,
   GridIcon,
-  MoreIcon,
   GearIcon,
   OpenIcon,
   PencilIcon,
@@ -125,7 +124,13 @@ type GitChange = GitSnapshot["changes"][number];
 type GitGraphItem = GitSnapshot["graph"][number];
 type GitGraphCommit = Extract<GitGraphItem, { type: "commit" }>;
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
+type GitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitFileDiff"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
+type GitDiffPreviewState = {
+  loading: boolean;
+  diff: GitFileDiffSnapshot | null;
+  error: string | null;
+};
 type GitGraphVisualCommit = {
   commit: GitGraphCommit;
   rowIndex: number;
@@ -294,6 +299,13 @@ export function RightPanel({
   const { contextUsage } = threadAnalysis;
   const [terminalCommandFocusRequest, setTerminalCommandFocusRequest] =
     useState<TerminalCommandFocusRequest | null>(null);
+  const [gitDiffPreview, setGitDiffPreview] = useState<GitDiffPreviewState>({
+    loading: false,
+    diff: null,
+    error: null,
+  });
+  const gitDiffRequestScope = useRef(0);
+  const gitDiffBasePreviewKey = useRef<string | null>(null);
 
   const focusCommandMonitor = (monitor: MonitorSummary) => {
     const target = resolveThreadAnalysisCommandFocus(thread, monitor);
@@ -307,6 +319,74 @@ export function RightPanel({
     onSetActiveView("terminal");
     onSetCollapsed(false);
   };
+
+  function clearGitDiffPreview() {
+    gitDiffRequestScope.current += 1;
+    gitDiffBasePreviewKey.current = null;
+    setGitDiffPreview({ loading: false, diff: null, error: null });
+  }
+
+  function openTreeFileFromPreview(path: string) {
+    clearGitDiffPreview();
+    onOpenTreeFile(path);
+  }
+
+  function openGitFileDiff(change: GitChange, mode: "staged" | "unstaged") {
+    if (!thread || isChatCompatCwd(thread.cwd)) {
+      return;
+    }
+    const scope = gitDiffRequestScope.current + 1;
+    gitDiffRequestScope.current = scope;
+    gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
+    setGitDiffPreview({ loading: true, diff: null, error: null });
+    onSetFilePanelView("preview");
+    onSetActiveView("preview");
+
+    window.codexDesktop
+      .readGitFileDiff(thread.cwd, {
+        path: change.path,
+        originalPath: change.originalPath,
+        staged: mode === "staged",
+      })
+      .then((diff) => {
+        if (gitDiffRequestScope.current === scope) {
+          setGitDiffPreview({ loading: false, diff, error: diff.error });
+        }
+      })
+      .catch((error) => {
+        if (gitDiffRequestScope.current === scope) {
+          setGitDiffPreview({
+            loading: false,
+            diff: null,
+            error: error instanceof Error ? error.message : "Failed to read Git diff.",
+          });
+        }
+      });
+  }
+
+  useEffect(() => {
+    const gitDiffActive =
+      gitDiffPreview.loading ||
+      Boolean(gitDiffPreview.diff) ||
+      Boolean(gitDiffPreview.error);
+    if (
+      shouldClearGitDiffPreviewForFilePreviewChange({
+        active: gitDiffActive,
+        basePreviewKey: gitDiffBasePreviewKey.current,
+        currentPreviewKey: filePreviewIdentity(preview, previewRootId),
+      })
+    ) {
+      clearGitDiffPreview();
+    }
+  }, [
+    gitDiffPreview.diff,
+    gitDiffPreview.error,
+    gitDiffPreview.loading,
+    preview?.column,
+    preview?.line,
+    preview?.path,
+    previewRootId,
+  ]);
 
   return (
     <aside className={`right-panel ${isCollapsed ? "collapsed" : ""}`}>
@@ -327,7 +407,11 @@ export function RightPanel({
                 runtimeRestartProgress={runtimeRestartProgress}
               />
             ) : activeView === "git" ? (
-              <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
+              <GitPanel
+                changedFiles={threadAnalysis.changedFiles}
+                onOpenDiff={openGitFileDiff}
+                thread={thread}
+              />
             ) : activeView === "browser" ? (
               <BrowserPanel
                 nativeOverlayActive={browserNativeOverlayActive}
@@ -350,7 +434,10 @@ export function RightPanel({
                 fileTreeLoadingPath={fileTreeLoadingPath}
                 onNavigateToSymbol={onNavigateToSymbol}
                 onOpenPreviewExternally={onOpenPreviewExternally}
-                onOpenTreeFile={onOpenTreeFile}
+                gitDiffPreview={gitDiffPreview.diff}
+                gitDiffPreviewError={gitDiffPreview.error}
+                gitDiffPreviewLoading={gitDiffPreview.loading}
+                onOpenTreeFile={openTreeFileFromPreview}
                 onPreviewUpdated={onPreviewUpdated}
                 onSetFilePanelView={onSetFilePanelView}
                 onToggleTreeDirectory={onToggleTreeDirectory}
@@ -1913,9 +2000,11 @@ function formatPlanStatus(status: ThreadPlanStep["status"]) {
 
 function GitPanel({
   changedFiles,
+  onOpenDiff,
   thread,
 }: {
   changedFiles: ThreadAnalysis["changedFiles"];
+  onOpenDiff: (change: GitChange, mode: "staged" | "unstaged") => void;
   thread: Thread | null;
 }) {
   const hasProjectCwd = thread ? !isChatCompatCwd(thread.cwd) : false;
@@ -1928,6 +2017,8 @@ function GitPanel({
   const [graphPanePercent, setGraphPanePercent] = useState(66);
   const [isResizingPanes, setIsResizingPanes] = useState(false);
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [stagedChangesCollapsed, setStagedChangesCollapsed] = useState(false);
+  const [unstagedChangesCollapsed, setUnstagedChangesCollapsed] = useState(false);
   const [commitFilesByHash, setCommitFilesByHash] = useState<
     Record<string, GitCommitFilesSnapshot | undefined>
   >({});
@@ -2134,48 +2225,12 @@ function GitPanel({
               <button
                 type="button"
                 className="git-icon-button"
-                disabled
-                title="Focus current ref"
-                aria-label="Focus current Git ref"
-              >
-                <BrowserIcon />
-              </button>
-              <button
-                type="button"
-                className="git-icon-button"
-                disabled
-                title="Fetch"
-                aria-label="Fetch Git refs"
-              >
-                <ArrowLeftIcon />
-              </button>
-              <button
-                type="button"
-                className="git-icon-button"
-                disabled
-                title="Pull"
-                aria-label="Pull Git refs"
-              >
-                <ArrowRightIcon />
-              </button>
-              <button
-                type="button"
-                className="git-icon-button"
                 disabled={!thread || !hasProjectCwd || loading}
                 onClick={() => setRefreshKey((value) => value + 1)}
                 title="Refresh Git view"
                 aria-label="Refresh Git view"
               >
                 <RefreshIcon />
-              </button>
-              <button
-                type="button"
-                className="git-icon-button"
-                disabled
-                title="More Git actions"
-                aria-label="More Git actions"
-              >
-                <MoreIcon />
               </button>
             </>
           }
@@ -2252,8 +2307,22 @@ function GitPanel({
               <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
             ) : snapshot ? (
               <>
-                <GitChangeGroup changes={stagedChanges} mode="staged" title="Staged Changes" />
-                <GitChangeGroup changes={unstagedChanges} mode="unstaged" title="Changes" />
+                <GitChangeGroup
+                  changes={stagedChanges}
+                  collapsed={stagedChangesCollapsed}
+                  mode="staged"
+                  onOpenDiff={onOpenDiff}
+                  onToggle={() => setStagedChangesCollapsed((collapsed) => !collapsed)}
+                  title="Staged Changes"
+                />
+                <GitChangeGroup
+                  changes={unstagedChanges}
+                  collapsed={unstagedChangesCollapsed}
+                  mode="unstaged"
+                  onOpenDiff={onOpenDiff}
+                  onToggle={() => setUnstagedChangesCollapsed((collapsed) => !collapsed)}
+                  title="Changes"
+                />
               </>
             ) : (
               <GitEmptyState message="Select a Git repository to inspect changes." />
@@ -2664,29 +2733,44 @@ function laneCenterX(lane: number) {
   return lane * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_SPINE_X;
 }
 
-function GitChangeGroup({
+export function GitChangeGroup({
   changes,
+  collapsed,
   mode,
+  onOpenDiff,
+  onToggle,
   title,
 }: {
   changes: GitChange[];
+  collapsed: boolean;
   mode: "staged" | "unstaged";
+  onOpenDiff: (change: GitChange, mode: "staged" | "unstaged") => void;
+  onToggle: () => void;
   title: string;
 }) {
+  const rowsId = `git-change-group:${mode}`;
   return (
     <div className="git-change-group">
-      <div className="git-change-group-header" data-drag-scroll-handle="true">
+      <button
+        type="button"
+        className="git-change-group-header"
+        aria-controls={rowsId}
+        aria-expanded={!collapsed}
+        data-drag-scroll-handle="true"
+        onClick={onToggle}
+      >
         <ChevronDownIcon />
         <span>{title}</span>
         <span className="git-change-count">{changes.length}</span>
-      </div>
-      {changes.length > 0 ? (
-        <div className="git-change-rows">
+      </button>
+      {!collapsed && changes.length > 0 ? (
+        <div className="git-change-rows" id={rowsId}>
           {changes.map((change) => (
             <GitChangeRow
               key={`${title}:${change.path}:${change.originalPath ?? ""}`}
               change={change}
               mode={mode}
+              onOpenDiff={onOpenDiff}
             />
           ))}
         </div>
@@ -2695,21 +2779,53 @@ function GitChangeGroup({
   );
 }
 
-function GitChangeRow({ change, mode }: { change: GitChange; mode: "staged" | "unstaged" }) {
+export function GitChangeRow({
+  change,
+  mode,
+  onOpenDiff,
+}: {
+  change: GitChange;
+  mode: "staged" | "unstaged";
+  onOpenDiff: (change: GitChange, mode: "staged" | "unstaged") => void;
+}) {
   const status =
     (mode === "staged" ? change.stagedStatus : change.unstagedStatus) ??
     change.stagedStatus ??
     change.unstagedStatus ??
     "M";
   const directory = directoryName(change.path);
+  const label = `Open ${mode} diff for ${change.path}`;
   return (
-    <article className="git-change-row">
-      <span className={`git-status-letter ${gitStatusClass(status)}`} data-drag-scroll-handle="true">
+    <article
+      className="git-change-row clickable"
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      onClick={(event) => {
+        if (isSuppressedDragScrollClick(event.target)) {
+          return;
+        }
+        onOpenDiff(change, mode);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDiff(change, mode);
+        }
+      }}
+    >
+      <span
+        className={`git-status-letter ${gitStatusClass(status)}`}
+        data-drag-scroll-handle="true"
+      >
         {gitStatusLabel(status)}
       </span>
       <div className="git-change-copy">
         <strong title={change.path}>{baseName(change.path)}</strong>
         <span title={change.path}>{directory}</span>
+        {change.originalPath ? (
+          <span title={change.originalPath}>from {change.originalPath}</span>
+        ) : null}
       </div>
       <span className={`git-change-state ${gitStatusClass(status)}`} data-drag-scroll-handle="true">
         {gitStatusLabel(status)}
@@ -2914,12 +3030,39 @@ export function filePreviewHeaderEditControlsVisible({
   );
 }
 
+export function filePreviewIdentity(preview: FilePreview | null, rootId: string | null) {
+  if (!preview) {
+    return null;
+  }
+  return [
+    rootId ?? "",
+    preview.path,
+    preview.line ?? "",
+    preview.column ?? "",
+  ].join(":");
+}
+
+export function shouldClearGitDiffPreviewForFilePreviewChange({
+  active,
+  basePreviewKey,
+  currentPreviewKey,
+}: {
+  active: boolean;
+  basePreviewKey: string | null;
+  currentPreviewKey: string | null;
+}) {
+  return active && currentPreviewKey !== basePreviewKey;
+}
+
 function FilePreviewPanel({
   expandedTreeDirectories,
   filePanelView,
   fileTreeEntriesByPath,
   fileTreeErrorsByPath,
   fileTreeLoadingPath,
+  gitDiffPreview,
+  gitDiffPreviewError,
+  gitDiffPreviewLoading,
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
@@ -2937,6 +3080,9 @@ function FilePreviewPanel({
   fileTreeEntriesByPath: Record<string, FileTreeEntry[]>;
   fileTreeErrorsByPath: Record<string, string>;
   fileTreeLoadingPath: string | null;
+  gitDiffPreview: GitFileDiffSnapshot | null;
+  gitDiffPreviewError: string | null;
+  gitDiffPreviewLoading: boolean;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
@@ -2960,6 +3106,11 @@ function FilePreviewPanel({
     initialFilePreviewEditState(),
   );
   const previewRenderMode = filePreviewRenderMode(preview);
+  const showingGitDiffPreview =
+    filePanelView === "preview" &&
+    (gitDiffPreviewLoading ||
+      Boolean(gitDiffPreview) ||
+      Boolean(gitDiffPreviewError));
   const previewIsEditable = filePreviewCanEdit(preview);
   const previewSourceEditorVisible = filePreviewSourceEditorVisible(
     preview,
@@ -2967,9 +3118,9 @@ function FilePreviewPanel({
   );
   const showPreviewHeaderEditControls = filePreviewHeaderEditControlsVisible({
     filePanelView,
-    preview,
-    previewError,
-    previewLoading,
+    preview: showingGitDiffPreview ? null : preview,
+    previewError: showingGitDiffPreview ? gitDiffPreviewError : previewError,
+    previewLoading: showingGitDiffPreview ? gitDiffPreviewLoading : previewLoading,
   });
   const isEditingPreview = editState.mode === "editing";
   const isSavingPreview = editState.mode === "saving";
@@ -3132,7 +3283,9 @@ function FilePreviewPanel({
           <h2>
             {filePanelView === "tree"
               ? (threadRootPath ? trimPath(threadRootPath) : "Workspace Browser")
-              : preview
+              : showingGitDiffPreview && gitDiffPreview?.path
+                ? gitDiffPreview.path
+                : preview
                 ? preview.displayPath
                 : "Linked Context"}
           </h2>
@@ -3164,7 +3317,7 @@ function FilePreviewPanel({
             className="panel-inline-action preview-open-button"
             aria-label="Open preview in system editor"
             onClick={onOpenPreviewExternally}
-            disabled={!preview || filePanelView !== "preview"}
+            disabled={!preview || filePanelView !== "preview" || showingGitDiffPreview}
           >
             <OpenIcon />
           </button>
@@ -3185,14 +3338,21 @@ function FilePreviewPanel({
       ) : null}
       {filePanelView === "tree" ? null : (
         <>
-      {previewLoading ? <div className="preview-empty">Loading file…</div> : null}
-      {!previewLoading && previewError ? <div className="preview-empty">{previewError}</div> : null}
-      {!previewLoading && !previewError && !preview ? (
+      {showingGitDiffPreview ? (
+        <GitDiffPreviewPanel
+          diff={gitDiffPreview}
+          error={gitDiffPreviewError}
+          loading={gitDiffPreviewLoading}
+        />
+      ) : null}
+      {!showingGitDiffPreview && previewLoading ? <div className="preview-empty">Loading file…</div> : null}
+      {!showingGitDiffPreview && !previewLoading && previewError ? <div className="preview-empty">{previewError}</div> : null}
+      {!showingGitDiffPreview && !previewLoading && !previewError && !preview ? (
         <div className="preview-empty">
           <p>Open a local file link in the conversation to pin code context here.</p>
         </div>
       ) : null}
-      {!previewLoading && !previewError && previewRenderMode === "image" && preview?.image ? (
+      {!showingGitDiffPreview && !previewLoading && !previewError && previewRenderMode === "image" && preview?.image ? (
         <div className="preview-editor-shell preview-image-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
@@ -3218,7 +3378,7 @@ function FilePreviewPanel({
           </div>
         </div>
       ) : null}
-      {!previewLoading && !previewError && previewRenderMode === "pdf" && preview?.pdf ? (
+      {!showingGitDiffPreview && !previewLoading && !previewError && previewRenderMode === "pdf" && preview?.pdf ? (
         <div className="preview-editor-shell preview-pdf-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
@@ -3247,7 +3407,7 @@ function FilePreviewPanel({
           </object>
         </div>
       ) : null}
-      {!previewLoading && !previewError && preview && previewRenderMode !== "image" && previewRenderMode !== "pdf" ? (
+      {!showingGitDiffPreview && !previewLoading && !previewError && preview && previewRenderMode !== "image" && previewRenderMode !== "pdf" ? (
         <div className="preview-editor-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
@@ -3412,6 +3572,113 @@ function FilePreviewPanel({
         </div>
       ) : null}
         </>
+      )}
+    </div>
+  );
+}
+
+export function GitDiffPreviewPanel({
+  diff,
+  error,
+  loading,
+}: {
+  diff: GitFileDiffSnapshot | null;
+  error: string | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return <div className="preview-empty">Loading Git diff...</div>;
+  }
+  if (!diff) {
+    return <div className="preview-empty">{error ?? "No Git diff selected."}</div>;
+  }
+
+  const status = diff.status ?? "M";
+  const canRenderSideBySide = diff.available && !diff.binary;
+  return (
+    <div className="preview-editor-shell git-diff-preview-shell">
+      <div className="preview-utility-strip">
+        <div className="preview-utility-primary">
+          <span className={`preview-signal ${diff.available ? "ready" : "unavailable"}`} />
+          <button type="button" className="preview-lsp-button plain" disabled>
+            DIFF
+          </button>
+          <span className={`git-status-letter ${gitStatusClass(status)}`}>
+            {gitStatusLabel(status)}
+          </span>
+        </div>
+        <div className="preview-utility-secondary">
+          <span>{diff.staged ? "staged" : "unstaged"}</span>
+          {diff.originalPath ? (
+            <>
+              <span className="preview-utility-separator">•</span>
+              <span className="preview-utility-cwd">
+                {diff.originalPath}
+                {" -> "}
+                {diff.path}
+              </span>
+            </>
+          ) : null}
+          {diff.root ? (
+            <>
+              <span className="preview-utility-separator">•</span>
+              <span className="preview-utility-cwd">{diff.root}</span>
+            </>
+          ) : null}
+        </div>
+      </div>
+      {!canRenderSideBySide ? (
+        <div className="preview-git-diff-fallback">
+          <div className="preview-empty">
+            {error ?? diff.error ?? "This change cannot be shown as a side-by-side text diff."}
+          </div>
+          {diff.unifiedDiff ? (
+            <Editor
+              height="100%"
+              language="diff"
+              loading={<div className="preview-empty">Loading diff...</div>}
+              options={{
+                automaticLayout: true,
+                contextmenu: false,
+                fontSize: 12,
+                lineNumbersMinChars: 3,
+                minimap: { enabled: false },
+                readOnly: true,
+                renderLineHighlight: "none",
+                roundedSelection: false,
+                scrollBeyondLastLine: false,
+                selectionHighlight: false,
+                wordWrap: "off",
+              }}
+              path={`git-diff:${diff.path ?? "unknown"}`}
+              theme="vs"
+              value={diff.unifiedDiff}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <div className="preview-editor-pad">
+          <DiffEditor
+            height="100%"
+            language={diff.language}
+            loading={<div className="preview-empty">Loading diff editor...</div>}
+            modified={diff.newContent}
+            original={diff.oldContent}
+            options={{
+              automaticLayout: true,
+              contextmenu: false,
+              fontSize: 12,
+              lineNumbersMinChars: 3,
+              minimap: { enabled: false },
+              originalEditable: false,
+              readOnly: true,
+              renderSideBySide: true,
+              scrollBeyondLastLine: false,
+              wordWrap: "on",
+            }}
+            theme="vs"
+          />
+        </div>
       )}
     </div>
   );

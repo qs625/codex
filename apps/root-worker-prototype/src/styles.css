@@ -6723,15 +6723,23 @@ svg {
 
 .git-change-group-header {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: 8px;
   min-height: 30px;
   padding: 0 8px;
+  border: 0;
   border-radius: 7px;
   background: rgba(41, 37, 36, 0.08);
   color: #292524;
   font-size: 14px;
   font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.git-change-group-header[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
 }
 
 .git-change-count {
@@ -6750,6 +6758,20 @@ svg {
   min-height: 28px;
   column-gap: 6px;
   padding: 0 8px;
+}
+
+.git-change-row.clickable {
+  cursor: pointer;
+}
+
+.git-change-row.clickable:hover,
+.git-change-row.clickable:focus-visible {
+  background: rgba(28, 25, 23, 0.05);
+}
+
+.git-change-row.clickable:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: -2px;
 }
 
 .git-status-letter {
@@ -6852,6 +6874,17 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.git-diff-preview-shell {
+  min-height: 0;
+}
+
+.preview-git-diff-fallback {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
 }
 
 .preview-utility-label {

@@ -38,12 +38,17 @@ const {
   failFilePreviewSave,
   filePreviewCanEdit,
   filePreviewHeaderEditControlsVisible,
+  filePreviewIdentity,
   filePreviewRenderMode,
   filePreviewSourceEditorVisible,
+  GitChangeGroup,
+  GitChangeRow,
+  GitDiffPreviewPanel,
   normalizeBrowserPanelState,
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
+  shouldClearGitDiffPreviewForFilePreviewChange,
   syncFilePreviewEditState,
   updateFilePreviewDraft,
 } = await import("./RightPanel");
@@ -1112,16 +1117,143 @@ test("renders git panel with deduped thread file changes", () => {
   assert.match(markup, /Graph/);
   assert.match(markup, /graph-toolbar/);
   assert.match(markup, />Auto</);
-  assert.match(markup, /Focus current Git ref/);
-  assert.match(markup, /Fetch Git refs/);
-  assert.match(markup, /Pull Git refs/);
+  assert.doesNotMatch(markup, /Focus current Git ref/);
+  assert.doesNotMatch(markup, /Fetch Git refs/);
+  assert.doesNotMatch(markup, /Pull Git refs/);
+  assert.doesNotMatch(markup, /More Git actions/);
   assert.match(markup, /Changes/);
   assert.match(markup, /aria-expanded="true"/);
   assert.match(markup, /Collapse Changes/);
   assert.match(markup, /Select Git branch or ref/);
+  assert.match(markup, /Refresh Git view/);
   assert.match(markup, /Resize Git graph and changes panes/);
   assert.match(markup, /panel-rail-badge">2/);
   assert.doesNotMatch(markup, /Thread File Deltas/);
+});
+
+test("git change groups hide rows when collapsed and expose row diff navigation semantics", () => {
+  const change = {
+    path: "src/App.tsx",
+    originalPath: "src/OldApp.tsx",
+    stagedStatus: "R",
+    unstagedStatus: null,
+    staged: true,
+    unstaged: false,
+  };
+  const expandedMarkup = renderToStaticMarkup(
+    <GitChangeGroup
+      changes={[change]}
+      collapsed={false}
+      mode="staged"
+      onOpenDiff={() => {}}
+      onToggle={() => {}}
+      title="Staged Changes"
+    />,
+  );
+  const collapsedMarkup = renderToStaticMarkup(
+    <GitChangeGroup
+      changes={[change]}
+      collapsed={true}
+      mode="staged"
+      onOpenDiff={() => {}}
+      onToggle={() => {}}
+      title="Staged Changes"
+    />,
+  );
+  const rowMarkup = renderToStaticMarkup(
+    <GitChangeRow change={change} mode="staged" onOpenDiff={() => {}} />,
+  );
+
+  assert.match(expandedMarkup, /aria-expanded="true"/);
+  assert.match(expandedMarkup, /Open staged diff for src\/App\.tsx/);
+  assert.match(expandedMarkup, /from src\/OldApp\.tsx/);
+  assert.match(collapsedMarkup, /aria-expanded="false"/);
+  assert.doesNotMatch(collapsedMarkup, /Open staged diff for src\/App\.tsx/);
+  assert.match(rowMarkup, /role="button"/);
+  assert.match(rowMarkup, /tabindex="0"/);
+});
+
+test("git diff previews render as read-only preview content without edit controls", () => {
+  const markup = renderToStaticMarkup(
+    <GitDiffPreviewPanel
+      diff={{
+        available: false,
+        root: "/repo",
+        path: "src/App.tsx",
+        originalPath: null,
+        staged: false,
+        status: "M",
+        language: "typescript",
+        oldLabel: "Index",
+        newLabel: "Working tree",
+        oldContent: "",
+        newContent: "",
+        unifiedDiff: "",
+        error: "Binary files cannot be previewed as side-by-side text.",
+        binary: true,
+      }}
+      error={null}
+      loading={false}
+    />,
+  );
+
+  assert.match(markup, />DIFF</);
+  assert.match(markup, />unstaged</);
+  assert.doesNotMatch(markup, /preview-edit-action/);
+});
+
+test("git diff preview clears when normal file preview changes target", () => {
+  const firstPreview = makePreview({
+    path: "/repo/src/App.tsx",
+    line: 1,
+    column: 1,
+  });
+  const samePreview = makePreview({
+    path: "/repo/src/App.tsx",
+    line: 1,
+    column: 1,
+  });
+  const nextPreview = makePreview({
+    path: "/repo/src/Other.tsx",
+    line: 1,
+    column: 1,
+  });
+
+  const baseKey = filePreviewIdentity(firstPreview, "root-1");
+
+  assert.equal(filePreviewIdentity(samePreview, "root-1"), baseKey);
+  assert.equal(
+    shouldClearGitDiffPreviewForFilePreviewChange({
+      active: true,
+      basePreviewKey: baseKey,
+      currentPreviewKey: filePreviewIdentity(samePreview, "root-1"),
+    }),
+    false,
+  );
+  assert.equal(
+    shouldClearGitDiffPreviewForFilePreviewChange({
+      active: true,
+      basePreviewKey: baseKey,
+      currentPreviewKey: filePreviewIdentity(nextPreview, "root-1"),
+    }),
+    true,
+  );
+  assert.equal(
+    shouldClearGitDiffPreviewForFilePreviewChange({
+      active: true,
+      basePreviewKey: baseKey,
+      currentPreviewKey: filePreviewIdentity(firstPreview, "root-2"),
+    }),
+    true,
+  );
+  assert.equal(
+    shouldClearGitDiffPreviewForFilePreviewChange({
+      active: false,
+      basePreviewKey: baseKey,
+      currentPreviewKey: filePreviewIdentity(nextPreview, "root-1"),
+    }),
+    false,
+  );
 });
 
 test("builds a commit-level git graph visual model with a spine and curved branches", () => {
