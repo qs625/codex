@@ -195,11 +195,8 @@ test("builds a conversation event for typed client recovery", () => {
       kind: "event",
       author: "root",
       role: "system",
-      text:
-        "Runtime Capsule recovery: health check failed\nRelease: release-2\nFallback release: release-1\nActivation: activation-1",
-      timestamp: formatClockTime(
-        Date.parse("2026-09-09T08:30:00.000Z") / 1000,
-      ),
+      text: "Runtime Capsule recovery: health check failed\nRelease: release-2\nFallback release: release-1\nActivation: activation-1",
+      timestamp: formatClockTime(Date.parse("2026-09-09T08:30:00.000Z") / 1000),
       attachments: [],
       turnId: "turn-1",
     },
@@ -382,7 +379,8 @@ test("compact rows archive prior artifact cells", () => {
             id: "artifact-1",
             title: "Inline chart",
             mimeType: "image/svg+xml",
-            content: "<svg viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\" /></svg>",
+            content:
+              '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
           },
         ],
         itemsView: "full",
@@ -575,7 +573,9 @@ test("counts restart recovery prompts in command audit output separately from us
 
   const matchingUserMessages = entries.filter(
     (entry) =>
-      entry.kind === "message" && entry.role === "user" && entry.text === prompt,
+      entry.kind === "message" &&
+      entry.role === "user" &&
+      entry.text === prompt,
   );
   const matchingToolEntries = entries.filter(
     (entry) =>
@@ -2367,7 +2367,10 @@ test("renders compact summary even when replacement history is unavailable", () 
 
   const compactEntry = entries[0]!;
   assert.equal(compactEntry.kind, "compact");
-  assert.equal(compactEntry.text, "## Current Goal\n\n- Preserve compact summary");
+  assert.equal(
+    compactEntry.text,
+    "## Current Goal\n\n- Preserve compact summary",
+  );
   assert.equal(
     compactEntry.compactSummary,
     "## Current Goal\n\n- Preserve compact summary",
@@ -2697,6 +2700,85 @@ test("hides compact turn entries while preserving later visible items", () => {
       cell.entries.map((entry) => entry.text),
     ),
     ["old request"],
+  );
+});
+
+test("keeps same-turn user messages visible across compact display boundary", () => {
+  const firstPrompt =
+    "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";
+  const followupPrompt = "等下刚才发送的user message没显示";
+  const state = buildConversationState(
+    makeThreadWithTurns([
+      {
+        id: "turn-active",
+        items: [
+          {
+            type: "userMessage",
+            id: "item-12",
+            content: [{ type: "text", text: firstPrompt }],
+          },
+          {
+            type: "agentMessage",
+            id: "item-13",
+            text: "Summarizing previous context.",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "commandExecution",
+            id: "cmd-1",
+            command: "git status --short",
+            cwd: "/repo",
+            status: "completed",
+            aggregatedOutput: " M file.ts\n",
+            exitCode: 0,
+            durationMs: 10,
+          },
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistory: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "compact summary" }],
+              },
+            ],
+          },
+          {
+            type: "userMessage",
+            id: "item-16",
+            content: [{ type: "text", text: followupPrompt }],
+          },
+        ],
+        itemsView: "full",
+        status: "running",
+        error: null,
+        startedAt: 2,
+        completedAt: null,
+        durationMs: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    state.entries
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => [entry.id, entry.text]),
+    [
+      ["item-12", firstPrompt],
+      ["item-16", followupPrompt],
+    ],
+  );
+  assert.deepEqual(
+    state.cells
+      .filter((cell) =>
+        cell.entries.some(
+          (entry) => entry.kind === "message" && entry.role === "user",
+        ),
+      )
+      .map((cell) => cell.id),
+    ["item-12", "item-16"],
   );
 });
 

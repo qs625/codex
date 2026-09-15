@@ -1750,7 +1750,12 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
       if (index !== 0) {
         return turn;
       }
-      const items = turn.items.slice(latestCompact.itemIndex);
+      const items = [
+        ...turn.items
+          .slice(0, latestCompact.itemIndex)
+          .filter(isUserMessageItem),
+        ...turn.items.slice(latestCompact.itemIndex),
+      ];
       return items.length === turn.items.length ? turn : { ...turn, items };
     })
     .filter((turn) => !isActiveSubscriptionsTurn(turn))
@@ -1775,6 +1780,10 @@ function isActiveSubscriptionsTurn(turn: Turn) {
 
 function isActiveCommandsTurn(turn: Turn) {
   return turn.id === "active-commands";
+}
+
+function isUserMessageItem(item: ThreadItem) {
+  return item.type === "userMessage";
 }
 
 function findLatestCompactItemPosition(turns: Turn[]) {
