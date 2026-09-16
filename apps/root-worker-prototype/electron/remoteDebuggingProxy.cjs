@@ -172,9 +172,16 @@ function proxyWebSocketUpgrade({
   });
   const backendFrames = createFrameParser({
     onFrame: (frame) => {
-      socket.write(encodeWebSocketFrame(frame.payload, frame.opcode, false));
+      let payload = frame.payload;
       if (browserState && frame.opcode === 0x1) {
-        browserState.markAttachedTarget(attachedTargetIdFromFrame(frame));
+        payload = filterBrowserBackendMessage(frame.payload);
+        if (!payload) {
+          return;
+        }
+      }
+      socket.write(encodeWebSocketFrame(payload, frame.opcode, false));
+      if (browserState && frame.opcode === 0x1) {
+        browserState.markAttachedTarget(attachedTargetIdFromPayload(payload));
       }
     },
   });
@@ -317,10 +324,10 @@ function writeCreateTargetResponse(clientSocket, id, targetId) {
   );
 }
 
-function attachedTargetIdFromFrame(frame) {
+function attachedTargetIdFromPayload(payload) {
   let message;
   try {
-    message = JSON.parse(frame.payload.toString("utf8"));
+    message = JSON.parse(payload.toString("utf8"));
   } catch {
     return null;
   }
@@ -353,9 +360,11 @@ function rewriteDevToolsHttpBody({ body, headers, address, port, backendPort }) 
 
 function rewriteDevToolsWebSocketUrls(value, { address, port, backendPort }) {
   if (Array.isArray(value)) {
-    return value.map((item) =>
-      rewriteDevToolsWebSocketUrls(item, { address, port, backendPort }),
-    );
+    return value
+      .filter((item) => !isEmptyPageTargetInfo(item))
+      .map((item) =>
+        rewriteDevToolsWebSocketUrls(item, { address, port, backendPort }),
+      );
   }
   if (!value || typeof value !== "object") {
     return value;
@@ -378,6 +387,57 @@ function rewriteDevToolsWebSocketUrls(value, { address, port, backendPort }) {
     }
   }
   return result;
+}
+
+function filterBrowserBackendMessage(payload) {
+  let message;
+  try {
+    message = JSON.parse(payload.toString("utf8"));
+  } catch {
+    return payload;
+  }
+
+  if (isTargetInfoEventForEmptyPage(message)) {
+    return null;
+  }
+
+  if (Array.isArray(message?.result?.targetInfos)) {
+    return Buffer.from(
+      JSON.stringify({
+        ...message,
+        result: {
+          ...message.result,
+          targetInfos: message.result.targetInfos.filter(
+            (targetInfo) => !isEmptyPageTargetInfo(targetInfo),
+          ),
+        },
+      }),
+      "utf8",
+    );
+  }
+
+  return payload;
+}
+
+function isTargetInfoEventForEmptyPage(message) {
+  return (
+    (message?.method === "Target.attachedToTarget" ||
+      message?.method === "Target.targetCreated" ||
+      message?.method === "Target.targetInfoChanged") &&
+    isEmptyPageTargetInfo(message.params?.targetInfo)
+  );
+}
+
+function isEmptyPageTargetInfo(targetInfo) {
+  return (
+    targetInfo?.type === "page" &&
+    stringIsEmpty(targetInfo.title) &&
+    stringIsEmpty(targetInfo.url)
+  );
+}
+
+function stringIsEmpty(value) {
+  return typeof value !== "string" || value.length === 0;
 }
 
 function rewriteRequestHeaders(headers, address, backendPort) {
@@ -561,6 +621,7 @@ function isBrowserWebSocketPath(path) {
 
 module.exports = {
   encodeWebSocketFrame,
+  filterBrowserBackendMessage,
   parseWebSocketFrame,
   rewriteDevToolsWebSocketUrls,
   startRemoteDebuggingProxy,

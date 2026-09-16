@@ -5,6 +5,7 @@ const net = require("node:net");
 
 const {
   encodeWebSocketFrame,
+  filterBrowserBackendMessage,
   parseWebSocketFrame,
   rewriteDevToolsWebSocketUrls,
   startRemoteDebuggingProxy,
@@ -16,6 +17,13 @@ test("rewriteDevToolsWebSocketUrls keeps CDP clients on the proxy port", () => {
       {
         webSocketDebuggerUrl: "ws://127.0.0.1:9223/devtools/browser/abc",
         nested: [
+          {
+            id: "blank-page",
+            type: "page",
+            title: "",
+            url: "",
+            webSocketDebuggerUrl: "ws://127.0.0.1:9223/devtools/page/blank",
+          },
           {
             webSocketDebuggerUrl: "ws://127.0.0.1:9223/devtools/page/one",
           },
@@ -32,6 +40,68 @@ test("rewriteDevToolsWebSocketUrls keeps CDP clients on the proxy port", () => {
       ],
     },
   );
+});
+
+test("remote debugging proxy filters empty Electron page targets", () => {
+  assert.equal(
+    filterBrowserBackendMessage(
+      Buffer.from(
+        JSON.stringify({
+          method: "Target.attachedToTarget",
+          params: {
+            sessionId: "blank-session",
+            targetInfo: {
+              targetId: "blank-page",
+              type: "page",
+              title: "",
+              url: "",
+            },
+          },
+        }),
+      ),
+    ),
+    null,
+  );
+
+  const filtered = JSON.parse(
+    filterBrowserBackendMessage(
+      Buffer.from(
+        JSON.stringify({
+          id: 7,
+          result: {
+            targetInfos: [
+              {
+                targetId: "blank-page",
+                type: "page",
+                title: "",
+                url: "",
+              },
+              {
+                targetId: "root-worker",
+                type: "page",
+                title: "Root Worker Prototype",
+                url: "file:///app.asar/dist/index.html",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toString("utf8"),
+  );
+
+  assert.deepEqual(filtered, {
+    id: 7,
+    result: {
+      targetInfos: [
+        {
+          targetId: "root-worker",
+          type: "page",
+          title: "Root Worker Prototype",
+          url: "file:///app.asar/dist/index.html",
+        },
+      ],
+    },
+  });
 });
 
 test("remote debugging proxy rewrites /json/version WebSocket URLs", async (t) => {
