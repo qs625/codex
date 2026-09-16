@@ -9,18 +9,22 @@ const {
 
 let controller = null;
 
+configureNonActivatingHelperApp();
+
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 async function controllerForApp() {
   await app.whenReady();
+  configureNonActivatingHelperApp();
   if (!controller) {
     controller = createComputerUseOverlayController({
       BrowserWindow,
       hostApp: app,
       screen,
       logger: console,
+      restoreActivationPolicy: false,
     });
   }
   return controller;
@@ -79,4 +83,16 @@ lines.on("close", () => {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function configureNonActivatingHelperApp() {
+  try {
+    app.setActivationPolicy?.("accessory");
+  } catch {}
+  try {
+    const result = app.dock?.hide?.();
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {});
+    }
+  } catch {}
 }
