@@ -96,7 +96,12 @@ type ComputerUseState = {
     reason: string;
     observedAtMs: number;
     cursor: ComputerUsePoint | null;
+    systemCursor: ComputerUsePoint | null;
     activeApp: unknown | null;
+    frontmostApp: unknown | null;
+    targetApp: unknown | null;
+    targetVisibility: "frontmost" | "background" | "unknown";
+    limitations: Array<{ code: string; message: string }>;
     accessibilityTrusted: boolean;
     screenshot: {
       path: string;
@@ -106,8 +111,15 @@ type ComputerUseState = {
     } | null;
     error: string | null;
   } | null;
+  frontmostApp: unknown | null;
+  targetApp: unknown | null;
+  targetVisibility: "frontmost" | "background" | "unknown";
+  systemCursor: ComputerUsePoint | null;
+  agentCursor: ComputerUsePoint | null;
   cursor: ComputerUsePoint | null;
   pointerPath: Array<ComputerUsePoint & { atMs: number; source: string }>;
+  limitations: Array<{ code: string; message: string }>;
+  overlay: { visible: boolean; reason: string | null };
   trace: Array<{
     id: string;
     sequence: number;
@@ -118,6 +130,12 @@ type ComputerUseState = {
     startedAtMs: number;
     completedAtMs: number | null;
     observationSequence: number | null;
+    agentCursorPath?: Array<ComputerUsePoint & { atMs: number }>;
+    evidence?: {
+      systemCursorRestored?: boolean;
+      systemCursorBefore?: ComputerUsePoint | null;
+      systemCursorAfter?: ComputerUsePoint | null;
+    };
   }>;
   pendingAction: ComputerUseAction | null;
   policy: ComputerUsePolicy | null;

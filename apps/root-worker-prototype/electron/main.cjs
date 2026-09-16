@@ -13,6 +13,7 @@ const {
   protocol,
   session,
   shell,
+  screen,
   systemPreferences,
   webContents: electronWebContents,
   WebContentsView,
@@ -156,6 +157,9 @@ const {
   terminalTabSupports,
 } = require("./terminalPanel.cjs");
 const { createComputerUseManager } = require("./computerUse.cjs");
+const {
+  createComputerUseOverlayController,
+} = require("./computerUseOverlay.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -1204,7 +1208,13 @@ function computerUseManagerForEvent(event) {
   if (existing) {
     return existing;
   }
-  const manager = createComputerUseManager();
+  const manager = createComputerUseManager({
+    overlayController: createComputerUseOverlayController({
+      BrowserWindow,
+      screen,
+      logger: console,
+    }),
+  });
   computerUseManagersByWindowId.set(window.id, manager);
   return manager;
 }

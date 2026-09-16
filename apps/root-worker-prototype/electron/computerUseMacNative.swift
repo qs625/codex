@@ -89,25 +89,94 @@ func focusedWindow(pid: pid_t) -> [String: Any]? {
   return result
 }
 
-func observe() {
+func firstWindow(pid: pid_t) -> [String: Any]? {
+  let app = AXUIElementCreateApplication(pid)
+  var value: CFTypeRef?
+  guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success else {
+    return nil
+  }
+  guard let windows = value as? [AXUIElement], let window = windows.first else {
+    return nil
+  }
+  var result: [String: Any] = [:]
+  result["title"] = axString(window, kAXTitleAttribute)
+  result["role"] = axString(window, kAXRoleAttribute)
+  result["subrole"] = axString(window, kAXSubroleAttribute)
+  result["position"] = axPoint(window, kAXPositionAttribute)
+  result["size"] = axSize(window, kAXSizeAttribute)
+  return result
+}
+
+func appSummary(_ app: NSRunningApplication, trusted: Bool, frontmost: Bool) -> [String: Any] {
+  var result: [String: Any] = [:]
+  result["name"] = app.localizedName
+  result["bundleIdentifier"] = app.bundleIdentifier
+  result["processIdentifier"] = Int(app.processIdentifier)
+  result["frontmost"] = frontmost
+  if trusted {
+    result["window"] = frontmost
+      ? focusedWindow(pid: app.processIdentifier)
+      : firstWindow(pid: app.processIdentifier)
+  }
+  return result
+}
+
+func appMatches(_ app: NSRunningApplication, _ identifier: String) -> Bool {
+  let expected = identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  guard !expected.isEmpty else { return false }
+  return app.bundleIdentifier?.lowercased() == expected ||
+    app.localizedName?.lowercased() == expected
+}
+
+func targetApplication(_ identifier: String?) -> NSRunningApplication? {
+  guard let identifier = identifier else { return nil }
+  return NSWorkspace.shared.runningApplications.first { app in
+    appMatches(app, identifier)
+  }
+}
+
+func observe(_ object: [String: Any]) {
   let trusted = AXIsProcessTrusted()
   let cursor = CGEvent(source: nil)?.location ?? CGPoint.zero
   let frontmost = NSWorkspace.shared.frontmostApplication
-  var activeApp: [String: Any] = [:]
+  var frontmostApp: [String: Any] = [:]
   if let app = frontmost {
-    activeApp["name"] = app.localizedName
-    activeApp["bundleIdentifier"] = app.bundleIdentifier
-    activeApp["processIdentifier"] = Int(app.processIdentifier)
-    if trusted {
-      activeApp["window"] = focusedWindow(pid: app.processIdentifier)
-    }
+    frontmostApp = appSummary(app, trusted: trusted, frontmost: true)
   }
-  json([
+  let targetIdentifier = object["targetApp"] as? String
+  let target = targetApplication(targetIdentifier)
+  var targetApp: [String: Any]? = nil
+  var targetVisibility = "unknown"
+  if let target = target {
+    let isFrontmost = frontmost?.processIdentifier == target.processIdentifier
+    targetApp = appSummary(target, trusted: trusted, frontmost: isFrontmost)
+    targetVisibility = isFrontmost ? "frontmost" : "background"
+  } else if targetIdentifier == nil, let app = frontmost {
+    targetApp = appSummary(app, trusted: trusted, frontmost: true)
+    targetVisibility = "frontmost"
+  } else if let targetIdentifier = targetIdentifier, let app = frontmost, appMatches(app, targetIdentifier) {
+    targetApp = appSummary(app, trusted: trusted, frontmost: true)
+    targetVisibility = "frontmost"
+  }
+  var response: [String: Any] = [
     "ok": true,
     "cursor": ["x": cursor.x, "y": cursor.y],
-    "activeApp": activeApp,
+    "systemCursor": ["x": cursor.x, "y": cursor.y],
+    "activeApp": frontmostApp,
+    "frontmostApp": frontmostApp,
+    "targetVisibility": targetVisibility,
     "accessibilityTrusted": trusted,
-  ])
+  ]
+  if let targetApp = targetApp {
+    response["targetApp"] = targetApp
+  }
+  if targetVisibility == "background" {
+    response["limitations"] = [[
+      "code": "background-observe-metadata-only",
+      "message": "Background target observe is limited to app/window metadata; the screenshot remains the current desktop capture.",
+    ]]
+  }
+  json(response)
 }
 
 func postMouse(_ type: CGEventType, _ point: CGPoint) {
@@ -128,18 +197,29 @@ func requireDesktopControlPermission() {
 
 func move(_ object: [String: Any]) {
   requireDesktopControlPermission()
-  postMouse(.mouseMoved, pointFromPayload(object))
   json(["ok": true])
 }
 
 func click(_ object: [String: Any]) {
   requireDesktopControlPermission()
   let point = pointFromPayload(object)
-  postMouse(.mouseMoved, point)
+  let before = CGEvent(source: nil)?.location ?? CGPoint.zero
   postMouse(.leftMouseDown, point)
   usleep(45_000)
   postMouse(.leftMouseUp, point)
-  json(["ok": true])
+  let afterClick = CGEvent(source: nil)?.location ?? CGPoint.zero
+  var restored = false
+  if abs(afterClick.x - before.x) > 0.5 || abs(afterClick.y - before.y) > 0.5 {
+    CGWarpMouseCursorPosition(before)
+    restored = true
+  }
+  let afterRestore = CGEvent(source: nil)?.location ?? CGPoint.zero
+  json([
+    "ok": true,
+    "systemCursorRestored": restored,
+    "systemCursorBefore": ["x": before.x, "y": before.y],
+    "systemCursorAfter": ["x": afterRestore.x, "y": afterRestore.y],
+  ])
 }
 
 func typeText(_ object: [String: Any]) {
@@ -214,7 +294,7 @@ let object = payload()
 
 switch command {
 case "observe":
-  observe()
+  observe(object)
 case "move":
   move(object)
 case "click":

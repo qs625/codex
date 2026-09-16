@@ -5,6 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  buildAgentCursorPath,
   classifyComputerUseAction,
   createComputerUseManager,
   createMacNativeComputerUseClientWithAdapters,
@@ -21,14 +22,18 @@ function fakeNativeClient(options = {}) {
     async observe() {
       observeCount += 1;
       const observation = observations?.[Math.min(observeCount - 1, observations.length - 1)];
+      const activeApp = observation?.activeApp ?? {
+        name: options.activeAppName ?? "Firefox",
+        bundleIdentifier: options.bundleIdentifier ?? "org.mozilla.firefox",
+        processIdentifier: 42,
+        window: { title: `Window ${observeCount}` },
+      };
       return {
         cursor: observation?.cursor ?? { x: 100 + observeCount, y: 200 + observeCount },
-        activeApp: observation?.activeApp ?? {
-          name: options.activeAppName ?? "Firefox",
-          bundleIdentifier: options.bundleIdentifier ?? "org.mozilla.firefox",
-          processIdentifier: 42,
-          window: { title: `Window ${observeCount}` },
-        },
+        activeApp,
+        frontmostApp: observation?.frontmostApp ?? activeApp,
+        targetApp: observation?.targetApp,
+        targetVisibility: observation?.targetVisibility,
         accessibilityTrusted:
           observation?.accessibilityTrusted ?? options.accessibilityTrusted ?? true,
         screenshot: {
@@ -48,9 +53,24 @@ function fakeNativeClient(options = {}) {
   };
 }
 
+function fakeOverlayController() {
+  const updates = [];
+  return {
+    updates,
+    destroyed: 0,
+    async update(payload) {
+      updates.push(payload);
+    },
+    async destroy() {
+      this.destroyed += 1;
+    },
+  };
+}
+
 test("computer use session starts with observe evidence", async () => {
   const nativeClient = fakeNativeClient();
-  const manager = createComputerUseManager({ nativeClient });
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
 
   const state = await manager.startSession({ app: "Firefox" });
 
@@ -59,24 +79,53 @@ test("computer use session starts with observe evidence", async () => {
   assert.equal(state.observation.sequence, 1);
   assert.equal(state.observation.activeApp.name, "Firefox");
   assert.equal(state.observation.screenshot.mimeType, "image/png");
-  assert.deepEqual(state.cursor, { x: 101, y: 201 });
+  assert.deepEqual(state.systemCursor, { x: 101, y: 201 });
+  assert.deepEqual(state.agentCursor, { x: 101, y: 201 });
+  assert.deepEqual(state.cursor, state.agentCursor);
+  assert.deepEqual(overlayController.updates.at(-1).agentCursor, state.agentCursor);
 });
 
-test("low-risk actions execute against native desktop and post-observe", async () => {
+test("move updates agent cursor and overlay path without moving native cursor", async () => {
   const nativeClient = fakeNativeClient();
-  const manager = createComputerUseManager({ nativeClient });
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
   await manager.startSession();
 
   const state = await manager.act({ type: "move", x: 320, y: 240 });
 
-  assert.deepEqual(nativeClient.actions, [{ type: "move", x: 320, y: 240 }]);
+  assert.deepEqual(nativeClient.actions, []);
   assert.equal(state.status, "active");
+  assert.deepEqual(state.agentCursor, { x: 320, y: 240 });
+  assert.notDeepEqual(state.systemCursor, state.agentCursor);
   assert.equal(state.trace.length, 1);
   assert.equal(state.trace[0].status, "completed");
   assert.equal(state.trace[0].policy.kind, "low-risk");
+  assert.ok(state.trace[0].agentCursorPath.length >= 2);
   assert.equal(state.observation.sequence, 3);
   assert.ok(
     state.pointerPath.some((point) => point.x === 320 && point.source === "move"),
+  );
+  const animatedUpdate = overlayController.updates.find(
+    (update) => update.durationMs > 0,
+  );
+  assert.deepEqual(animatedUpdate.agentCursor, { x: 320, y: 240 });
+  assert.ok(animatedUpdate.pathSamples.length >= 2);
+  assert.equal(animatedUpdate.pathSamples.at(-1).x, 320);
+});
+
+test("click moves the agent cursor before native desktop click", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession();
+
+  const state = await manager.act({ type: "click", x: 320, y: 240 });
+
+  assert.deepEqual(nativeClient.actions, [{ type: "click", x: 320, y: 240 }]);
+  assert.deepEqual(state.agentCursor, { x: 320, y: 240 });
+  assert.ok(state.trace[0].agentCursorPath.length >= 2);
+  assert.ok(
+    overlayController.updates.some((update) => update.pathSamples?.at(-1)?.x === 320),
   );
 });
 
@@ -167,6 +216,107 @@ test("action preflight blocks if the active app changed after observe", async ()
   assert.equal(state.observation.activeApp.name, "Finder");
 });
 
+test("background target observe does not confuse frontmost app with target app", async () => {
+  const overlayController = fakeOverlayController();
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox" },
+        },
+        targetVisibility: "frontmost",
+      },
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox background" },
+        },
+        targetVisibility: "background",
+      },
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox background" },
+        },
+        targetVisibility: "background",
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const moved = await manager.act({ type: "move", x: 500, y: 400 });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(moved.frontmostApp.bundleIdentifier, "com.apple.finder");
+  assert.equal(moved.targetApp.bundleIdentifier, "org.mozilla.firefox");
+  assert.equal(moved.targetVisibility, "background");
+  assert.equal(moved.overlay.visible, false);
+  assert.match(moved.overlay.reason, /background target/);
+  assert.ok(overlayController.destroyed >= 1);
+  assert.deepEqual(moved.agentCursor, { x: 500, y: 400 });
+
+  const clicked = await manager.act({ type: "click", x: 500, y: 400 });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(clicked.trace.at(-1).status, "blocked");
+  assert.equal(clicked.trace.at(-1).policy.kind, "target-mismatch");
+});
+
+test("background target without window metadata does not inherit frontmost window", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder should not become target" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+
+  const state = await manager.startSession({ app: "org.mozilla.firefox" });
+
+  assert.equal(state.frontmostApp.window.title, "Finder should not become target");
+  assert.equal(state.targetApp.bundleIdentifier, "org.mozilla.firefox");
+  assert.equal(state.targetVisibility, "background");
+  assert.equal(state.target.window, null);
+});
+
 test("actions are blocked until observe proves accessibility permission", async () => {
   const nativeClient = fakeNativeClient({ accessibilityTrusted: false });
   const manager = createComputerUseManager({ nativeClient });
@@ -185,10 +335,34 @@ test("actions without a prior observation first preflight observe the desktop", 
 
   const state = await manager.act({ type: "move", x: 10, y: 10 });
 
-  assert.deepEqual(nativeClient.actions, [{ type: "move", x: 10, y: 10 }]);
+  assert.deepEqual(nativeClient.actions, []);
   assert.equal(state.trace[0].status, "completed");
   assert.equal(state.trace[0].policy.kind, "low-risk");
   assert.equal(state.observation.sequence, 2);
+});
+
+test("stop and cleanup destroy the agent cursor overlay", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession();
+  await manager.stopSession();
+  await manager.cleanup();
+
+  assert.equal(overlayController.destroyed, 2);
+});
+
+test("agent cursor path samples are bounded and end at the destination", () => {
+  const samples = buildAgentCursorPath(
+    { x: 0, y: 0 },
+    { x: 100, y: 50 },
+    { steps: 6, atMs: 1000, source: "move" },
+  );
+
+  assert.equal(samples.length, 6);
+  assert.deepEqual(samples[0], { x: 0, y: 0, atMs: 1000, source: "move" });
+  assert.equal(samples.at(-1).x, 100);
+  assert.equal(samples.at(-1).y, 50);
 });
 
 test("native screenshot cache removes the previous observe evidence", async () => {
@@ -297,11 +471,17 @@ test("computer use exposes headless IPC without adding a right panel view", () =
     path.join(electronDir, "../src/components/RightPanel.tsx"),
     "utf8",
   );
+  const nativeBridge = fs.readFileSync(
+    path.join(electronDir, "computerUseMacNative.swift"),
+    "utf8",
+  );
 
   assert.match(preload, /startComputerUse/);
   assert.match(preload, /actComputerUse/);
   assert.match(main, /codex:computerUse:act/);
   assert.match(main, /destroyComputerUseManager\(window\)/);
+  assert.match(main, /createComputerUseOverlayController/);
+  assert.doesNotMatch(nativeBridge, /postMouse\(\.mouseMoved/);
   assert.doesNotMatch(rightPanel, /Computer Use/);
   assert.doesNotMatch(rightPanel, /computerUse/i);
 });
