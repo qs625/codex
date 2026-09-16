@@ -41,6 +41,16 @@ func pointFromPayload(_ object: [String: Any]) -> CGPoint {
   return CGPoint(x: x, y: y)
 }
 
+func pointFromNestedPayload(_ object: [String: Any], _ key: String) -> CGPoint {
+  guard let nested = object[key] as? [String: Any] else {
+    error("Action requires \(key) point")
+  }
+  guard let x = number(nested["x"]), let y = number(nested["y"]) else {
+    error("Action requires \(key).x and \(key).y")
+  }
+  return CGPoint(x: x, y: y)
+}
+
 func axString(_ element: AXUIElement, _ attribute: String) -> String? {
   var value: CFTypeRef?
   if AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success {
@@ -222,6 +232,38 @@ func click(_ object: [String: Any]) {
   ])
 }
 
+func drag(_ object: [String: Any]) {
+  requireDesktopControlPermission()
+  let from = pointFromNestedPayload(object, "from")
+  let to = pointFromNestedPayload(object, "to")
+  let before = CGEvent(source: nil)?.location ?? CGPoint.zero
+  postMouse(.leftMouseDown, from)
+  let steps = 8
+  for index in 1...steps {
+    let progress = Double(index) / Double(steps)
+    let point = CGPoint(
+      x: from.x + ((to.x - from.x) * progress),
+      y: from.y + ((to.y - from.y) * progress)
+    )
+    postMouse(.leftMouseDragged, point)
+    usleep(12_000)
+  }
+  postMouse(.leftMouseUp, to)
+  let afterDrag = CGEvent(source: nil)?.location ?? CGPoint.zero
+  var restored = false
+  if abs(afterDrag.x - before.x) > 0.5 || abs(afterDrag.y - before.y) > 0.5 {
+    CGWarpMouseCursorPosition(before)
+    restored = true
+  }
+  let afterRestore = CGEvent(source: nil)?.location ?? CGPoint.zero
+  json([
+    "ok": true,
+    "systemCursorRestored": restored,
+    "systemCursorBefore": ["x": before.x, "y": before.y],
+    "systemCursorAfter": ["x": afterRestore.x, "y": afterRestore.y],
+  ])
+}
+
 func typeText(_ object: [String: Any]) {
   requireDesktopControlPermission()
   guard let text = object["text"] as? String else {
@@ -239,7 +281,7 @@ func typeText(_ object: [String: Any]) {
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
   }
-  json(["ok": true])
+  json(["ok": true, "characterCount": text.count])
 }
 
 let keyCodes: [String: CGKeyCode] = [
@@ -286,7 +328,7 @@ func pressKey(_ object: [String: Any]) {
   up.flags = eventFlags
   down.post(tap: .cghidEventTap)
   up.post(tap: .cghidEventTap)
-  json(["ok": true])
+  json(["ok": true, "key": raw, "modifiers": modifiers])
 }
 
 let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "observe"
@@ -303,6 +345,8 @@ case "type":
   typeText(object)
 case "key":
   pressKey(object)
+case "drag":
+  drag(object)
 default:
   error("Unsupported command: \(command)")
 }

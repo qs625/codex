@@ -50,6 +50,21 @@ function fakeNativeClient(options = {}) {
     },
     async act(action) {
       actions.push(action);
+      if (action.type === "click" || action.type === "drag") {
+        return {
+          ok: true,
+          systemCursorRestored: false,
+          systemCursorBefore: { x: 100, y: 200 },
+          systemCursorAfter: { x: 100, y: 200 },
+        };
+      }
+      if (action.type === "type") {
+        return { ok: true, characterCount: action.text.length };
+      }
+      if (action.type === "key") {
+        return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
+      }
+      return { ok: true };
     },
     async cleanup() {
       actions.push({ type: "cleanup" });
@@ -194,46 +209,64 @@ test("click moves the agent cursor before native desktop click", async () => {
   );
 });
 
-test("dangerous and disabled actions are blocked before native side effects", async () => {
+test("warning and drag actions execute with trace evidence", async () => {
   const nativeClient = fakeNativeClient();
-  const manager = createComputerUseManager({ nativeClient });
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
   await manager.startSession();
 
-  const dangerous = await manager.act({ type: "type", text: "send password" });
-  const disabled = await manager.act({
+  const warned = await manager.act({ type: "type", text: "send password" });
+  const dragged = await manager.act({
     type: "drag",
-    from: { x: 1, y: 2 },
-    to: { x: 3, y: 4 },
+    from: { x: 10, y: 20 },
+    to: { x: 30, y: 40 },
   });
 
-  assert.deepEqual(nativeClient.actions, []);
-  assert.equal(dangerous.trace[0].status, "blocked");
-  assert.equal(dangerous.trace[0].policy.kind, "needs-confirmation");
-  assert.equal(disabled.trace[1].status, "blocked");
-  assert.equal(disabled.trace[1].policy.kind, "disabled");
+  assert.deepEqual(nativeClient.actions, [
+    { type: "type", text: "send password" },
+    { type: "drag", from: { x: 10, y: 20 }, to: { x: 30, y: 40 } },
+  ]);
+  assert.equal(warned.trace[0].status, "completed");
+  assert.equal(warned.trace[0].policy.kind, "side-effect-warning");
+  assert.equal(warned.trace[0].evidence.characterCount, 13);
+  assert.equal(dragged.trace[1].status, "completed");
+  assert.equal(dragged.trace[1].policy.kind, "side-effect");
+  assert.ok(dragged.trace[1].agentCursorPath.length >= 2);
+  assert.deepEqual(dragged.agentCursor, { x: 30, y: 40 });
+  assert.equal(dragged.trace[1].evidence.systemCursorRestored, false);
 });
 
 test("policy keeps safe keyboard shortcuts available", () => {
   assert.deepEqual(classifyComputerUseAction({ type: "key", key: "t", modifiers: ["cmd"] }), {
-    kind: "low-risk",
+    kind: "side-effect",
     allowed: true,
-    reason: null,
+    reason: "Computer Use side-effect action.",
   });
-  assert.equal(
+  assert.deepEqual(
     classifyComputerUseAction(normalizeAction({
       type: "key",
       key: "q",
       modifiers: ["command"],
-    })).allowed,
-    false,
+    })),
+    {
+      kind: "side-effect-warning",
+      allowed: true,
+      reason:
+        "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
+    },
   );
-  assert.equal(
+  assert.deepEqual(
     classifyComputerUseAction(normalizeAction({
       type: "key",
       key: "w",
       modifiers: ["meta"],
-    })).allowed,
-    false,
+    })),
+    {
+      kind: "side-effect-warning",
+      allowed: true,
+      reason:
+        "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
+    },
   );
 });
 
@@ -354,6 +387,7 @@ test("background target observe does not confuse frontmost app with target app",
   assert.deepEqual(nativeClient.actions, []);
   assert.equal(clicked.trace.at(-1).status, "blocked");
   assert.equal(clicked.trace.at(-1).policy.kind, "target-mismatch");
+  assert.match(clicked.trace.at(-1).policy.reason, /background/);
 });
 
 test("background target without window metadata does not inherit frontmost window", async () => {

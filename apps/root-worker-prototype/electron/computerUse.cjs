@@ -135,6 +135,8 @@ class ComputerUseManager {
       } else {
         if (normalized.type === "click") {
           await this.moveAgentCursor(normalized, traceItem);
+        } else if (normalized.type === "drag") {
+          await this.dragAgentCursor(normalized, traceItem);
         }
         const actionResult = await this.nativeClient.act(normalized);
         applyActionEvidence(traceItem, actionResult);
@@ -170,6 +172,19 @@ class ComputerUseManager {
         kind: "needs-observation",
         allowed: false,
         reason: "Observe the desktop before running Computer Use actions.",
+      };
+    }
+    if (
+      action.type !== "move" &&
+      this.session.targetVisibility !== "frontmost"
+    ) {
+      return {
+        kind: "target-mismatch",
+        allowed: false,
+        reason:
+          this.session.targetVisibility === "background"
+            ? "Target app is in the background; bring it frontmost before running side-effect Computer Use actions."
+            : "Target app visibility is unknown; observe a frontmost target before running side-effect Computer Use actions.",
       };
     }
     const mismatch =
@@ -277,6 +292,31 @@ class ComputerUseManager {
       this.session.systemCursor ??
       this.session.observation?.systemCursor ??
       destination;
+    const pathSamples = buildAgentCursorPath(origin, destination, {
+      steps: AGENT_CURSOR_MOVE_SAMPLES,
+      atMs: now,
+      source: action.type,
+    });
+    this.session.agentCursor = destination;
+    this.session.cursor = destination;
+    for (const sample of pathSamples) {
+      pushPointerPoint(this.session, sample, sample.atMs, sample.source);
+    }
+    traceItem.agentCursorPath = pathSamples.map(({ x, y, atMs }) => ({
+      x,
+      y,
+      atMs,
+    }));
+    await this.updateOverlay({
+      durationMs: AGENT_CURSOR_MOVE_DURATION_MS,
+      pathSamples,
+    });
+  }
+
+  async dragAgentCursor(action, traceItem) {
+    const now = this.clock();
+    const origin = { x: action.from.x, y: action.from.y };
+    const destination = { x: action.to.x, y: action.to.y };
     const pathSamples = buildAgentCursorPath(origin, destination, {
       steps: AGENT_CURSOR_MOVE_SAMPLES,
       atMs: now,
@@ -428,13 +468,6 @@ function classifyComputerUseAction(action) {
   if (action.type === "observe") {
     return { kind: "read-only", allowed: true, reason: null };
   }
-  if (action.type === "drag") {
-    return {
-      kind: "disabled",
-      allowed: false,
-      reason: "Drag is reserved for the persistent action boundary but disabled in v1.",
-    };
-  }
   const modifiers = normalizeModifiers(action.modifiers);
   if (
     (action.type === "type" && DANGEROUS_TEXT_PATTERN.test(action.text ?? "")) ||
@@ -443,9 +476,17 @@ function classifyComputerUseAction(action) {
       ["delete", "q", "w"].includes(String(action.key ?? "").toLowerCase()))
   ) {
     return {
-      kind: "needs-confirmation",
-      allowed: false,
-      reason: "Potentially destructive or sensitive action requires a future confirmation boundary.",
+      kind: "side-effect-warning",
+      allowed: true,
+      reason:
+        "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
+    };
+  }
+  if (["click", "type", "key", "drag"].includes(action.type)) {
+    return {
+      kind: "side-effect",
+      allowed: true,
+      reason: "Computer Use side-effect action.",
     };
   }
   return { kind: "low-risk", allowed: true, reason: null };
@@ -644,17 +685,32 @@ function applyActionEvidence(traceItem, actionResult) {
   if (!actionResult || typeof actionResult !== "object") {
     return;
   }
+  const evidence = { ...(traceItem.evidence ?? {}) };
   if (
     Object.hasOwn(actionResult, "systemCursorRestored") ||
     Object.hasOwn(actionResult, "systemCursorBefore") ||
     Object.hasOwn(actionResult, "systemCursorAfter")
   ) {
-    traceItem.evidence = {
-      ...(traceItem.evidence ?? {}),
-      systemCursorRestored: actionResult.systemCursorRestored === true,
-      systemCursorBefore: normalizePoint(actionResult.systemCursorBefore),
-      systemCursorAfter: normalizePoint(actionResult.systemCursorAfter),
-    };
+    evidence.systemCursorRestored = actionResult.systemCursorRestored === true;
+    evidence.systemCursorBefore = normalizePoint(actionResult.systemCursorBefore);
+    evidence.systemCursorAfter = normalizePoint(actionResult.systemCursorAfter);
+  }
+  if (Object.hasOwn(actionResult, "ok")) {
+    evidence.ok = actionResult.ok === true;
+  }
+  if (Number.isFinite(actionResult.characterCount)) {
+    evidence.characterCount = actionResult.characterCount;
+  }
+  if (typeof actionResult.key === "string") {
+    evidence.key = actionResult.key;
+  }
+  if (Array.isArray(actionResult.modifiers)) {
+    evidence.modifiers = actionResult.modifiers
+      .filter((value) => typeof value === "string")
+      .slice(0, 8);
+  }
+  if (Object.keys(evidence).length > 0) {
+    traceItem.evidence = evidence;
   }
 }
 
