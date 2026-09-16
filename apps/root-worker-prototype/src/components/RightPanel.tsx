@@ -310,6 +310,8 @@ export function RightPanel({
   const { contextUsage } = threadAnalysis;
   const [terminalCommandFocusRequest, setTerminalCommandFocusRequest] =
     useState<TerminalCommandFocusRequest | null>(null);
+  const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken] =
+    useState(0);
   const [gitDiffPreview, setGitDiffPreview] = useState<GitDiffPreviewState>({
     loading: false,
     diff: null,
@@ -542,6 +544,7 @@ export function RightPanel({
               <TerminalPanel
                 thread={thread}
                 focusCommandRequest={terminalCommandFocusRequest}
+                focusPanelRequestToken={terminalPanelFocusRequestToken}
               />
             ) : activeView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
@@ -657,6 +660,9 @@ export function RightPanel({
                     clickedView: item.view,
                     isCollapsed,
                   });
+                  if (item.view === "terminal") {
+                    setTerminalPanelFocusRequestToken((current) => current + 1);
+                  }
                   onSetActiveView(next.nextView);
                   onSetCollapsed(next.nextCollapsed);
                 }

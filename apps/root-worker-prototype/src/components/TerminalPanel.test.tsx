@@ -159,3 +159,57 @@ test("TerminalPanel publishes preferred size while idle with no active tab", () 
     "idle terminal viewport must remain mounted beneath the empty state",
   );
 });
+
+test("TerminalPanel focuses xterm only from explicit focus requests", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const requestHelperIndex = source.indexOf(
+    "const requestTerminalViewportFocus = useCallback",
+  );
+  const applyHelperIndex = source.indexOf("const applyPendingTerminalFocus = useCallback");
+  const guardedFocusIndex = source.indexOf(
+    "lastAppliedTerminalFocusTokenRef.current = request.token;\n    terminal.focus();",
+    applyHelperIndex,
+  );
+  const targetGuardIndex = source.indexOf(
+    "shouldApplyTerminalViewportFocusRequest({",
+    applyHelperIndex,
+  );
+  const mountFocusIndex = source.indexOf("applyPendingTerminalFocus();");
+  const unconditionalMountFocusIndex = source.indexOf("terminal?.focus();");
+  const focusRequestEffectIndex = source.indexOf(
+    "requestTerminalViewportFocus(nextState.activeTabId);",
+  );
+  const newShellFocusIndex = source.indexOf(
+    "requestTerminalViewportFocus(nextState.activeTabId);",
+    source.indexOf("const createTerminal = () => {"),
+  );
+  const liveCommandFocusIndex = source.indexOf(
+    "const focusLiveCommand = (command: (typeof liveCommands)[number]) => {",
+  );
+  const tabClickFocusIndex = source.indexOf(
+    "requestTerminalViewportFocus(tab.id);",
+    source.indexOf(".selectTerminalTab(tab.id)"),
+  );
+
+  assert.notEqual(requestHelperIndex, -1);
+  assert.notEqual(applyHelperIndex, -1);
+  assert.notEqual(guardedFocusIndex, -1);
+  assert.notEqual(targetGuardIndex, -1);
+  assert.notEqual(mountFocusIndex, -1);
+  assert.equal(
+    unconditionalMountFocusIndex,
+    -1,
+    "terminal mount/replay updates must not unconditionally steal focus",
+  );
+  assert.notEqual(focusRequestEffectIndex, -1);
+  assert.notEqual(newShellFocusIndex, -1);
+  assert.notEqual(liveCommandFocusIndex, -1);
+  assert.notEqual(
+    source.indexOf(
+      "requestTerminalViewportFocus(nextState.activeTabId);",
+      liveCommandFocusIndex,
+    ),
+    -1,
+  );
+  assert.notEqual(tabClickFocusIndex, -1);
+});
