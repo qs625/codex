@@ -107,6 +107,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       }
       throw new Error(`Unsupported Computer Use CLI action: ${action.type}`);
     }
+    needsCleanup = await cleanupBatchSession(manager, needsCleanup);
     const finalState = sanitizeState(manager.state(), request);
     return {
       ok: true,
@@ -118,6 +119,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       state: finalState,
     };
   } catch (error) {
+    needsCleanup = await cleanupBatchSession(manager, needsCleanup);
     return {
       ok: false,
       command: request.command,
@@ -133,6 +135,14 @@ export async function runComputerUseRequest(request, managerFactory) {
       await manager.cleanup?.();
     }
   }
+}
+
+async function cleanupBatchSession(manager, needsCleanup) {
+  if (!needsCleanup) {
+    return false;
+  }
+  await manager.cleanup?.();
+  return false;
 }
 
 export function parseComputerUseCliArgs(argv) {

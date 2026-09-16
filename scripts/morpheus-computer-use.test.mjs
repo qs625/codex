@@ -217,6 +217,13 @@ test("computer use CLI wires a target-bound overlay for frontmost moves", async 
     width: 900,
     height: 700,
   });
+  assert.equal(result.results[2].state.status, "stopped");
+  assert.equal(result.results[2].state.overlay.mode, "target-bound");
+  assert.equal(result.results[2].state.overlay.visible, false);
+  assert.match(result.results[2].state.overlay.reason, /stopped/);
+  assert.equal(result.state.status, "stopped");
+  assert.equal(result.state.overlay.visible, false);
+  assert.match(result.state.overlay.reason, /stopped/);
   assert.equal(overlayController.destroyed, 1);
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
@@ -242,14 +249,50 @@ test("computer use CLI keeps background target cursor hidden without drawing ove
   );
 
   assert.equal(result.ok, true);
+  assert.equal(result.results[1].state.overlay.mode, "target-bound");
+  assert.equal(result.results[1].state.overlay.visible, false);
+  assert.match(result.results[1].state.overlay.reason, /background target/);
+  assert.match(result.results[1].state.overlay.reason, /foreground app/);
+  assert.match(
+    result.results[1].state.overlay.reason,
+    /subsequent observe or move/,
+  );
   assert.equal(result.state.overlay.mode, "target-bound");
   assert.equal(result.state.overlay.visible, false);
-  assert.match(result.state.overlay.reason, /background target/);
-  assert.match(result.state.overlay.reason, /foreground app/);
-  assert.match(result.state.overlay.reason, /subsequent observe or move/);
+  assert.match(result.state.overlay.reason, /stopped/);
   assert.deepEqual(result.state.agentCursor, { x: 620, y: 460 });
   assert.equal(overlayController.updates.length, 0);
   assert.equal(overlayController.destroyed >= 1, true);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI final state hides overlay after implicit batch cleanup", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "move", x: 620, y: 460 }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => overlayController,
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].state.overlay.visible, true);
+  assert.equal(result.state.status, "active");
+  assert.equal(result.state.overlay.mode, "target-bound");
+  assert.equal(result.state.overlay.visible, false);
+  assert.match(result.state.overlay.reason, /stopped/);
+  assert.equal(overlayController.destroyed, 1);
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 
@@ -329,10 +372,17 @@ test("computer use CLI hides frontmost target overlay when move is outside targe
   );
 
   assert.equal(result.ok, true);
+  assert.equal(result.results[1].state.targetVisibility, "frontmost");
+  assert.equal(result.results[1].state.overlay.mode, "target-bound");
+  assert.equal(result.results[1].state.overlay.visible, false);
+  assert.match(
+    result.results[1].state.overlay.reason,
+    /outside the target window/,
+  );
   assert.equal(result.state.targetVisibility, "frontmost");
   assert.equal(result.state.overlay.mode, "target-bound");
   assert.equal(result.state.overlay.visible, false);
-  assert.match(result.state.overlay.reason, /outside the target window/);
+  assert.match(result.state.overlay.reason, /stopped/);
   assert.deepEqual(result.state.agentCursor, { x: 1200, y: 900 });
   assert.equal(
     overlayController.updates.some(
@@ -368,9 +418,15 @@ test("computer use CLI reports target-bound overlay limitation when helper is di
   );
 
   assert.equal(result.ok, true);
+  assert.equal(result.results[1].state.overlay.mode, "target-bound");
+  assert.equal(result.results[1].state.overlay.visible, false);
+  assert.match(
+    result.results[1].state.overlay.reason,
+    /overlay controller is unavailable/,
+  );
   assert.equal(result.state.overlay.mode, "target-bound");
   assert.equal(result.state.overlay.visible, false);
-  assert.match(result.state.overlay.reason, /overlay controller is unavailable/);
+  assert.match(result.state.overlay.reason, /stopped/);
   assert.deepEqual(result.state.agentCursor, { x: 620, y: 460 });
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });

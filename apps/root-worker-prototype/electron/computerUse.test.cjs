@@ -414,8 +414,13 @@ test("stop and cleanup destroy the agent cursor overlay", async () => {
   const overlayController = fakeOverlayController();
   const manager = createComputerUseManager({ nativeClient, overlayController });
   await manager.startSession();
-  await manager.stopSession();
+  const stopped = await manager.stopSession();
+  assert.equal(stopped.overlay.mode, "target-bound");
+  assert.equal(stopped.overlay.visible, false);
+  assert.match(stopped.overlay.reason, /stopped/);
   await manager.cleanup();
+  assert.equal(manager.state().overlay.visible, false);
+  assert.match(manager.state().overlay.reason, /stopped/);
 
   assert.equal(overlayController.destroyed, 2);
 });

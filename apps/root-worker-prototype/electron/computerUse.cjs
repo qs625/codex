@@ -40,6 +40,7 @@ class ComputerUseManager {
   async cleanup() {
     await this.nativeClient.cleanup?.();
     await this.overlayController?.destroy?.();
+    this.markOverlayStopped();
   }
 
   async startSession(options = {}) {
@@ -58,6 +59,7 @@ class ComputerUseManager {
     this.session.updatedAtMs = this.clock();
     await this.nativeClient.cleanup?.();
     await this.overlayController?.destroy?.();
+    this.markOverlayStopped();
     return this.state();
   }
 
@@ -366,6 +368,16 @@ class ComputerUseManager {
       return;
     }
     this.session.overlay = { mode: "target-bound", visible: true, reason: null };
+  }
+
+  markOverlayStopped() {
+    if (this.session) {
+      this.session.overlay = {
+        mode: "target-bound",
+        visible: false,
+        reason: "Agent cursor overlay is stopped.",
+      };
+    }
   }
 
   applyError(error, phase) {
