@@ -345,7 +345,7 @@ test("background target observe does not confuse frontmost app with target app",
   assert.equal(moved.overlay.visible, false);
   assert.match(moved.overlay.reason, /background target/);
   assert.match(moved.overlay.reason, /foreground app/);
-  assert.match(moved.overlay.reason, /frontmost/);
+  assert.match(moved.overlay.reason, /subsequent observe or move/);
   assert.ok(overlayController.destroyed >= 1);
   assert.deepEqual(moved.agentCursor, { x: 500, y: 400 });
 

@@ -23,6 +23,10 @@ function fakeNativeClient(options = {}) {
     },
     async observe() {
       observeCount += 1;
+      const targetVisibility =
+        options.targetVisibilitySequence?.[observeCount - 1] ??
+        options.targetVisibility ??
+        "frontmost";
       return {
         cursor: { x: 100 + observeCount, y: 200 + observeCount },
         systemCursor: { x: 100 + observeCount, y: 200 + observeCount },
@@ -56,7 +60,7 @@ function fakeNativeClient(options = {}) {
             size: { width: 900, height: 700 },
           },
         },
-        targetVisibility: options.targetVisibility ?? "frontmost",
+        targetVisibility,
         accessibilityTrusted: true,
         screenshot: {
           path: `/tmp/screen-${observeCount}.png`,
@@ -242,10 +246,65 @@ test("computer use CLI keeps background target cursor hidden without drawing ove
   assert.equal(result.state.overlay.visible, false);
   assert.match(result.state.overlay.reason, /background target/);
   assert.match(result.state.overlay.reason, /foreground app/);
-  assert.match(result.state.overlay.reason, /frontmost/);
+  assert.match(result.state.overlay.reason, /subsequent observe or move/);
   assert.deepEqual(result.state.agentCursor, { x: 620, y: 460 });
   assert.equal(overlayController.updates.length, 0);
   assert.equal(overlayController.destroyed >= 1, true);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI shows target-bound overlay on a later move after target becomes frontmost", async () => {
+  const nativeClient = fakeNativeClient({
+    targetVisibilitySequence: [
+      "background",
+      "background",
+      "background",
+      "frontmost",
+      "frontmost",
+      "frontmost",
+    ],
+  });
+  const overlayController = fakeOverlayController();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([
+        { type: "start" },
+        { type: "move", x: 620, y: 460 },
+        { type: "observe" },
+        { type: "move", x: 640, y: 480 },
+      ]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => overlayController,
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].state.targetVisibility, "background");
+  assert.equal(result.results[1].state.overlay.visible, false);
+  assert.equal(result.results[2].state.targetVisibility, "frontmost");
+  assert.equal(result.results[2].state.overlay.visible, true);
+  assert.equal(result.results[3].state.targetVisibility, "frontmost");
+  assert.equal(result.results[3].state.overlay.visible, true);
+  assert.deepEqual(result.results[3].state.agentCursor, { x: 640, y: 480 });
+  assert.equal(
+    overlayController.updates.every(
+      (payload) => payload.targetVisibility === "frontmost",
+    ),
+    true,
+  );
+  assert.equal(
+    overlayController.updates.some((payload) => payload.pathSamples.length > 0),
+    true,
+  );
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 

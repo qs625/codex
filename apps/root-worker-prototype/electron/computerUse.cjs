@@ -316,7 +316,7 @@ class ComputerUseManager {
         visible: false,
         reason:
           targetVisibility === "background"
-            ? "Agent cursor is tracking a background target; target-bound overlay is hidden to avoid drawing over the user's current foreground app and will become visible when the target window is frontmost."
+            ? "Agent cursor is tracking a background target; target-bound overlay is hidden to avoid drawing over the user's current foreground app. After the target becomes frontmost, a subsequent observe or move can show target-bound cursor feedback."
             : "Agent cursor overlay is hidden because target visibility is unknown.",
       };
       await this.overlayController.destroy?.();

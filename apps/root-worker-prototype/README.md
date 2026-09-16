@@ -146,10 +146,10 @@ that file before returning; pass `--omit-screenshot-data` for metadata-only
 output. CLI runs create a narrow Electron overlay helper for target-bound agent
 cursor feedback; the helper is click-through, non-focusable, and cleaned up on
 `stop`/process exit. Background targets are not activated by default and the
-cursor is not drawn over an unrelated foreground app; the target-bound cursor
-becomes visible when the target window is frontmost. After a visible `move`, the
-CLI keeps the overlay on screen briefly before the next batch action; pass
-`--overlay-hold-ms 0` to disable that delay.
+cursor is not drawn over an unrelated foreground app; after the target becomes
+frontmost, a subsequent `observe` or `move` can show target-bound cursor
+feedback. After a visible `move`, the CLI keeps the overlay on screen briefly
+before the next batch action; pass `--overlay-hold-ms 0` to disable that delay.
 
 ## Electron
 
