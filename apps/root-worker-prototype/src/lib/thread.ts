@@ -2279,7 +2279,8 @@ function getRetainedUnmatchedTurn(
     !normalizedItems.some(
       (item) =>
         hasMatchingInitContextItem(matcher, item) ||
-        hasMatchingReasoningItem(matcher, item),
+        hasMatchingReasoningItem(matcher, item) ||
+        hasMatchingRestartRecoveryNoticeItem(matcher, item),
     )
   ) {
     return [normalizedTurn];
@@ -2553,6 +2554,25 @@ function consumeMatchingRestartRecoveryNoticeItem(
   }
   decrementMapCount(matcher.index.restartRecoveryNoticeTexts, text, 1);
   return true;
+}
+
+function hasMatchingRestartRecoveryNoticeItem(
+  matcher: TurnItemMatcher,
+  item: ThreadItem,
+) {
+  const noticeId = restartRecoveryNoticeId(item);
+  const text = userMessageTextKey(item);
+  if (noticeId) {
+    if (matcher.index.restartRecoveryNoticeIds.has(noticeId)) {
+      return true;
+    }
+    return text
+      ? (matcher.index.untypedUserMessageTexts.get(text) ?? 0) > 0
+      : false;
+  }
+  return text
+    ? (matcher.index.restartRecoveryNoticeTexts.get(text) ?? 0) > 0
+    : false;
 }
 
 function restartRecoveryNoticeId(item: ThreadItem) {

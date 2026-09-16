@@ -4449,6 +4449,89 @@ test("mergeThreadSnapshot drops live restart recovery notice restored by thread 
   );
 });
 
+test("mergeThreadSnapshot drops completed restart recovery notice restored by thread read", () => {
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求 call_same；该请求已完成。";
+  const existingRecoveryTurn = {
+    id: "completed-local-recovery-turn",
+    items: [
+      {
+        type: "userMessage" as const,
+        id: "runtime-restart-recovery:call_same",
+        content: [{ type: "text" as const, text: prompt }],
+      },
+      {
+        type: "commandExecution" as const,
+        id: "cmd-audit",
+        command: "audit recovery text",
+        cwd: "/tmp",
+        status: "completed" as const,
+        initialWaitMs: null,
+        notifyOn: null,
+        aggregatedOutput: `${prompt}\n`,
+        exitCode: 0,
+        durationMs: 10,
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    id: "read-recovery-turn",
+    items: [
+      {
+        type: "userMessage" as const,
+        id: "backend-user-message",
+        content: [{ type: "text" as const, text: prompt }],
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [existingRecoveryTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(
+    merged.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage" ? [item.id] : [],
+      ),
+    ),
+    ["backend-user-message"],
+  );
+  assert.deepEqual(
+    merged.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "commandExecution" ? [item.id] : [],
+      ),
+    ),
+    ["cmd-audit"],
+  );
+  assert.deepEqual(
+    buildConversationEntries(merged)
+      .filter((entry) => entry.kind === "message" && entry.role === "user")
+      .map((entry) => entry.text),
+    [prompt],
+  );
+});
+
 test("mergeThreadSnapshot preserves independent same-text user messages", () => {
   const prompt = "same user text";
   const liveTurn = {
