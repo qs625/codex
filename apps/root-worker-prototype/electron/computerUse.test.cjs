@@ -679,6 +679,40 @@ test("actions without a prior observation first preflight observe the desktop", 
   assert.equal(state.observation.sequence, 2);
 });
 
+test("side effects without an explicit target bind to the observed frontmost app", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox" },
+        },
+      },
+      {
+        activeApp: {
+          name: "Safari",
+          bundleIdentifier: "com.apple.Safari",
+          processIdentifier: 43,
+          window: { title: "Safari" },
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+
+  const state = await manager.act({ type: "key", key: "Tab" });
+
+  assert.deepEqual(nativeClient.actions, [{ type: "key", key: "Tab", modifiers: [] }]);
+  assert.equal(state.trace[0].status, "completed");
+  assert.equal(state.trace[0].policy.kind, "side-effect");
+  assert.equal(state.trace[0].observationSequence, 1);
+  assert.equal(state.target.app, "org.mozilla.firefox");
+  assert.equal(state.frontmostApp.bundleIdentifier, "com.apple.Safari");
+  assert.equal(state.targetVisibility, "unknown");
+});
+
 test("stop and cleanup destroy the agent cursor overlay", async () => {
   const nativeClient = fakeNativeClient();
   const overlayController = fakeOverlayController();
