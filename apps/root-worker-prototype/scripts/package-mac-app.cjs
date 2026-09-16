@@ -84,6 +84,7 @@ function buildMacAppPackagePlan({
       "MacOS",
       LAUNCHER_EXECUTABLE_NAME,
     ),
+    nativeResourceDir: path.join(resourceStagingDir, "native"),
     outerInfoPlistSourcePath: path.join(cwd, "electron", "Info.plist"),
     payloadBundlePath,
     payloadStagingDir,
@@ -106,6 +107,7 @@ function buildElectronPackagerArgs({
   payloadStagingDir = path.join(cwd, PAYLOAD_STAGING_DIR_NAME),
   binResourceDir,
   defaultConfigResourceDir,
+  nativeResourceDir,
 } = {}) {
   return [
     ".",
@@ -124,6 +126,7 @@ function buildElectronPackagerArgs({
     "--no-prune",
     `--extra-resource=${path.relative(cwd, binResourceDir)}`,
     `--extra-resource=${path.relative(cwd, defaultConfigResourceDir)}`,
+    `--extra-resource=${path.relative(cwd, nativeResourceDir)}`,
   ];
 }
 
@@ -303,6 +306,7 @@ function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}
       payloadStagingDir: plan.payloadStagingDir,
       binResourceDir: plan.binResourceDir,
       defaultConfigResourceDir: plan.defaultConfigResourceDir,
+      nativeResourceDir: plan.nativeResourceDir,
     })], { cwd });
     const sourceCommit = capture("git", ["rev-parse", "HEAD"], { cwd }).trim();
     const manifest = prepareSeedCapsule(plan, { sourceCommit });

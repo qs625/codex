@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   APP_NAME,
+  COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
   materializeInstalledArtifactWorkerBundle,
@@ -328,17 +329,20 @@ test("Electron worker bundle reads packaged sources and writes a raw loadable bu
   );
 });
 
-test("stagePayloadResources installs app-server and compact prompt", () => {
+test("stagePayloadResources installs app-server, compact prompt, and native bridge", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "capsule-resources-"));
   try {
     const appServer = path.join(root, "source-app-server");
     const compact = path.join(root, "source-compact.md");
+    const native = path.join(root, "computerUseMacNative.swift");
     fs.writeFileSync(appServer, "binary", { mode: 0o755 });
     fs.writeFileSync(compact, "prompt");
+    fs.writeFileSync(native, "// native bridge");
     const target = path.join(root, "resources");
     stagePayloadResources(
       {
         appServerBinaryPath: appServer,
+        computerUseNativeScriptSourcePath: native,
         defaultCompactPromptSourcePath: compact,
       },
       target,
@@ -350,6 +354,16 @@ test("stagePayloadResources installs app-server and compact prompt", () => {
         "utf8",
       ),
       "prompt",
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          target,
+          ...COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH.split(path.sep),
+        ),
+        "utf8",
+      ),
+      "// native bridge",
     );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -365,8 +379,13 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
     const compactPath = path.join(root, "COMPACT.md");
     fs.mkdirSync(sourceAppDir, { recursive: true });
     fs.mkdirSync(codexRsDir, { recursive: true });
+    fs.mkdirSync(path.join(sourceAppDir, "electron"), { recursive: true });
     fs.writeFileSync(appServerBinaryPath, "server", { mode: 0o755 });
     fs.writeFileSync(compactPath, "compact");
+    fs.writeFileSync(
+      path.join(sourceAppDir, "electron", "computerUseMacNative.swift"),
+      "// native bridge",
+    );
     const plan = {
       appServerBinaryPath,
       codexRsDir,
@@ -449,6 +468,18 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
     for (const generated of GENERATED_SOURCE_DIR_NAMES) {
       assert.ok(packagerArgs.includes(`--ignore=^/${generated}($|/)`));
     }
+    assert.ok(
+      packagerArgs.includes(
+        `--extra-resource=${path.join(
+          root,
+          "state",
+          "incoming",
+          "activation-test",
+          ".resources",
+          "native",
+        )}`,
+      ),
+    );
     assert.match(result.releaseId, /^sha256:[0-9a-f]{64}$/);
     assert.ok(
       fs.statSync(
@@ -481,8 +512,13 @@ test("Electron producer uses raw filesystem for regular app.asar and failure cle
     const compactPath = path.join(root, "COMPACT.md");
     fs.mkdirSync(sourceAppDir, { recursive: true });
     fs.mkdirSync(codexRsDir, { recursive: true });
+    fs.mkdirSync(path.join(sourceAppDir, "electron"), { recursive: true });
     fs.writeFileSync(appServerBinaryPath, "server", { mode: 0o755 });
     fs.writeFileSync(compactPath, "compact");
+    fs.writeFileSync(
+      path.join(sourceAppDir, "electron", "computerUseMacNative.swift"),
+      "// native bridge",
+    );
     const plan = {
       appServerBinaryPath,
       codexRsDir,

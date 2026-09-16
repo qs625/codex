@@ -30,6 +30,7 @@ test("package plan separates outer app, payload staging, and Seed Capsule", () =
     /target\/release\/runtime-capsule-launcher$/,
   );
   assert.match(plan.launcherExecutablePath, /Contents\/MacOS\/MorpheusLauncher$/);
+  assert.match(plan.nativeResourceDir, /dist-package-resources\/native$/);
 });
 
 test("Electron packager creates the complete inner Runtime app", () => {
@@ -38,6 +39,7 @@ test("Electron packager creates the complete inner Runtime app", () => {
     payloadStagingDir: "/repo/payload",
     binResourceDir: "/repo/resources/bin",
     defaultConfigResourceDir: "/repo/resources/default-config",
+    nativeResourceDir: "/repo/resources/native",
   });
   assert.deepEqual(args.slice(0, 2), [".", "Root Worker Runtime"]);
   assert.ok(args.includes("--extend-info=electron/PayloadInfo.plist"));
@@ -51,6 +53,8 @@ test("Electron packager creates the complete inner Runtime app", () => {
     assert.ok(args.includes(`--ignore=^/${generated}($|/)`));
   }
   assert.ok(args.includes("--extra-resource=../../resources/bin"));
+  assert.ok(args.includes("--extra-resource=../../resources/default-config"));
+  assert.ok(args.includes("--extra-resource=../../resources/native"));
 });
 
 test("Launcher build uses the generic Cargo bin and embeds the Seed release", () => {

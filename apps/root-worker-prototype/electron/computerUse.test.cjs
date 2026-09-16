@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
-const { join } = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -8,6 +9,7 @@ const {
   createComputerUseManager,
   createMacNativeComputerUseClientWithAdapters,
   normalizeAction,
+  resolveMacNativeComputerUseScriptPath,
 } = require("./computerUse.cjs");
 
 function fakeNativeClient(options = {}) {
@@ -249,12 +251,50 @@ test("native observe failure removes the just-captured screenshot", async () => 
   assert.deepEqual(removed, ["/tmp/screen-failed.png"]);
 });
 
+test("mac native script resolver prefers packaged resource file", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-resource-"));
+  try {
+    const resourcesPath = path.join(root, "Resources");
+    const resourceScript = path.join(
+      resourcesPath,
+      "native",
+      "computerUseMacNative.swift",
+    );
+    fs.mkdirSync(path.dirname(resourceScript), { recursive: true });
+    fs.writeFileSync(resourceScript, "// bridge");
+
+    assert.equal(
+      resolveMacNativeComputerUseScriptPath({
+        resourcesPath,
+        sourceDirectory: "/repo/apps/root-worker-prototype/electron",
+      }),
+      resourceScript,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native script resolver falls back to source tree path", () => {
+  assert.equal(
+    resolveMacNativeComputerUseScriptPath({
+      resourcesPath: "/missing/Resources",
+      sourceDirectory: "/repo/apps/root-worker-prototype/electron",
+      fileExists: () => false,
+    }),
+    path.join(
+      "/repo/apps/root-worker-prototype/electron",
+      "computerUseMacNative.swift",
+    ),
+  );
+});
+
 test("computer use exposes headless IPC without adding a right panel view", () => {
   const electronDir = __dirname;
-  const preload = readFileSync(join(electronDir, "preload.cjs"), "utf8");
-  const main = readFileSync(join(electronDir, "main.cjs"), "utf8");
-  const rightPanel = readFileSync(
-    join(electronDir, "../src/components/RightPanel.tsx"),
+  const preload = fs.readFileSync(path.join(electronDir, "preload.cjs"), "utf8");
+  const main = fs.readFileSync(path.join(electronDir, "main.cjs"), "utf8");
+  const rightPanel = fs.readFileSync(
+    path.join(electronDir, "../src/components/RightPanel.tsx"),
     "utf8",
   );
 
