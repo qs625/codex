@@ -125,6 +125,26 @@ Screen Recording and Accessibility approval are still granted by macOS to the
 installed, signed app identity in System Settings; they are not replaced by
 external computer-use permissions or by the cloned source workspace.
 
+The agent-facing Computer Use entrypoint is the repository CLI, not the
+renderer/preload IPC surface:
+
+```bash
+node scripts/morpheus-computer-use.mjs run \
+  --app com.apple.finder \
+  --json \
+  --actions '[{"type":"start"},{"type":"observe"},{"type":"move","x":420,"y":360},{"type":"stop"}]'
+```
+
+The CLI keeps a Computer Use session inside a single `run` process and reuses
+the Electron ComputerUseManager safety gates, target preflight, trace evidence,
+and native macOS bridge. CLI v1 supports `start`, `observe`, `move`, and `stop`;
+`move` only updates the agent cursor/path evidence and does not move the macOS
+system cursor. `click`, `type`, `key`, and `drag` are reported as blocked until a
+future confirmation boundary exists. Screenshot evidence includes a bounded data
+URL by default and omits the temporary capture path because the CLI cleans up
+that file before returning; pass `--omit-screenshot-data` for metadata-only
+output.
+
 ## Electron
 
 ```bash
