@@ -72,7 +72,24 @@ function fakeNativeClient(options = {}) {
     },
     async act(action) {
       actions.push(action);
-      return {};
+      if (options.failActionType === action.type) {
+        throw new Error(`${action.type} failed in native backend`);
+      }
+      if (action.type === "click" || action.type === "drag") {
+        return {
+          ok: true,
+          systemCursorRestored: false,
+          systemCursorBefore: { x: 101, y: 201 },
+          systemCursorAfter: { x: 101, y: 201 },
+        };
+      }
+      if (action.type === "type") {
+        return { ok: true, characterCount: action.text.length };
+      }
+      if (action.type === "key") {
+        return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
+      }
+      return { ok: true };
     },
     async cleanup() {
       actions.push({ type: "cleanup" });
@@ -141,37 +158,176 @@ test("computer use CLI run keeps batch session state for observe move stop", asy
   assert.deepEqual(harness.nativeClient.actions, [{ type: "cleanup" }]);
 });
 
-test("computer use CLI blocks click type key and drag before native side effects", async () => {
-  const harness = managerHarness();
+test("computer use CLI runs click type key and drag by default", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
 
   const result = await runComputerUseRequest(
     parseComputerUseCliArgs([
       "run",
+      "--app",
+      "com.apple.finder",
       "--overlay-hold-ms",
       "0",
       "--actions",
       JSON.stringify([
-        { type: "click", x: 10, y: 20 },
+        { type: "start" },
+        { type: "click", x: 620, y: 460 },
+        { type: "key", key: "Tab" },
         { type: "type", text: "hello" },
-        { type: "key", key: "t", modifiers: ["cmd"] },
-        { type: "drag", from: { x: 1, y: 2 }, to: { x: 3, y: 4 } },
+        { type: "drag", from: { x: 620, y: 460 }, to: { x: 640, y: 480 } },
+        { type: "stop" },
       ]),
     ]),
-    () => harness.manager,
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => overlayController,
+    }),
   );
 
   assert.equal(result.ok, true);
   assert.deepEqual(
     result.results.map((item) => item.status),
-    ["blocked", "blocked", "blocked", "blocked"],
+    ["completed", "completed", "completed", "completed", "completed", "completed"],
+  );
+  assert.deepEqual(result.policy.disabledActions, []);
+  assert.deepEqual(
+    result.policy.allowedActions,
+    ["start", "observe", "move", "click", "key", "type", "drag", "stop"],
+  );
+  assert.deepEqual(nativeClient.actions, [
+    { type: "click", x: 620, y: 460 },
+    { type: "key", key: "Tab", modifiers: [] },
+    { type: "type", text: "hello" },
+    { type: "drag", from: { x: 620, y: 460 }, to: { x: 640, y: 480 } },
+    { type: "cleanup" },
+  ]);
+  const clickTrace = result.results[1].state.trace.at(-1);
+  assert.equal(clickTrace.action.type, "click");
+  assert.equal(clickTrace.policy.kind, "side-effect");
+  assert.equal(clickTrace.status, "completed");
+  assert.equal(clickTrace.evidence.ok, true);
+  assert.equal(clickTrace.evidence.systemCursorRestored, false);
+  assert.ok(clickTrace.agentCursorPath.length >= 2);
+  const keyTrace = result.results[2].state.trace.at(-1);
+  assert.equal(keyTrace.action.type, "key");
+  assert.equal(keyTrace.evidence.key, "Tab");
+  assert.deepEqual(keyTrace.evidence.modifiers, []);
+  const typeTrace = result.results[3].state.trace.at(-1);
+  assert.equal(typeTrace.action.type, "type");
+  assert.equal(typeTrace.evidence.characterCount, 5);
+  const dragTrace = result.results[4].state.trace.at(-1);
+  assert.equal(dragTrace.action.type, "drag");
+  assert.equal(dragTrace.status, "completed");
+  assert.equal(dragTrace.policy.kind, "side-effect");
+  assert.ok(dragTrace.agentCursorPath.length >= 2);
+  assert.equal(dragTrace.evidence.systemCursorRestored, false);
+  assert.deepEqual(result.results[4].state.agentCursor, { x: 640, y: 480 });
+  assert.equal(result.state.overlay.visible, false);
+  assert.match(result.state.overlay.reason, /stopped/);
+});
+
+test("computer use CLI keeps side effects blocked for background targets", async () => {
+  const nativeClient = fakeNativeClient({ targetVisibility: "background" });
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "key", key: "Tab" }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].status, "blocked");
+  assert.equal(result.results[1].policy.kind, "target-mismatch");
+  assert.match(result.results[1].policy.reason, /background/);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI executes warning side effects with policy evidence", async () => {
+  const nativeClient = fakeNativeClient();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([
+        { type: "type", text: "send password token" },
+        { type: "key", key: "q", modifiers: ["cmd"] },
+      ]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.results.map((item) => item.status),
+    ["completed", "completed"],
   );
   assert.deepEqual(
-    result.results.map((item) => item.policy.kind),
-    ["disabled", "disabled", "disabled", "disabled"],
+    result.results.map((item) => item.state.trace.at(-1).policy.kind),
+    ["side-effect-warning", "side-effect-warning"],
   );
-  assert.equal(harness.nativeClient.observeCount, 0);
-  assert.deepEqual(harness.nativeClient.actions, []);
-  assert.equal(result.state.status, "idle");
+  assert.deepEqual(nativeClient.actions, [
+    { type: "type", text: "send password token" },
+    { type: "key", key: "q", modifiers: ["cmd"] },
+    { type: "cleanup" },
+  ]);
+  assert.equal(
+    result.results[0].state.trace.at(-1).evidence.characterCount,
+    "send password token".length,
+  );
+  assert.equal(result.results[1].state.trace.at(-1).evidence.key, "q");
+});
+
+test("computer use CLI reports native side-effect failures without fake success", async () => {
+  const nativeClient = fakeNativeClient({ failActionType: "key" });
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "key", key: "Tab" }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].status, "failed");
+  assert.match(result.results[1].error, /key failed in native backend/);
+  assert.equal(result.results[1].state.status, "error");
+  assert.equal(result.results[1].state.trace.at(-1).status, "failed");
+  assert.match(
+    result.results[1].state.trace.at(-1).error,
+    /key failed in native backend/,
+  );
+  assert.deepEqual(nativeClient.actions, [
+    { type: "key", key: "Tab", modifiers: [] },
+    { type: "cleanup" },
+  ]);
 });
 
 test("computer use CLI wires a target-bound overlay for frontmost moves", async () => {

@@ -13,7 +13,7 @@ const {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const CLI_DISABLED_ACTIONS = new Set(["click", "type", "key", "drag"]);
+const CLI_ACTIONS = new Set(["move", "click", "type", "key", "drag"]);
 const DEFAULT_ACTIONS = [{ type: "start" }];
 const OVERLAY_HELPER_PATH = join(
   __dirname,
@@ -88,18 +88,14 @@ export async function runComputerUseRequest(request, managerFactory) {
         results.push(completedResult(index, action, state, request));
         continue;
       }
-      if (CLI_DISABLED_ACTIONS.has(action.type)) {
-        results.push(blockedResult(index, action, manager.state(), request));
-        continue;
-      }
-      if (action.type === "move") {
+      if (CLI_ACTIONS.has(action.type)) {
         if (!started) {
           await manager.startSession({ app: request.app ?? undefined });
           started = true;
           needsCleanup = true;
         }
         const state = await manager.act(action);
-        results.push(completedResult(index, action, state, request));
+        results.push(managerActionResult(index, action, state, request));
         if (state.overlay?.visible === true) {
           await delay(request.overlayHoldMs);
         }
@@ -113,7 +109,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       ok: true,
       command: request.command,
       target: { app: request.app ?? null },
-      policy: cliPolicy(),
+      policy: cliPolicy(request),
       limitations: cliLimitations(),
       results,
       state: finalState,
@@ -124,7 +120,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       ok: false,
       command: request.command,
       target: { app: request.app ?? null },
-      policy: cliPolicy(),
+      policy: cliPolicy(request),
       limitations: cliLimitations(),
       results,
       state: safeManagerState(manager, request),
@@ -428,17 +424,43 @@ function completedResult(index, action, state, request) {
   };
 }
 
-function blockedResult(index, action, state, request) {
+function managerActionResult(index, action, state, request) {
+  const traceItem = state?.trace?.at?.(-1);
+  const traceMatchesAction = traceItem?.action?.type === action.type;
+  if (traceMatchesAction && traceItem.status === "blocked") {
+    return {
+      index,
+      action,
+      status: "blocked",
+      policy: traceItem.policy ?? null,
+      state: sanitizeState(state, request),
+    };
+  }
+  if (traceMatchesAction && traceItem.status === "failed") {
+    return {
+      index,
+      action,
+      status: "failed",
+      policy: traceItem.policy ?? null,
+      error: traceItem.error ?? null,
+      state: sanitizeState(state, request),
+    };
+  }
+  return completedResult(index, action, state, request);
+}
+
+function blockedResult(index, action, state, request, policy = null) {
   return {
     index,
     action,
     status: "blocked",
-    policy: {
-      kind: "disabled",
-      allowed: false,
-      reason:
-        "This Computer Use CLI v1 only permits start, observe, move, and stop. Click, type, key, and drag require a future confirmation boundary.",
-    },
+    policy:
+      policy ?? {
+        kind: "disabled",
+        allowed: false,
+        reason:
+          "This Computer Use CLI action is not supported by the current run command.",
+      },
     state: sanitizeState(state, request),
   };
 }
@@ -482,8 +504,8 @@ function cliPolicy() {
   return {
     version: "computer-use-cli-v1",
     sessionMode: "single-process-batch",
-    allowedActions: ["start", "observe", "move", "stop"],
-    disabledActions: [...CLI_DISABLED_ACTIONS],
+    allowedActions: ["start", "observe", "move", "click", "key", "type", "drag", "stop"],
+    disabledActions: [],
     moveDoesNotMoveSystemCursor: true,
   };
 }
@@ -491,7 +513,8 @@ function cliPolicy() {
 function cliLimitations() {
   return [
     "The CLI keeps session state only for the lifetime of one `run` process.",
-    "The CLI v1 disables click, type, key, and drag even when the underlying manager can classify some of them as low risk.",
+    "Click, key, type, and drag are real desktop side effects and require a frontmost matched target plus Accessibility permission.",
+    "Background targets are not activated automatically; make the target frontmost before running side-effect actions.",
     "Screenshots include a bounded data URL by default; pass --omit-screenshot-data for metadata-only output.",
     "Visible agent cursor feedback is target-bound. Background targets are not activated or drawn over unrelated foreground apps.",
     "After a visible move, the CLI waits --overlay-hold-ms before the next action so the cursor can be seen.",
@@ -527,7 +550,7 @@ function usage() {
     "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --json --actions '<json-array>'",
     "",
     "Actions:",
-    "  start, observe, move, stop",
+    "  start, observe, move, click, key, type, drag, stop",
     "",
     "Example:",
     "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --actions '[{\"type\":\"start\"},{\"type\":\"observe\"},{\"type\":\"move\",\"x\":420,\"y\":360},{\"type\":\"stop\"}]'",
