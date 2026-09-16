@@ -155,6 +155,7 @@ const {
   terminalTabNeedsLiveSessionRefresh,
   terminalTabSupports,
 } = require("./terminalPanel.cjs");
+const { createComputerUseManager } = require("./computerUse.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -202,6 +203,7 @@ const handleClientRelaunchNotification =
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
 const terminalPanelsByWindowId = new Map();
+const computerUseManagersByWindowId = new Map();
 const commandOutputCache = new Map();
 const MAX_PENDING_TERMINAL_NOTIFICATIONS = 4096;
 let browserPanelTabCounter = 0;
@@ -254,6 +256,7 @@ async function createWindow() {
   window.on("closed", () => {
     destroyBrowserPanel(window);
     terminalPanelsByWindowId.delete(window.id);
+    destroyComputerUseManager(window);
     windows.delete(window);
   });
 
@@ -910,6 +913,26 @@ ipcMain.handle("codex:terminal:terminate", async (event, tabId) => {
   return { ok: true };
 });
 
+ipcMain.handle("codex:computerUse:start", async (event, options = {}) => {
+  return computerUseManagerForEvent(event).startSession(options);
+});
+
+ipcMain.handle("codex:computerUse:observe", async (event) => {
+  return computerUseManagerForEvent(event).observe("manual");
+});
+
+ipcMain.handle("codex:computerUse:act", async (event, action) => {
+  return computerUseManagerForEvent(event).act(action);
+});
+
+ipcMain.handle("codex:computerUse:stop", async (event) => {
+  return computerUseManagerForEvent(event).stopSession();
+});
+
+ipcMain.handle("codex:computerUse:state", async (event) => {
+  return computerUseManagerForEvent(event).state();
+});
+
 ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
 });
@@ -1164,6 +1187,26 @@ function terminalPanelForEvent(event) {
   };
   terminalPanelsByWindowId.set(window.id, panel);
   return panel;
+}
+
+function destroyComputerUseManager(window) {
+  const manager = computerUseManagersByWindowId.get(window.id);
+  computerUseManagersByWindowId.delete(window.id);
+  void manager?.cleanup?.();
+}
+
+function computerUseManagerForEvent(event) {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    throw new Error("Computer Use requires an active application window");
+  }
+  const existing = computerUseManagersByWindowId.get(window.id);
+  if (existing) {
+    return existing;
+  }
+  const manager = createComputerUseManager();
+  computerUseManagersByWindowId.set(window.id, manager);
+  return manager;
 }
 
 function terminalPanelState(panel) {

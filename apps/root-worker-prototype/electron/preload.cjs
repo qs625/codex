@@ -103,6 +103,16 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:terminal:updatePreferredSize", payload),
   terminateTerminal: (tabId) =>
     ipcRenderer.invoke("codex:terminal:terminate", tabId),
+  startComputerUse: (payload) =>
+    ipcRenderer.invoke("codex:computerUse:start", payload),
+  observeComputerUse: () =>
+    ipcRenderer.invoke("codex:computerUse:observe"),
+  actComputerUse: (action) =>
+    ipcRenderer.invoke("codex:computerUse:act", action),
+  stopComputerUse: () =>
+    ipcRenderer.invoke("codex:computerUse:stop"),
+  getComputerUseState: () =>
+    ipcRenderer.invoke("codex:computerUse:state"),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
   interruptTurn: (payload) =>
     ipcRenderer.invoke("codex:interruptTurn", payload),
