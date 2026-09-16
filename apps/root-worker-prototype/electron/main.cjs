@@ -1211,6 +1211,7 @@ function computerUseManagerForEvent(event) {
   const manager = createComputerUseManager({
     overlayController: createComputerUseOverlayController({
       BrowserWindow,
+      hostApp: app,
       screen,
       logger: console,
     }),
