@@ -135,12 +135,26 @@ node scripts/morpheus-computer-use.mjs run \
   --actions '[{"type":"start"},{"type":"observe"},{"type":"move","x":420,"y":360},{"type":"stop"}]'
 ```
 
+For common action chains, the same `run` command also accepts ordered shorthand
+flags and compiles them into the same action array:
+
+```bash
+node scripts/morpheus-computer-use.mjs run \
+  --app com.apple.TextEdit \
+  --json \
+  --click 420,360 \
+  --type "hello" \
+  --key cmd+s
+```
+
 The CLI keeps a Computer Use session inside a single `run` process and reuses
 the Electron ComputerUseManager safety gates, target preflight, trace evidence,
 and native macOS bridge. CLI supports `start`, `observe`, `move`, `click`,
 `key`, `type`, `drag`, and `stop`; `move` only updates the agent cursor/path
 evidence and does not move the macOS system cursor. The `run --actions` batch is
-the explicit Computer Use operation boundary for real desktop side effects.
+the explicit Computer Use operation boundary for real desktop side effects, and
+shorthand flags are compiled into that same batch path. The JSON result includes
+the compiled `actions` for audit and replay.
 Side effects require a matched target app, Accessibility permission must be
 available, and native backend failures are reported as failed action results
 rather than fake success. If the target app is in the background, Computer Use

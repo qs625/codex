@@ -59,7 +59,12 @@ function fakeNativeClient(options = {}) {
         };
       }
       if (action.type === "type") {
-        return { ok: true, characterCount: action.text.length };
+        return {
+          ok: true,
+          method: "pasteboard-cmd-v",
+          characterCount: action.text.length,
+          pasteboardRestored: true,
+        };
       }
       if (action.type === "key") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
@@ -247,6 +252,8 @@ test("warning and drag actions execute with trace evidence", async () => {
   assert.equal(warned.trace[0].status, "completed");
   assert.equal(warned.trace[0].policy.kind, "side-effect-warning");
   assert.equal(warned.trace[0].evidence.characterCount, 13);
+  assert.equal(warned.trace[0].evidence.method, "pasteboard-cmd-v");
+  assert.equal(warned.trace[0].evidence.pasteboardRestored, true);
   assert.equal(dragged.trace[1].status, "completed");
   assert.equal(dragged.trace[1].policy.kind, "side-effect");
   assert.ok(dragged.trace[1].agentCursorPath.length >= 2);

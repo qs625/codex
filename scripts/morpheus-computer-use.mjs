@@ -109,6 +109,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       ok: true,
       command: request.command,
       target: { app: request.app ?? null },
+      actions: request.actions,
       policy: cliPolicy(request),
       limitations: cliLimitations(),
       results,
@@ -120,6 +121,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       ok: false,
       command: request.command,
       target: { app: request.app ?? null },
+      actions: request.actions,
       policy: cliPolicy(request),
       limitations: cliLimitations(),
       results,
@@ -159,6 +161,7 @@ export function parseComputerUseCliArgs(argv) {
     pretty: false,
     noOverlay: false,
     overlayHoldMs: 900,
+    shorthandActions: [],
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -170,6 +173,44 @@ export function parseComputerUseCliArgs(argv) {
         break;
       case "--actions":
         request.actions = JSON.parse(requireValue(args, ++index, arg));
+        break;
+      case "--start":
+        request.shorthandActions.push({ type: "start" });
+        break;
+      case "--observe":
+        request.shorthandActions.push({ type: "observe" });
+        break;
+      case "--stop":
+        request.shorthandActions.push({ type: "stop" });
+        break;
+      case "--move":
+        request.shorthandActions.push({
+          type: "move",
+          ...parseCliPoint(requireValue(args, ++index, arg), arg),
+        });
+        break;
+      case "--click":
+        request.shorthandActions.push({
+          type: "click",
+          ...parseCliPoint(requireValue(args, ++index, arg), arg),
+        });
+        break;
+      case "--type":
+      case "--text":
+        request.shorthandActions.push({
+          type: "type",
+          text: requireValue(args, ++index, arg),
+        });
+        break;
+      case "--key":
+        request.shorthandActions.push(
+          parseCliKey(requireValue(args, ++index, arg), arg),
+        );
+        break;
+      case "--drag":
+        request.shorthandActions.push(
+          parseCliDrag(requireValue(args, ++index, arg), arg),
+        );
         break;
       case "--json":
         break;
@@ -197,12 +238,24 @@ export function parseComputerUseCliArgs(argv) {
   }
 
   if (command === "run") {
-    request.actions = normalizeCliActions(request.actions ?? DEFAULT_ACTIONS);
+    if (request.actions && request.shorthandActions.length > 0) {
+      throw new Error("Use either --actions or shorthand action flags, not both.");
+    }
+    request.actions = normalizeCliActions(
+      request.shorthandActions.length > 0
+        ? compileShorthandActions(request.shorthandActions)
+        : request.actions ?? DEFAULT_ACTIONS,
+    );
+    delete request.shorthandActions;
     return request;
   }
   if (["start", "observe", "stop"].includes(command)) {
+    if (request.actions || request.shorthandActions.length > 0) {
+      throw new Error(`Command ${command} does not accept action flags.`);
+    }
     request.command = "run";
     request.actions = [{ type: command }];
+    delete request.shorthandActions;
     return request;
   }
   throw new Error(`Unsupported command: ${command}`);
@@ -415,6 +468,69 @@ function normalizeCliAction(action) {
   return action;
 }
 
+function compileShorthandActions(actions) {
+  const compiled = [...actions];
+  if (compiled[0]?.type !== "start") {
+    compiled.unshift({ type: "start" });
+  }
+  if (!compiled.some((action) => action.type === "stop")) {
+    compiled.push({ type: "stop" });
+  }
+  return compiled;
+}
+
+function parseCliPoint(value, flag) {
+  const match = /^([^,]+),([^,]+)$/.exec(value.trim());
+  if (!match) {
+    throw new Error(`${flag} requires coordinates as x,y`);
+  }
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(`${flag} requires finite x,y coordinates`);
+  }
+  return { x, y };
+}
+
+function parseCliDrag(value, flag) {
+  const [from, to, extra] = value.split(":");
+  if (!from || !to || extra !== undefined) {
+    throw new Error(`${flag} requires coordinates as x1,y1:x2,y2`);
+  }
+  return {
+    type: "drag",
+    from: parseCliPoint(from, flag),
+    to: parseCliPoint(to, flag),
+  };
+}
+
+function parseCliKey(value, flag) {
+  const parts = value
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) {
+    throw new Error(`${flag} requires a key name`);
+  }
+  const key = parts.at(-1);
+  const modifiers = parts.slice(0, -1).map(normalizeCliModifier);
+  return { type: "key", key, modifiers };
+}
+
+function normalizeCliModifier(value) {
+  switch (value.toLowerCase()) {
+    case "command":
+    case "meta":
+      return "cmd";
+    case "control":
+      return "ctrl";
+    case "option":
+      return "alt";
+    default:
+      return value.toLowerCase();
+  }
+}
+
 function completedResult(index, action, state, request) {
   return {
     index,
@@ -548,12 +664,18 @@ function usage() {
   return [
     "Usage:",
     "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --json --actions '<json-array>'",
+    "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --click 300,230 --type 'hello' --key cmd+s",
     "",
     "Actions:",
     "  start, observe, move, click, key, type, drag, stop",
     "",
+    "Shorthand flags:",
+    "  --start --observe --stop",
+    "  --move x,y --click x,y --type text --text text --key key|mod+key --drag x1,y1:x2,y2",
+    "",
     "Example:",
     "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --actions '[{\"type\":\"start\"},{\"type\":\"observe\"},{\"type\":\"move\",\"x\":420,\"y\":360},{\"type\":\"stop\"}]'",
+    "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --move 420,360 --observe",
     "",
     "Options:",
     "  --omit-screenshot-data  Return screenshot metadata without the bounded data URL.",

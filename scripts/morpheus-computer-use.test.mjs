@@ -84,7 +84,12 @@ function fakeNativeClient(options = {}) {
         };
       }
       if (action.type === "type") {
-        return { ok: true, characterCount: action.text.length };
+        return {
+          ok: true,
+          method: "pasteboard-cmd-v",
+          characterCount: action.text.length,
+          pasteboardRestored: true,
+        };
       }
       if (action.type === "key") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
@@ -173,6 +178,52 @@ test("computer use CLI run keeps batch session state for observe move stop", asy
   assert.deepEqual(harness.nativeClient.actions, [{ type: "cleanup" }]);
 });
 
+test("computer use CLI compiles shorthand flags into a run action batch", async () => {
+  const request = parseComputerUseCliArgs([
+    "run",
+    "--app",
+    "com.apple.finder",
+    "--move",
+    "10,20",
+    "--click",
+    "30,40",
+    "--type",
+    "hello",
+    "--key",
+    "cmd+s",
+    "--drag",
+    "1,2:3,4",
+    "--observe",
+    "--overlay-hold-ms",
+    "0",
+  ]);
+
+  assert.deepEqual(request.actions, [
+    { type: "start" },
+    { type: "move", x: 10, y: 20 },
+    { type: "click", x: 30, y: 40 },
+    { type: "type", text: "hello" },
+    { type: "key", key: "s", modifiers: ["cmd"] },
+    { type: "drag", from: { x: 1, y: 2 }, to: { x: 3, y: 4 } },
+    { type: "observe" },
+    { type: "stop" },
+  ]);
+});
+
+test("computer use CLI rejects mixing shorthand flags with --actions", () => {
+  assert.throws(
+    () =>
+      parseComputerUseCliArgs([
+        "run",
+        "--actions",
+        JSON.stringify([{ type: "start" }]),
+        "--type",
+        "hello",
+      ]),
+    /either --actions or shorthand/,
+  );
+});
+
 test("computer use CLI runs click type key and drag by default", async () => {
   const nativeClient = fakeNativeClient();
   const overlayController = fakeOverlayController();
@@ -231,6 +282,8 @@ test("computer use CLI runs click type key and drag by default", async () => {
   const typeTrace = result.results[3].state.trace.at(-1);
   assert.equal(typeTrace.action.type, "type");
   assert.equal(typeTrace.evidence.characterCount, 5);
+  assert.equal(typeTrace.evidence.method, "pasteboard-cmd-v");
+  assert.equal(typeTrace.evidence.pasteboardRestored, true);
   const dragTrace = result.results[4].state.trace.at(-1);
   assert.equal(dragTrace.action.type, "drag");
   assert.equal(dragTrace.status, "completed");

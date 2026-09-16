@@ -836,6 +836,12 @@ function applyActionEvidence(traceItem, actionResult) {
   if (Number.isFinite(actionResult.characterCount)) {
     evidence.characterCount = actionResult.characterCount;
   }
+  if (typeof actionResult.method === "string") {
+    evidence.method = actionResult.method;
+  }
+  if (Object.hasOwn(actionResult, "pasteboardRestored")) {
+    evidence.pasteboardRestored = actionResult.pasteboardRestored === true;
+  }
   if (typeof actionResult.key === "string") {
     evidence.key = actionResult.key;
   }
@@ -946,15 +952,32 @@ function createMacNativeComputerUseClientWithAdapters({
 
 async function runSwiftComputerUse(scriptPath, command, payload) {
   const encoded = Buffer.from(JSON.stringify(payload ?? {})).toString("base64");
-  const { stdout } = await execFileAsync("/usr/bin/swift", [scriptPath, command, encoded], {
-    maxBuffer: 1024 * 1024,
-  });
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync("/usr/bin/swift", [scriptPath, command, encoded], {
+      maxBuffer: 1024 * 1024,
+    }));
+  } catch (error) {
+    const nativeError = parseNativeError(error.stdout);
+    throw new Error(nativeError || errorMessage(error));
+  }
   const parsed = JSON.parse(String(stdout || "{}"));
   if (!parsed.ok) {
     throw new Error(parsed.error || `${command} failed`);
   }
   delete parsed.ok;
   return parsed;
+}
+
+function parseNativeError(stdout) {
+  try {
+    const parsed = JSON.parse(String(stdout || "{}"));
+    return typeof parsed.error === "string" && parsed.error.length > 0
+      ? parsed.error
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 async function captureScreenshot(tmpDir) {
