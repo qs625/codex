@@ -57,6 +57,73 @@ type TerminalPanelEvent =
       tab: Omit<TerminalPanelTabState, "replayBase64">;
     };
 
+type ComputerUsePoint = {
+  x: number;
+  y: number;
+};
+
+type ComputerUseAction =
+  | ({ type: "move" | "click" } & ComputerUsePoint)
+  | { type: "type"; text: string }
+  | { type: "key"; key: string; modifiers?: string[] }
+  | { type: "drag"; from: ComputerUsePoint; to: ComputerUsePoint };
+
+type ComputerUsePolicy = {
+  kind:
+    | "read-only"
+    | "low-risk"
+    | "needs-confirmation"
+    | "needs-permission"
+    | "needs-observation"
+    | "target-mismatch"
+    | "disabled";
+  allowed: boolean;
+  reason: string | null;
+};
+
+type ComputerUseState = {
+  id: string;
+  status: "idle" | "observing" | "active" | "acting" | "error" | "stopped";
+  createdAtMs: number;
+  updatedAtMs: number;
+  target: {
+    app: string | null;
+    window: unknown | null;
+  };
+  sequence: number;
+  observation: {
+    sequence: number;
+    reason: string;
+    observedAtMs: number;
+    cursor: ComputerUsePoint | null;
+    activeApp: unknown | null;
+    accessibilityTrusted: boolean;
+    screenshot: {
+      path: string;
+      mimeType: string;
+      byteSize: number;
+      dataUrl: string;
+    } | null;
+    error: string | null;
+  } | null;
+  cursor: ComputerUsePoint | null;
+  pointerPath: Array<ComputerUsePoint & { atMs: number; source: string }>;
+  trace: Array<{
+    id: string;
+    sequence: number;
+    action: ComputerUseAction;
+    policy: ComputerUsePolicy;
+    status: "running" | "completed" | "failed" | "blocked";
+    error: string | null;
+    startedAtMs: number;
+    completedAtMs: number | null;
+    observationSequence: number | null;
+  }>;
+  pendingAction: ComputerUseAction | null;
+  policy: ComputerUsePolicy | null;
+  error: { phase: string; message: string; atMs: number } | null;
+};
+
 declare global {
   interface Window {
     codexDesktop: {
@@ -502,6 +569,13 @@ declare global {
         size: { rows: number; cols: number };
       }) => Promise<{ ok: true }>;
       terminateTerminal: (tabId: string) => Promise<{ ok: true }>;
+      startComputerUse: (payload?: {
+        app?: string | null;
+      }) => Promise<ComputerUseState>;
+      observeComputerUse: () => Promise<ComputerUseState>;
+      actComputerUse: (action: ComputerUseAction) => Promise<ComputerUseState>;
+      stopComputerUse: () => Promise<ComputerUseState>;
+      getComputerUseState: () => Promise<ComputerUseState>;
       subscribeBrowserState: (
         listener: (state: BrowserPanelState) => void,
       ) => () => void;
