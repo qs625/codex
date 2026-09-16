@@ -22,74 +22,131 @@ const OVERLAY_HTML = `<!doctype html>
     }
     #path {
       fill: none;
-      stroke: rgba(45, 212, 191, 0.48);
-      stroke-width: 3;
+      stroke: url(#agent-trail-gradient);
+      stroke-width: 2;
       stroke-linecap: round;
       stroke-linejoin: round;
-      filter: drop-shadow(0 0 5px rgba(45, 212, 191, 0.38));
+      opacity: 0.72;
+      filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.28));
+    }
+    #trail-tip {
+      fill: #ecfeff;
+      stroke: rgba(20, 184, 166, 0.8);
+      stroke-width: 1.4;
+      opacity: 0;
+      filter: drop-shadow(0 0 5px rgba(45, 212, 191, 0.35));
     }
     #cursor {
       position: absolute;
       left: 0;
       top: 0;
-      width: 18px;
-      height: 18px;
-      transform: translate(-5px, -5px);
-      transition-property: left, top;
+      width: 24px;
+      height: 24px;
+      transform: translate(-12px, -12px);
+      transition-property: left, top, opacity;
       transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
     }
-    #cursor::before {
+    .cursor-halo {
       content: "";
       position: absolute;
-      left: 0;
-      top: 0;
-      width: 0;
-      height: 0;
-      border-left: 14px solid #f8fafc;
-      border-top: 3px solid transparent;
-      border-bottom: 12px solid transparent;
-      filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.8));
+      inset: 1px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(236, 254, 255, 0.9) 0%, rgba(34, 211, 238, 0.24) 45%, rgba(20, 184, 166, 0) 72%);
+      filter: blur(1.5px);
+      opacity: 0.74;
     }
-    #cursor::after {
+    .cursor-gem {
       content: "";
       position: absolute;
-      left: 1px;
-      top: 1px;
-      width: 0;
-      height: 0;
-      border-left: 8px solid #14b8a6;
-      border-top: 2px solid transparent;
-      border-bottom: 7px solid transparent;
+      left: 6px;
+      top: 3px;
+      width: 12px;
+      height: 17px;
+      border: 1px solid rgba(8, 145, 178, 0.72);
+      border-radius: 7px 7px 8px 7px;
+      background: linear-gradient(145deg, #ffffff 0%, #ecfeff 38%, #2dd4bf 100%);
+      box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.38),
+        0 0 0 1px rgba(255, 255, 255, 0.74) inset,
+        0 0 10px rgba(45, 212, 191, 0.24);
+      transform: rotate(45deg) skew(-5deg, -5deg);
+      transform-origin: 50% 64%;
+    }
+    .cursor-gem::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 2px;
+      width: 5px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      transform: rotate(-10deg);
+    }
+    .cursor-dot {
+      content: "";
+      position: absolute;
+      left: 10px;
+      top: 9px;
+      width: 4px;
+      height: 4px;
+      border-radius: 999px;
+      background: #0f766e;
+      box-shadow: 0 0 0 2px rgba(236, 254, 255, 0.86);
     }
   </style>
 </head>
 <body>
-  <svg id="trail"><polyline id="path" points=""></polyline></svg>
-  <div id="cursor"></div>
+  <svg id="trail">
+    <defs>
+      <linearGradient id="agent-trail-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#22d3ee" stop-opacity="0" />
+        <stop offset="48%" stop-color="#22d3ee" stop-opacity="0.38" />
+        <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0.78" />
+      </linearGradient>
+    </defs>
+    <polyline id="path" points=""></polyline>
+    <circle id="trail-tip" r="3.1" cx="0" cy="0"></circle>
+  </svg>
+  <div id="cursor" aria-hidden="true">
+    <span class="cursor-halo"></span>
+    <span class="cursor-gem"></span>
+    <span class="cursor-dot"></span>
+  </div>
   <script>
     const cursor = document.getElementById("cursor");
     const path = document.getElementById("path");
+    const trailTip = document.getElementById("trail-tip");
     let trailTimer = null;
     window.__setComputerUseCursor = (payload) => {
       const point = payload && payload.agentCursor;
       if (!point) {
         cursor.style.display = "none";
         path.setAttribute("points", "");
+        trailTip.style.opacity = "0";
         return;
       }
       cursor.style.display = "block";
       cursor.style.transitionDuration = String(payload.durationMs || 0) + "ms";
-      cursor.style.left = String(point.x - payload.bounds.x) + "px";
-      cursor.style.top = String(point.y - payload.bounds.y) + "px";
+      const localX = point.x - payload.bounds.x;
+      const localY = point.y - payload.bounds.y;
+      cursor.style.left = String(localX) + "px";
+      cursor.style.top = String(localY) + "px";
       const samples = Array.isArray(payload.pathSamples) ? payload.pathSamples : [];
       path.setAttribute(
         "points",
         samples.map((sample) => String(sample.x - payload.bounds.x) + "," + String(sample.y - payload.bounds.y)).join(" ")
       );
+      trailTip.setAttribute("cx", String(localX));
+      trailTip.setAttribute("cy", String(localY));
+      trailTip.style.opacity = samples.length > 1 ? "0.84" : "0";
       if (trailTimer) {
         clearTimeout(trailTimer);
       }
-      trailTimer = setTimeout(() => path.setAttribute("points", ""), 900);
+      trailTimer = setTimeout(() => {
+        path.setAttribute("points", "");
+        trailTip.style.opacity = "0";
+      }, 900);
     };
   </script>
 </body>

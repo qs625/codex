@@ -246,5 +246,11 @@ test("computer use overlay bounds cover all displays", () => {
 test("computer use overlay html contains cursor and trail surfaces", () => {
   assert.match(OVERLAY_HTML, /__setComputerUseCursor/);
   assert.match(OVERLAY_HTML, /<polyline id="path"/);
+  assert.match(OVERLAY_HTML, /id="agent-trail-gradient"/);
+  assert.match(OVERLAY_HTML, /id="trail-tip"/);
+  assert.match(OVERLAY_HTML, /class="cursor-gem"/);
+  assert.match(OVERLAY_HTML, /class="cursor-halo"/);
+  assert.match(OVERLAY_HTML, /class="cursor-dot"/);
   assert.match(OVERLAY_HTML, /transition-property: left, top/);
+  assert.doesNotMatch(OVERLAY_HTML, /border-left: 14px solid/);
 });
