@@ -91,6 +91,21 @@ function fakeNativeClient(options = {}) {
       }
       return { ok: true };
     },
+    async activateTarget(payload) {
+      actions.push({ type: "activate", ...payload });
+      if (options.activationError) {
+        throw new Error(options.activationError);
+      }
+      return options.activationResult ?? {
+        activated: true,
+        waitedMs: 50,
+        targetApp: {
+          name: options.activeAppName ?? "Finder",
+          bundleIdentifier: options.bundleIdentifier ?? "com.apple.finder",
+          processIdentifier: 42,
+        },
+      };
+    },
     async cleanup() {
       actions.push({ type: "cleanup" });
     },
@@ -227,8 +242,10 @@ test("computer use CLI runs click type key and drag by default", async () => {
   assert.match(result.state.overlay.reason, /stopped/);
 });
 
-test("computer use CLI keeps side effects blocked for background targets", async () => {
-  const nativeClient = fakeNativeClient({ targetVisibility: "background" });
+test("computer use CLI activates background targets before side effects", async () => {
+  const nativeClient = fakeNativeClient({
+    targetVisibilitySequence: ["background", "background", "frontmost", "frontmost"],
+  });
 
   const result = await runComputerUseRequest(
     parseComputerUseCliArgs([
@@ -247,10 +264,44 @@ test("computer use CLI keeps side effects blocked for background targets", async
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.results[1].status, "blocked");
-  assert.equal(result.results[1].policy.kind, "target-mismatch");
-  assert.match(result.results[1].policy.reason, /background/);
-  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+  assert.equal(result.results[1].status, "completed");
+  assert.equal(result.results[1].state.trace.at(-1).policy.kind, "side-effect");
+  assert.equal(result.results[1].state.trace.at(-1).activation.status, "completed");
+  assert.equal(result.results[1].state.trace.at(-1).activation.before.targetVisibility, "background");
+  assert.equal(result.results[1].state.trace.at(-1).activation.reobserved.targetVisibility, "frontmost");
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate", "key", "cleanup"]);
+});
+
+test("computer use CLI reports activation failures without native side effects", async () => {
+  const nativeClient = fakeNativeClient({
+    targetVisibility: "background",
+    activationResult: {
+      activated: false,
+      reason: "Target app did not become frontmost after activation",
+      waitedMs: 1000,
+    },
+  });
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "key", key: "Tab" }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[0].status, "failed");
+  assert.match(result.results[0].error, /did not become frontmost/);
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate", "cleanup"]);
 });
 
 test("computer use CLI executes warning side effects with policy evidence", async () => {

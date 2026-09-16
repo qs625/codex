@@ -141,19 +141,20 @@ and native macOS bridge. CLI supports `start`, `observe`, `move`, `click`,
 `key`, `type`, `drag`, and `stop`; `move` only updates the agent cursor/path
 evidence and does not move the macOS system cursor. The `run --actions` batch is
 the explicit Computer Use operation boundary for real desktop side effects.
-Side effects still require the target app to be frontmost and
-matched, Accessibility permission must be available, and native backend failures
-are reported as failed action results rather than fake success. Screenshot
+Side effects require a matched target app, Accessibility permission must be
+available, and native backend failures are reported as failed action results
+rather than fake success. If the target app is in the background, Computer Use
+activates that target, re-observes the desktop, and only sends the side-effect
+action after the target is confirmed frontmost/matched; activation failure or a
+different foreground app is reported as a failed or blocked action. Screenshot
 evidence includes a bounded data URL by default and omits the temporary capture
 path because the CLI cleans up that file before returning; pass
 `--omit-screenshot-data` for metadata-only output. CLI runs create a narrow
 Electron overlay helper for target-bound agent cursor feedback; the helper is
 click-through, non-focusable, and cleaned up on `stop`/process exit. Background
-targets are not activated by default and the cursor is not drawn over an
-unrelated foreground app; after the target becomes frontmost, a subsequent
-`observe` or `move` can show target-bound cursor feedback. After a visible
-`move`, the CLI keeps the overlay on screen briefly before the next batch
-action; pass `--overlay-hold-ms 0` to disable that delay.
+targets are not drawn over an unrelated foreground app before activation. After
+a visible `move`, the CLI keeps the overlay on screen briefly before the next
+batch action; pass `--overlay-hold-ms 0` to disable that delay.
 
 ## Electron
 
