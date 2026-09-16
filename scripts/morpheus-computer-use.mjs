@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
 
 const require = createRequire(import.meta.url);
 const {
@@ -34,6 +35,7 @@ const OVERLAY_HELPER_PATH = join(
 
 export async function runComputerUseCli({
   argv = process.argv.slice(2),
+  input = process.stdin,
   managerFactory = null,
   overlayControllerFactory = createCliOverlayController,
   writeStdout = null,
@@ -45,6 +47,18 @@ export async function runComputerUseCli({
       const output = usage();
       writeStdout?.(`${output}\n`);
       return { ok: true, help: output, exitCode: 0 };
+    }
+    if (request.command === "repl") {
+      const result = await runComputerUseRepl(
+        request,
+        managerFactory ??
+          createComputerUseCliManagerFactory({ overlayControllerFactory }),
+        {
+          input,
+          writeStdout,
+        },
+      );
+      return { ...result, exitCode: result.ok ? 0 : 1 };
     }
     const result = await runComputerUseRequest(
       request,
@@ -66,56 +80,20 @@ export async function runComputerUseCli({
 
 export async function runComputerUseRequest(request, managerFactory) {
   const manager = await managerFactory(request);
-  let started = false;
-  let needsCleanup = false;
+  const context = createSessionContext();
   const results = [];
   try {
     for (const [index, rawAction] of request.actions.entries()) {
-      const action = normalizeCliAction(rawAction);
-      if (action.type === "start") {
-        const state = await manager.startSession({
-          app: action.app ?? request.app ?? undefined,
-        });
-        started = true;
-        needsCleanup = true;
-        results.push(completedResult(index, action, state, request));
-        continue;
-      }
-      if (action.type === "observe") {
-        if (!started) {
-          const state = await manager.startSession({ app: request.app ?? undefined });
-          started = true;
-          needsCleanup = true;
-          results.push(completedResult(index, action, state, request));
-          continue;
-        }
-        const state = await manager.observe("cli");
-        results.push(completedResult(index, action, state, request));
-        continue;
-      }
-      if (action.type === "stop") {
-        const state = await manager.stopSession();
-        started = false;
-        needsCleanup = false;
-        results.push(completedResult(index, action, state, request));
-        continue;
-      }
-      if (CLI_ACTIONS.has(action.type)) {
-        if (!started) {
-          await manager.startSession({ app: request.app ?? undefined });
-          started = true;
-          needsCleanup = true;
-        }
-        const state = await manager.act(action);
-        results.push(managerActionResult(index, action, state, request));
-        if (state.overlay?.visible === true) {
-          await delay(request.overlayHoldMs);
-        }
-        continue;
-      }
-      throw new Error(`Unsupported Computer Use CLI action: ${action.type}`);
+      const { result } = await executeComputerUseSessionAction({
+        manager,
+        rawAction,
+        request,
+        context,
+        index,
+      });
+      results.push(result);
     }
-    needsCleanup = await cleanupBatchSession(manager, needsCleanup);
+    context.needsCleanup = await cleanupBatchSession(manager, context.needsCleanup);
     const finalState = sanitizeState(manager.state(), request);
     return {
       ok: true,
@@ -128,7 +106,7 @@ export async function runComputerUseRequest(request, managerFactory) {
       state: finalState,
     };
   } catch (error) {
-    needsCleanup = await cleanupBatchSession(manager, needsCleanup);
+    context.needsCleanup = await cleanupBatchSession(manager, context.needsCleanup);
     return {
       ok: false,
       command: request.command,
@@ -141,10 +119,233 @@ export async function runComputerUseRequest(request, managerFactory) {
       error: errorMessage(error),
     };
   } finally {
-    if (needsCleanup) {
+    if (context.needsCleanup) {
       await manager.cleanup?.();
     }
   }
+}
+
+export async function runComputerUseRepl(
+  request,
+  managerFactory,
+  { input = process.stdin, writeStdout = null, interruptSignal = null } = {},
+) {
+  const manager = await managerFactory(request);
+  const context = createSessionContext();
+  const sessionId = randomUUID();
+  let ok = true;
+  let index = 0;
+  let cleanup = null;
+  const settings = {
+    json: request.json === true,
+    raw: request.raw === true,
+    traceTail: request.traceTail,
+  };
+
+  const write = (value) => writeStdout?.(`${value}\n`);
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let interrupted = false;
+  const interrupt = () => {
+    interrupted = true;
+    lines.close();
+  };
+  const removeInterruptHandlers = installReplInterruptHandlers({
+    lines,
+    interrupt,
+    interruptSignal,
+  });
+  try {
+    for await (const line of lines) {
+      if (interrupted) {
+        break;
+      }
+      const parsed = parseReplLine(line);
+      if (parsed.kind === "empty") {
+        continue;
+      }
+      if (parsed.kind === "exit") {
+        cleanup = await cleanupReplSession(manager, context, request);
+        write(formatReplControlResult({ sessionId, command: "exit", cleanup }, settings));
+        break;
+      }
+      if (parsed.kind === "help") {
+        write(formatReplControlResult({ sessionId, command: "help", help: replHelp() }, settings));
+        continue;
+      }
+      if (parsed.kind === "status") {
+        write(
+          formatReplStateResult({
+            sessionId,
+            command: "status",
+            state: safeManagerState(manager, request),
+          }, settings),
+        );
+        continue;
+      }
+      if (parsed.kind === "trace") {
+        write(
+          formatReplTraceResult({
+            sessionId,
+            command: "trace",
+            state: safeManagerState(manager, request),
+            count: parsed.count ?? settings.traceTail,
+          }, settings),
+        );
+        continue;
+      }
+      if (parsed.kind === "mode") {
+        settings[parsed.mode] = parsed.value;
+        write(formatReplControlResult({
+          sessionId,
+          command: parsed.mode,
+          [parsed.mode]: parsed.value,
+        }, settings));
+        continue;
+      }
+
+      const { action, result } = await executeComputerUseSessionAction({
+        manager,
+        rawAction: parsed.action,
+        request,
+        context,
+        index,
+      });
+      write(formatReplActionResult({ sessionId, action, result }, settings));
+      index += 1;
+      if (interrupted) {
+        break;
+      }
+      if (result.status === "failed") {
+        ok = false;
+        cleanup = await cleanupReplSession(manager, context, request);
+        write(formatReplControlResult({
+          sessionId,
+          command: "cleanup",
+          reason: "failed-action",
+          cleanup,
+        }, settings));
+        break;
+      }
+    }
+    if (interrupted) {
+      ok = false;
+      cleanup = await cleanupReplSession(manager, context, request);
+      write(formatReplControlResult({
+        sessionId,
+        command: "cleanup",
+        reason: "interrupt",
+        cleanup,
+      }, settings));
+    } else if (!cleanup && context.needsCleanup) {
+      cleanup = await cleanupReplSession(manager, context, request);
+      write(formatReplControlResult({
+        sessionId,
+        command: "cleanup",
+        reason: "eof",
+        cleanup,
+      }, settings));
+    }
+    return {
+      ok,
+      command: "repl",
+      sessionId,
+      cleanup,
+      state: safeManagerState(manager, request),
+    };
+  } catch (error) {
+    ok = false;
+    cleanup = await cleanupReplSession(manager, context, request);
+    write(formatReplControlResult({
+      sessionId,
+      command: "cleanup",
+      reason: "error",
+      cleanup,
+      error: errorMessage(error),
+    }, settings));
+    return {
+      ok: false,
+      command: "repl",
+      sessionId,
+      cleanup,
+      state: safeManagerState(manager, request),
+      error: errorMessage(error),
+    };
+  } finally {
+    removeInterruptHandlers();
+    lines.close();
+  }
+}
+
+function installReplInterruptHandlers({ lines, interrupt, interruptSignal }) {
+  lines.once("SIGINT", interrupt);
+  process.once("SIGINT", interrupt);
+  if (interruptSignal) {
+    if (interruptSignal.aborted) {
+      interrupt();
+    } else {
+      interruptSignal.addEventListener("abort", interrupt, { once: true });
+    }
+  }
+  return () => {
+    lines.off("SIGINT", interrupt);
+    process.off("SIGINT", interrupt);
+    interruptSignal?.removeEventListener?.("abort", interrupt);
+  };
+}
+
+function createSessionContext() {
+  return {
+    started: false,
+    needsCleanup: false,
+  };
+}
+
+async function executeComputerUseSessionAction({
+  manager,
+  rawAction,
+  request,
+  context,
+  index,
+}) {
+  const action = normalizeCliAction(rawAction);
+  if (action.type === "start") {
+    const state = await manager.startSession({
+      app: action.app ?? request.app ?? undefined,
+    });
+    context.started = true;
+    context.needsCleanup = true;
+    return { action, result: completedResult(index, action, state, request) };
+  }
+  if (action.type === "observe") {
+    if (!context.started) {
+      const state = await manager.startSession({ app: request.app ?? undefined });
+      context.started = true;
+      context.needsCleanup = true;
+      return { action, result: completedResult(index, action, state, request) };
+    }
+    const state = await manager.observe("cli");
+    return { action, result: completedResult(index, action, state, request) };
+  }
+  if (action.type === "stop") {
+    const state = await manager.stopSession();
+    context.started = false;
+    context.needsCleanup = false;
+    return { action, result: completedResult(index, action, state, request) };
+  }
+  if (CLI_ACTIONS.has(action.type)) {
+    if (!context.started) {
+      await manager.startSession({ app: request.app ?? undefined });
+      context.started = true;
+      context.needsCleanup = true;
+    }
+    const state = await manager.act(action);
+    const result = managerActionResult(index, action, state, request);
+    if (state.overlay?.visible === true) {
+      await delay(request.overlayHoldMs);
+    }
+    return { action, result };
+  }
+  throw new Error(`Unsupported Computer Use CLI action: ${action.type}`);
 }
 
 async function cleanupBatchSession(manager, needsCleanup) {
@@ -153,6 +354,35 @@ async function cleanupBatchSession(manager, needsCleanup) {
   }
   await manager.cleanup?.();
   return false;
+}
+
+async function cleanupReplSession(manager, context, request) {
+  if (!context.needsCleanup) {
+    return { needed: false, status: "skipped" };
+  }
+  try {
+    const stoppedState =
+      typeof manager.stopSession === "function"
+        ? await manager.stopSession()
+        : null;
+    if (!stoppedState) {
+      await manager.cleanup?.();
+    }
+    context.needsCleanup = false;
+    context.started = false;
+    return {
+      needed: true,
+      status: "completed",
+      state: stoppedState ? sanitizeState(stoppedState, request) : safeManagerState(manager, request),
+    };
+  } catch (error) {
+    return {
+      needed: true,
+      status: "failed",
+      error: errorMessage(error),
+      state: safeManagerState(manager, request),
+    };
+  }
 }
 
 export function parseComputerUseCliArgs(argv) {
@@ -170,9 +400,12 @@ export function parseComputerUseCliArgs(argv) {
     app: null,
     actions: null,
     includeScreenshotData: true,
+    json: false,
+    raw: false,
     pretty: false,
     noOverlay: false,
     overlayHoldMs: 900,
+    traceTail: 3,
     shorthandActions: [],
   };
 
@@ -256,6 +489,10 @@ export function parseComputerUseCliArgs(argv) {
         });
         break;
       case "--json":
+        request.json = true;
+        break;
+      case "--raw":
+        request.raw = true;
         break;
       case "--pretty":
         request.pretty = true;
@@ -275,11 +512,24 @@ export function parseComputerUseCliArgs(argv) {
           arg,
         );
         break;
+      case "--trace-tail":
+        request.traceTail = parsePositiveInteger(
+          requireValue(args, ++index, arg),
+          arg,
+        );
+        break;
       default:
         throw new Error(`Unsupported argument: ${arg}`);
     }
   }
 
+  if (command === "repl") {
+    if (request.actions || request.shorthandActions.length > 0) {
+      throw new Error("Command repl does not accept batch action flags.");
+    }
+    delete request.shorthandActions;
+    return request;
+  }
   if (command === "run") {
     if (request.actions && request.shorthandActions.length > 0) {
       throw new Error("Use either --actions or shorthand action flags, not both.");
@@ -598,6 +848,194 @@ function parseWaitMs(value, flag) {
   return parsed;
 }
 
+function parseReplLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return { kind: "empty" };
+  }
+  if (trimmed.startsWith("{")) {
+    return { kind: "action", action: JSON.parse(trimmed) };
+  }
+  const tokens = splitReplCommandLine(trimmed);
+  const command = normalizeReplCommand(tokens.shift() ?? "");
+  switch (command) {
+    case "exit":
+    case "quit":
+      return { kind: "exit" };
+    case "help":
+      return { kind: "help" };
+    case "status":
+      return { kind: "status" };
+    case "trace":
+      return {
+        kind: "trace",
+        count: tokens[0] ? parsePositiveInteger(tokens[0], "trace") : null,
+      };
+    case "json":
+      return { kind: "mode", mode: "json", value: parseReplModeValue(tokens) };
+    case "raw":
+      return { kind: "mode", mode: "raw", value: parseReplModeValue(tokens) };
+    case "start":
+      return { kind: "action", action: parseReplStart(tokens) };
+    case "observe":
+    case "stop":
+      requireNoReplArgs(command, tokens);
+      return { kind: "action", action: { type: command } };
+    case "move":
+    case "click":
+    case "doubleClick":
+    case "rightClick":
+      return {
+        kind: "action",
+        action: {
+          type: command,
+          ...parseCliPoint(requireReplArg(command, tokens, 0), command),
+        },
+      };
+    case "scroll":
+      return { kind: "action", action: parseReplScroll(tokens) };
+    case "key":
+      return {
+        kind: "action",
+        action: parseCliKey(requireReplArg(command, tokens, 0), command),
+      };
+    case "hotkey":
+      return {
+        kind: "action",
+        action: parseCliHotkey(requireReplArg(command, tokens, 0), command),
+      };
+    case "type":
+      return { kind: "action", action: { type: "type", text: tokens.join(" ") } };
+    case "drag":
+      return {
+        kind: "action",
+        action: parseCliDrag(requireReplArg(command, tokens, 0), command),
+      };
+    case "wait":
+    case "pause":
+      return {
+        kind: "action",
+        action: {
+          type: "wait",
+          ms: parseWaitMs(requireReplArg(command, tokens, 0), command),
+        },
+      };
+    default:
+      throw new Error(`Unsupported Computer Use REPL command: ${command || trimmed}`);
+  }
+}
+
+function normalizeReplCommand(command) {
+  switch (command) {
+    case "double-click":
+      return "doubleClick";
+    case "right-click":
+      return "rightClick";
+    default:
+      return command;
+  }
+}
+
+function parseReplStart(tokens) {
+  if (tokens.length === 0) {
+    return { type: "start" };
+  }
+  if (tokens[0] === "--app" || tokens[0] === "--target-app") {
+    return { type: "start", app: requireReplArg("start", tokens, 1) };
+  }
+  if (tokens.length === 1) {
+    return { type: "start", app: tokens[0] };
+  }
+  throw new Error("start accepts at most one app target");
+}
+
+function parseReplScroll(tokens) {
+  const point = requireReplArg("scroll", tokens, 0);
+  if (point.includes(":")) {
+    return parseCliScroll(point, "scroll");
+  }
+  const delta = requireReplArg("scroll", tokens, 1);
+  return parseCliScroll(`${point}:${delta}`, "scroll");
+}
+
+function parseReplModeValue(tokens) {
+  const value = tokens[0] ?? "on";
+  switch (value.toLowerCase()) {
+    case "on":
+    case "true":
+    case "1":
+      return true;
+    case "off":
+    case "false":
+    case "0":
+      return false;
+    default:
+      throw new Error(`Mode value must be on or off, got ${value}`);
+  }
+}
+
+function splitReplCommandLine(value) {
+  const tokens = [];
+  let token = "";
+  let quote = null;
+  let escaping = false;
+  for (const char of value) {
+    if (escaping) {
+      token += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        token += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (token.length > 0) {
+        tokens.push(token);
+        token = "";
+      }
+      continue;
+    }
+    token += char;
+  }
+  if (escaping) {
+    token += "\\";
+  }
+  if (quote) {
+    throw new Error("Unterminated quote in REPL command");
+  }
+  if (token.length > 0) {
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function requireNoReplArgs(command, tokens) {
+  if (tokens.length > 0) {
+    throw new Error(`${command} does not accept arguments`);
+  }
+}
+
+function requireReplArg(command, tokens, index) {
+  const value = tokens[index];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${command} requires argument ${index + 1}`);
+  }
+  return value;
+}
+
 function normalizeCliModifier(value) {
   switch (value.toLowerCase()) {
     case "command":
@@ -697,6 +1135,131 @@ function stripScreenshotData(screenshot, request) {
   }
 }
 
+function formatReplActionResult({ sessionId, action, result }, settings) {
+  const state = result.state ?? null;
+  const trace = state?.trace?.at?.(-1) ?? null;
+  const payload = {
+    type: "action",
+    sessionId,
+    index: result.index,
+    action,
+    status: result.status,
+    policy: result.policy ?? trace?.policy ?? null,
+    error: result.error ?? trace?.error ?? null,
+    evidence: trace?.evidence ?? null,
+    targetVisibility: state?.targetVisibility ?? null,
+    traceTail: traceTailFromState(state, settings.traceTail),
+  };
+  if (settings.raw) {
+    payload.state = state;
+  } else {
+    payload.state = summarizeState(state);
+  }
+  return formatReplPayload(payload, settings, () => {
+    const evidence = payload.evidence
+      ? ` evidence=${truncate(JSON.stringify(payload.evidence), 500)}`
+      : "";
+    const error = payload.error ? ` error=${truncate(payload.error, 240)}` : "";
+    return `${payload.status} action=${action.type} policy=${payload.policy?.kind ?? "none"} target=${payload.targetVisibility ?? "unknown"}${evidence}${error}`;
+  });
+}
+
+function formatReplStateResult({ sessionId, command, state }, settings) {
+  const payload = {
+    type: command,
+    sessionId,
+    state: settings.raw ? state : summarizeState(state),
+    traceTail: traceTailFromState(state, settings.traceTail),
+  };
+  return formatReplPayload(payload, settings, () => {
+    const summary = payload.state ?? {};
+    return `status=${summary.status ?? "none"} target=${summary.target?.app ?? "none"} visibility=${summary.targetVisibility ?? "unknown"} trace=${summary.traceCount ?? 0}`;
+  });
+}
+
+function formatReplTraceResult({ sessionId, command, state, count }, settings) {
+  const payload = {
+    type: command,
+    sessionId,
+    traceTail: traceTailFromState(state, count),
+  };
+  return formatReplPayload(payload, settings, () =>
+    JSON.stringify(payload.traceTail),
+  );
+}
+
+function formatReplControlResult(payload, settings) {
+  return formatReplPayload({ type: "control", ...payload }, settings, () => {
+    if (payload.command === "help") {
+      return payload.help;
+    }
+    if (payload.command === "exit") {
+      return `exit cleanup=${payload.cleanup?.status ?? "none"}`;
+    }
+    if (payload.command === "cleanup") {
+      const error = payload.error ? ` error=${truncate(payload.error, 240)}` : "";
+      return `cleanup reason=${payload.reason ?? "unknown"} status=${payload.cleanup?.status ?? "none"}${error}`;
+    }
+    if (payload.command === "json" || payload.command === "raw") {
+      return `${payload.command}=${payload[payload.command] ? "on" : "off"}`;
+    }
+    return `${payload.command ?? "control"} ok`;
+  });
+}
+
+function formatReplPayload(payload, settings, humanFormatter) {
+  if (settings.json) {
+    return JSON.stringify(payload, null, settings.pretty ? 2 : 0);
+  }
+  return humanFormatter();
+}
+
+function summarizeState(state) {
+  if (!state) {
+    return null;
+  }
+  return {
+    status: state.status ?? null,
+    target: state.target ?? null,
+    targetVisibility: state.targetVisibility ?? null,
+    pendingAction: state.pendingAction ?? null,
+    policy: state.policy ?? null,
+    overlay: state.overlay
+      ? {
+          mode: state.overlay.mode ?? null,
+          visible: state.overlay.visible === true,
+          reason: state.overlay.reason ?? null,
+        }
+      : null,
+    cursor: state.cursor ?? null,
+    agentCursor: state.agentCursor ?? null,
+    systemCursor: state.systemCursor ?? null,
+    observationSequence: state.observation?.sequence ?? null,
+    traceCount: Array.isArray(state.trace) ? state.trace.length : 0,
+  };
+}
+
+function traceTailFromState(state, requestedCount) {
+  const trace = Array.isArray(state?.trace) ? state.trace : [];
+  const count = Math.min(Math.max(Number(requestedCount) || 3, 1), 20);
+  return trace.slice(-count).map((item) => ({
+    sequence: item.sequence ?? null,
+    action: item.action ?? null,
+    status: item.status ?? null,
+    policy: item.policy ?? null,
+    error: item.error ?? null,
+    evidence: item.evidence ?? null,
+    activation: item.activation ?? null,
+  }));
+}
+
+function truncate(value, maxLength) {
+  if (typeof value !== "string" || value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
 function cliPolicy() {
   return {
     version: "computer-use-cli-v1",
@@ -749,6 +1312,14 @@ function parseNonNegativeInteger(value, flag) {
   return parsed;
 }
 
+function parsePositiveInteger(value, flag) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${flag} requires a positive integer`);
+  }
+  return parsed;
+}
+
 async function delay(ms) {
   if (!Number.isSafeInteger(ms) || ms <= 0) {
     return;
@@ -756,11 +1327,23 @@ async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function replHelp() {
+  return [
+    "Computer Use REPL commands:",
+    "  start [--app <bundle-or-name>] | observe | status | trace [count] | stop | exit",
+    "  move x,y | click x,y | double-click x,y | right-click x,y | scroll x,y deltaX,deltaY",
+    "  key key|mod+key | hotkey mod+key | type <text> | drag x1,y1:x2,y2 | wait ms | pause ms",
+    "  json on|off | raw on|off | help",
+    "  JSON action lines are also accepted, for example: {\"type\":\"move\",\"x\":420,\"y\":360}",
+  ].join("\n");
+}
+
 function usage() {
   return [
     "Usage:",
     "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --json --actions '<json-array>'",
     "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --click 300,230 --type 'hello' --hotkey cmd+s",
+    "  node scripts/morpheus-computer-use.mjs repl --app <bundle-or-name> --omit-screenshot-data",
     "",
     "Actions:",
     "  start, observe, move, click, doubleClick, rightClick, scroll, key, hotkey, type, drag, wait/pause, stop",
@@ -776,7 +1359,12 @@ function usage() {
     "",
     "Options:",
     "  --omit-screenshot-data  Return screenshot metadata without the bounded data URL.",
+    "  --json                  For repl, emit one JSON event per command.",
+    "  --raw                   For repl JSON output, include sanitized full state.",
+    "  --trace-tail <n>        Include at most n recent trace items in repl output (bounded to 20).",
     "  --overlay-hold-ms <ms>  Keep a visible moved cursor on screen before the next action (default: 900).",
+    "",
+    replHelp(),
   ].join("\n");
 }
 

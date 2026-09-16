@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createRequire } from "node:module";
+import { Readable } from "node:stream";
 
 import {
   createComputerUseCliManagerFactory,
   parseComputerUseCliArgs,
+  runComputerUseRepl,
   runComputerUseRequest,
 } from "./morpheus-computer-use.mjs";
 
@@ -148,6 +150,33 @@ function managerHarness() {
   return { manager, nativeClient };
 }
 
+async function runReplHarness({
+  args = [],
+  lines = [],
+  nativeClient = null,
+  overlayController = null,
+  interruptAfterOutput = null,
+} = {}) {
+  const request = parseComputerUseCliArgs(["repl", ...args]);
+  const stdout = [];
+  const abortController = interruptAfterOutput === null ? null : new AbortController();
+  const manager = createComputerUseManager({
+    nativeClient: nativeClient ?? fakeNativeClient(),
+    ...(overlayController ? { overlayController } : {}),
+  });
+  const result = await runComputerUseRepl(request, async () => manager, {
+    input: Readable.from(lines.map((line) => `${line}\n`)),
+    interruptSignal: abortController?.signal,
+    writeStdout: (value) => {
+      stdout.push(value.trimEnd());
+      if (stdout.length === interruptAfterOutput) {
+        abortController?.abort();
+      }
+    },
+  });
+  return { request, manager, result, stdout };
+}
+
 test("computer use CLI run keeps batch session state for observe move stop", async () => {
   const harness = managerHarness();
 
@@ -185,6 +214,129 @@ test("computer use CLI run keeps batch session state for observe move stop", asy
   );
   assert.equal(result.state.status, "stopped");
   assert.deepEqual(harness.nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL keeps one manager session across commands", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--omit-screenshot-data", "--overlay-hold-ms", "0"],
+    lines: ["start", "observe", "move 420,360", "status", "exit"],
+    nativeClient,
+    overlayController,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state.status, "stopped");
+  assert.equal(stdout.length, 5);
+  assert.match(stdout[2], /completed action=move/);
+  assert.match(stdout[3], /status=active/);
+  assert.match(stdout[4], /exit cleanup=completed/);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+  assert.equal(overlayController.destroyed, 1);
+});
+
+test("computer use REPL emits JSON events with trace tail", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: [
+      "--app",
+      "com.apple.finder",
+      "--json",
+      "--omit-screenshot-data",
+      "--overlay-hold-ms",
+      "0",
+    ],
+    lines: ["start", "click 30,40", "trace 1", "exit"],
+    nativeClient,
+  });
+
+  const events = stdout.map((line) => JSON.parse(line));
+  assert.equal(result.ok, true);
+  assert.equal(events[1].type, "action");
+  assert.equal(events[1].action.type, "click");
+  assert.equal(events[1].status, "completed");
+  assert.equal(events[1].traceTail.length, 1);
+  assert.equal(events[1].traceTail[0].action.type, "click");
+  assert.equal(events[2].type, "trace");
+  assert.equal(events[2].traceTail.length, 1);
+  assert.equal(events[3].cleanup.status, "completed");
+  assert.deepEqual(nativeClient.actions, [
+    { type: "click", x: 30, y: 40 },
+    { type: "cleanup" },
+  ]);
+});
+
+test("computer use REPL allows background pause without native act", async () => {
+  const nativeClient = fakeNativeClient({ targetVisibility: "background" });
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", '{"type":"pause","ms":0}', "exit"],
+    nativeClient,
+  });
+
+  const pauseEvent = JSON.parse(stdout[1]);
+  assert.equal(result.ok, true);
+  assert.equal(pauseEvent.action.type, "wait");
+  assert.equal(pauseEvent.status, "completed");
+  assert.equal(pauseEvent.policy.kind, "low-risk");
+  assert.equal(pauseEvent.evidence.waitMs, 0);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL cleans up on EOF", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", "move 10,20"],
+    nativeClient,
+  });
+
+  const cleanupEvent = JSON.parse(stdout.at(-1));
+  assert.equal(result.ok, true);
+  assert.equal(cleanupEvent.command, "cleanup");
+  assert.equal(cleanupEvent.reason, "eof");
+  assert.equal(cleanupEvent.cleanup.status, "completed");
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL cleans up after failed side effect", async () => {
+  const nativeClient = fakeNativeClient({ failActionType: "key" });
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", "key Tab", "click 30,40"],
+    nativeClient,
+  });
+
+  const failed = JSON.parse(stdout[1]);
+  const cleanup = JSON.parse(stdout[2]);
+  assert.equal(result.ok, false);
+  assert.equal(stdout.length, 3);
+  assert.equal(failed.status, "failed");
+  assert.match(failed.error, /key failed/);
+  assert.equal(cleanup.reason, "failed-action");
+  assert.equal(cleanup.cleanup.status, "completed");
+  assert.deepEqual(nativeClient.actions, [
+    { type: "key", key: "Tab", modifiers: [] },
+    { type: "cleanup" },
+  ]);
+});
+
+test("computer use REPL cleans up after interrupt", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", "click 30,40"],
+    nativeClient,
+    interruptAfterOutput: 1,
+  });
+
+  const cleanup = JSON.parse(stdout[1]);
+  assert.equal(result.ok, false);
+  assert.equal(stdout.length, 2);
+  assert.equal(cleanup.reason, "interrupt");
+  assert.equal(cleanup.cleanup.status, "completed");
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 
 test("computer use CLI compiles shorthand flags into a run action batch", async () => {
