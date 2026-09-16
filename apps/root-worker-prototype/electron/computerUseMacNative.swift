@@ -189,6 +189,40 @@ func observe(_ object: [String: Any]) {
   json(response)
 }
 
+func activate(_ object: [String: Any]) {
+  guard let targetIdentifier = object["targetApp"] as? String else {
+    error("Activate requires targetApp")
+  }
+  guard let target = targetApplication(targetIdentifier) else {
+    error("Target app \(targetIdentifier) is not running")
+  }
+  let requested = target.activate(options: [.activateIgnoringOtherApps])
+  let trusted = AXIsProcessTrusted()
+  var waitedMs = 0
+  var frontmost = NSWorkspace.shared.frontmostApplication
+  while frontmost?.processIdentifier != target.processIdentifier && waitedMs < 1_000 {
+    usleep(50_000)
+    waitedMs += 50
+    frontmost = NSWorkspace.shared.frontmostApplication
+  }
+  let activated = frontmost?.processIdentifier == target.processIdentifier
+  var response: [String: Any] = [
+    "ok": true,
+    "activated": requested && activated,
+    "waitedMs": waitedMs,
+    "targetApp": appSummary(target, trusted: trusted, frontmost: activated),
+  ]
+  if let frontmost = frontmost {
+    response["frontmostApp"] = appSummary(frontmost, trusted: trusted, frontmost: true)
+  }
+  if !requested {
+    response["reason"] = "macOS declined target app activation"
+  } else if !activated {
+    response["reason"] = "Target app did not become frontmost after activation"
+  }
+  json(response)
+}
+
 func postMouse(_ type: CGEventType, _ point: CGPoint) {
   let event = CGEvent(
     mouseEventSource: nil,
@@ -337,6 +371,8 @@ let object = payload()
 switch command {
 case "observe":
   observe(object)
+case "activate":
+  activate(object)
 case "move":
   move(object)
 case "click":

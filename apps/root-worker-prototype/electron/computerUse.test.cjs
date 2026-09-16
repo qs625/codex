@@ -66,6 +66,24 @@ function fakeNativeClient(options = {}) {
       }
       return { ok: true };
     },
+    async activateTarget(payload) {
+      actions.push({ type: "activate", ...payload });
+      if (options.activationError) {
+        throw new Error(options.activationError);
+      }
+      if (options.activationResult) {
+        return options.activationResult;
+      }
+      return {
+        activated: true,
+        waitedMs: 50,
+        targetApp: {
+          name: options.activeAppName ?? "Firefox",
+          bundleIdentifier: options.bundleIdentifier ?? "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+      };
+    },
     async cleanup() {
       actions.push({ type: "cleanup" });
     },
@@ -270,19 +288,20 @@ test("policy keeps safe keyboard shortcuts available", () => {
   );
 });
 
-test("actions are blocked when target app is not the observed active app", async () => {
+test("actions stay blocked when activation cannot prove the target app", async () => {
   const nativeClient = fakeNativeClient({ activeAppName: "Finder", bundleIdentifier: "com.apple.finder" });
   const manager = createComputerUseManager({ nativeClient });
   await manager.startSession({ app: "org.mozilla.firefox" });
 
   const state = await manager.act({ type: "click", x: 10, y: 10 });
 
-  assert.deepEqual(nativeClient.actions, []);
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate"]);
   assert.equal(state.trace[0].status, "blocked");
   assert.equal(state.trace[0].policy.kind, "target-mismatch");
+  assert.equal(state.trace[0].activation.status, "completed");
 });
 
-test("action preflight blocks if the active app changed after observe", async () => {
+test("action preflight activates then blocks if the active app still changed after observe", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
       {
@@ -308,13 +327,13 @@ test("action preflight blocks if the active app changed after observe", async ()
 
   const state = await manager.act({ type: "click", x: 10, y: 10 });
 
-  assert.deepEqual(nativeClient.actions, []);
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate"]);
   assert.equal(state.trace[0].status, "blocked");
   assert.equal(state.trace[0].policy.kind, "target-mismatch");
   assert.equal(state.observation.activeApp.name, "Finder");
 });
 
-test("background target observe does not confuse frontmost app with target app", async () => {
+test("background target side effect activates target before native action", async () => {
   const overlayController = fakeOverlayController();
   const nativeClient = fakeNativeClient({
     observations: [
@@ -363,6 +382,51 @@ test("background target observe does not confuse frontmost app with target app",
         },
         targetVisibility: "background",
       },
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox background" },
+        },
+        targetVisibility: "background",
+      },
+      {
+        activeApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox front" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox front" },
+        },
+        targetVisibility: "frontmost",
+      },
+      {
+        activeApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox after" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: { title: "Firefox after" },
+        },
+        targetVisibility: "frontmost",
+      },
     ],
   });
   const manager = createComputerUseManager({ nativeClient, overlayController });
@@ -384,10 +448,182 @@ test("background target observe does not confuse frontmost app with target app",
 
   const clicked = await manager.act({ type: "click", x: 500, y: 400 });
 
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate", "click"]);
+  assert.equal(clicked.trace.at(-1).status, "completed");
+  assert.equal(clicked.trace.at(-1).policy.kind, "side-effect");
+  assert.equal(clicked.trace.at(-1).activation.status, "completed");
+  assert.equal(clicked.trace.at(-1).activation.before.targetVisibility, "background");
+  assert.equal(clicked.trace.at(-1).activation.reobserved.targetVisibility, "frontmost");
+  assert.equal(clicked.targetVisibility, "frontmost");
+  assert.equal(clicked.frontmostApp.bundleIdentifier, "org.mozilla.firefox");
+});
+
+test("background target side effect fails without native action when activation fails", async () => {
+  const nativeClient = fakeNativeClient({
+    activationResult: {
+      activated: false,
+      reason: "Target app did not become frontmost after activation",
+      waitedMs: 1000,
+    },
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({ type: "key", key: "Tab" });
+
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate"]);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).activation.status, "failed");
+  assert.match(state.trace.at(-1).error, /did not become frontmost/);
+});
+
+test("background target side effect records activation throw evidence", async () => {
+  const nativeClient = fakeNativeClient({
+    activationError: "Target app org.mozilla.firefox is not running",
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: null,
+        targetVisibility: "unknown",
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({ type: "click", x: 20, y: 30 });
+
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate"]);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).activation.status, "failed");
+  assert.equal(state.trace.at(-1).activation.result.activated, false);
+  assert.match(state.trace.at(-1).activation.result.reason, /not running/);
+});
+
+test("background target side effect records missing activation capability", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+    ],
+  });
+  delete nativeClient.activateTarget;
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({ type: "key", key: "Tab" });
+
   assert.deepEqual(nativeClient.actions, []);
-  assert.equal(clicked.trace.at(-1).status, "blocked");
-  assert.equal(clicked.trace.at(-1).policy.kind, "target-mismatch");
-  assert.match(clicked.trace.at(-1).policy.reason, /background/);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).activation.status, "failed");
+  assert.equal(state.trace.at(-1).activation.result.activated, false);
+  assert.match(state.trace.at(-1).activation.result.reason, /does not support target activation/);
+});
+
+test("background target side effect blocks when activation foregrounds another app", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+          window: { title: "Finder" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+      {
+        activeApp: {
+          name: "Mail",
+          bundleIdentifier: "com.apple.mail",
+          processIdentifier: 44,
+          window: { title: "Mail" },
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        targetVisibility: "background",
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({ type: "type", text: "hello" });
+
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate"]);
+  assert.equal(state.trace.at(-1).status, "blocked");
+  assert.equal(state.trace.at(-1).policy.kind, "target-mismatch");
+  assert.equal(state.trace.at(-1).activation.reobserved.frontmostApp.bundleIdentifier, "com.apple.mail");
+  assert.match(state.trace.at(-1).policy.reason, /still in the background/);
 });
 
 test("background target without window metadata does not inherit frontmost window", async () => {

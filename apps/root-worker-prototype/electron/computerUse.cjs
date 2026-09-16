@@ -111,6 +111,19 @@ class ComputerUseManager {
       return this.state();
     }
 
+    if (shouldActivateTargetBeforeAction(normalized, this.session)) {
+      try {
+        await this.activateTargetForAction(traceItem);
+        await this.observeNow("post-activation");
+      } catch (error) {
+        traceItem.status = "failed";
+        traceItem.error = errorMessage(error);
+        traceItem.completedAtMs = this.clock();
+        this.applyError(error, "target-activation");
+        return this.state();
+      }
+    }
+
     policy = this.policyForAction(normalized);
     traceItem.policy = policy;
     traceItem.observationSequence = this.session.observation?.sequence ?? null;
@@ -183,8 +196,8 @@ class ComputerUseManager {
         allowed: false,
         reason:
           this.session.targetVisibility === "background"
-            ? "Target app is in the background; bring it frontmost before running side-effect Computer Use actions."
-            : "Target app visibility is unknown; observe a frontmost target before running side-effect Computer Use actions.",
+            ? "Target app is still in the background after target activation; refusing to send side-effect Computer Use actions to the current foreground app."
+            : "Target app visibility is unknown after target activation; refusing to send side-effect Computer Use actions to the current foreground app.",
       };
     }
     const mismatch =
@@ -199,6 +212,60 @@ class ComputerUseManager {
       };
     }
     return basePolicy;
+  }
+
+  async activateTargetForAction(traceItem) {
+    const targetApp = this.session.target?.app;
+    if (!targetApp) {
+      return;
+    }
+    const startedAtMs = this.clock();
+    const activation = {
+      attempted: true,
+      status: "running",
+      targetApp,
+      startedAtMs,
+      before: {
+        observationSequence: this.session.observation?.sequence ?? null,
+        targetVisibility: this.session.targetVisibility ?? "unknown",
+        frontmostApp: compactAppIdentity(this.session.frontmostApp),
+        targetApp: compactAppIdentity(this.session.targetApp),
+      },
+    };
+    traceItem.activation = activation;
+    this.session.status = "activating-target";
+    this.session.updatedAtMs = startedAtMs;
+    const markActivationFailed = (reason) => {
+      activation.status = "failed";
+      activation.completedAtMs = this.clock();
+      activation.result = {
+        activated: false,
+        reason,
+      };
+    };
+    const activateTarget = this.nativeClient.activateTarget;
+    if (typeof activateTarget !== "function") {
+      const message = "Native Computer Use backend does not support target activation";
+      markActivationFailed(message);
+      throw new Error(message);
+    }
+    let result;
+    try {
+      result = await activateTarget.call(this.nativeClient, {
+        targetApp,
+        observedTargetApp: compactAppIdentity(this.session.targetApp),
+        frontmostApp: compactAppIdentity(this.session.frontmostApp),
+      });
+    } catch (error) {
+      markActivationFailed(errorMessage(error));
+      throw error;
+    }
+    activation.status = result?.activated === false ? "failed" : "completed";
+    activation.completedAtMs = this.clock();
+    activation.result = normalizeActivationResult(result);
+    if (result?.activated === false) {
+      throw new Error(result.reason || `Could not activate target app ${targetApp}`);
+    }
   }
 
   state() {
@@ -282,6 +349,19 @@ class ComputerUseManager {
     this.session.status = "active";
     this.session.error = null;
     this.session.updatedAtMs = now;
+    const currentTrace = this.session.trace.at(-1);
+    if (
+      reason === "post-activation" &&
+      currentTrace?.activation &&
+      !currentTrace.activation.reobserved
+    ) {
+      currentTrace.activation.reobserved = {
+        observationSequence: this.session.observation.sequence,
+        targetVisibility,
+        frontmostApp: compactAppIdentity(frontmostApp),
+        targetApp: compactAppIdentity(targetApp),
+      };
+    }
   }
 
   async moveAgentCursor(action, traceItem) {
@@ -492,6 +572,18 @@ function classifyComputerUseAction(action) {
   return { kind: "low-risk", allowed: true, reason: null };
 }
 
+function isSideEffectAction(action) {
+  return ["click", "type", "key", "drag"].includes(action?.type);
+}
+
+function shouldActivateTargetBeforeAction(action, session) {
+  return (
+    isSideEffectAction(action) &&
+    Boolean(session?.target?.app) &&
+    session.targetVisibility !== "frontmost"
+  );
+}
+
 function normalizeAction(action) {
   if (!action || typeof action !== "object") {
     throw new Error("Computer Use action is required");
@@ -641,6 +733,49 @@ function resolveTargetWindow({ frontmostApp, target, targetApp, targetVisibility
 
 function normalizeTargetApp(value) {
   return String(value).trim().toLowerCase();
+}
+
+function compactAppIdentity(app) {
+  if (!app || typeof app !== "object") {
+    return null;
+  }
+  const result = {};
+  for (const key of ["name", "bundleIdentifier", "processIdentifier", "frontmost"]) {
+    if (app[key] !== undefined && app[key] !== null) {
+      result[key] = app[key];
+    }
+  }
+  if (app.window && typeof app.window === "object") {
+    result.window = {};
+    for (const key of ["title", "role", "subrole"]) {
+      if (app.window[key] !== undefined && app.window[key] !== null) {
+        result.window[key] = app.window[key];
+      }
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function normalizeActivationResult(result) {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const normalized = {
+    activated: result.activated === true,
+  };
+  if (typeof result.reason === "string") {
+    normalized.reason = result.reason;
+  }
+  if (Number.isFinite(result.waitedMs)) {
+    normalized.waitedMs = result.waitedMs;
+  }
+  if (result.targetApp) {
+    normalized.targetApp = compactAppIdentity(result.targetApp);
+  }
+  if (result.frontmostApp) {
+    normalized.frontmostApp = compactAppIdentity(result.frontmostApp);
+  }
+  return normalized;
 }
 
 function appendTrace(session, item) {
@@ -798,6 +933,9 @@ function createMacNativeComputerUseClientWithAdapters({
     },
     async act(action) {
       return runNative(scriptPath, action.type, action);
+    },
+    async activateTarget(payload) {
+      return runNative(scriptPath, "activate", payload);
     },
     async cleanup() {
       await removeFile(lastScreenshotPath);

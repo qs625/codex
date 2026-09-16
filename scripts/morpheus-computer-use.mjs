@@ -513,10 +513,10 @@ function cliPolicy() {
 function cliLimitations() {
   return [
     "The CLI keeps session state only for the lifetime of one `run` process.",
-    "Click, key, type, and drag are real desktop side effects and require a frontmost matched target plus Accessibility permission.",
-    "Background targets are not activated automatically; make the target frontmost before running side-effect actions.",
+    "Click, key, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
+    "Background targets are activated by the Computer Use session, then re-observed before any side-effect action is sent.",
     "Screenshots include a bounded data URL by default; pass --omit-screenshot-data for metadata-only output.",
-    "Visible agent cursor feedback is target-bound. Background targets are not activated or drawn over unrelated foreground apps.",
+    "Visible agent cursor feedback is target-bound. Background targets are not drawn over unrelated foreground apps before activation.",
     "After a visible move, the CLI waits --overlay-hold-ms before the next action so the cursor can be seen.",
   ];
 }
