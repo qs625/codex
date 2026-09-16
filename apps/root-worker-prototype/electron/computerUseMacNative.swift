@@ -303,19 +303,32 @@ func typeText(_ object: [String: Any]) {
   guard let text = object["text"] as? String else {
     error("Type action requires text")
   }
-  for scalar in text.unicodeScalars {
-    var value = UniChar(scalar.value)
-    guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-      let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
-    else {
-      error("Could not create keyboard event")
-    }
-    down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-    up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
+  let pasteboard = NSPasteboard.general
+  let saved = copyPasteboardItems(pasteboard)
+  if let failure = saved.error {
+    error(failure)
   }
-  json(["ok": true, "characterCount": text.count])
+  let savedItems = saved.items
+  pasteboard.clearContents()
+  guard pasteboard.setString(text, forType: .string) else {
+    let restored = restorePasteboard(pasteboard, savedItems)
+    error("Could not write type text to the pasteboard; pasteboardRestored=\(restored)")
+  }
+  if let failure = postKey("v", ["cmd"]) {
+    let restored = restorePasteboard(pasteboard, savedItems)
+    error("Could not send paste shortcut for type action: \(failure); pasteboardRestored=\(restored)")
+  }
+  usleep(120_000)
+  let restored = restorePasteboard(pasteboard, savedItems)
+  guard restored else {
+    error("Typed text was sent, but the previous pasteboard contents could not be restored")
+  }
+  json([
+    "ok": true,
+    "method": "pasteboard-cmd-v",
+    "characterCount": text.count,
+    "pasteboardRestored": restored,
+  ])
 }
 
 let keyCodes: [String: CGKeyCode] = [
@@ -347,22 +360,111 @@ func pressKey(_ object: [String: Any]) {
   guard let raw = object["key"] as? String else {
     error("Key action requires key")
   }
-  guard let code = keyCodes[raw.lowercased()] else {
-    error("Unsupported key: \(raw)")
-  }
   let modifiers = object["modifiers"] as? [String] ?? []
+  if let failure = postKey(raw, modifiers) {
+    error(failure)
+  }
+  json(["ok": true, "key": raw, "modifiers": modifiers])
+}
+
+func postKey(_ raw: String, _ modifiers: [String]) -> String? {
+  guard let code = keyCodes[raw.lowercased()] else {
+    return "Unsupported key: \(raw)"
+  }
   let eventFlags = flags(modifiers)
   guard
     let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
     let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)
   else {
-    error("Could not create keyboard event")
+    return "Could not create keyboard event"
   }
   down.flags = eventFlags
   up.flags = eventFlags
   down.post(tap: .cghidEventTap)
   up.post(tap: .cghidEventTap)
-  json(["ok": true, "key": raw, "modifiers": modifiers])
+  return nil
+}
+
+func copyPasteboardItems(_ pasteboard: NSPasteboard) -> (items: [NSPasteboardItem], error: String?) {
+  guard let items = pasteboard.pasteboardItems else {
+    return ([], nil)
+  }
+  var copies: [NSPasteboardItem] = []
+  for item in items {
+    if item.types.isEmpty {
+      return ([], "Could not safely copy pasteboard item with no data types")
+    }
+    let copy = NSPasteboardItem()
+    for type in item.types {
+      if let data = item.data(forType: type) {
+        guard copy.setData(data, forType: type) else {
+          return ([], "Could not safely preserve pasteboard data for type \(type.rawValue)")
+        }
+        continue
+      }
+      if let value = item.propertyList(forType: type) {
+        guard copy.setPropertyList(value, forType: type) else {
+          return ([], "Could not safely preserve pasteboard property list for type \(type.rawValue)")
+        }
+        continue
+      }
+      if let string = fallbackStringForPasteboardItem(item, forType: type) {
+        guard copy.setString(string, forType: type) else {
+          return ([], "Could not safely preserve pasteboard string for type \(type.rawValue)")
+        }
+        continue
+      }
+      return ([], "Could not safely copy pasteboard data for type \(type.rawValue)")
+    }
+    copies.append(copy)
+  }
+  return (copies, nil)
+}
+
+func fallbackStringForPasteboardItem(_ item: NSPasteboardItem, forType targetType: NSPasteboard.PasteboardType) -> String? {
+  let textTypes: [NSPasteboard.PasteboardType] = [
+    .string,
+    NSPasteboard.PasteboardType("public.utf8-plain-text"),
+    NSPasteboard.PasteboardType("public.utf16-plain-text"),
+    NSPasteboard.PasteboardType("public.utf16-external-plain-text"),
+  ]
+  guard textTypes.contains(targetType) else {
+    return nil
+  }
+  for type in textTypes {
+    if let string = item.string(forType: type) {
+      return string
+    }
+    if let data = item.data(forType: type) {
+      if let string = String(data: data, encoding: .utf8) {
+        return string
+      }
+      if let string = String(data: data, encoding: .utf16) {
+        return string
+      }
+    }
+  }
+  for type in item.types {
+    if type == .rtf, let data = item.data(forType: type) {
+      let attributed = try? NSAttributedString(
+        data: data,
+        options: [.documentType: NSAttributedString.DocumentType.rtf],
+        documentAttributes: nil
+      )
+      if let string = attributed?.string {
+        return string
+      }
+    }
+  }
+  return nil
+}
+
+func restorePasteboard(_ pasteboard: NSPasteboard, _ items: [NSPasteboardItem]) -> Bool {
+  pasteboard.clearContents()
+  if items.isEmpty {
+    return true
+  }
+  return pasteboard.writeObjects(items)
 }
 
 let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "observe"
