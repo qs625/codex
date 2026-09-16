@@ -223,14 +223,37 @@ func activate(_ object: [String: Any]) {
   json(response)
 }
 
-func postMouse(_ type: CGEventType, _ point: CGPoint) {
+func postMouse(_ type: CGEventType, _ point: CGPoint, button: CGMouseButton = .left, clickState: Int64 = 1) {
   let event = CGEvent(
     mouseEventSource: nil,
     mouseType: type,
     mouseCursorPosition: point,
-    mouseButton: .left
+    mouseButton: button
   )
+  event?.setIntegerValueField(.mouseEventClickState, value: clickState)
   event?.post(tap: .cghidEventTap)
+}
+
+func currentCursor() -> CGPoint {
+  CGEvent(source: nil)?.location ?? CGPoint.zero
+}
+
+func restoreCursorIfNeeded(_ before: CGPoint) -> (Bool, CGPoint) {
+  let current = currentCursor()
+  var restored = false
+  if abs(current.x - before.x) > 0.5 || abs(current.y - before.y) > 0.5 {
+    CGWarpMouseCursorPosition(before)
+    restored = true
+  }
+  return (restored, currentCursor())
+}
+
+func cursorEvidence(_ before: CGPoint, _ restored: Bool, _ after: CGPoint) -> [String: Any] {
+  [
+    "systemCursorRestored": restored,
+    "systemCursorBefore": ["x": before.x, "y": before.y],
+    "systemCursorAfter": ["x": after.x, "y": after.y],
+  ]
 }
 
 func requireDesktopControlPermission() {
@@ -247,30 +270,95 @@ func move(_ object: [String: Any]) {
 func click(_ object: [String: Any]) {
   requireDesktopControlPermission()
   let point = pointFromPayload(object)
-  let before = CGEvent(source: nil)?.location ?? CGPoint.zero
+  let before = currentCursor()
   postMouse(.leftMouseDown, point)
   usleep(45_000)
   postMouse(.leftMouseUp, point)
-  let afterClick = CGEvent(source: nil)?.location ?? CGPoint.zero
-  var restored = false
-  if abs(afterClick.x - before.x) > 0.5 || abs(afterClick.y - before.y) > 0.5 {
-    CGWarpMouseCursorPosition(before)
-    restored = true
-  }
-  let afterRestore = CGEvent(source: nil)?.location ?? CGPoint.zero
-  json([
+  let (restored, afterRestore) = restoreCursorIfNeeded(before)
+  var response = cursorEvidence(before, restored, afterRestore)
+  response.merge([
     "ok": true,
-    "systemCursorRestored": restored,
-    "systemCursorBefore": ["x": before.x, "y": before.y],
-    "systemCursorAfter": ["x": afterRestore.x, "y": afterRestore.y],
-  ])
+    "method": "mouse-click",
+    "button": "left",
+    "clickCount": 1,
+  ]) { _, new in new }
+  json(response)
+}
+
+func doubleClick(_ object: [String: Any]) {
+  requireDesktopControlPermission()
+  let point = pointFromPayload(object)
+  let before = currentCursor()
+  postMouse(.leftMouseDown, point, clickState: 1)
+  usleep(35_000)
+  postMouse(.leftMouseUp, point, clickState: 1)
+  usleep(65_000)
+  postMouse(.leftMouseDown, point, clickState: 2)
+  usleep(35_000)
+  postMouse(.leftMouseUp, point, clickState: 2)
+  let (restored, afterRestore) = restoreCursorIfNeeded(before)
+  var response = cursorEvidence(before, restored, afterRestore)
+  response.merge([
+    "ok": true,
+    "method": "mouse-click",
+    "button": "left",
+    "clickCount": 2,
+  ]) { _, new in new }
+  json(response)
+}
+
+func rightClick(_ object: [String: Any]) {
+  requireDesktopControlPermission()
+  let point = pointFromPayload(object)
+  let before = currentCursor()
+  postMouse(.rightMouseDown, point, button: .right)
+  usleep(45_000)
+  postMouse(.rightMouseUp, point, button: .right)
+  let (restored, afterRestore) = restoreCursorIfNeeded(before)
+  var response = cursorEvidence(before, restored, afterRestore)
+  response.merge([
+    "ok": true,
+    "method": "mouse-click",
+    "button": "right",
+    "clickCount": 1,
+  ]) { _, new in new }
+  json(response)
+}
+
+func scroll(_ object: [String: Any]) {
+  requireDesktopControlPermission()
+  let point = pointFromPayload(object)
+  let deltaX = Int32(number(object["deltaX"]) ?? 0)
+  let deltaY = Int32(number(object["deltaY"]) ?? 0)
+  let before = currentCursor()
+  guard let event = CGEvent(
+    scrollWheelEvent2Source: nil,
+    units: .pixel,
+    wheelCount: 2,
+    wheel1: deltaY,
+    wheel2: deltaX,
+    wheel3: 0
+  ) else {
+    error("Could not create scroll event")
+  }
+  event.location = point
+  event.post(tap: .cghidEventTap)
+  let (restored, afterRestore) = restoreCursorIfNeeded(before)
+  var response = cursorEvidence(before, restored, afterRestore)
+  response.merge([
+    "ok": true,
+    "method": "scroll-wheel",
+    "deltaX": Double(deltaX),
+    "deltaY": Double(deltaY),
+  ]) { _, new in new }
+  json(response)
 }
 
 func drag(_ object: [String: Any]) {
   requireDesktopControlPermission()
   let from = pointFromNestedPayload(object, "from")
   let to = pointFromNestedPayload(object, "to")
-  let before = CGEvent(source: nil)?.location ?? CGPoint.zero
+  let before = currentCursor()
   postMouse(.leftMouseDown, from)
   let steps = 8
   for index in 1...steps {
@@ -283,19 +371,14 @@ func drag(_ object: [String: Any]) {
     usleep(12_000)
   }
   postMouse(.leftMouseUp, to)
-  let afterDrag = CGEvent(source: nil)?.location ?? CGPoint.zero
-  var restored = false
-  if abs(afterDrag.x - before.x) > 0.5 || abs(afterDrag.y - before.y) > 0.5 {
-    CGWarpMouseCursorPosition(before)
-    restored = true
-  }
-  let afterRestore = CGEvent(source: nil)?.location ?? CGPoint.zero
-  json([
+  let (restored, afterRestore) = restoreCursorIfNeeded(before)
+  var response = cursorEvidence(before, restored, afterRestore)
+  response.merge([
     "ok": true,
-    "systemCursorRestored": restored,
-    "systemCursorBefore": ["x": before.x, "y": before.y],
-    "systemCursorAfter": ["x": afterRestore.x, "y": afterRestore.y],
-  ])
+    "method": "mouse-drag",
+    "button": "left",
+  ]) { _, new in new }
+  json(response)
 }
 
 func typeText(_ object: [String: Any]) {
@@ -364,7 +447,19 @@ func pressKey(_ object: [String: Any]) {
   if let failure = postKey(raw, modifiers) {
     error(failure)
   }
-  json(["ok": true, "key": raw, "modifiers": modifiers])
+  json(["ok": true, "method": "key-press", "key": raw, "modifiers": modifiers])
+}
+
+func pressHotkey(_ object: [String: Any]) {
+  requireDesktopControlPermission()
+  guard let raw = object["key"] as? String else {
+    error("Hotkey action requires key")
+  }
+  let modifiers = object["modifiers"] as? [String] ?? []
+  if let failure = postKey(raw, modifiers) {
+    error(failure)
+  }
+  json(["ok": true, "method": "keyboard-shortcut", "key": raw, "modifiers": modifiers])
 }
 
 func postKey(_ raw: String, _ modifiers: [String]) -> String? {
@@ -479,10 +574,18 @@ case "move":
   move(object)
 case "click":
   click(object)
+case "doubleClick":
+  doubleClick(object)
+case "rightClick":
+  rightClick(object)
+case "scroll":
+  scroll(object)
 case "type":
   typeText(object)
 case "key":
   pressKey(object)
+case "hotkey":
+  pressHotkey(object)
 case "drag":
   drag(object)
 default:
