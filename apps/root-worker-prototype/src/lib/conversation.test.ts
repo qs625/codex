@@ -772,6 +772,52 @@ test("renders command notifications as structured command tool entries", () => {
   );
 });
 
+test("previews large command notification output without projecting full payload", () => {
+  const largeOutput = `${"output line\n".repeat(400)}UNBOUNDED_COMMAND_SENTINEL`;
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "rg . ~/.morpheus",
+        cwd: "/tmp/project",
+        status: "running",
+        aggregatedOutput: largeOutput,
+        exitCode: null,
+        durationMs: null,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:output:1",
+        commandItemId: "cmd-1",
+        kind: "output",
+        message: "Command output notification received.",
+        output: largeOutput,
+        exitCode: null,
+        createdAtMs: 1,
+      },
+    ]),
+  );
+
+  const notificationEntry = entries.find(
+    (entry) => entry.id === "cmd-1:notification:output:1",
+  );
+
+  assert.equal(notificationEntry?.toolOutput?.terminalEmulated, true);
+  assert.match(
+    notificationEntry?.toolOutput?.text ?? "",
+    /\[truncated: [\d,]+ characters omitted\]/,
+  );
+  assert.doesNotMatch(
+    notificationEntry?.toolOutput?.text ?? "",
+    /UNBOUNDED_COMMAND_SENTINEL/,
+  );
+  assert.doesNotMatch(
+    entries[0]?.toolDetails ?? "",
+    /UNBOUNDED_COMMAND_SENTINEL/,
+  );
+});
+
 test("keeps consecutive command notifications grouped in one visible tool cell", () => {
   const entries = buildConversationEntries(
     makeThread([

@@ -93,6 +93,67 @@ export function previewInlineText(value: unknown, maxChars: number) {
     : text;
 }
 
+export type BoundedText = {
+  text: string;
+  truncated: boolean;
+  omittedChars: number;
+};
+
+export function previewBlockText(
+  text: string,
+  options: { maxChars: number; maxLines?: number },
+): BoundedText {
+  const maxChars = Math.max(0, Math.floor(options.maxChars));
+  const maxLines =
+    options.maxLines === undefined
+      ? null
+      : Math.max(0, Math.floor(options.maxLines));
+  let endIndex = Math.min(text.length, maxChars);
+
+  if (maxLines !== null) {
+    const lineEndIndex = indexAfterLineLimit(text, maxLines);
+    if (lineEndIndex !== null) {
+      endIndex = Math.min(endIndex, lineEndIndex);
+    }
+  }
+
+  if (endIndex >= text.length) {
+    return { text, truncated: false, omittedChars: 0 };
+  }
+
+  const preview = text.slice(0, endIndex).trimEnd();
+  const omittedChars = text.length - endIndex;
+  return {
+    text: `${preview}\n[truncated: ${formatOmittedCharacterCount(omittedChars)} characters omitted]`,
+    truncated: true,
+    omittedChars,
+  };
+}
+
+function indexAfterLineLimit(text: string, maxLines: number) {
+  if (maxLines <= 0) {
+    return 0;
+  }
+
+  let searchFrom = 0;
+  for (let line = 1; line <= maxLines; line += 1) {
+    const newlineIndex = text.indexOf("\n", searchFrom);
+    if (newlineIndex === -1) {
+      return null;
+    }
+    if (line === maxLines) {
+      return newlineIndex;
+    }
+    searchFrom = newlineIndex + 1;
+  }
+
+  return null;
+}
+
+function formatOmittedCharacterCount(value: number) {
+  return new Intl.NumberFormat("en-US").format(Math.max(0, value));
+}
+
 export function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()

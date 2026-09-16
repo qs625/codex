@@ -4,9 +4,13 @@ import { trimPath } from "./thread";
 import {
   formatMillisecondsDuration,
   formatSecondsDuration,
+  previewBlockText,
   safeJson,
   stringOrNull,
 } from "./conversationFormatting";
+
+const COMMAND_OUTPUT_PREVIEW_MAX_CHARS = 12_000;
+const COMMAND_OUTPUT_PREVIEW_MAX_LINES = 240;
 
 export function summarizeCommandExecution(
   item: Extract<ThreadItem, { type: "commandExecution" }>,
@@ -109,9 +113,13 @@ export function commandExecutionNotificationOutput(
   if (item.output === null || item.output === undefined) {
     return undefined;
   }
+  const outputPreview = previewBlockText(item.output, {
+    maxChars: COMMAND_OUTPUT_PREVIEW_MAX_CHARS,
+    maxLines: COMMAND_OUTPUT_PREVIEW_MAX_LINES,
+  });
   return {
     label: item.kind === "exit" ? "Command exit output" : "Command output",
-    text: item.output,
+    text: outputPreview.text,
     isEmpty: item.output.length === 0,
     terminalEmulated: true,
   };

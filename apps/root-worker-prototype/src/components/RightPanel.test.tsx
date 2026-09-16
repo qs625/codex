@@ -621,6 +621,7 @@ test("omits plan work queue from thread analysis", () => {
 });
 
 test("keeps live commands visible without output while rendering schedules", () => {
+  const largeOutput = `${"changed:/tmp/out.log\n".repeat(400)}UNBOUNDED_RIGHT_PANEL_OUTPUT`;
   const activeCommand = {
     type: "commandExecution",
     id: "command-1",
@@ -628,7 +629,7 @@ test("keeps live commands visible without output while rendering schedules", () 
     cwd: "/tmp",
     processId: "pid-1",
     status: "running",
-    aggregatedOutput: "changed:/tmp/out.log\n",
+    aggregatedOutput: largeOutput,
     exitCode: null,
     durationMs: null,
   } satisfies NonNullable<Thread["activeCommandItems"]>[number];
@@ -663,6 +664,7 @@ test("keeps live commands visible without output while rendering schedules", () 
   assert.match(markup, /Lifetime/);
   assert.match(markup, /<span>Compactions<\/span><strong>2<\/strong>/);
   assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
+  assert.doesNotMatch(markup, /UNBOUNDED_RIGHT_PANEL_OUTPUT/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /every_interval 6h/);

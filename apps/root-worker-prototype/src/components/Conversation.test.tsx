@@ -1222,7 +1222,7 @@ test("compact rows render only a compact marker in the active chat list", () => 
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
 
-test("compact rows omit summary and unavailable replacement diagnostics", () => {
+test("compact rows render expandable summary without unavailable replacement diagnostics", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1242,9 +1242,38 @@ test("compact rows omit summary and unavailable replacement diagnostics", () => 
   );
 
   assert.match(markup, /Context compacted/);
+  assert.match(markup, /Summary available/);
+  assert.match(markup, /<details class="compact-summary-details">/);
+  assert.match(markup, /<summary>View summary<\/summary>/);
   assert.doesNotMatch(markup, /replacement history unavailable/);
-  assert.doesNotMatch(markup, /Preserve compact summary/);
+  assert.match(markup, /Preserve compact summary/);
   assert.doesNotMatch(markup, /Replacement history is unavailable/);
+});
+
+test("compact row summary preview is bounded for large compact payloads", () => {
+  const longSummary = `${"summary line\n".repeat(400)}UNBOUNDED_COMPACT_SENTINEL`;
+  const markup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-1",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Context compacted",
+        timestamp: "09:43",
+        attachments: [],
+        compactSummary: longSummary,
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 0,
+        replacementHistoryEntries: [],
+      }}
+    />,
+  );
+
+  assert.match(markup, /Context compacted/);
+  assert.match(markup, /View summary/);
+  assert.match(markup, /\[truncated: [\d,]+ characters omitted\]/);
+  assert.doesNotMatch(markup, /UNBOUNDED_COMPACT_SENTINEL/);
 });
 
 test("compact rows do not render grouped history body when expanded", () => {
