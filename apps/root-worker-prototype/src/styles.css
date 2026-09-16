@@ -5251,6 +5251,33 @@ svg {
   outline: none;
 }
 
+.compact-summary-details {
+  border-top: 1px solid rgba(75, 85, 99, 0.12);
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.compact-summary-details summary {
+  padding: 9px 12px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style-position: inside;
+  overflow-wrap: anywhere;
+}
+
+.compact-summary-body {
+  max-height: min(360px, 46vh);
+  overflow: auto;
+  padding: 0 12px 12px;
+  border-top: 1px solid rgba(75, 85, 99, 0.08);
+  scrollbar-width: thin;
+}
+
+.compact-summary-body .markdown-content {
+  padding-top: 10px;
+}
+
 .monitor-list > .monitor-row:first-child {
   padding-top: 0;
   border-top: 0;
