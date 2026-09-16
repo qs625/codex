@@ -3,6 +3,7 @@ import test from "node:test";
 import { createRequire } from "node:module";
 
 import {
+  createComputerUseCliManagerFactory,
   parseComputerUseCliArgs,
   runComputerUseRequest,
 } from "./morpheus-computer-use.mjs";
@@ -29,21 +30,33 @@ function fakeNativeClient(options = {}) {
           name: options.activeAppName ?? "Finder",
           bundleIdentifier: options.bundleIdentifier ?? "com.apple.finder",
           processIdentifier: 42,
-          window: { title: `Window ${observeCount}` },
+          window: {
+            title: `Window ${observeCount}`,
+            position: { x: 100, y: 100 },
+            size: { width: 900, height: 700 },
+          },
         },
         frontmostApp: {
           name: options.activeAppName ?? "Finder",
           bundleIdentifier: options.bundleIdentifier ?? "com.apple.finder",
           processIdentifier: 42,
-          window: { title: `Window ${observeCount}` },
+          window: {
+            title: `Window ${observeCount}`,
+            position: { x: 100, y: 100 },
+            size: { width: 900, height: 700 },
+          },
         },
         targetApp: {
           name: options.activeAppName ?? "Finder",
           bundleIdentifier: options.bundleIdentifier ?? "com.apple.finder",
           processIdentifier: 42,
-          window: { title: `Window ${observeCount}` },
+          window: {
+            title: `Window ${observeCount}`,
+            position: { x: 100, y: 100 },
+            size: { width: 900, height: 700 },
+          },
         },
-        targetVisibility: "frontmost",
+        targetVisibility: options.targetVisibility ?? "frontmost",
         accessibilityTrusted: true,
         screenshot: {
           path: `/tmp/screen-${observeCount}.png`,
@@ -63,6 +76,22 @@ function fakeNativeClient(options = {}) {
   };
 }
 
+function fakeOverlayController() {
+  const updates = [];
+  return {
+    updates,
+    destroyed: 0,
+    async update(payload) {
+      updates.push(payload);
+      return { available: true, visible: true };
+    },
+    async destroy() {
+      this.destroyed += 1;
+      return { available: true, visible: false, destroyed: true };
+    },
+  };
+}
+
 function managerHarness() {
   const nativeClient = fakeNativeClient();
   const manager = createComputerUseManager({ nativeClient });
@@ -78,6 +107,8 @@ test("computer use CLI run keeps batch session state for observe move stop", asy
       "--app",
       "com.apple.finder",
       "--json",
+      "--overlay-hold-ms",
+      "0",
       "--actions",
       JSON.stringify([
         { type: "start" },
@@ -112,6 +143,8 @@ test("computer use CLI blocks click type key and drag before native side effects
   const result = await runComputerUseRequest(
     parseComputerUseCliArgs([
       "run",
+      "--overlay-hold-ms",
+      "0",
       "--actions",
       JSON.stringify([
         { type: "click", x: 10, y: 20 },
@@ -135,6 +168,152 @@ test("computer use CLI blocks click type key and drag before native side effects
   assert.equal(harness.nativeClient.observeCount, 0);
   assert.deepEqual(harness.nativeClient.actions, []);
   assert.equal(result.state.status, "idle");
+});
+
+test("computer use CLI wires a target-bound overlay for frontmost moves", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([
+        { type: "start" },
+        { type: "move", x: 620, y: 460 },
+        { type: "stop" },
+      ]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => overlayController,
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].state.overlay.mode, "target-bound");
+  assert.equal(result.results[1].state.overlay.visible, true);
+  assert.deepEqual(result.results[1].state.agentCursor, { x: 620, y: 460 });
+  assert.notDeepEqual(
+    result.results[1].state.systemCursor,
+    result.results[1].state.agentCursor,
+  );
+  assert.equal(overlayController.updates.length > 0, true);
+  assert.deepEqual(overlayController.updates.at(-1).agentCursor, {
+    x: 620,
+    y: 460,
+  });
+  assert.deepEqual(overlayController.updates.at(-1).targetBounds, {
+    x: 100,
+    y: 100,
+    width: 900,
+    height: 700,
+  });
+  assert.equal(overlayController.destroyed, 1);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI keeps background target cursor hidden without drawing over foreground", async () => {
+  const nativeClient = fakeNativeClient({ targetVisibility: "background" });
+  const overlayController = fakeOverlayController();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "move", x: 620, y: 460 }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => overlayController,
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state.overlay.mode, "target-bound");
+  assert.equal(result.state.overlay.visible, false);
+  assert.match(result.state.overlay.reason, /background target/);
+  assert.match(result.state.overlay.reason, /foreground app/);
+  assert.match(result.state.overlay.reason, /frontmost/);
+  assert.deepEqual(result.state.agentCursor, { x: 620, y: 460 });
+  assert.equal(overlayController.updates.length, 0);
+  assert.equal(overlayController.destroyed >= 1, true);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI hides frontmost target overlay when move is outside target window", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "move", x: 1200, y: 900 }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => overlayController,
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state.targetVisibility, "frontmost");
+  assert.equal(result.state.overlay.mode, "target-bound");
+  assert.equal(result.state.overlay.visible, false);
+  assert.match(result.state.overlay.reason, /outside the target window/);
+  assert.deepEqual(result.state.agentCursor, { x: 1200, y: 900 });
+  assert.equal(
+    overlayController.updates.some(
+      (update) => update.agentCursor?.x === 1200 && update.agentCursor?.y === 900,
+    ),
+    false,
+  );
+  assert.equal(overlayController.updates.length, 2);
+  assert.equal(overlayController.destroyed >= 1, true);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI reports target-bound overlay limitation when helper is disabled", async () => {
+  const nativeClient = fakeNativeClient();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--no-overlay",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "move", x: 620, y: 460 }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => {
+        throw new Error("overlay factory should not be called");
+      },
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state.overlay.mode, "target-bound");
+  assert.equal(result.state.overlay.visible, false);
+  assert.match(result.state.overlay.reason, /overlay controller is unavailable/);
+  assert.deepEqual(result.state.agentCursor, { x: 620, y: 460 });
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 
 test("computer use CLI output keeps bounded screenshot data without stale temp path", async () => {

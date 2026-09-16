@@ -130,6 +130,7 @@ class ComputerUseOverlayController {
       durationMs: payload.durationMs ?? 0,
       pathSamples: payload.pathSamples ?? [],
       status: payload.status ?? "active",
+      targetBounds: payload.targetBounds ?? null,
     };
     await overlayWindow.webContents.executeJavaScript(
       `window.__setComputerUseCursor(${JSON.stringify(overlayPayload)})`,

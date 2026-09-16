@@ -119,7 +119,11 @@ type ComputerUseState = {
   cursor: ComputerUsePoint | null;
   pointerPath: Array<ComputerUsePoint & { atMs: number; source: string }>;
   limitations: Array<{ code: string; message: string }>;
-  overlay: { visible: boolean; reason: string | null };
+  overlay: {
+    mode: "target-bound";
+    visible: boolean;
+    reason: string | null;
+  };
   trace: Array<{
     id: string;
     sequence: number;

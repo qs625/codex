@@ -26,7 +26,11 @@ function fakeNativeClient(options = {}) {
         name: options.activeAppName ?? "Firefox",
         bundleIdentifier: options.bundleIdentifier ?? "org.mozilla.firefox",
         processIdentifier: 42,
-        window: { title: `Window ${observeCount}` },
+        window: {
+          title: `Window ${observeCount}`,
+          position: { x: 0, y: 0 },
+          size: { width: 800, height: 600 },
+        },
       };
       return {
         cursor: observation?.cursor ?? { x: 100 + observeCount, y: 200 + observeCount },
@@ -109,8 +113,69 @@ test("move updates agent cursor and overlay path without moving native cursor", 
     (update) => update.durationMs > 0,
   );
   assert.deepEqual(animatedUpdate.agentCursor, { x: 320, y: 240 });
+  assert.deepEqual(animatedUpdate.targetBounds, {
+    x: 0,
+    y: 0,
+    width: 800,
+    height: 600,
+  });
   assert.ok(animatedUpdate.pathSamples.length >= 2);
   assert.equal(animatedUpdate.pathSamples.at(-1).x, 320);
+});
+
+test("frontmost target without window bounds hides target-bound overlay", async () => {
+  const activeAppWithoutBounds = {
+    name: "Firefox",
+    bundleIdentifier: "org.mozilla.firefox",
+    processIdentifier: 42,
+    window: { title: "Firefox without bounds" },
+  };
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: activeAppWithoutBounds,
+        frontmostApp: activeAppWithoutBounds,
+        targetApp: activeAppWithoutBounds,
+        targetVisibility: "frontmost",
+      },
+    ],
+  });
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession();
+
+  const state = await manager.act({ type: "move", x: 320, y: 240 });
+
+  assert.equal(state.targetVisibility, "frontmost");
+  assert.equal(state.overlay.mode, "target-bound");
+  assert.equal(state.overlay.visible, false);
+  assert.match(state.overlay.reason, /bounds are unavailable/);
+  assert.equal(overlayController.updates.length, 0);
+  assert.ok(overlayController.destroyed >= 1);
+});
+
+test("frontmost target move outside target window hides target-bound overlay", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession();
+  const updatesBeforeMove = overlayController.updates.length;
+
+  const state = await manager.act({ type: "move", x: 900, y: 700 });
+
+  assert.equal(state.targetVisibility, "frontmost");
+  assert.deepEqual(state.agentCursor, { x: 900, y: 700 });
+  assert.equal(state.overlay.mode, "target-bound");
+  assert.equal(state.overlay.visible, false);
+  assert.match(state.overlay.reason, /outside the target window/);
+  assert.equal(
+    overlayController.updates.some(
+      (update) => update.agentCursor?.x === 900 && update.agentCursor?.y === 700,
+    ),
+    false,
+  );
+  assert.equal(overlayController.updates.length, updatesBeforeMove + 1);
+  assert.ok(overlayController.destroyed >= 1);
 });
 
 test("click moves the agent cursor before native desktop click", async () => {
@@ -276,8 +341,11 @@ test("background target observe does not confuse frontmost app with target app",
   assert.equal(moved.frontmostApp.bundleIdentifier, "com.apple.finder");
   assert.equal(moved.targetApp.bundleIdentifier, "org.mozilla.firefox");
   assert.equal(moved.targetVisibility, "background");
+  assert.equal(moved.overlay.mode, "target-bound");
   assert.equal(moved.overlay.visible, false);
   assert.match(moved.overlay.reason, /background target/);
+  assert.match(moved.overlay.reason, /foreground app/);
+  assert.match(moved.overlay.reason, /frontmost/);
   assert.ok(overlayController.destroyed >= 1);
   assert.deepEqual(moved.agentCursor, { x: 500, y: 400 });
 
