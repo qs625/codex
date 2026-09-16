@@ -100,11 +100,18 @@ function createComputerUseOverlayController(options = {}) {
 }
 
 class ComputerUseOverlayController {
-  constructor({ BrowserWindow, hostApp, screen, logger = console } = {}) {
+  constructor({
+    BrowserWindow,
+    hostApp,
+    screen,
+    logger = console,
+    restoreActivationPolicy = true,
+  } = {}) {
     this.BrowserWindow = BrowserWindow;
     this.hostApp = hostApp ?? null;
     this.screen = screen;
     this.logger = logger;
+    this.restoreActivationPolicy = restoreActivationPolicy;
     this.window = null;
     this.readyPromise = null;
   }
@@ -122,7 +129,7 @@ class ComputerUseOverlayController {
     } else {
       overlayWindow.show();
     }
-    restoreRegularActivationPolicy(this.hostApp);
+    this.restoreRegularActivationPolicy();
     await this.readyPromise;
     const overlayPayload = {
       agentCursor: payload.agentCursor,
@@ -130,6 +137,7 @@ class ComputerUseOverlayController {
       durationMs: payload.durationMs ?? 0,
       pathSamples: payload.pathSamples ?? [],
       status: payload.status ?? "active",
+      targetBounds: payload.targetBounds ?? null,
     };
     await overlayWindow.webContents.executeJavaScript(
       `window.__setComputerUseCursor(${JSON.stringify(overlayPayload)})`,
@@ -143,7 +151,7 @@ class ComputerUseOverlayController {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.close();
     }
-    restoreRegularActivationPolicy(this.hostApp);
+    this.restoreRegularActivationPolicy();
   }
 
   ensureWindow() {
@@ -161,6 +169,7 @@ class ComputerUseOverlayController {
       movable: false,
       focusable: false,
       skipTaskbar: true,
+      show: false,
       hasShadow: false,
       alwaysOnTop: true,
       fullscreenable: false,
@@ -176,7 +185,7 @@ class ComputerUseOverlayController {
         visibleOnFullScreen: true,
       });
     }
-    restoreRegularActivationPolicy(this.hostApp);
+    this.restoreRegularActivationPolicy();
     this.readyPromise = overlayWindow
       .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(OVERLAY_HTML)}`)
       .catch((error) => {
@@ -185,6 +194,12 @@ class ComputerUseOverlayController {
       });
     this.window = overlayWindow;
     return overlayWindow;
+  }
+
+  restoreRegularActivationPolicy() {
+    if (this.restoreActivationPolicy) {
+      restoreRegularActivationPolicy(this.hostApp);
+    }
   }
 }
 

@@ -40,6 +40,7 @@ class ComputerUseManager {
   async cleanup() {
     await this.nativeClient.cleanup?.();
     await this.overlayController?.destroy?.();
+    this.markOverlayStopped();
   }
 
   async startSession(options = {}) {
@@ -58,6 +59,7 @@ class ComputerUseManager {
     this.session.updatedAtMs = this.clock();
     await this.nativeClient.cleanup?.();
     await this.overlayController?.destroy?.();
+    this.markOverlayStopped();
     return this.state();
   }
 
@@ -298,29 +300,84 @@ class ComputerUseManager {
 
   async updateOverlay({ durationMs, pathSamples }) {
     if (!this.overlayController || !this.session?.agentCursor) {
+      if (this.session) {
+        this.session.overlay = {
+          mode: "target-bound",
+          visible: false,
+          reason: !this.overlayController
+            ? "Computer Use overlay controller is unavailable for this session."
+            : "Agent cursor overlay is hidden because no agent cursor is available.",
+        };
+      }
       return;
     }
     const targetVisibility = this.session.targetVisibility ?? "unknown";
     if (targetVisibility === "background" || targetVisibility === "unknown") {
       this.session.overlay = {
+        mode: "target-bound",
         visible: false,
         reason:
           targetVisibility === "background"
-            ? "Agent cursor is tracking a background target; overlay is hidden to avoid drawing over the user's current foreground app."
+            ? "Agent cursor is tracking a background target; target-bound overlay is hidden to avoid drawing over the user's current foreground app. After the target becomes frontmost, a subsequent observe or move can show target-bound cursor feedback."
             : "Agent cursor overlay is hidden because target visibility is unknown.",
       };
       await this.overlayController.destroy?.();
       return;
     }
-    this.session.overlay = { visible: true, reason: null };
-    await this.overlayController.update?.({
+    const targetBounds = targetWindowBounds(this.session.target?.window);
+    if (!targetBounds) {
+      this.session.overlay = {
+        mode: "target-bound",
+        visible: false,
+        reason:
+          "Agent cursor overlay is hidden because target window bounds are unavailable.",
+      };
+      await this.overlayController.destroy?.();
+      return;
+    }
+    if (!pointInRect(this.session.agentCursor, targetBounds)) {
+      this.session.overlay = {
+        mode: "target-bound",
+        visible: false,
+        reason:
+          "Agent cursor overlay is hidden because the agent cursor is outside the target window visible bounds.",
+      };
+      await this.overlayController.destroy?.();
+      return;
+    }
+    const overlayResult = await this.overlayController.update?.({
       agentCursor: this.session.agentCursor,
       durationMs,
-      pathSamples,
+      pathSamples: pathSamples.filter((point) => pointInRect(point, targetBounds)),
       pointerPath: this.session.pointerPath,
       status: this.session.status,
+      targetBounds,
       targetVisibility,
     });
+    if (
+      overlayResult &&
+      (overlayResult.visible === false || overlayResult.available === false)
+    ) {
+      this.session.overlay = {
+        mode: "target-bound",
+        visible: false,
+        reason:
+          overlayResult.reason ||
+          "Computer Use overlay helper is unavailable for this session.",
+      };
+      return;
+    }
+    this.session.overlay = { mode: "target-bound", visible: true, reason: null };
+  }
+
+  markOverlayStopped() {
+    if (this.session) {
+      this.session.overlay = {
+        mode: "target-bound",
+        visible: false,
+        reason: "Agent cursor overlay is stopped.",
+      };
+    }
   }
 
   applyError(error, phase) {
@@ -355,7 +412,7 @@ function createEmptySession(now, options) {
     cursor: null,
     pointerPath: [],
     limitations: [],
-    overlay: { visible: false, reason: null },
+    overlay: { mode: "target-bound", visible: false, reason: null },
     trace: [],
     pendingAction: null,
     policy: null,
@@ -599,6 +656,34 @@ function applyActionEvidence(traceItem, actionResult) {
       systemCursorAfter: normalizePoint(actionResult.systemCursorAfter),
     };
   }
+}
+
+function targetWindowBounds(window) {
+  const position = normalizePoint(window?.position);
+  const width = Number(window?.size?.width);
+  const height = Number(window?.size?.height);
+  if (
+    !position ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  return { x: position.x, y: position.y, width, height };
+}
+
+function pointInRect(point, rect) {
+  if (!point || !rect) {
+    return false;
+  }
+  return (
+    point.x >= rect.x &&
+    point.y >= rect.y &&
+    point.x <= rect.x + rect.width &&
+    point.y <= rect.y + rect.height
+  );
 }
 
 function createMacNativeComputerUseClient({ scriptPath, tmpDir } = {}) {
