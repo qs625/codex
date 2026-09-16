@@ -100,8 +100,9 @@ function createComputerUseOverlayController(options = {}) {
 }
 
 class ComputerUseOverlayController {
-  constructor({ BrowserWindow, screen, logger = console } = {}) {
+  constructor({ BrowserWindow, hostApp, screen, logger = console } = {}) {
     this.BrowserWindow = BrowserWindow;
+    this.hostApp = hostApp ?? null;
     this.screen = screen;
     this.logger = logger;
     this.window = null;
@@ -121,6 +122,7 @@ class ComputerUseOverlayController {
     } else {
       overlayWindow.show();
     }
+    restoreRegularActivationPolicy(this.hostApp);
     await this.readyPromise;
     const overlayPayload = {
       agentCursor: payload.agentCursor,
@@ -141,6 +143,7 @@ class ComputerUseOverlayController {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.close();
     }
+    restoreRegularActivationPolicy(this.hostApp);
   }
 
   ensureWindow() {
@@ -173,6 +176,7 @@ class ComputerUseOverlayController {
         visibleOnFullScreen: true,
       });
     }
+    restoreRegularActivationPolicy(this.hostApp);
     this.readyPromise = overlayWindow
       .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(OVERLAY_HTML)}`)
       .catch((error) => {
@@ -182,6 +186,21 @@ class ComputerUseOverlayController {
     this.window = overlayWindow;
     return overlayWindow;
   }
+}
+
+function restoreRegularActivationPolicy(hostApp) {
+  if (!hostApp) {
+    return;
+  }
+  try {
+    hostApp.setActivationPolicy?.("regular");
+  } catch {}
+  try {
+    const result = hostApp.dock?.show?.();
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {});
+    }
+  } catch {}
 }
 
 function displayUnionBounds(screen) {
@@ -209,4 +228,5 @@ module.exports = {
   OVERLAY_HTML,
   createComputerUseOverlayController,
   displayUnionBounds,
+  restoreRegularActivationPolicy,
 };

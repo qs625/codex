@@ -6,10 +6,12 @@ const {
   OVERLAY_HTML,
   createComputerUseOverlayController,
   displayUnionBounds,
+  restoreRegularActivationPolicy,
 } = require("./computerUseOverlay.cjs");
 
 test("computer use overlay uses a click-through transparent window", async () => {
   const windows = [];
+  const activationCalls = [];
   class FakeBrowserWindow {
     constructor(options) {
       this.options = options;
@@ -51,6 +53,16 @@ test("computer use overlay uses a click-through transparent window", async () =>
   }
   const controller = createComputerUseOverlayController({
     BrowserWindow: FakeBrowserWindow,
+    hostApp: {
+      setActivationPolicy(policy) {
+        activationCalls.push(["setActivationPolicy", policy]);
+      },
+      dock: {
+        show() {
+          activationCalls.push(["dock.show"]);
+        },
+      },
+    },
     screen: {
       getAllDisplays: () => [
         { bounds: { x: 0, y: 0, width: 500, height: 400 } },
@@ -68,6 +80,7 @@ test("computer use overlay uses a click-through transparent window", async () =>
   assert.equal(windows.length, 1);
   assert.equal(windows[0].options.transparent, true);
   assert.equal(windows[0].options.focusable, false);
+  assert.equal(windows[0].options.skipTaskbar, true);
   assert.deepEqual(windows[0].ignoreMouseEvents, {
     ignore: true,
     options: { forward: true },
@@ -76,9 +89,69 @@ test("computer use overlay uses a click-through transparent window", async () =>
   assert.equal(windows[0].shownInactive, true);
   assert.match(windows[0].webContents.scripts[0], /agentCursor/);
   assert.match(windows[0].webContents.scripts[0], /pathSamples/);
+  assert.deepEqual(activationCalls, [
+    ["setActivationPolicy", "regular"],
+    ["dock.show"],
+    ["setActivationPolicy", "regular"],
+    ["dock.show"],
+  ]);
 
   await controller.destroy();
   assert.equal(windows[0].closed, true);
+  assert.deepEqual(activationCalls.slice(-2), [
+    ["setActivationPolicy", "regular"],
+    ["dock.show"],
+  ]);
+});
+
+test("computer use overlay destroy restores regular app activation without a window", async () => {
+  const activationCalls = [];
+  const controller = createComputerUseOverlayController({
+    hostApp: {
+      setActivationPolicy(policy) {
+        activationCalls.push(["setActivationPolicy", policy]);
+      },
+      dock: {
+        show() {
+          activationCalls.push(["dock.show"]);
+        },
+      },
+    },
+  });
+
+  await controller.destroy();
+
+  assert.deepEqual(activationCalls, [
+    ["setActivationPolicy", "regular"],
+    ["dock.show"],
+  ]);
+});
+
+test("regular activation restore is a no-op without Electron app APIs", async () => {
+  assert.doesNotThrow(() => restoreRegularActivationPolicy(null));
+  assert.doesNotThrow(() => restoreRegularActivationPolicy({}));
+  assert.doesNotThrow(() =>
+    restoreRegularActivationPolicy({
+      setActivationPolicy() {
+        throw new Error("activation policy unavailable");
+      },
+      dock: {
+        show() {
+          throw new Error("dock unavailable");
+        },
+      },
+    }),
+  );
+  assert.doesNotThrow(() =>
+    restoreRegularActivationPolicy({
+      dock: {
+        show() {
+          return Promise.reject(new Error("dock show rejected"));
+        },
+      },
+    }),
+  );
+  await Promise.resolve();
 });
 
 test("computer use overlay bounds cover all displays", () => {
