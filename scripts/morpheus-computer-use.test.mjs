@@ -75,9 +75,18 @@ function fakeNativeClient(options = {}) {
       if (options.failActionType === action.type) {
         throw new Error(`${action.type} failed in native backend`);
       }
-      if (action.type === "click" || action.type === "drag") {
+      if (
+        ["click", "doubleClick", "rightClick", "drag", "scroll"].includes(
+          action.type,
+        )
+      ) {
         return {
           ok: true,
+          method: action.type === "scroll" ? "scroll-wheel" : "mouse-click",
+          button: action.type === "rightClick" ? "right" : "left",
+          clickCount: action.type === "doubleClick" ? 2 : 1,
+          deltaX: action.deltaX,
+          deltaY: action.deltaY,
           systemCursorRestored: false,
           systemCursorBefore: { x: 101, y: 201 },
           systemCursorAfter: { x: 101, y: 201 },
@@ -91,7 +100,7 @@ function fakeNativeClient(options = {}) {
           pasteboardRestored: true,
         };
       }
-      if (action.type === "key") {
+      if (action.type === "key" || action.type === "hotkey") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
       }
       return { ok: true };
@@ -187,12 +196,22 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     "10,20",
     "--click",
     "30,40",
+    "--double-click",
+    "50,60",
+    "--right-click",
+    "70,80",
+    "--scroll",
+    "90,100:0,-240",
     "--type",
     "hello",
     "--key",
     "cmd+s",
+    "--hotkey",
+    "cmd+shift+p",
     "--drag",
     "1,2:3,4",
+    "--pause",
+    "0",
     "--observe",
     "--overlay-hold-ms",
     "0",
@@ -202,9 +221,14 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     { type: "start" },
     { type: "move", x: 10, y: 20 },
     { type: "click", x: 30, y: 40 },
+    { type: "doubleClick", x: 50, y: 60 },
+    { type: "rightClick", x: 70, y: 80 },
+    { type: "scroll", x: 90, y: 100, deltaX: 0, deltaY: -240 },
     { type: "type", text: "hello" },
     { type: "key", key: "s", modifiers: ["cmd"] },
+    { type: "hotkey", key: "p", modifiers: ["cmd", "shift"] },
     { type: "drag", from: { x: 1, y: 2 }, to: { x: 3, y: 4 } },
+    { type: "wait", ms: 0 },
     { type: "observe" },
     { type: "stop" },
   ]);
@@ -224,7 +248,7 @@ test("computer use CLI rejects mixing shorthand flags with --actions", () => {
   );
 });
 
-test("computer use CLI runs click type key and drag by default", async () => {
+test("computer use CLI runs semantic side effects and wait by default", async () => {
   const nativeClient = fakeNativeClient();
   const overlayController = fakeOverlayController();
 
@@ -239,9 +263,14 @@ test("computer use CLI runs click type key and drag by default", async () => {
       JSON.stringify([
         { type: "start" },
         { type: "click", x: 620, y: 460 },
+        { type: "doubleClick", x: 621, y: 461 },
+        { type: "rightClick", x: 622, y: 462 },
+        { type: "scroll", x: 623, y: 463, deltaX: 0, deltaY: -120 },
         { type: "key", key: "Tab" },
+        { type: "hotkey", key: "p", modifiers: ["cmd", "shift"] },
         { type: "type", text: "hello" },
         { type: "drag", from: { x: 620, y: 460 }, to: { x: 640, y: 480 } },
+        { type: "wait", ms: 0 },
         { type: "stop" },
       ]),
     ]),
@@ -254,16 +283,47 @@ test("computer use CLI runs click type key and drag by default", async () => {
   assert.equal(result.ok, true);
   assert.deepEqual(
     result.results.map((item) => item.status),
-    ["completed", "completed", "completed", "completed", "completed", "completed"],
+    [
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+    ],
   );
   assert.deepEqual(result.policy.disabledActions, []);
   assert.deepEqual(
     result.policy.allowedActions,
-    ["start", "observe", "move", "click", "key", "type", "drag", "stop"],
+    [
+      "start",
+      "observe",
+      "move",
+      "click",
+      "doubleClick",
+      "rightClick",
+      "scroll",
+      "key",
+      "hotkey",
+      "type",
+      "drag",
+      "wait",
+      "pause",
+      "stop",
+    ],
   );
   assert.deepEqual(nativeClient.actions, [
     { type: "click", x: 620, y: 460 },
+    { type: "doubleClick", x: 621, y: 461 },
+    { type: "rightClick", x: 622, y: 462 },
+    { type: "scroll", x: 623, y: 463, deltaX: 0, deltaY: -120 },
     { type: "key", key: "Tab", modifiers: [] },
+    { type: "hotkey", key: "p", modifiers: ["cmd", "shift"] },
     { type: "type", text: "hello" },
     { type: "drag", from: { x: 620, y: 460 }, to: { x: 640, y: 480 } },
     { type: "cleanup" },
@@ -275,22 +335,37 @@ test("computer use CLI runs click type key and drag by default", async () => {
   assert.equal(clickTrace.evidence.ok, true);
   assert.equal(clickTrace.evidence.systemCursorRestored, false);
   assert.ok(clickTrace.agentCursorPath.length >= 2);
-  const keyTrace = result.results[2].state.trace.at(-1);
+  const doubleClickTrace = result.results[2].state.trace.at(-1);
+  assert.equal(doubleClickTrace.action.type, "doubleClick");
+  assert.equal(doubleClickTrace.evidence.clickCount, 2);
+  const rightClickTrace = result.results[3].state.trace.at(-1);
+  assert.equal(rightClickTrace.action.type, "rightClick");
+  assert.equal(rightClickTrace.evidence.button, "right");
+  const scrollTrace = result.results[4].state.trace.at(-1);
+  assert.equal(scrollTrace.action.type, "scroll");
+  assert.equal(scrollTrace.evidence.deltaY, -120);
+  const keyTrace = result.results[5].state.trace.at(-1);
   assert.equal(keyTrace.action.type, "key");
   assert.equal(keyTrace.evidence.key, "Tab");
   assert.deepEqual(keyTrace.evidence.modifiers, []);
-  const typeTrace = result.results[3].state.trace.at(-1);
+  const hotkeyTrace = result.results[6].state.trace.at(-1);
+  assert.equal(hotkeyTrace.action.type, "hotkey");
+  assert.deepEqual(hotkeyTrace.evidence.modifiers, ["cmd", "shift"]);
+  const typeTrace = result.results[7].state.trace.at(-1);
   assert.equal(typeTrace.action.type, "type");
   assert.equal(typeTrace.evidence.characterCount, 5);
   assert.equal(typeTrace.evidence.method, "pasteboard-cmd-v");
   assert.equal(typeTrace.evidence.pasteboardRestored, true);
-  const dragTrace = result.results[4].state.trace.at(-1);
+  const dragTrace = result.results[8].state.trace.at(-1);
   assert.equal(dragTrace.action.type, "drag");
   assert.equal(dragTrace.status, "completed");
   assert.equal(dragTrace.policy.kind, "side-effect");
   assert.ok(dragTrace.agentCursorPath.length >= 2);
   assert.equal(dragTrace.evidence.systemCursorRestored, false);
-  assert.deepEqual(result.results[4].state.agentCursor, { x: 640, y: 480 });
+  assert.deepEqual(result.results[8].state.agentCursor, { x: 640, y: 480 });
+  const waitTrace = result.results[9].state.trace.at(-1);
+  assert.equal(waitTrace.action.type, "wait");
+  assert.equal(waitTrace.evidence.waitMs, 0);
   assert.equal(result.state.overlay.visible, false);
   assert.match(result.state.overlay.reason, /stopped/);
 });
@@ -523,6 +598,37 @@ test("computer use CLI keeps background target cursor hidden without drawing ove
   assert.deepEqual(result.state.agentCursor, { x: 620, y: 460 });
   assert.equal(overlayController.updates.length, 0);
   assert.equal(overlayController.destroyed >= 1, true);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI allows JSON pause for background targets without native act", async () => {
+  const nativeClient = fakeNativeClient({ targetVisibility: "background" });
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([{ type: "start" }, { type: "pause", ms: 0 }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.results.map((item) => item.status),
+    ["completed", "completed"],
+  );
+  assert.equal(result.results[1].action.type, "wait");
+  assert.equal(result.results[1].state.trace.at(-1).action.type, "wait");
+  assert.equal(result.results[1].state.trace.at(-1).policy.kind, "low-risk");
+  assert.equal(result.results[1].state.trace.at(-1).evidence.waitMs, 0);
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 

@@ -50,9 +50,18 @@ function fakeNativeClient(options = {}) {
     },
     async act(action) {
       actions.push(action);
-      if (action.type === "click" || action.type === "drag") {
+      if (
+        ["click", "doubleClick", "rightClick", "drag", "scroll"].includes(
+          action.type,
+        )
+      ) {
         return {
           ok: true,
+          method: action.type === "scroll" ? "scroll-wheel" : "mouse-click",
+          button: action.type === "rightClick" ? "right" : "left",
+          clickCount: action.type === "doubleClick" ? 2 : 1,
+          deltaX: action.deltaX,
+          deltaY: action.deltaY,
           systemCursorRestored: false,
           systemCursorBefore: { x: 100, y: 200 },
           systemCursorAfter: { x: 100, y: 200 },
@@ -66,7 +75,7 @@ function fakeNativeClient(options = {}) {
           pasteboardRestored: true,
         };
       }
-      if (action.type === "key") {
+      if (action.type === "key" || action.type === "hotkey") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
       }
       return { ok: true };
@@ -261,6 +270,64 @@ test("warning and drag actions execute with trace evidence", async () => {
   assert.equal(dragged.trace[1].evidence.systemCursorRestored, false);
 });
 
+test("new semantic actions execute through manager with trace evidence", async () => {
+  const nativeClient = fakeNativeClient();
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession();
+
+  const doubleClicked = await manager.act({ type: "doubleClick", x: 320, y: 240 });
+  const rightClicked = await manager.act({ type: "rightClick", x: 330, y: 250 });
+  const scrolled = await manager.act({
+    type: "scroll",
+    x: 340,
+    y: 260,
+    deltaX: 0,
+    deltaY: -240,
+  });
+  const hotkeyed = await manager.act({
+    type: "hotkey",
+    key: "p",
+    modifiers: ["cmd", "shift"],
+  });
+  const waited = await manager.act({ type: "pause", ms: 0 });
+
+  assert.deepEqual(nativeClient.actions, [
+    { type: "doubleClick", x: 320, y: 240 },
+    { type: "rightClick", x: 330, y: 250 },
+    { type: "scroll", x: 340, y: 260, deltaX: 0, deltaY: -240 },
+    { type: "hotkey", key: "p", modifiers: ["cmd", "shift"] },
+  ]);
+  assert.equal(doubleClicked.trace[0].evidence.button, "left");
+  assert.equal(doubleClicked.trace[0].evidence.clickCount, 2);
+  assert.equal(rightClicked.trace[1].evidence.button, "right");
+  assert.equal(scrolled.trace[2].evidence.method, "scroll-wheel");
+  assert.equal(scrolled.trace[2].evidence.deltaY, -240);
+  assert.equal(hotkeyed.trace[3].evidence.key, "p");
+  assert.deepEqual(hotkeyed.trace[3].evidence.modifiers, ["cmd", "shift"]);
+  assert.equal(waited.trace[4].action.type, "wait");
+  assert.equal(waited.trace[4].policy.kind, "low-risk");
+  assert.equal(waited.trace[4].evidence.method, "timer");
+  assert.equal(waited.trace[4].evidence.waitMs, 0);
+  assert.deepEqual(waited.agentCursor, { x: 340, y: 260 });
+});
+
+test("wait remains low-risk for background targets without native side effects", async () => {
+  const nativeClient = fakeNativeClient({
+    targetVisibility: "background",
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({ type: "pause", ms: 0 });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace[0].action.type, "wait");
+  assert.equal(state.trace[0].status, "completed");
+  assert.equal(state.trace[0].policy.kind, "low-risk");
+  assert.equal(state.trace[0].evidence.waitMs, 0);
+});
+
 test("policy keeps safe keyboard shortcuts available", () => {
   assert.deepEqual(classifyComputerUseAction({ type: "key", key: "t", modifiers: ["cmd"] }), {
     kind: "side-effect",
@@ -282,7 +349,7 @@ test("policy keeps safe keyboard shortcuts available", () => {
   );
   assert.deepEqual(
     classifyComputerUseAction(normalizeAction({
-      type: "key",
+      type: "hotkey",
       key: "w",
       modifiers: ["meta"],
     })),

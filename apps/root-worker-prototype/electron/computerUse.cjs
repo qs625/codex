@@ -12,6 +12,7 @@ const MAX_TRACE_ITEMS = 80;
 const MAX_POINTER_PATH_ITEMS = 48;
 const AGENT_CURSOR_MOVE_SAMPLES = 10;
 const AGENT_CURSOR_MOVE_DURATION_MS = 180;
+const MAX_WAIT_ACTION_MS = 10_000;
 const MAC_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
   "computerUseMacNative.swift",
@@ -145,8 +146,15 @@ class ComputerUseManager {
     try {
       if (normalized.type === "move") {
         await this.moveAgentCursor(normalized, traceItem);
+      } else if (normalized.type === "wait") {
+        await delay(normalized.ms);
+        applyActionEvidence(traceItem, {
+          ok: true,
+          method: "timer",
+          waitMs: normalized.ms,
+        });
       } else {
-        if (normalized.type === "click") {
+        if (["click", "doubleClick", "rightClick", "scroll"].includes(normalized.type)) {
           await this.moveAgentCursor(normalized, traceItem);
         } else if (normalized.type === "drag") {
           await this.dragAgentCursor(normalized, traceItem);
@@ -188,7 +196,7 @@ class ComputerUseManager {
       };
     }
     if (
-      action.type !== "move" &&
+      isSideEffectAction(action) &&
       this.session.targetVisibility !== "frontmost"
     ) {
       return {
@@ -201,7 +209,7 @@ class ComputerUseManager {
       };
     }
     const mismatch =
-      action.type === "move"
+      action.type === "move" || !isSideEffectAction(action)
         ? null
         : targetMismatch(this.session.target, this.session.observation?.frontmostApp);
     if (mismatch) {
@@ -551,7 +559,7 @@ function classifyComputerUseAction(action) {
   const modifiers = normalizeModifiers(action.modifiers);
   if (
     (action.type === "type" && DANGEROUS_TEXT_PATTERN.test(action.text ?? "")) ||
-    (action.type === "key" &&
+    ((action.type === "key" || action.type === "hotkey") &&
       modifiers.includes("cmd") &&
       ["delete", "q", "w"].includes(String(action.key ?? "").toLowerCase()))
   ) {
@@ -562,7 +570,18 @@ function classifyComputerUseAction(action) {
         "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
     };
   }
-  if (["click", "type", "key", "drag"].includes(action.type)) {
+  if (
+    [
+      "click",
+      "doubleClick",
+      "rightClick",
+      "scroll",
+      "type",
+      "key",
+      "hotkey",
+      "drag",
+    ].includes(action.type)
+  ) {
     return {
       kind: "side-effect",
       allowed: true,
@@ -573,7 +592,16 @@ function classifyComputerUseAction(action) {
 }
 
 function isSideEffectAction(action) {
-  return ["click", "type", "key", "drag"].includes(action?.type);
+  return [
+    "click",
+    "doubleClick",
+    "rightClick",
+    "scroll",
+    "type",
+    "key",
+    "hotkey",
+    "drag",
+  ].includes(action?.type);
 }
 
 function shouldActivateTargetBeforeAction(action, session) {
@@ -591,12 +619,27 @@ function normalizeAction(action) {
   switch (action.type) {
     case "move":
     case "click":
+    case "doubleClick":
+    case "rightClick":
       return { type: action.type, ...requirePoint(action) };
+    case "scroll":
+      return {
+        type: "scroll",
+        ...requirePoint(action),
+        deltaX: finiteNumberOrDefault(action.deltaX, 0, "deltaX"),
+        deltaY: finiteNumberOrDefault(action.deltaY, 0, "deltaY"),
+      };
     case "type":
       return { type: "type", text: String(action.text ?? "") };
     case "key":
       return {
         type: "key",
+        key: String(action.key ?? ""),
+        modifiers: normalizeModifiers(action.modifiers),
+      };
+    case "hotkey":
+      return {
+        type: "hotkey",
         key: String(action.key ?? ""),
         modifiers: normalizeModifiers(action.modifiers),
       };
@@ -606,9 +649,34 @@ function normalizeAction(action) {
         from: requirePoint(action.from ?? {}),
         to: requirePoint(action.to ?? {}),
       };
+    case "wait":
+    case "pause":
+      return {
+        type: "wait",
+        ms: boundedWaitMs(action.ms ?? action.waitMs ?? action.durationMs),
+      };
     default:
       throw new Error(`Unsupported Computer Use action: ${String(action.type)}`);
   }
+}
+
+function finiteNumberOrDefault(value, defaultValue, name) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Action requires finite ${name}`);
+  }
+  return parsed;
+}
+
+function boundedWaitMs(value) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > MAX_WAIT_ACTION_MS) {
+    throw new Error(`Wait action requires ms between 0 and ${MAX_WAIT_ACTION_MS}`);
+  }
+  return parsed;
 }
 
 function requirePoint(value) {
@@ -839,6 +907,21 @@ function applyActionEvidence(traceItem, actionResult) {
   if (typeof actionResult.method === "string") {
     evidence.method = actionResult.method;
   }
+  if (typeof actionResult.button === "string") {
+    evidence.button = actionResult.button;
+  }
+  if (Number.isFinite(actionResult.clickCount)) {
+    evidence.clickCount = actionResult.clickCount;
+  }
+  if (Number.isFinite(actionResult.deltaX)) {
+    evidence.deltaX = actionResult.deltaX;
+  }
+  if (Number.isFinite(actionResult.deltaY)) {
+    evidence.deltaY = actionResult.deltaY;
+  }
+  if (Number.isFinite(actionResult.waitMs)) {
+    evidence.waitMs = actionResult.waitMs;
+  }
   if (Object.hasOwn(actionResult, "pasteboardRestored")) {
     evidence.pasteboardRestored = actionResult.pasteboardRestored === true;
   }
@@ -853,6 +936,13 @@ function applyActionEvidence(traceItem, actionResult) {
   if (Object.keys(evidence).length > 0) {
     traceItem.evidence = evidence;
   }
+}
+
+async function delay(ms) {
+  if (!Number.isSafeInteger(ms) || ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function targetWindowBounds(window) {

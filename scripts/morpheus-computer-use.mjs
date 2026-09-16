@@ -13,7 +13,19 @@ const {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const CLI_ACTIONS = new Set(["move", "click", "type", "key", "drag"]);
+const CLI_ACTIONS = new Set([
+  "move",
+  "click",
+  "doubleClick",
+  "rightClick",
+  "scroll",
+  "type",
+  "key",
+  "hotkey",
+  "drag",
+  "wait",
+  "pause",
+]);
 const DEFAULT_ACTIONS = [{ type: "start" }];
 const OVERLAY_HELPER_PATH = join(
   __dirname,
@@ -195,6 +207,25 @@ export function parseComputerUseCliArgs(argv) {
           ...parseCliPoint(requireValue(args, ++index, arg), arg),
         });
         break;
+      case "--double-click":
+      case "--doubleClick":
+        request.shorthandActions.push({
+          type: "doubleClick",
+          ...parseCliPoint(requireValue(args, ++index, arg), arg),
+        });
+        break;
+      case "--right-click":
+      case "--rightClick":
+        request.shorthandActions.push({
+          type: "rightClick",
+          ...parseCliPoint(requireValue(args, ++index, arg), arg),
+        });
+        break;
+      case "--scroll":
+        request.shorthandActions.push(
+          parseCliScroll(requireValue(args, ++index, arg), arg),
+        );
+        break;
       case "--type":
       case "--text":
         request.shorthandActions.push({
@@ -207,10 +238,22 @@ export function parseComputerUseCliArgs(argv) {
           parseCliKey(requireValue(args, ++index, arg), arg),
         );
         break;
+      case "--hotkey":
+        request.shorthandActions.push(
+          parseCliHotkey(requireValue(args, ++index, arg), arg),
+        );
+        break;
       case "--drag":
         request.shorthandActions.push(
           parseCliDrag(requireValue(args, ++index, arg), arg),
         );
+        break;
+      case "--wait":
+      case "--pause":
+        request.shorthandActions.push({
+          type: "wait",
+          ms: parseWaitMs(requireValue(args, ++index, arg), arg),
+        });
         break;
       case "--json":
         break;
@@ -465,6 +508,9 @@ function normalizeCliAction(action) {
   if (typeof action.type !== "string" || action.type.length === 0) {
     throw new Error("Computer Use CLI action requires a type");
   }
+  if (action.type === "pause") {
+    return { ...action, type: "wait" };
+  }
   return action;
 }
 
@@ -504,6 +550,28 @@ function parseCliDrag(value, flag) {
   };
 }
 
+function parseCliScroll(value, flag) {
+  const [point, delta, extra] = value.split(":");
+  if (!point || !delta || extra !== undefined) {
+    throw new Error(`${flag} requires x,y:deltaX,deltaY`);
+  }
+  const [rawDeltaX, rawDeltaY, deltaExtra] = delta.split(",");
+  if (rawDeltaX === undefined || rawDeltaY === undefined || deltaExtra !== undefined) {
+    throw new Error(`${flag} requires x,y:deltaX,deltaY`);
+  }
+  const deltaX = Number(rawDeltaX);
+  const deltaY = Number(rawDeltaY);
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+    throw new Error(`${flag} requires finite deltaX,deltaY`);
+  }
+  return {
+    type: "scroll",
+    ...parseCliPoint(point, flag),
+    deltaX,
+    deltaY,
+  };
+}
+
 function parseCliKey(value, flag) {
   const parts = value
     .split("+")
@@ -515,6 +583,19 @@ function parseCliKey(value, flag) {
   const key = parts.at(-1);
   const modifiers = parts.slice(0, -1).map(normalizeCliModifier);
   return { type: "key", key, modifiers };
+}
+
+function parseCliHotkey(value, flag) {
+  const parsed = parseCliKey(value, flag);
+  return { ...parsed, type: "hotkey" };
+}
+
+function parseWaitMs(value, flag) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 10_000) {
+    throw new Error(`${flag} requires milliseconds between 0 and 10000`);
+  }
+  return parsed;
 }
 
 function normalizeCliModifier(value) {
@@ -620,7 +701,22 @@ function cliPolicy() {
   return {
     version: "computer-use-cli-v1",
     sessionMode: "single-process-batch",
-    allowedActions: ["start", "observe", "move", "click", "key", "type", "drag", "stop"],
+    allowedActions: [
+      "start",
+      "observe",
+      "move",
+      "click",
+      "doubleClick",
+      "rightClick",
+      "scroll",
+      "key",
+      "hotkey",
+      "type",
+      "drag",
+      "wait",
+      "pause",
+      "stop",
+    ],
     disabledActions: [],
     moveDoesNotMoveSystemCursor: true,
   };
@@ -629,7 +725,7 @@ function cliPolicy() {
 function cliLimitations() {
   return [
     "The CLI keeps session state only for the lifetime of one `run` process.",
-    "Click, key, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
+    "Click, doubleClick, rightClick, scroll, key, hotkey, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
     "Background targets are activated by the Computer Use session, then re-observed before any side-effect action is sent.",
     "Screenshots include a bounded data URL by default; pass --omit-screenshot-data for metadata-only output.",
     "Visible agent cursor feedback is target-bound. Background targets are not drawn over unrelated foreground apps before activation.",
@@ -664,14 +760,15 @@ function usage() {
   return [
     "Usage:",
     "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --json --actions '<json-array>'",
-    "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --click 300,230 --type 'hello' --key cmd+s",
+    "  node scripts/morpheus-computer-use.mjs run --app <bundle-or-name> --click 300,230 --type 'hello' --hotkey cmd+s",
     "",
     "Actions:",
-    "  start, observe, move, click, key, type, drag, stop",
+    "  start, observe, move, click, doubleClick, rightClick, scroll, key, hotkey, type, drag, wait/pause, stop",
     "",
     "Shorthand flags:",
     "  --start --observe --stop",
-    "  --move x,y --click x,y --type text --text text --key key|mod+key --drag x1,y1:x2,y2",
+    "  --move x,y --click x,y --double-click x,y --right-click x,y --scroll x,y:deltaX,deltaY",
+    "  --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
     "",
     "Example:",
     "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --actions '[{\"type\":\"start\"},{\"type\":\"observe\"},{\"type\":\"move\",\"x\":420,\"y\":360},{\"type\":\"stop\"}]'",
