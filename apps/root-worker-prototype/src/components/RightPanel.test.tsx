@@ -20,6 +20,7 @@ import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
 import {
   createTerminalStateRequestSequencer,
   isTerminalCommandFocusRequestForThread,
+  shouldApplyTerminalViewportFocusRequest,
 } from "../lib/terminalCommandFocus";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
@@ -738,6 +739,71 @@ test("rejects stale terminal focus requests from another thread", () => {
       "thread-b",
     ),
     true,
+  );
+});
+
+test("right panel terminal rail click is the explicit terminal panel focus source", () => {
+  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const tokenStateIndex = source.indexOf(
+    "const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken]",
+  );
+  const propIndex = source.indexOf(
+    "focusPanelRequestToken={terminalPanelFocusRequestToken}",
+  );
+  const railClickIndex = source.indexOf("if (item.view === \"terminal\") {");
+  const incrementIndex = source.indexOf(
+    "setTerminalPanelFocusRequestToken((current) => current + 1);",
+    railClickIndex,
+  );
+
+  assert.notEqual(tokenStateIndex, -1);
+  assert.notEqual(propIndex, -1);
+  assert.notEqual(railClickIndex, -1);
+  assert.notEqual(incrementIndex, -1);
+  assert.ok(
+    incrementIndex < source.indexOf("onSetActiveView(next.nextView);", railClickIndex),
+    "TerminalPanel should receive the focus token as part of the explicit open action",
+  );
+});
+
+test("targeted terminal focus waits for the selected tab to become active", () => {
+  const request = { token: 2, tabId: "target-tab" };
+
+  assert.equal(
+    shouldApplyTerminalViewportFocusRequest({
+      request,
+      lastAppliedToken: 1,
+      activeTabId: "old-tab",
+      terminalAvailable: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyTerminalViewportFocusRequest({
+      request,
+      lastAppliedToken: 1,
+      activeTabId: "target-tab",
+      terminalAvailable: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyTerminalViewportFocusRequest({
+      request,
+      lastAppliedToken: 1,
+      activeTabId: "target-tab",
+      terminalAvailable: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldApplyTerminalViewportFocusRequest({
+      request,
+      lastAppliedToken: 2,
+      activeTabId: "target-tab",
+      terminalAvailable: true,
+    }),
+    false,
   );
 });
 

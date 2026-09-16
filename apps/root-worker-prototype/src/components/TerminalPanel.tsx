@@ -14,6 +14,8 @@ import {
 import {
   createTerminalStateRequestSequencer,
   isTerminalCommandFocusRequestForThread,
+  shouldApplyTerminalViewportFocusRequest,
+  type PendingTerminalViewportFocusRequest,
   type TerminalCommandFocusRequest,
 } from "../lib/terminalCommandFocus";
 import { selectRunningActiveCommandItems } from "../lib/activeCommands";
@@ -65,15 +67,21 @@ const EMPTY_STATE: TerminalPanelState = {
 export function TerminalPanel({
   thread,
   focusCommandRequest,
+  focusPanelRequestToken,
 }: {
   thread: Thread | null;
   focusCommandRequest?: TerminalCommandFocusRequest | null;
+  focusPanelRequestToken?: number;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const syncTerminalSizeRef = useRef<(() => void) | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
+  const terminalFocusRequestTokenRef = useRef(0);
+  const pendingTerminalFocusRequestRef =
+    useRef<PendingTerminalViewportFocusRequest | null>(null);
+  const lastAppliedTerminalFocusTokenRef = useRef(0);
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const lastPreferredSizeRef = useRef<{
     threadId: string;
@@ -89,6 +97,7 @@ export function TerminalPanel({
     readTerminalDisplayPreferences,
   );
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
+  const [terminalFocusRequestToken, setTerminalFocusRequestToken] = useState(0);
   const activeTab = useMemo(
     () =>
       state.tabs.find((tab) => tab.id === state.activeTabId) ??
@@ -97,6 +106,33 @@ export function TerminalPanel({
     [state],
   );
   activeTabIdRef.current = activeTab?.id ?? null;
+  terminalFocusRequestTokenRef.current = terminalFocusRequestToken;
+
+  const requestTerminalViewportFocus = useCallback((tabId: string | null = null) => {
+    const token = terminalFocusRequestTokenRef.current + 1;
+    terminalFocusRequestTokenRef.current = token;
+    pendingTerminalFocusRequestRef.current = { token, tabId };
+    setTerminalFocusRequestToken(token);
+  }, []);
+
+  const applyPendingTerminalFocus = useCallback(() => {
+    const request = pendingTerminalFocusRequestRef.current;
+    const terminal = terminalRef.current;
+    if (
+      !shouldApplyTerminalViewportFocusRequest({
+        request,
+        lastAppliedToken: lastAppliedTerminalFocusTokenRef.current,
+        activeTabId: activeTabIdRef.current,
+        terminalAvailable: Boolean(terminal),
+      }) ||
+      !terminal
+    ) {
+      return;
+    }
+    pendingTerminalFocusRequestRef.current = null;
+    lastAppliedTerminalFocusTokenRef.current = request.token;
+    terminal.focus();
+  }, []);
 
   const publishPreferredTerminalSize = useCallback((next: TerminalSize) => {
     const threadId = thread?.id ?? null;
@@ -175,6 +211,7 @@ export function TerminalPanel({
       .then(({ state: nextState }) => {
         if (terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
           setState(nextState);
+          requestTerminalViewportFocus(nextState.activeTabId);
           setLocalError(null);
         }
       })
@@ -191,8 +228,16 @@ export function TerminalPanel({
     focusCommandRequest?.status,
     focusCommandRequest?.threadId,
     focusCommandRequest?.token,
+    requestTerminalViewportFocus,
     thread?.id,
   ]);
+
+  useEffect(() => {
+    if (focusPanelRequestToken == null || focusPanelRequestToken <= 0) {
+      return;
+    }
+    requestTerminalViewportFocus();
+  }, [focusPanelRequestToken, requestTerminalViewportFocus]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -326,7 +371,7 @@ export function TerminalPanel({
             return;
           }
           sendSize?.();
-          terminal?.focus();
+          applyPendingTerminalFocus();
         });
       })
       .catch((error) => {
@@ -361,9 +406,14 @@ export function TerminalPanel({
     activeTab?.hasSequenceGap,
     activeTab?.replayThroughSequence,
     activeTab?.status,
+    applyPendingTerminalFocus,
     publishPreferredTerminalSize,
     thread?.id,
   ]);
+
+  useEffect(() => {
+    queueMicrotask(applyPendingTerminalFocus);
+  }, [applyPendingTerminalFocus, terminalFocusRequestToken]);
 
   useEffect(() => {
     if (activeTab) {
@@ -419,12 +469,17 @@ export function TerminalPanel({
   };
 
   const createTerminal = () => {
-    applyState(
-      window.codexDesktop.createTerminal({
+    void window.codexDesktop
+      .createTerminal({
         cwd: thread?.cwd ?? null,
         size: lastSizeRef.current ?? { rows: 24, cols: 80 },
-      }),
-    );
+      })
+      .then((nextState) => {
+        setState(nextState);
+        requestTerminalViewportFocus(nextState.activeTabId);
+        setLocalError(null);
+      })
+      .catch((error) => setLocalError(toTerminalError(error)));
   };
 
   const liveCommands = selectRunningActiveCommandItems(thread);
@@ -444,6 +499,7 @@ export function TerminalPanel({
       })
       .then(({ state: nextState }) => {
         setState(nextState);
+        requestTerminalViewportFocus(nextState.activeTabId);
         setLocalError(null);
       })
       .catch((error) => setLocalError(toTerminalError(error)));
@@ -604,9 +660,16 @@ export function TerminalPanel({
                   role="tab"
                   aria-selected={isActive}
                   title={tab.title}
-                  onClick={() =>
-                    applyState(window.codexDesktop.selectTerminalTab(tab.id))
-                  }
+                  onClick={() => {
+                    void window.codexDesktop
+                      .selectTerminalTab(tab.id)
+                      .then((nextState) => {
+                        setState(nextState);
+                        requestTerminalViewportFocus(tab.id);
+                        setLocalError(null);
+                      })
+                      .catch((error) => setLocalError(toTerminalError(error)));
+                  }}
                 >
                   <span
                     className={`browser-tab-dot terminal-tab-dot ${tab.status} ${tab.backgroundActivity ? "activity" : ""}`}

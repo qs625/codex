@@ -8,11 +8,35 @@ export type TerminalCommandFocusRequest = {
   token: number;
 };
 
+export type PendingTerminalViewportFocusRequest = {
+  token: number;
+  tabId: string | null;
+};
+
 export function isTerminalCommandFocusRequestForThread(
   request: TerminalCommandFocusRequest | null | undefined,
   threadId: string | null | undefined,
 ) {
   return Boolean(request && threadId && request.threadId === threadId);
+}
+
+export function shouldApplyTerminalViewportFocusRequest({
+  request,
+  lastAppliedToken,
+  activeTabId,
+  terminalAvailable,
+}: {
+  request: PendingTerminalViewportFocusRequest | null | undefined;
+  lastAppliedToken: number;
+  activeTabId: string | null | undefined;
+  terminalAvailable: boolean;
+}) {
+  return Boolean(
+    request &&
+      request.token > lastAppliedToken &&
+      terminalAvailable &&
+      (!request.tabId || request.tabId === activeTabId),
+  );
 }
 
 export function createTerminalStateRequestSequencer() {

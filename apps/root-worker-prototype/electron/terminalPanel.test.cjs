@@ -22,6 +22,7 @@ const {
   reattachTerminalSessions,
   replayBufferFromDescriptor,
   setTerminalTabSize,
+  selectTerminalTab,
   terminalSafeTruncatedReplay,
   terminalPanelSnapshot,
   terminalCommandItemKey,
@@ -695,6 +696,42 @@ test("live command session keeps focus available when active snapshot is stale",
   assert.equal(state.tabs.length, 1);
   assert.equal(state.activeTabId, tab.id);
   assert.equal(tab.readOnlyOutput, undefined);
+});
+
+test("background command output does not select or focus the command tab", () => {
+  const state = createTerminalPanelState();
+  mergeTerminalSessions(state, [descriptor()], "thread");
+  const commandTab = state.tabs[0];
+  const shellTab = addUserTerminal(state, {
+    sessionId: "user:local:process-1",
+    generation: "process-1",
+    origin: "user",
+    threadId: null,
+    commandItemId: null,
+    processId: "process-1",
+    title: "zsh",
+    cwd: "/repo",
+    replayBase64: null,
+    replayTruncated: false,
+    replayThroughSequence: 0,
+    size: null,
+    canResize: true,
+    canWrite: true,
+    canTerminate: true,
+  });
+
+  assert.equal(state.activeTabId, shellTab.id);
+  assert.equal(
+    appendTerminalOutput(commandTab, Buffer.from("tick\n").toString("base64"), 1),
+    true,
+  );
+  commandTab.backgroundActivity = state.activeTabId !== commandTab.id;
+
+  assert.equal(state.activeTabId, shellTab.id);
+  assert.equal(commandTab.backgroundActivity, true);
+  assert.equal(selectTerminalTab(state, commandTab.id), true);
+  assert.equal(state.activeTabId, commandTab.id);
+  assert.equal(commandTab.backgroundActivity, false);
 });
 
 test("live command session wins over active command fallback descriptor", () => {
