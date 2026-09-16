@@ -12,6 +12,8 @@
 
 ## System Model
 - 这个项目的核心不是单一 CLI，而是一套围绕 thread、agent、tool call、event replay 和客户端展示组织起来的运行时系统。
+- Morpheus 的产品交互设计不能只从局部 UI 组件出发。任何用户可见工作流都应先定义交互 contract：用户意图入口、系统状态反馈、确认/取消/接管、错误恢复、审计证据、完成证明，以及与 conversation、RightPanel、Browser、Terminal、Live Commands 等既有表面的关系；然后才选择是否需要页面、面板、浮层、conversation card、tool output 或完全 headless 的形态。
+- 对 agent/AI 操作型能力，尤其要区分“能力真实作用的位置”和“UI 展示/审计的位置”：例如直接桌面 Computer Use 的动作应发生在真实目标 app 上，Morpheus 只负责发起、确认、状态反馈和审计，不应因为方便展示而把真实操作语义偷换成 app 内模拟。
 - owner 需要长期区分 3 类东西：
   - live runtime state：当前 turn、agent、command、wait 状态等即时运行态
   - persisted event/history：供 reload、history replay、UI 恢复使用的持久化事实
