@@ -128,7 +128,7 @@ export async function runComputerUseRequest(request, managerFactory) {
 export async function runComputerUseRepl(
   request,
   managerFactory,
-  { input = process.stdin, writeStdout = null } = {},
+  { input = process.stdin, writeStdout = null, interruptSignal = null } = {},
 ) {
   const manager = await managerFactory(request);
   const context = createSessionContext();
@@ -144,8 +144,21 @@ export async function runComputerUseRepl(
 
   const write = (value) => writeStdout?.(`${value}\n`);
   const lines = createInterface({ input, crlfDelay: Infinity });
+  let interrupted = false;
+  const interrupt = () => {
+    interrupted = true;
+    lines.close();
+  };
+  const removeInterruptHandlers = installReplInterruptHandlers({
+    lines,
+    interrupt,
+    interruptSignal,
+  });
   try {
     for await (const line of lines) {
+      if (interrupted) {
+        break;
+      }
       const parsed = parseReplLine(line);
       if (parsed.kind === "empty") {
         continue;
@@ -199,6 +212,9 @@ export async function runComputerUseRepl(
       });
       write(formatReplActionResult({ sessionId, action, result }, settings));
       index += 1;
+      if (interrupted) {
+        break;
+      }
       if (result.status === "failed") {
         ok = false;
         cleanup = await cleanupReplSession(manager, context, request);
@@ -211,7 +227,16 @@ export async function runComputerUseRepl(
         break;
       }
     }
-    if (!cleanup && context.needsCleanup) {
+    if (interrupted) {
+      ok = false;
+      cleanup = await cleanupReplSession(manager, context, request);
+      write(formatReplControlResult({
+        sessionId,
+        command: "cleanup",
+        reason: "interrupt",
+        cleanup,
+      }, settings));
+    } else if (!cleanup && context.needsCleanup) {
       cleanup = await cleanupReplSession(manager, context, request);
       write(formatReplControlResult({
         sessionId,
@@ -246,8 +271,26 @@ export async function runComputerUseRepl(
       error: errorMessage(error),
     };
   } finally {
+    removeInterruptHandlers();
     lines.close();
   }
+}
+
+function installReplInterruptHandlers({ lines, interrupt, interruptSignal }) {
+  lines.once("SIGINT", interrupt);
+  process.once("SIGINT", interrupt);
+  if (interruptSignal) {
+    if (interruptSignal.aborted) {
+      interrupt();
+    } else {
+      interruptSignal.addEventListener("abort", interrupt, { once: true });
+    }
+  }
+  return () => {
+    lines.off("SIGINT", interrupt);
+    process.off("SIGINT", interrupt);
+    interruptSignal?.removeEventListener?.("abort", interrupt);
+  };
 }
 
 function createSessionContext() {

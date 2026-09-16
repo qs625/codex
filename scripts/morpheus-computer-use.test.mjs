@@ -150,16 +150,29 @@ function managerHarness() {
   return { manager, nativeClient };
 }
 
-async function runReplHarness({ args = [], lines = [], nativeClient = null, overlayController = null } = {}) {
+async function runReplHarness({
+  args = [],
+  lines = [],
+  nativeClient = null,
+  overlayController = null,
+  interruptAfterOutput = null,
+} = {}) {
   const request = parseComputerUseCliArgs(["repl", ...args]);
   const stdout = [];
+  const abortController = interruptAfterOutput === null ? null : new AbortController();
   const manager = createComputerUseManager({
     nativeClient: nativeClient ?? fakeNativeClient(),
     ...(overlayController ? { overlayController } : {}),
   });
   const result = await runComputerUseRepl(request, async () => manager, {
     input: Readable.from(lines.map((line) => `${line}\n`)),
-    writeStdout: (value) => stdout.push(value.trimEnd()),
+    interruptSignal: abortController?.signal,
+    writeStdout: (value) => {
+      stdout.push(value.trimEnd());
+      if (stdout.length === interruptAfterOutput) {
+        abortController?.abort();
+      }
+    },
   });
   return { request, manager, result, stdout };
 }
@@ -307,6 +320,23 @@ test("computer use REPL cleans up after failed side effect", async () => {
     { type: "key", key: "Tab", modifiers: [] },
     { type: "cleanup" },
   ]);
+});
+
+test("computer use REPL cleans up after interrupt", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", "click 30,40"],
+    nativeClient,
+    interruptAfterOutput: 1,
+  });
+
+  const cleanup = JSON.parse(stdout[1]);
+  assert.equal(result.ok, false);
+  assert.equal(stdout.length, 2);
+  assert.equal(cleanup.reason, "interrupt");
+  assert.equal(cleanup.cleanup.status, "completed");
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 
 test("computer use CLI compiles shorthand flags into a run action batch", async () => {
