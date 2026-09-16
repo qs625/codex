@@ -1,4 +1,5 @@
 const { execFile } = require("node:child_process");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -8,6 +9,10 @@ const { promisify } = require("node:util");
 const execFileAsync = promisify(execFile);
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_TRACE_ITEMS = 80;
+const MAC_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
+  "native",
+  "computerUseMacNative.swift",
+);
 const DANGEROUS_TEXT_PATTERN =
   /\b(password|passcode|token|secret|delete|remove|send|submit|purchase|buy|transfer|bank|credit|sudo|rm\s+-rf)\b/i;
 
@@ -21,7 +26,7 @@ class ComputerUseManager {
       options.nativeClient ??
       createMacNativeComputerUseClient({
         scriptPath:
-          options.scriptPath ?? path.join(__dirname, "computerUseMacNative.swift"),
+          options.scriptPath ?? resolveMacNativeComputerUseScriptPath(options),
         tmpDir: options.tmpDir,
       });
     this.clock = options.clock ?? (() => Date.now());
@@ -393,12 +398,29 @@ function pushPointerPoint(session, point, atMs, source) {
 
 function createMacNativeComputerUseClient({ scriptPath, tmpDir } = {}) {
   return createMacNativeComputerUseClientWithAdapters({
-    scriptPath,
+    scriptPath: scriptPath ?? resolveMacNativeComputerUseScriptPath(),
     tmpDir,
     runNative: runSwiftComputerUse,
     screenshotCapture: captureScreenshot,
     removeFile: removeScreenshot,
   });
+}
+
+function resolveMacNativeComputerUseScriptPath(options = {}) {
+  const sourceDirectory = options.sourceDirectory ?? __dirname;
+  const resourcesPath =
+    options.resourcesPath === undefined
+      ? currentResourcesPath()
+      : options.resourcesPath;
+  const fileExists =
+    options.fileExists ?? ((targetPath) => fsSync.existsSync(targetPath));
+  if (resourcesPath) {
+    const resourcePath = path.join(resourcesPath, MAC_NATIVE_RESOURCE_RELATIVE_PATH);
+    if (fileExists(resourcePath)) {
+      return resourcePath;
+    }
+  }
+  return path.join(sourceDirectory, "computerUseMacNative.swift");
 }
 
 function createMacNativeComputerUseClientWithAdapters({
@@ -480,13 +502,21 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function currentResourcesPath() {
+  return typeof process.resourcesPath === "string"
+    ? process.resourcesPath
+    : null;
+}
+
 module.exports = {
+  MAC_NATIVE_RESOURCE_RELATIVE_PATH,
   createComputerUseManager,
   createMacNativeComputerUseClient,
   createMacNativeComputerUseClientWithAdapters,
   classifyComputerUseAction,
   normalizeAction,
   normalizeModifiers,
+  resolveMacNativeComputerUseScriptPath,
   targetMismatch,
   shouldAllowComputerUseAction: (action) => classifyComputerUseAction(normalizeAction(action)),
 };

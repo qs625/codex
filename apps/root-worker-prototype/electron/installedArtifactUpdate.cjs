@@ -22,6 +22,11 @@ const PAYLOAD_EXECUTABLE_RELATIVE_PATH = path.join(
   "MacOS",
   APP_NAME,
 );
+const COMPUTER_USE_NATIVE_SCRIPT_FILE = "computerUseMacNative.swift";
+const COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
+  "native",
+  COMPUTER_USE_NATIVE_SCRIPT_FILE,
+);
 const GENERATED_SOURCE_DIR_NAMES = [
   "dist-app",
   "dist-package-resources",
@@ -204,6 +209,7 @@ function updateInstalledArtifacts(plan, options = {}) {
         "--no-prune",
         `--extra-resource=${path.join(resourceRoot, "bin")}`,
         `--extra-resource=${path.join(resourceRoot, "default-config")}`,
+        `--extra-resource=${path.join(resourceRoot, "native")}`,
       ],
       { cwd: plan.sourceAppDir },
     );
@@ -294,6 +300,13 @@ function stagePayloadResources(
     "compact",
     "COMPACT.md",
   );
+  const nativeSource =
+    plan.computerUseNativeScriptSourcePath ??
+    path.join(plan.sourceAppDir, "electron", COMPUTER_USE_NATIVE_SCRIPT_FILE);
+  const nativeTarget = path.join(
+    resourceRoot,
+    COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
+  );
   fsOps.mkdirSync(path.dirname(appServerTarget), {
     recursive: true,
     mode: 0o755,
@@ -302,10 +315,16 @@ function stagePayloadResources(
     recursive: true,
     mode: 0o755,
   });
+  fsOps.mkdirSync(path.dirname(nativeTarget), {
+    recursive: true,
+    mode: 0o755,
+  });
   fsOps.copyFileSync(plan.appServerBinaryPath, appServerTarget);
   fsOps.chmodSync(appServerTarget, 0o755);
   fsOps.copyFileSync(plan.defaultCompactPromptSourcePath, compactTarget);
   fsOps.chmodSync(compactTarget, 0o644);
+  fsOps.copyFileSync(nativeSource, nativeTarget);
+  fsOps.chmodSync(nativeTarget, 0o644);
 }
 
 function normalizeRuntimeCapsuleTree(
@@ -576,6 +595,8 @@ function currentResourcesPath() {
 
 module.exports = {
   APP_NAME,
+  COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
+  COMPUTER_USE_NATIVE_SCRIPT_FILE,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
   PAYLOAD_RELATIVE_PATH,
