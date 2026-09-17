@@ -7,6 +7,7 @@ use codex_git_info::collect_git_info;
 use codex_git_info::get_git_repo_root;
 use thread_service_api::AgentDirectoryEntry;
 use thread_service_api::AgentDirectoryListRequest;
+use thread_service_api::ThreadRuntimeStatus;
 
 struct ThreadListFilters {
     model_providers: Option<Vec<String>>,
@@ -418,10 +419,17 @@ impl ThreadRequestProcessor {
             .ok();
         let (mut thread, _) = if include_turns {
             if let Some(live_snapshot) = live_snapshot.as_ref() {
-                // Loaded thread with turns: keep the persisted turn projection available
-                // so richer init-context items survive live-history reconstruction.
-                let persisted_thread = match self
-                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ true)
+                if live_snapshot.config_snapshot.ephemeral {
+                    return Err(ThreadReadViewError::InvalidRequest(
+                        "ephemeral threads do not support includeTurns".to_string(),
+                    ));
+                }
+                // Loaded thread with turns: read through the live runtime so
+                // rollout remains an internal recovery source, not an
+                // authoritative UI/read snapshot that can overwrite current
+                // runtime command/tool state.
+                let runtime_thread = match self
+                    .load_runtime_thread_for_read(thread_id, /*include_turns*/ true)
                     .await
                 {
                     Ok(thread) => thread,
@@ -438,7 +446,7 @@ impl ThreadRequestProcessor {
                     thread_id,
                     include_turns,
                     live_snapshot,
-                    persisted_thread,
+                    runtime_thread,
                 )
                 .await?
             } else if let Some(thread) = self
@@ -453,31 +461,27 @@ impl ThreadRequestProcessor {
                     "thread not loaded: {thread_id}"
                 )));
             }
+        } else if let Some(live_snapshot) = live_snapshot.as_ref() {
+            // Loaded metadata-only read follows the same read-through-runtime
+            // contract as includeTurns. Runtime may satisfy this from its own
+            // durable recovery source, but request handling should not bypass
+            // runtime current-state projection for loaded threads.
+            let thread = if live_snapshot.config_snapshot.ephemeral {
+                build_thread_from_live_snapshot(thread_id, live_snapshot)
+            } else {
+                self.load_runtime_thread_for_read(thread_id, include_turns)
+                    .await?
+                    .unwrap_or_else(|| build_thread_from_live_snapshot(thread_id, live_snapshot))
+            };
+            let has_live_in_progress_turn =
+                self.active_in_progress_turn_snapshot(thread_id).await.is_some();
+            (thread, has_live_in_progress_turn)
         } else if let Some(thread) = self
             .load_persisted_thread_for_read(thread_id, include_turns)
             .await?
         {
-            // Persisted metadata-only read: preserve stored fields, but still
-            // consult live state when the thread is loaded so status reflects
-            // an in-progress turn before watch status catches up.
-            let has_live_in_progress_turn = if live_snapshot.is_some() {
-                self.active_in_progress_turn_snapshot(thread_id)
-                    .await
-                    .is_some()
-            } else {
-                false
-            };
-            (thread, has_live_in_progress_turn)
-        } else if let Some(live_snapshot) = live_snapshot.as_ref() {
-            // Loaded metadata-only read before persistence is materialized: build
-            // the response from the live thread snapshot.
-            self.load_live_thread_view(
-                thread_id,
-                include_turns,
-                live_snapshot,
-                /*persisted_thread*/ None,
-            )
-            .await?
+            // Unloaded metadata-only read: recover from persisted durable state.
+            (thread, false)
         } else {
             return Err(ThreadReadViewError::InvalidRequest(format!(
                 "thread not loaded: {thread_id}"
@@ -651,6 +655,48 @@ impl ThreadRequestProcessor {
         }
     }
 
+    pub(super) async fn load_runtime_thread_for_read(
+        &self,
+        thread_id: ThreadId,
+        include_turns: bool,
+    ) -> Result<Option<Thread>, ThreadReadViewError> {
+        let fallback_provider = self.config.model_provider_id.as_str();
+        match self
+            .live_thread_history
+            .read_live_thread(
+                thread_id,
+                /*include_archived*/ true,
+                /*include_history*/ true,
+            )
+            .await
+        {
+            Ok(stored_thread) => {
+                let (mut thread, history) =
+                    thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
+                if include_turns && let Some(history) = history {
+                    thread.turns = build_api_turns_from_rollout_items(&history.items);
+                    apply_runtime_activity_items_from_persisted_turns(&mut thread);
+                    prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+                }
+                Ok(Some(thread))
+            }
+            Err(ThreadStoreError::InvalidRequest { message })
+                if message == format!("no rollout found for thread id {thread_id}") =>
+            {
+                Ok(None)
+            }
+            Err(ThreadStoreError::ThreadNotFound {
+                thread_id: missing_thread_id,
+            }) if missing_thread_id == thread_id => Ok(None),
+            Err(ThreadStoreError::InvalidRequest { message }) => {
+                Err(ThreadReadViewError::InvalidRequest(message))
+            }
+            Err(err) => Err(ThreadReadViewError::Internal(format!(
+                "failed to read live thread through runtime: {err}"
+            ))),
+        }
+    }
+
     /// Builds a `thread/read` view from a loaded thread plus optional persisted metadata.
     pub(super) async fn load_live_thread_view(
         &self,
@@ -670,7 +716,14 @@ impl ThreadRequestProcessor {
             mut thread,
             persisted_turns,
         } = live_thread_read_projection_base(fallback_thread, persisted_thread);
-        let active_turn = self.active_in_progress_turn_snapshot(thread_id).await;
+        let runtime_status = self
+            .thread_lifecycle_runtime
+            .live_thread_runtime_status(thread_id)
+            .await
+            .ok();
+        let active_turn = self
+            .live_current_turn_snapshot(thread_id, runtime_status)
+            .await;
         let has_live_in_progress_turn = match self
             .apply_thread_read_store_fields(
                 thread_id,
@@ -749,11 +802,20 @@ impl ThreadRequestProcessor {
         active_turn: Option<&Turn>,
     ) -> Result<bool, ThreadReadViewError> {
         self.attach_thread_name(thread_id, thread).await;
-        let history = self
+        let history = match self
             .live_thread_history
             .live_thread_history(thread_id, /*include_archived*/ true)
             .await
-            .map_err(|err| thread_read_history_load_error(thread_id, err))?;
+        {
+            Ok(history) => history,
+            Err(err) if is_missing_thread_history_error(&err, thread_id) => {
+                let items = read_thread_history_items(self.thread_store.as_ref(), thread_id)
+                    .await
+                    .map_err(|err| thread_read_history_load_error(thread_id, err))?;
+                thread_store::StoredThreadHistory { thread_id, items }
+            }
+            Err(err) => return Err(thread_read_history_load_error(thread_id, err)),
+        };
         apply_thread_stats_from_rollout_items(thread, history.items.as_slice());
         if let Some(token_usage) = self
             .live_thread_usage
@@ -794,7 +856,9 @@ impl ThreadRequestProcessor {
             thread.context_usage = Some(context_usage.into());
         }
 
-        let has_live_in_progress_turn = active_turn.is_some();
+        let has_live_in_progress_turn = active_turn
+            .as_ref()
+            .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
         if include_turns {
             populate_thread_turns_from_history(thread, &history.items, active_turn);
         }
@@ -833,13 +897,13 @@ impl ThreadRequestProcessor {
             .await
             .ok();
         let has_live_running_thread = matches!(live_agent_status, Some(AgentStatus::Running));
-        let active_turn = if live_agent_status.is_some() {
-            // Persisted history may not yet include the currently running turn. The
-            // app-server listener has already projected live turn events into ThreadState,
-            // so merge that in-memory snapshot before paginating.
-            let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
-            let state = thread_state.lock().await;
-            state.active_in_progress_turn_snapshot()
+        let runtime_status = self
+            .thread_lifecycle_runtime
+            .live_thread_runtime_status(thread_uuid)
+            .await
+            .ok();
+        let active_turn = if live_agent_status.is_some() || runtime_status.is_some() {
+            self.live_current_turn_snapshot(thread_uuid, runtime_status).await
         } else {
             None
         };
@@ -870,6 +934,28 @@ impl ThreadRequestProcessor {
         &self,
         thread_id: ThreadId,
     ) -> Result<Vec<RolloutItem>, ThreadReadViewError> {
+        if let Some(live_snapshot) = self
+            .live_thread_inspection
+            .live_thread_snapshot(thread_id)
+            .await
+            .ok()
+        {
+            if live_snapshot.config_snapshot.ephemeral {
+                return Err(ThreadReadViewError::InvalidRequest(
+                    "ephemeral threads do not support thread/turns/list".to_string(),
+                ));
+            }
+            match self
+                .live_thread_history
+                .live_thread_history(thread_id, /*include_archived*/ true)
+                .await
+            {
+                Ok(history) => return Ok(history.items),
+                Err(err) if is_missing_thread_history_error(&err, thread_id) => {}
+                Err(err) => return Err(thread_turns_list_history_load_error(thread_id, err)),
+            }
+        }
+
         match read_thread_history_items(self.thread_store.as_ref(), thread_id).await {
             Ok(items) => return Ok(items),
             Err(ThreadStoreError::InvalidRequest { message })
@@ -971,6 +1057,24 @@ impl ThreadRequestProcessor {
             );
         }
     }
+
+    pub(super) async fn live_current_turn_snapshot(
+        &self,
+        thread_id: ThreadId,
+        runtime_status: Option<ThreadRuntimeStatus>,
+    ) -> Option<Turn> {
+        let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+        let state = thread_state.lock().await;
+        match runtime_status {
+            Some(ThreadRuntimeStatus::IdleWaitCommand) => state
+                .active_in_progress_turn_snapshot()
+                .or_else(|| state.last_terminal_turn_snapshot()),
+            Some(ThreadRuntimeStatus::Active) | None => state.active_in_progress_turn_snapshot(),
+            Some(ThreadRuntimeStatus::IdleWaitChild)
+            | Some(ThreadRuntimeStatus::IdleWaitEventSubscription)
+            | Some(ThreadRuntimeStatus::Complete) => None,
+        }
+    }
 }
 
 fn is_unknown_agent_type_resume_error(err: &JSONRPCErrorError) -> bool {
@@ -1051,6 +1155,18 @@ fn live_thread_lifecycle_overlay_from_facts(
 fn live_overlay_updated_at(stored_updated_at: i64) -> i64 {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     now.max(stored_updated_at.saturating_add(1))
+}
+
+fn is_missing_thread_history_error(err: &ThreadStoreError, thread_id: ThreadId) -> bool {
+    match err {
+        ThreadStoreError::ThreadNotFound {
+            thread_id: missing_thread_id,
+        } => *missing_thread_id == thread_id,
+        ThreadStoreError::InvalidRequest { message } => {
+            message == &format!("no rollout found for thread id {thread_id}")
+        }
+        _ => false,
+    }
 }
 
 async fn live_thread_git_info(cwd: &AbsolutePathBuf) -> Option<ApiGitInfo> {
