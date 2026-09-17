@@ -203,14 +203,14 @@ export async function runComputerUseRepl(
         continue;
       }
 
-      const { action, result } = await executeComputerUseSessionAction({
+      const { action, result, traceItem } = await executeComputerUseSessionAction({
         manager,
         rawAction: parsed.action,
         request,
         context,
         index,
       });
-      write(formatReplActionResult({ sessionId, action, result }, settings));
+      write(formatReplActionResult({ sessionId, action, result, traceItem }, settings));
       index += 1;
       if (interrupted) {
         break;
@@ -314,23 +314,23 @@ async function executeComputerUseSessionAction({
     });
     context.started = true;
     context.needsCleanup = true;
-    return { action, result: completedResult(index, action, state, request) };
+    return { action, result: completedResult(index, action, state, request), traceItem: null };
   }
   if (action.type === "observe") {
     if (!context.started) {
       const state = await manager.startSession({ app: request.app ?? undefined });
       context.started = true;
       context.needsCleanup = true;
-      return { action, result: completedResult(index, action, state, request) };
+      return { action, result: completedResult(index, action, state, request), traceItem: null };
     }
     const state = await manager.observe("cli");
-    return { action, result: completedResult(index, action, state, request) };
+    return { action, result: completedResult(index, action, state, request), traceItem: null };
   }
   if (action.type === "stop") {
     const state = await manager.stopSession();
     context.started = false;
     context.needsCleanup = false;
-    return { action, result: completedResult(index, action, state, request) };
+    return { action, result: completedResult(index, action, state, request), traceItem: null };
   }
   if (CLI_ACTIONS.has(action.type)) {
     if (!context.started) {
@@ -338,12 +338,20 @@ async function executeComputerUseSessionAction({
       context.started = true;
       context.needsCleanup = true;
     }
+    const traceCursor = managerTraceCursor(manager);
     const state = await manager.act(action);
-    const result = managerActionResult(index, action, state, request);
+    const traceItem = newTraceItemForAction(state, action, traceCursor);
+    const result = managerActionResult(
+      index,
+      action,
+      state,
+      request,
+      traceItem,
+    );
     if (state.overlay?.visible === true) {
       await delay(request.overlayHoldMs);
     }
-    return { action, result };
+    return { action, result, traceItem: sanitizeTraceItem(traceItem, request) };
   }
   throw new Error(`Unsupported Computer Use CLI action: ${action.type}`);
 }
@@ -1059,10 +1067,8 @@ function completedResult(index, action, state, request) {
   };
 }
 
-function managerActionResult(index, action, state, request) {
-  const traceItem = state?.trace?.at?.(-1);
-  const traceMatchesAction = traceItem?.action?.type === action.type;
-  if (traceMatchesAction && traceItem.status === "blocked") {
+function managerActionResult(index, action, state, request, traceItem = null) {
+  if (traceItem?.status === "blocked") {
     return {
       index,
       action,
@@ -1071,7 +1077,7 @@ function managerActionResult(index, action, state, request) {
       state: sanitizeState(state, request),
     };
   }
-  if (traceMatchesAction && traceItem.status === "failed") {
+  if (traceItem?.status === "failed") {
     return {
       index,
       action,
@@ -1108,6 +1114,34 @@ function safeManagerState(manager, request) {
   }
 }
 
+function managerTraceCursor(manager) {
+  try {
+    const trace = manager.state?.()?.trace;
+    if (!Array.isArray(trace)) {
+      return { length: 0, lastSequence: null };
+    }
+    const lastSequence = trace.at(-1)?.sequence;
+    return {
+      length: trace.length,
+      lastSequence: Number.isFinite(lastSequence) ? lastSequence : null,
+    };
+  } catch {
+    return { length: 0, lastSequence: null };
+  }
+}
+
+function newTraceItemForAction(state, action, traceCursor) {
+  const trace = Array.isArray(state?.trace) ? state.trace : [];
+  const newTrace = Number.isFinite(traceCursor?.lastSequence)
+    ? trace.filter((item) => Number.isFinite(item?.sequence) && item.sequence > traceCursor.lastSequence)
+    : trace.slice(traceCursor?.length ?? 0);
+  const traceItem = newTrace.findLast?.((item) => item?.action?.type === action.type) ?? null;
+  if (traceItem?.action?.type !== action.type) {
+    return null;
+  }
+  return traceItem;
+}
+
 function sanitizeState(state, request) {
   const copy = JSON.parse(JSON.stringify(state ?? null));
   if (!copy) {
@@ -1117,6 +1151,15 @@ function sanitizeState(state, request) {
   for (const item of copy.trace ?? []) {
     stripScreenshotData(item.screenshot, request);
   }
+  return copy;
+}
+
+function sanitizeTraceItem(traceItem, request) {
+  if (!traceItem) {
+    return null;
+  }
+  const copy = JSON.parse(JSON.stringify(traceItem));
+  stripScreenshotData(copy.screenshot, request);
   return copy;
 }
 
@@ -1135,9 +1178,9 @@ function stripScreenshotData(screenshot, request) {
   }
 }
 
-function formatReplActionResult({ sessionId, action, result }, settings) {
+function formatReplActionResult({ sessionId, action, result, traceItem = null }, settings) {
   const state = result.state ?? null;
-  const trace = state?.trace?.at?.(-1) ?? null;
+  const trace = traceItem;
   const payload = {
     type: "action",
     sessionId,
