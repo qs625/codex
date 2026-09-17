@@ -678,8 +678,8 @@ ipcMain.handle("codex:openLink", async (_event, target) => {
 
 ipcMain.handle("codex:browser:show", async (event, bounds) => {
   const panel = browserPanelForEvent(event);
-  attachBrowserPanel(panel);
   setBrowserPanelBounds(panel, bounds);
+  attachBrowserPanel(panel);
   return browserPanelState(panel);
 });
 

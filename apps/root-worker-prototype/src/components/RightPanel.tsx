@@ -989,22 +989,42 @@ function BrowserPanel({
       return undefined;
     }
 
-    let animationFrame: number | null = null;
+    let boundsUpdateFrame: number | null = null;
+    let boundsWatchFrame: number | null = null;
+    let lastSentBounds: BrowserViewBounds | null = null;
     const measureBounds = () =>
-      browserBoundsFromElement(viewport, ++boundsSequenceRef.current);
-    const updateBounds = () => {
-      if (animationFrame !== null) {
+      browserBoundsFromElement(
+        viewport,
+        nextBrowserBoundsSequence(boundsSequenceRef),
+      );
+    const sendBounds = () => {
+      const bounds = measureBounds();
+      if (browserBoundsMatch(lastSentBounds, bounds)) {
         return;
       }
-      animationFrame = window.requestAnimationFrame(() => {
-        animationFrame = null;
+      lastSentBounds = bounds;
+      void browserApi
+        .setBrowserViewBounds(bounds)
+        .catch((error) => setLocalError(toBrowserError(error)));
+    };
+    const scheduleBoundsUpdate = () => {
+      if (boundsUpdateFrame !== null) {
+        return;
+      }
+      boundsUpdateFrame = window.requestAnimationFrame(() => {
+        boundsUpdateFrame = null;
         if (nativeOverlayActive) {
           return;
         }
-        void browserApi
-          .setBrowserViewBounds(measureBounds())
-          .catch((error) => setLocalError(toBrowserError(error)));
+        sendBounds();
       });
+    };
+    const watchBounds = () => {
+      if (nativeOverlayActive) {
+        return;
+      }
+      sendBounds();
+      boundsWatchFrame = window.requestAnimationFrame(watchBounds);
     };
 
     if (nativeOverlayActive) {
@@ -1013,25 +1033,31 @@ function BrowserPanel({
         .then((nextState) => applyBrowserState(nextState))
         .catch((error) => setLocalError(toBrowserError(error)));
     } else {
+      const bounds = measureBounds();
+      lastSentBounds = bounds;
       void browserApi
-        .showBrowserView(measureBounds())
+        .showBrowserView(bounds)
         .then((nextState) => {
           applyBrowserState(nextState);
         })
         .catch((error) => setLocalError(toBrowserError(error)));
     }
 
-    updateBounds();
-    const resizeObserver = new ResizeObserver(updateBounds);
+    scheduleBoundsUpdate();
+    boundsWatchFrame = window.requestAnimationFrame(watchBounds);
+    const resizeObserver = new ResizeObserver(scheduleBoundsUpdate);
     resizeObserver.observe(viewport);
-    window.addEventListener("resize", updateBounds);
+    window.addEventListener("resize", scheduleBoundsUpdate);
 
     return () => {
-      if (animationFrame !== null) {
-        window.cancelAnimationFrame(animationFrame);
+      if (boundsUpdateFrame !== null) {
+        window.cancelAnimationFrame(boundsUpdateFrame);
+      }
+      if (boundsWatchFrame !== null) {
+        window.cancelAnimationFrame(boundsWatchFrame);
       }
       resizeObserver.disconnect();
-      window.removeEventListener("resize", updateBounds);
+      window.removeEventListener("resize", scheduleBoundsUpdate);
       void browserApi.hideBrowserView();
     };
   }, [nativeOverlayActive]);
@@ -1338,6 +1364,25 @@ export function browserBoundsFromElement(
     height: Math.max(0, Math.round(rect.height)),
     ...(sequence ? { sequence } : {}),
   };
+}
+
+export function nextBrowserBoundsSequence(ref: { current: number }): number {
+  const sequence = Math.max(ref.current + 1, Date.now());
+  ref.current = sequence;
+  return sequence;
+}
+
+export function browserBoundsMatch(
+  previous: BrowserViewBounds | null,
+  next: BrowserViewBounds,
+): boolean {
+  return (
+    previous !== null &&
+    previous.x === next.x &&
+    previous.y === next.y &&
+    previous.width === next.width &&
+    previous.height === next.height
+  );
 }
 
 export function currentBrowserPanelApi(): BrowserPanelApi | null {

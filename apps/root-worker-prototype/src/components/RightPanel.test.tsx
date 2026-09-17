@@ -30,6 +30,7 @@ const {
   ScheduleAgendaDateGroup,
   beginFilePreviewEdit,
   beginFilePreviewSave,
+  browserBoundsMatch,
   browserBoundsFromElement,
   browserTabLabel,
   buildGitGraphVisualModel,
@@ -49,6 +50,7 @@ const {
   gitDiffTargetForTreePath,
   gitRelativeTreePath,
   normalizeBrowserPanelState,
+  nextBrowserBoundsSequence,
   resolveGitTreeFileOpen,
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
@@ -351,6 +353,36 @@ test("browserBoundsFromElement measures the visible viewport rect with sequence"
   });
 });
 
+test("nextBrowserBoundsSequence advances past manual wall-clock bounds", () => {
+  const originalNow = Date.now;
+  Date.now = () => 1_800_000;
+  try {
+    const sequence = { current: 9_901 };
+    assert.equal(nextBrowserBoundsSequence(sequence), 1_800_000);
+    assert.equal(sequence.current, 1_800_000);
+    assert.equal(nextBrowserBoundsSequence(sequence), 1_800_001);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("browserBoundsMatch ignores sequence and detects layout movement", () => {
+  assert.equal(
+    browserBoundsMatch(
+      { x: 900, y: 150, width: 700, height: 600, sequence: 42 },
+      { x: 900, y: 150, width: 700, height: 600, sequence: 43 },
+    ),
+    true,
+  );
+  assert.equal(
+    browserBoundsMatch(
+      { x: 900, y: 150, width: 700, height: 600, sequence: 43 },
+      { x: 1193, y: 169, width: 489, height: 888, sequence: 44 },
+    ),
+    false,
+  );
+});
+
 test("browser native view hides under app overlays and restores with measured bounds", () => {
   const rightPanelSource = readFileSync(
     new URL("./RightPanel.tsx", import.meta.url),
@@ -364,7 +396,11 @@ test("browser native view hides under app overlays and restores with measured bo
   );
   assert.match(
     rightPanelSource,
-    /else \{[\s\S]*\.showBrowserView\(measureBounds\(\)\)/,
+    /else \{[\s\S]*const bounds = measureBounds\(\)[\s\S]*\.showBrowserView\(bounds\)/,
+  );
+  assert.match(
+    rightPanelSource,
+    /requestAnimationFrame\(watchBounds\)/,
   );
   assert.match(
     appSource,
