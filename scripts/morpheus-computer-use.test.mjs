@@ -106,6 +106,23 @@ function fakeNativeClient(options = {}) {
           pasteboardRestored: true,
         };
       }
+      if (action.type === "setText") {
+        return {
+          ok: true,
+          method: "accessibility-set-value",
+          targetVisibility: options.targetVisibility ?? "frontmost",
+          query: action.query,
+          matchStatus: "unique",
+          matchedElement: {
+            role: "AXTextField",
+            title: action.query,
+            writable: true,
+            bounds: { x: 120, y: 130, width: 200, height: 30 },
+            center: { x: 220, y: 145 },
+          },
+          characterCount: action.text.length,
+        };
+      }
       if (action.type === "key" || action.type === "hotkey") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
       }
@@ -459,6 +476,8 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     "Open",
     "--click-text",
     "Save",
+    "--set-text",
+    "Search=hello",
     "--type",
     "hello",
     "--key",
@@ -483,6 +502,7 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     { type: "scroll", x: 90, y: 100, deltaX: 0, deltaY: -240 },
     { type: "findText", text: "Open" },
     { type: "clickText", text: "Save" },
+    { type: "setText", query: "Search", text: "hello" },
     { type: "type", text: "hello" },
     { type: "key", key: "s", modifiers: ["cmd"] },
     { type: "hotkey", key: "p", modifiers: ["cmd", "shift"] },
@@ -593,6 +613,7 @@ test("computer use CLI runs semantic side effects and wait by default", async ()
       "scroll",
       "findText",
       "clickText",
+      "setText",
       "key",
       "hotkey",
       "type",
@@ -683,6 +704,52 @@ test("computer use CLI activates background targets before side effects", async 
   assert.equal(result.results[1].state.trace.at(-1).activation.before.targetVisibility, "background");
   assert.equal(result.results[1].state.trace.at(-1).activation.reobserved.targetVisibility, "frontmost");
   assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate", "key", "cleanup"]);
+});
+
+test("computer use CLI setText writes background AX target without activation", async () => {
+  const nativeClient = fakeNativeClient({
+    targetVisibility: "background",
+    perception: {
+      accessibilityElements: [
+        {
+          role: "AXTextField",
+          title: "Search",
+          writable: true,
+          bounds: { x: 100, y: 100, width: 240, height: 30 },
+          center: { x: 220, y: 115 },
+        },
+      ],
+    },
+  });
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--set-text",
+      "Search=hello background",
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].status, "completed");
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), [
+    "setText",
+    "cleanup",
+  ]);
+  assert.equal(nativeClient.actions[0].query, "Search");
+  assert.equal(nativeClient.actions[0].text, "hello background");
+  const trace = result.results[1].state.trace.at(-1);
+  assert.equal(trace.action.type, "setText");
+  assert.equal(trace.evidence.method, "accessibility-set-value");
+  assert.equal(trace.evidence.targetVisibility, "background");
 });
 
 test("computer use CLI reports activation failures without native side effects", async () => {

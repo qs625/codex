@@ -22,6 +22,7 @@ const CLI_ACTIONS = new Set([
   "scroll",
   "findText",
   "clickText",
+  "setText",
   "type",
   "key",
   "hotkey",
@@ -491,6 +492,12 @@ export function parseComputerUseCliArgs(argv) {
           text: requireValue(args, ++index, arg),
         });
         break;
+      case "--set-text":
+      case "--setText":
+        request.shorthandActions.push(
+          parseCliSetText(requireValue(args, ++index, arg), arg),
+        );
+        break;
       case "--type":
       case "--text":
         request.shorthandActions.push({
@@ -883,6 +890,19 @@ function parseCliScroll(value, flag) {
   };
 }
 
+function parseCliSetText(value, flag) {
+  const index = value.indexOf("=");
+  if (index <= 0) {
+    throw new Error(`${flag} requires query=text`);
+  }
+  const query = value.slice(0, index).trim();
+  const text = value.slice(index + 1);
+  if (!query) {
+    throw new Error(`${flag} requires a non-empty query`);
+  }
+  return { type: "setText", query, text };
+}
+
 function parseCliKey(value, flag) {
   const parts = value
     .split("+")
@@ -959,6 +979,11 @@ function parseReplLine(line) {
       return { kind: "action", action: { type: "findText", text: tokens.join(" ") } };
     case "clickText":
       return { kind: "action", action: { type: "clickText", text: tokens.join(" ") } };
+    case "setText":
+      return {
+        kind: "action",
+        action: parseCliSetText(tokens.join(" "), command),
+      };
     case "key":
       return {
         kind: "action",
@@ -1000,6 +1025,8 @@ function normalizeReplCommand(command) {
       return "findText";
     case "click-text":
       return "clickText";
+    case "set-text":
+      return "setText";
     default:
       return command;
   }
@@ -1429,6 +1456,7 @@ function cliPolicy(request = {}) {
       "scroll",
       "findText",
       "clickText",
+      "setText",
       "key",
       "hotkey",
       "type",
@@ -1447,8 +1475,9 @@ function cliLimitations() {
     "The CLI keeps session state only for the lifetime of one `run` process.",
     "Click, doubleClick, rightClick, scroll, key, hotkey, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
     "Background targets are activated by the Computer Use session, then re-observed before any side-effect action is sent.",
+    "setText is a semantic Accessibility set-value action for one unique writable target element; it does not send background keyboard events.",
     "Screenshots include a bounded data URL by default; pass --omit-screenshot-data for metadata-only output.",
-    "Foreground target observations include bounded perception facts by default; pass --no-perception to disable AX/window crop extraction.",
+    "Target observations include bounded perception facts by default when macOS exposes real window/AX evidence; pass --no-perception to disable AX/window crop extraction.",
     "Visible agent cursor feedback is target-bound. Background targets are not drawn over unrelated foreground apps before activation.",
     "After a visible move, the CLI waits --overlay-hold-ms before the next action so the cursor can be seen.",
     "High-risk actions require --confirm-risk high; --plan-only blocks real side effects before native input.",
@@ -1499,7 +1528,7 @@ function replHelp() {
     "Computer Use REPL commands:",
     "  start [--app <bundle-or-name>] | observe | status | trace [count] | stop | exit",
     "  move x,y | click x,y | double-click x,y | right-click x,y | scroll x,y deltaX,deltaY",
-    "  find-text <text> | click-text <text>",
+    "  find-text <text> | click-text <text> | set-text query=value",
     "  key key|mod+key | hotkey mod+key | type <text> | drag x1,y1:x2,y2 | wait ms | pause ms",
     "  json on|off | raw on|off | help",
     "  JSON action lines are also accepted, for example: {\"type\":\"move\",\"x\":420,\"y\":360}",
@@ -1514,12 +1543,12 @@ function usage() {
     "  node scripts/morpheus-computer-use.mjs repl --app <bundle-or-name> --omit-screenshot-data",
     "",
     "Actions:",
-    "  start, observe, move, click, doubleClick, rightClick, scroll, key, hotkey, type, drag, wait/pause, stop",
+    "  start, observe, move, click, doubleClick, rightClick, scroll, findText, clickText, setText, key, hotkey, type, drag, wait/pause, stop",
     "",
     "Shorthand flags:",
     "  --start --observe --stop",
     "  --move x,y --click x,y --double-click x,y --right-click x,y --scroll x,y:deltaX,deltaY",
-    "  --find-text text --click-text text --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
+    "  --find-text text --click-text text --set-text query=value --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
     "",
     "Example:",
     "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --actions '[{\"type\":\"start\"},{\"type\":\"observe\"},{\"type\":\"move\",\"x\":420,\"y\":360},{\"type\":\"stop\"}]'",
