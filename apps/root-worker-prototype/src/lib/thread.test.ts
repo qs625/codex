@@ -1143,6 +1143,54 @@ test("buildProjectAgentSidebar uses root thread status and aggregates project co
   assert.equal(project?.failedCount, 1);
 });
 
+test("buildProjectAgentSidebar keeps active owner child status aligned with project count", () => {
+  const root = makeSidebarThread({
+    id: "self-root",
+    cwd: "/Users/bytedance/.morpheus/source_workspace",
+    path: "/self",
+    name: "/self",
+    lifecycleStatus: { type: "final" as const, result: { type: "completed" } },
+  });
+  const activeOwner = makeSubagentThread(
+    "owner-dev-3",
+    "self-root",
+    "/self/owner_dev_3",
+    {
+      agentRole: "feature-owner",
+      lifecycleStatus: { type: "active" as const, activeFlags: [] },
+    },
+  );
+  const completedReviewer = makeSubagentThread(
+    "reviewer",
+    "owner-dev-3",
+    "/self/owner_dev_3/reviewer",
+    {
+      agentRole: "code-review",
+      lifecycleStatus: {
+        type: "final" as const,
+        result: { type: "completed" as const },
+      },
+    },
+  );
+
+  const sidebar = buildProjectAgentSidebar([
+    root,
+    activeOwner,
+    completedReviewer,
+  ]);
+  const project = sidebar.projects[0];
+  const ownerNode = project?.tree.children[0];
+  const reviewerNode = ownerNode?.children[0];
+
+  assert.equal(project?.activeCount, 1);
+  assert.ok(ownerNode);
+  assert.equal(treeThreadLifecycleStatusClass(ownerNode), "doing");
+  assert.equal(treeThreadLifecycleStatusLabel("doing"), "Active");
+  assert.ok(reviewerNode);
+  assert.equal(treeThreadLifecycleStatusClass(reviewerNode), "todo");
+  assert.equal(treeThreadLifecycleStatusLabel("todo"), "Inactive");
+});
+
 test("buildProjectAgentSidebar keeps project status scoped to cp_http_api root", () => {
   const cpHttpApiRoot = makeSidebarThread({
     id: "cp-http-api-root",
@@ -1633,6 +1681,57 @@ test("mergeThreadSnapshot does not downgrade completed lifecycle from stale meta
   });
 });
 
+test("mergeThreadSnapshot reopens completed lifecycle from fresh active snapshot", () => {
+  const existing = {
+    ...makeThread(),
+    preview: "old task",
+    updatedAt: 10,
+    gitInfo: { branch: "old-branch" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+  } satisfies Thread;
+  const activeSnapshot = {
+    ...makeThread(),
+    preview: "new task",
+    updatedAt: 20,
+    gitInfo: { branch: "new-branch" },
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, activeSnapshot);
+
+  assert.deepEqual(merged.lifecycleStatus, {
+    type: "active",
+    activeFlags: ["running"],
+  });
+  assert.equal(merged.preview, "new task");
+  assert.equal(merged.updatedAt, 20);
+  assert.deepEqual(merged.gitInfo, { branch: "new-branch" });
+});
+
+test("mergeThreadSnapshot does not reopen completed lifecycle from older stale active metadata", () => {
+  const existing = {
+    ...makeThread(),
+    preview: "current completed task",
+    updatedAt: 20,
+    gitInfo: { branch: "current-branch" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+  } satisfies Thread;
+  const staleActive = {
+    ...makeThread(),
+    preview: "older active task",
+    updatedAt: 10,
+    gitInfo: { branch: "older-branch" },
+    lifecycleStatus: { type: "active", activeFlags: [] },
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, staleActive);
+
+  assert.deepEqual(merged.lifecycleStatus, {
+    type: "final",
+    result: { type: "completed" },
+  });
+});
+
 test("upsertThreadMetadataPreservingTurns does not downgrade completed lifecycle", () => {
   const existing = {
     ...makeThread(),
@@ -1649,6 +1748,50 @@ test("upsertThreadMetadataPreservingTurns does not downgrade completed lifecycle
     type: "final",
     result: { type: "completed" },
   });
+});
+
+test("upsertThreadMetadataPreservingTurns reopens completed lifecycle from fresh waiting metadata", () => {
+  const existing = {
+    ...makeThread(),
+    preview: "old task",
+    updatedAt: 10,
+    gitInfo: { branch: "old-branch" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+    turns: [
+      {
+        id: "turn-1",
+        items: [],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    ],
+  } satisfies Thread;
+  const waitingMetadata = {
+    ...makeThread(),
+    preview: "new task",
+    updatedAt: 20,
+    gitInfo: { branch: "new-branch" },
+    lifecycleStatus: { type: "waiting", reason: "child" },
+    turns: [],
+  } satisfies Thread;
+
+  const threads = upsertThreadMetadataPreservingTurns(
+    [existing],
+    waitingMetadata,
+  );
+
+  assert.deepEqual(threads[0]?.lifecycleStatus, {
+    type: "waiting",
+    reason: "child",
+  });
+  assert.equal(threads[0]?.preview, "new task");
+  assert.equal(threads[0]?.updatedAt, 20);
+  assert.deepEqual(threads[0]?.gitInfo, { branch: "new-branch" });
+  assert.equal(threads[0]?.turns.length, 1);
 });
 
 test("upsertThreadMetadataPreservingTurns preserves thread stats when omitted", () => {
@@ -1834,6 +1977,29 @@ test("mergeThreadSnapshot does not downgrade non-completed final lifecycle", () 
   assert.deepEqual(merged.lifecycleStatus, {
     type: "final",
     result: { type: "interrupted" },
+  });
+});
+
+test("mergeThreadSnapshot does not reopen strong terminal lifecycle from newer active snapshot", () => {
+  const existing = {
+    ...makeThread(),
+    updatedAt: 10,
+    lifecycleStatus: {
+      type: "final",
+      result: { type: "errored", message: "failed" },
+    },
+  } satisfies Thread;
+  const activeSnapshot = {
+    ...makeThread(),
+    updatedAt: 20,
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, activeSnapshot);
+
+  assert.deepEqual(merged.lifecycleStatus, {
+    type: "final",
+    result: { type: "errored", message: "failed" },
   });
 });
 
