@@ -3,9 +3,12 @@ const test = require("node:test");
 
 const {
   browserPanelLoadErrorMessage,
+  browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
+  shouldExposeBrowserPanelLoading,
+  waitForBrowserPanelNavigationResult,
 } = require("./browserPanelNavigationState.cjs");
 
 test("browserPanelUrlsEqual compares normalized URL hrefs", () => {
@@ -115,4 +118,64 @@ test("browserPanelLoadErrorMessage includes Electron error code when present", (
     }),
     "ERR_NAME_NOT_RESOLVED (-105)",
   );
+});
+
+test("browserPanelNavigationTimeoutMessage rounds timeout seconds", () => {
+  assert.equal(
+    browserPanelNavigationTimeoutMessage(15_000),
+    "Browser navigation timed out after 15s",
+  );
+});
+
+test("shouldExposeBrowserPanelLoading hides initial blank webContents loading", () => {
+  assert.equal(
+    shouldExposeBrowserPanelLoading({
+      observedLoading: true,
+      pendingNavigationSequence: null,
+    }),
+    false,
+  );
+});
+
+test("shouldExposeBrowserPanelLoading shows active navigation loading", () => {
+  assert.equal(
+    shouldExposeBrowserPanelLoading({
+      observedLoading: true,
+      pendingNavigationSequence: 7,
+    }),
+    true,
+  );
+});
+
+test("waitForBrowserPanelNavigationResult rejects hung loadURL with bounded timeout", async () => {
+  const timers = {
+    setTimeout(callback) {
+      callback();
+      return 1;
+    },
+    clearTimeout() {},
+  };
+
+  await assert.rejects(
+    waitForBrowserPanelNavigationResult(new Promise(() => {}), 3_000, timers),
+    (error) => {
+      assert.equal(error.code, "ERR_BROWSER_PANEL_NAVIGATION_TIMEOUT");
+      assert.equal(error.message, "Browser navigation timed out after 3s");
+      return true;
+    },
+  );
+});
+
+test("waitForBrowserPanelNavigationResult resolves completed loadURL before timeout", async () => {
+  let timeoutScheduled = false;
+  const timers = {
+    setTimeout() {
+      timeoutScheduled = true;
+      return 1;
+    },
+    clearTimeout() {},
+  };
+
+  await waitForBrowserPanelNavigationResult(Promise.resolve(), 3_000, timers);
+  assert.equal(timeoutScheduled, true);
 });

@@ -5,6 +5,11 @@ function browserPanelLoadErrorMessage(failure) {
     : description;
 }
 
+function browserPanelNavigationTimeoutMessage(timeoutMs) {
+  const seconds = Math.max(1, Math.round(timeoutMs / 1_000));
+  return `Browser navigation timed out after ${seconds}s`;
+}
+
 function browserPanelUrlsEqual(left, right) {
   if (!left || !right) {
     return false;
@@ -44,9 +49,39 @@ function shouldCompleteRejectedBrowserPanelNavigation({
   );
 }
 
+function shouldExposeBrowserPanelLoading({
+  observedLoading,
+  pendingNavigationSequence,
+}) {
+  return Boolean(observedLoading && pendingNavigationSequence !== null);
+}
+
+function waitForBrowserPanelNavigationResult(loadPromise, timeoutMs, timers = {}) {
+  const setTimer = timers.setTimeout ?? setTimeout;
+  const clearTimer = timers.clearTimeout ?? clearTimeout;
+  let timeout = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimer(() => {
+      const error = new Error(browserPanelNavigationTimeoutMessage(timeoutMs));
+      error.code = "ERR_BROWSER_PANEL_NAVIGATION_TIMEOUT";
+      reject(error);
+    }, timeoutMs);
+  });
+
+  return Promise.race([loadPromise, timeoutPromise]).finally(() => {
+    if (timeout !== null) {
+      clearTimer(timeout);
+    }
+  });
+}
+
 module.exports = {
   browserPanelLoadErrorMessage,
+  browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
+  shouldExposeBrowserPanelLoading,
+  waitForBrowserPanelNavigationResult,
 };
