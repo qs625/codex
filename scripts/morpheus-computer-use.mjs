@@ -20,6 +20,8 @@ const CLI_ACTIONS = new Set([
   "doubleClick",
   "rightClick",
   "scroll",
+  "findText",
+  "clickText",
   "type",
   "key",
   "hotkey",
@@ -414,6 +416,8 @@ export function parseComputerUseCliArgs(argv) {
     noOverlay: false,
     overlayHoldMs: 900,
     traceTail: 3,
+    includePerception: true,
+    perceptionLimit: 40,
     shorthandActions: [],
   };
 
@@ -467,6 +471,20 @@ export function parseComputerUseCliArgs(argv) {
           parseCliScroll(requireValue(args, ++index, arg), arg),
         );
         break;
+      case "--find-text":
+      case "--findText":
+        request.shorthandActions.push({
+          type: "findText",
+          text: requireValue(args, ++index, arg),
+        });
+        break;
+      case "--click-text":
+      case "--clickText":
+        request.shorthandActions.push({
+          type: "clickText",
+          text: requireValue(args, ++index, arg),
+        });
+        break;
       case "--type":
       case "--text":
         request.shorthandActions.push({
@@ -510,6 +528,18 @@ export function parseComputerUseCliArgs(argv) {
         break;
       case "--omit-screenshot-data":
         request.includeScreenshotData = false;
+        break;
+      case "--include-perception":
+        request.includePerception = true;
+        break;
+      case "--no-perception":
+        request.includePerception = false;
+        break;
+      case "--perception-limit":
+        request.perceptionLimit = parseNonNegativeInteger(
+          requireValue(args, ++index, arg),
+          arg,
+        );
         break;
       case "--no-overlay":
         request.noOverlay = true;
@@ -573,6 +603,8 @@ export function createComputerUseCliManagerFactory({
     return createComputerUseManager({
       ...(nativeClient ? { nativeClient } : {}),
       overlayController,
+      includePerception: request.includePerception,
+      perceptionLimit: request.perceptionLimit,
     });
   };
 }
@@ -902,6 +934,10 @@ function parseReplLine(line) {
       };
     case "scroll":
       return { kind: "action", action: parseReplScroll(tokens) };
+    case "findText":
+      return { kind: "action", action: { type: "findText", text: tokens.join(" ") } };
+    case "clickText":
+      return { kind: "action", action: { type: "clickText", text: tokens.join(" ") } };
     case "key":
       return {
         kind: "action",
@@ -939,6 +975,10 @@ function normalizeReplCommand(command) {
       return "doubleClick";
     case "right-click":
       return "rightClick";
+    case "find-text":
+      return "findText";
+    case "click-text":
+      return "clickText";
     default:
       return command;
   }
@@ -1148,6 +1188,10 @@ function sanitizeState(state, request) {
     return copy;
   }
   stripScreenshotData(copy.observation?.screenshot, request);
+  stripScreenshotData(
+    copy.observation?.perception?.windowCrop?.screenshot,
+    request,
+  );
   for (const item of copy.trace ?? []) {
     stripScreenshotData(item.screenshot, request);
   }
@@ -1216,7 +1260,10 @@ function formatReplStateResult({ sessionId, command, state }, settings) {
   };
   return formatReplPayload(payload, settings, () => {
     const summary = payload.state ?? {};
-    return `status=${summary.status ?? "none"} target=${summary.target?.app ?? "none"} visibility=${summary.targetVisibility ?? "unknown"} trace=${summary.traceCount ?? 0}`;
+    const perception = summary.perception
+      ? ` perception=elements:${summary.perception.elementCount ?? 0},crop:${summary.perception.windowCrop ? "yes" : "no"},limits:${summary.perception.limitationCount ?? 0}`
+      : "";
+    return `status=${summary.status ?? "none"} target=${summary.target?.app ?? "none"} visibility=${summary.targetVisibility ?? "unknown"} trace=${summary.traceCount ?? 0}${perception}`;
   });
 }
 
@@ -1278,7 +1325,30 @@ function summarizeState(state) {
     agentCursor: state.agentCursor ?? null,
     systemCursor: state.systemCursor ?? null,
     observationSequence: state.observation?.sequence ?? null,
+    perception: summarizePerception(state.observation?.perception),
     traceCount: Array.isArray(state.trace) ? state.trace.length : 0,
+  };
+}
+
+function summarizePerception(perception) {
+  if (!perception) {
+    return null;
+  }
+  return {
+    enabled: perception.enabled === true,
+    source: perception.source ?? null,
+    windowCrop: perception.windowCrop
+      ? {
+          bounds: perception.windowCrop.bounds ?? null,
+          hasScreenshot: Boolean(perception.windowCrop.screenshot),
+        }
+      : null,
+    elementCount: Array.isArray(perception.accessibilityElements)
+      ? perception.accessibilityElements.length
+      : 0,
+    limitationCount: Array.isArray(perception.limitations)
+      ? perception.limitations.length
+      : 0,
   };
 }
 
@@ -1315,6 +1385,8 @@ function cliPolicy() {
       "doubleClick",
       "rightClick",
       "scroll",
+      "findText",
+      "clickText",
       "key",
       "hotkey",
       "type",
@@ -1334,6 +1406,7 @@ function cliLimitations() {
     "Click, doubleClick, rightClick, scroll, key, hotkey, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
     "Background targets are activated by the Computer Use session, then re-observed before any side-effect action is sent.",
     "Screenshots include a bounded data URL by default; pass --omit-screenshot-data for metadata-only output.",
+    "Foreground target observations include bounded perception facts by default; pass --no-perception to disable AX/window crop extraction.",
     "Visible agent cursor feedback is target-bound. Background targets are not drawn over unrelated foreground apps before activation.",
     "After a visible move, the CLI waits --overlay-hold-ms before the next action so the cursor can be seen.",
   ];
@@ -1375,6 +1448,7 @@ function replHelp() {
     "Computer Use REPL commands:",
     "  start [--app <bundle-or-name>] | observe | status | trace [count] | stop | exit",
     "  move x,y | click x,y | double-click x,y | right-click x,y | scroll x,y deltaX,deltaY",
+    "  find-text <text> | click-text <text>",
     "  key key|mod+key | hotkey mod+key | type <text> | drag x1,y1:x2,y2 | wait ms | pause ms",
     "  json on|off | raw on|off | help",
     "  JSON action lines are also accepted, for example: {\"type\":\"move\",\"x\":420,\"y\":360}",
@@ -1394,7 +1468,7 @@ function usage() {
     "Shorthand flags:",
     "  --start --observe --stop",
     "  --move x,y --click x,y --double-click x,y --right-click x,y --scroll x,y:deltaX,deltaY",
-    "  --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
+    "  --find-text text --click-text text --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
     "",
     "Example:",
     "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --actions '[{\"type\":\"start\"},{\"type\":\"observe\"},{\"type\":\"move\",\"x\":420,\"y\":360},{\"type\":\"stop\"}]'",
@@ -1402,6 +1476,8 @@ function usage() {
     "",
     "Options:",
     "  --omit-screenshot-data  Return screenshot metadata without the bounded data URL.",
+    "  --no-perception         Disable foreground window crop and AX element extraction.",
+    "  --perception-limit <n>  Bound returned AX element candidates (default: 40, max: 80).",
     "  --json                  For repl, emit one JSON event per command.",
     "  --raw                   For repl JSON output, include sanitized full state.",
     "  --trace-tail <n>        Include at most n recent trace items in repl output (bounded to 20).",

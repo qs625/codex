@@ -40,6 +40,7 @@ function fakeNativeClient(options = {}) {
         targetVisibility: observation?.targetVisibility,
         accessibilityTrusted:
           observation?.accessibilityTrusted ?? options.accessibilityTrusted ?? true,
+        perception: observation?.perception,
         screenshot: {
           path: `/tmp/screen-${observeCount}.png`,
           mimeType: "image/png",
@@ -134,6 +135,241 @@ test("computer use session starts with observe evidence", async () => {
   assert.deepEqual(state.agentCursor, { x: 101, y: 201 });
   assert.deepEqual(state.cursor, state.agentCursor);
   assert.deepEqual(overlayController.updates.at(-1).agentCursor, state.agentCursor);
+});
+
+test("observe adds bounded foreground perception facts", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Save",
+              bounds: { x: 20, y: 30, width: 100, height: 40 },
+              center: { x: 70, y: 50 },
+              confidence: 0.9,
+              source: "macos-accessibility",
+            },
+            {
+              role: "AXStaticText",
+              title: "Ignored by limit",
+              bounds: { x: 20, y: 80, width: 140, height: 20 },
+              center: { x: 90, y: 90 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({
+    nativeClient,
+    perceptionLimit: 1,
+  });
+
+  const state = await manager.startSession({ app: "Firefox" });
+
+  assert.deepEqual(state.observation.perception.windowCrop.bounds, {
+    x: 0,
+    y: 0,
+    width: 800,
+    height: 600,
+  });
+  assert.equal(
+    state.observation.perception.windowCrop.screenshot.derivedFrom,
+    "full-screenshot",
+  );
+  assert.equal(state.observation.perception.accessibilityElements.length, 1);
+  assert.equal(state.observation.perception.accessibilityElements[0].title, "Save");
+  assert.equal(
+    state.observation.perception.limitations.some(
+      (item) => item.code === "accessibility-elements-truncated",
+    ),
+    true,
+  );
+});
+
+test("background target observe records perception limitation without fake crop", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: {
+            title: "Background",
+            position: { x: 40, y: 50 },
+            size: { width: 500, height: 400 },
+          },
+        },
+        frontmostApp: {
+          name: "Mail",
+          bundleIdentifier: "com.apple.mail",
+          processIdentifier: 84,
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+
+  const state = await manager.startSession({ app: "Firefox" });
+
+  assert.equal(state.targetVisibility, "background");
+  assert.equal(state.observation.perception.windowCrop, null);
+  assert.equal(state.observation.perception.accessibilityElements.length, 0);
+  assert.equal(
+    state.observation.perception.limitations.some(
+      (item) => item.code === "target-not-frontmost",
+    ),
+    true,
+  );
+});
+
+test("clickText requires a unique accessibility match before native click", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Open",
+              bounds: { x: 10, y: 10, width: 80, height: 30 },
+              center: { x: 50, y: 25 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "clickText", text: "Open" });
+
+  assert.equal(nativeClient.actions.at(-1).type, "click");
+  assert.deepEqual(nativeClient.actions.at(-1), { type: "click", x: 50, y: 25 });
+  assert.equal(state.trace.at(-1).status, "completed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "unique");
+  assert.deepEqual(state.trace.at(-1).evidence.compiledAction, {
+    type: "click",
+    x: 50,
+    y: 25,
+  });
+});
+
+test("clickText blocks ambiguous accessibility matches before native click", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Open",
+              bounds: { x: 10, y: 10, width: 80, height: 30 },
+              center: { x: 50, y: 25 },
+            },
+            {
+              role: "AXButton",
+              title: "Open Recent",
+              bounds: { x: 110, y: 10, width: 100, height: 30 },
+              center: { x: 160, y: 25 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "clickText", text: "Open" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "multiple");
+  assert.match(state.trace.at(-1).error, /Multiple visible accessibility elements/);
+});
+
+test("clickText maxMatches only limits evidence and cannot hide ambiguity", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Open",
+              bounds: { x: 10, y: 10, width: 80, height: 30 },
+              center: { x: 50, y: 25 },
+            },
+            {
+              role: "AXButton",
+              title: "Open Recent",
+              bounds: { x: 110, y: 10, width: 100, height: 30 },
+              center: { x: 160, y: 25 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({
+    type: "clickText",
+    text: "Open",
+    maxMatches: 1,
+  });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "multiple");
+  assert.equal(state.trace.at(-1).evidence.matchCount, 2);
+  assert.equal(state.trace.at(-1).evidence.candidates.length, 1);
+});
+
+test("clickText fails when perception candidates are truncated", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          limitations: [
+            {
+              code: "accessibility-elements-truncated",
+              message: "Accessibility element output reached the configured candidate limit before traversal completed.",
+            },
+          ],
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Open",
+              bounds: { x: 10, y: 10, width: 80, height: 30 },
+              center: { x: 50, y: 25 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "clickText", text: "Open" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "incomplete");
+  assert.match(state.trace.at(-1).error, /candidate limit/);
 });
 
 test("move updates agent cursor and overlay path without moving native cursor", async () => {
@@ -847,7 +1083,7 @@ test("native screenshot cache removes the previous observe evidence", async () =
   await client.observe();
   await client.cleanup();
 
-  assert.deepEqual(removed, [null, "/tmp/screen-1.png", "/tmp/screen-2.png"]);
+  assert.deepEqual(removed, ["/tmp/screen-1.png", "/tmp/screen-2.png"]);
 });
 
 test("native observe failure removes the just-captured screenshot", async () => {
