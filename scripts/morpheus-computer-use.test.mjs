@@ -203,6 +203,7 @@ test("computer use CLI run keeps batch session state for observe move stop", asy
   assert.equal(result.target.app, "com.apple.finder");
   assert.equal(result.results.length, 4);
   assert.equal(result.results[2].status, "completed");
+  assert.equal(Object.hasOwn(result.results[2], "traceItem"), false);
   assert.deepEqual(result.results[2].state.agentCursor, { x: 420, y: 360 });
   assert.equal(result.results[2].state.trace.at(-1).action.type, "move");
   assert.equal(result.results[2].state.trace.at(-1).status, "completed");
@@ -281,6 +282,47 @@ test("computer use REPL allows background pause without native act", async () =>
   assert.equal(pauseEvent.status, "completed");
   assert.equal(pauseEvent.policy.kind, "low-risk");
   assert.equal(pauseEvent.evidence.waitMs, 0);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL does not reuse wait evidence for stop action", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", "wait 30", "stop", "trace 1", "exit"],
+    nativeClient,
+  });
+
+  const waitEvent = JSON.parse(stdout[1]);
+  const stopEvent = JSON.parse(stdout[2]);
+  const traceEvent = JSON.parse(stdout[3]);
+  assert.equal(result.ok, true);
+  assert.equal(waitEvent.action.type, "wait");
+  assert.equal(waitEvent.evidence.waitMs, 30);
+  assert.equal(stopEvent.action.type, "stop");
+  assert.equal(stopEvent.evidence, null);
+  assert.equal(stopEvent.policy, null);
+  assert.equal(traceEvent.traceTail.length, 1);
+  assert.equal(traceEvent.traceTail[0].action.type, "wait");
+  assert.equal(traceEvent.traceTail[0].evidence.waitMs, 30);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL keeps current evidence after trace reaches cap", async () => {
+  const nativeClient = fakeNativeClient();
+  const waitLines = [...Array.from({ length: 81 }, () => "wait 0"), "wait 7"];
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", ...waitLines, "exit"],
+    nativeClient,
+  });
+
+  const lastWaitEvent = JSON.parse(stdout[82]);
+  assert.equal(result.ok, true);
+  assert.equal(lastWaitEvent.action.type, "wait");
+  assert.equal(lastWaitEvent.evidence.waitMs, 7);
+  assert.equal(lastWaitEvent.traceTail.at(-1).action.type, "wait");
+  assert.equal(lastWaitEvent.traceTail.at(-1).evidence.waitMs, 7);
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 
