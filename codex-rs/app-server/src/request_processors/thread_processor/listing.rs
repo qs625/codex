@@ -279,15 +279,10 @@ impl ThreadRequestProcessor {
         use_state_db_only: bool,
     ) -> Vec<Thread> {
         let mut threads = Vec::with_capacity(stored_threads.len());
-        let mut status_ids = Vec::with_capacity(stored_threads.len());
         let fallback_provider = self.config.model_provider_id.clone();
 
         for stored_thread in stored_threads {
             let thread_id = stored_thread.thread_id;
-            let original_status = stored_thread
-                .thread_status
-                .clone()
-                .unwrap_or(ThreadLifecycleStatus::NotLoaded);
             let (mut thread, history) = thread_from_stored_thread(
                 stored_thread,
                 fallback_provider.as_str(),
@@ -301,41 +296,25 @@ impl ThreadRequestProcessor {
                 apply_persisted_thread_lifecycle_status(&mut thread, &history_items);
                 apply_thread_stats_from_rollout_items(&mut thread, &history_items);
             }
-            self.persist_self_healed_read_status(
-                &thread.id,
-                &original_status,
-                &thread.lifecycle_status,
-            )
-            .await;
-            status_ids.push(thread.id.clone());
-            threads.push((thread, original_status));
+            threads.push((thread_id, thread));
         }
 
-        let statuses = self
-            .thread_watch_manager
-            .loaded_statuses_for_threads(status_ids)
-            .await;
-
         let mut projected_threads = Vec::with_capacity(threads.len());
-        for (mut thread, original_status) in threads {
-            if let Some(status) = statuses.get(&thread.id) {
-                let status = self
-                    .thread_read_projection_status(&thread.id, status.clone())
-                    .await;
-                if should_apply_read_status_overlay(&thread.lifecycle_status, &status) {
-                    set_thread_status_and_interrupt_stale_turns(
-                        &mut thread,
-                        status,
-                        /*has_live_in_progress_turn*/ false,
-                    );
-                    self.persist_self_healed_read_status(
-                        &thread.id,
-                        &original_status,
-                        &thread.lifecycle_status,
-                    )
-                    .await;
-                }
-            }
+        for (thread_id, mut thread) in threads {
+            let has_live_in_progress_turn = if self
+                .live_thread_inspection
+                .is_live_thread_loaded(thread_id)
+                .await
+            {
+                self.active_in_progress_turn_snapshot(thread_id).await.is_some()
+            } else {
+                false
+            };
+            set_thread_status_and_interrupt_stale_turns(
+                &mut thread,
+                ThreadLifecycleStatus::NotLoaded,
+                has_live_in_progress_turn,
+            );
             projected_threads.push(thread);
         }
         projected_threads
@@ -469,59 +448,12 @@ impl ThreadRequestProcessor {
             )));
         };
 
-        let thread_status = self
-            .thread_watch_manager
-            .loaded_status_for_thread(&thread.id)
-            .await;
-        let thread_status = self
-            .thread_read_projection_status(&thread.id, thread_status)
-            .await;
-        let previous_status = thread.lifecycle_status.clone();
-
         set_thread_status_and_interrupt_stale_turns(
             &mut thread,
-            thread_status,
+            ThreadLifecycleStatus::NotLoaded,
             has_live_in_progress_turn,
         );
-        self.persist_self_healed_read_status(
-            &thread.id,
-            &previous_status,
-            &thread.lifecycle_status,
-        )
-        .await;
         Ok(thread)
-    }
-
-    async fn thread_read_projection_status(
-        &self,
-        thread_id: &str,
-        watch_status: ThreadLifecycleStatus,
-    ) -> ThreadLifecycleStatus {
-        let Ok(thread_id) = ThreadId::from_string(thread_id) else {
-            return watch_status;
-        };
-        let live_agent_status = self
-            .thread_lifecycle_runtime
-            .live_thread_agent_status(thread_id)
-            .await
-            .ok();
-        thread_read_projection_status(watch_status, live_agent_status.as_ref())
-    }
-
-    async fn persist_self_healed_read_status(
-        &self,
-        thread_id: &str,
-        previous_status: &ThreadLifecycleStatus,
-        effective_status: &ThreadLifecycleStatus,
-    ) {
-        if !should_persist_self_healed_read_status_transition(previous_status, effective_status) {
-            return;
-        }
-        let Ok(thread_id) = ThreadId::from_string(thread_id) else {
-            return;
-        };
-        self.persist_thread_status(thread_id, effective_status)
-            .await;
     }
 
     fn is_include_turns_unavailable_before_first_user_message(message: &str) -> bool {
@@ -555,19 +487,8 @@ impl ThreadRequestProcessor {
             .await
         {
             Ok(stored_thread) => {
-                let original_status = stored_thread
-                    .thread_status
-                    .clone()
-                    .unwrap_or(ThreadLifecycleStatus::NotLoaded);
-                let stored_thread_id = stored_thread.thread_id;
                 let (mut thread, history) =
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
-                self.persist_self_healed_read_status(
-                    &stored_thread_id.to_string(),
-                    &original_status,
-                    &thread.lifecycle_status,
-                )
-                .await;
                 if include_turns && let Some(history) = history {
                     thread.turns = build_api_turns_from_rollout_items(&history.items);
                     apply_runtime_activity_items_from_persisted_turns(&mut thread);
@@ -911,164 +832,6 @@ impl ThreadRequestProcessor {
                 "thread",
             );
         }
-    }
-}
-
-fn thread_read_projection_status(
-    watch_status: ThreadLifecycleStatus,
-    live_agent_status: Option<&AgentStatus>,
-) -> ThreadLifecycleStatus {
-    let Some(live_agent_status) = live_agent_status else {
-        return watch_status;
-    };
-    let live_status = super::ops::thread_lifecycle_status_from_agent_status(live_agent_status);
-    match (&watch_status, &live_status) {
-        // Waiting/runtime-error facts are stronger than a completed agent status: an
-        // after-turn command, child, or event subscription still has work to resume.
-        (
-            ThreadLifecycleStatus::Waiting { .. } | ThreadLifecycleStatus::SystemError { .. },
-            ThreadLifecycleStatus::Final { .. },
-        ) => watch_status,
-        // A live running agent or in-progress turn is real activity and may reopen
-        // a previously completed persisted view.
-        (_, ThreadLifecycleStatus::Active { .. } | ThreadLifecycleStatus::Initializing) => {
-            live_status
-        }
-        // A live terminal agent status is canonical when the watch/status-db view
-        // only says active/not-loaded/initializing. This prevents stale watch facts
-        // from keeping completed agents active in thread/read and thread/list.
-        (
-            ThreadLifecycleStatus::Active { .. }
-            | ThreadLifecycleStatus::NotLoaded
-            | ThreadLifecycleStatus::Initializing,
-            ThreadLifecycleStatus::Final { .. },
-        ) => live_status,
-        _ => watch_status,
-    }
-}
-
-fn should_persist_self_healed_read_status(status: &ThreadLifecycleStatus) -> bool {
-    matches!(status, ThreadLifecycleStatus::Final { .. })
-}
-
-fn should_persist_self_healed_read_status_transition(
-    previous_status: &ThreadLifecycleStatus,
-    effective_status: &ThreadLifecycleStatus,
-) -> bool {
-    previous_status != effective_status && should_persist_self_healed_read_status(effective_status)
-}
-
-fn should_apply_read_status_overlay(
-    current_status: &ThreadLifecycleStatus,
-    overlay_status: &ThreadLifecycleStatus,
-) -> bool {
-    !matches!(overlay_status, ThreadLifecycleStatus::NotLoaded)
-        || matches!(current_status, ThreadLifecycleStatus::NotLoaded)
-}
-
-#[cfg(test)]
-mod lifecycle_projection_tests {
-    use super::*;
-    use app_server_protocol::ThreadLifecycleActiveFlag;
-    use app_server_protocol::ThreadLifecycleWaitReason;
-
-    #[test]
-    fn live_completed_agent_status_overrides_stale_active_read_status() {
-        let status = thread_read_projection_status(
-            ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            Some(&AgentStatus::Completed(Some("done".to_string()))),
-        );
-
-        assert_eq!(
-            status,
-            ThreadLifecycleStatus::completed(Some("done".to_string()))
-        );
-    }
-
-    #[test]
-    fn live_running_agent_status_can_reopen_completed_read_status() {
-        let status = thread_read_projection_status(
-            ThreadLifecycleStatus::completed(Some("done".to_string())),
-            Some(&AgentStatus::Running),
-        );
-
-        assert_eq!(
-            status,
-            ThreadLifecycleStatus::Active {
-                active_flags: vec![ThreadLifecycleActiveFlag::Running],
-            }
-        );
-    }
-
-    #[test]
-    fn waiting_read_status_overrides_completed_live_agent_status() {
-        let status = thread_read_projection_status(
-            ThreadLifecycleStatus::Waiting {
-                reason: ThreadLifecycleWaitReason::EventSubscription,
-            },
-            Some(&AgentStatus::Completed(Some("done".to_string()))),
-        );
-
-        assert_eq!(
-            status,
-            ThreadLifecycleStatus::Waiting {
-                reason: ThreadLifecycleWaitReason::EventSubscription,
-            }
-        );
-    }
-
-    #[test]
-    fn self_heal_persists_only_final_read_statuses() {
-        assert!(should_persist_self_healed_read_status(
-            &ThreadLifecycleStatus::completed(None)
-        ));
-        assert!(!should_persist_self_healed_read_status(
-            &ThreadLifecycleStatus::Active {
-                active_flags: vec![ThreadLifecycleActiveFlag::Running],
-            }
-        ));
-    }
-
-    #[test]
-    fn self_heal_persists_original_stale_active_to_projected_final() {
-        assert!(should_persist_self_healed_read_status_transition(
-            &ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            &ThreadLifecycleStatus::completed(Some("done".to_string())),
-        ));
-    }
-
-    #[test]
-    fn not_loaded_overlay_does_not_block_live_completed_correction() {
-        let watch_status = ThreadLifecycleStatus::NotLoaded;
-        let live_corrected_status = thread_read_projection_status(
-            watch_status,
-            Some(&AgentStatus::Completed(Some("done".to_string()))),
-        );
-
-        assert!(should_apply_read_status_overlay(
-            &ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            &live_corrected_status,
-        ));
-        assert_eq!(
-            live_corrected_status,
-            ThreadLifecycleStatus::completed(Some("done".to_string()))
-        );
-    }
-
-    #[test]
-    fn not_loaded_overlay_still_preserves_existing_persisted_status_without_live_correction() {
-        assert!(!should_apply_read_status_overlay(
-            &ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            &ThreadLifecycleStatus::NotLoaded,
-        ));
     }
 }
 
