@@ -36,6 +36,7 @@ import {
   mergeThreadLifecycleStatus,
   mergeThreadSnapshot,
   normalizeThreadSnapshot,
+  orderSidebarProjectsStable,
   pickBootstrapInitialProjectThread,
   pickInitialProjectThread,
   preserveTerminalLifecycleStatus,
@@ -379,6 +380,120 @@ test("buildProjectAgentSidebar shows self command roots in ordinary project navi
     ["self-root", "project-root"],
   );
   assert.equal(sidebar.chat.conversations.length, 0);
+});
+
+test("orderSidebarProjectsStable pins self before existing project order", () => {
+  const selfRoot = makeSidebarThread({
+    id: "self-root",
+    name: "/self",
+    path: "/self",
+    cwd: "/work/source",
+    createdAt: 2,
+    updatedAt: 2,
+  });
+  const alpha = makeSidebarThread({
+    id: "alpha",
+    cwd: "/work/alpha",
+    createdAt: 1,
+    updatedAt: 100,
+  });
+  const beta = makeSidebarThread({
+    id: "beta",
+    cwd: "/work/beta",
+    createdAt: 3,
+    updatedAt: 3,
+  });
+
+  const sidebar = buildProjectAgentSidebar([alpha, beta, selfRoot]);
+  const ordered = orderSidebarProjectsStable(
+    sidebar.projects,
+    ["project:/work/beta", "project:/work/alpha"],
+  );
+
+  assert.deepEqual(
+    ordered.map((project) => project.id),
+    [
+      "project:/work/source|path:/self",
+      "project:/work/beta",
+      "project:/work/alpha",
+    ],
+  );
+});
+
+test("orderSidebarProjectsStable preserves project order across backend and activity changes", () => {
+  const first = buildProjectAgentSidebar([
+    makeSidebarThread({
+      id: "alpha",
+      cwd: "/work/alpha",
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+    makeSidebarThread({
+      id: "beta",
+      cwd: "/work/beta",
+      createdAt: 2,
+      updatedAt: 2,
+    }),
+  ]);
+  const firstOrdered = orderSidebarProjectsStable(first.projects, []);
+  const previousProjectIds = firstOrdered.map((project) => project.id);
+
+  const refreshed = buildProjectAgentSidebar([
+    makeSidebarThread({
+      id: "beta",
+      cwd: "/work/beta",
+      createdAt: 2,
+      updatedAt: 200,
+    }),
+    makeSidebarThread({
+      id: "alpha",
+      cwd: "/work/alpha",
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  ]);
+  const refreshedOrdered = orderSidebarProjectsStable(
+    refreshed.projects,
+    previousProjectIds,
+  );
+
+  assert.deepEqual(
+    refreshedOrdered.map((project) => project.id),
+    ["project:/work/alpha", "project:/work/beta"],
+  );
+  assert.equal(refreshedOrdered[1]?.updatedAt, 200);
+});
+
+test("orderSidebarProjectsStable appends new projects deterministically", () => {
+  const sidebar = buildProjectAgentSidebar([
+    makeSidebarThread({
+      id: "gamma",
+      cwd: "/work/gamma",
+      createdAt: 3,
+      updatedAt: 30,
+    }),
+    makeSidebarThread({
+      id: "alpha",
+      cwd: "/work/alpha",
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+    makeSidebarThread({
+      id: "beta",
+      cwd: "/work/beta",
+      createdAt: 2,
+      updatedAt: 20,
+    }),
+  ]);
+  const ordered = orderSidebarProjectsStable(sidebar.projects, [
+    "project:/work/beta",
+    "project:/work/alpha",
+  ]);
+
+  assert.deepEqual(
+    ordered.map((project) => project.id),
+    ["project:/work/beta", "project:/work/alpha", "project:/work/gamma"],
+  );
 });
 
 test("mergeDefaultCollapsedProjectIds collapses untouched projects by default", () => {
@@ -804,6 +919,23 @@ test("pickInitialProjectThread follows sidebar canonical project root selection"
   const picked = pickInitialProjectThread([olderRoot, activeRoot]);
 
   assert.equal(picked?.id, "active-root");
+});
+
+test("pickInitialProjectThread keeps recency fallback independent from stable display order", () => {
+  const alphaRoot = makeSidebarThread({
+    id: "alpha-root",
+    cwd: "/work/alpha",
+    updatedAt: 1,
+  });
+  const zetaRoot = makeSidebarThread({
+    id: "zeta-root",
+    cwd: "/work/zeta",
+    updatedAt: 20,
+  });
+
+  const picked = pickInitialProjectThread([alphaRoot, zetaRoot]);
+
+  assert.equal(picked?.id, "zeta-root");
 });
 
 test("pickInitialProjectThread skips a freshly materialized self root when possible", () => {
