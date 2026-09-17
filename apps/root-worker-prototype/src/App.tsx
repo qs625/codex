@@ -287,6 +287,7 @@ function App() {
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
   const previousSelectedThreadIdRef = useRef<string | null>(null);
+  const selectionReadThreadIdRef = useRef<string | null>(null);
   const approvalRequestsByIdRef = useRef<Record<string, ApprovalRequest>>({});
   const loadingThreadIdsRef = useRef<Set<string>>(new Set());
   const loadThreadRequestIdsByThreadIdRef = useRef<Map<string, number>>(
@@ -407,8 +408,11 @@ function App() {
 
   useEffect(() => {
     if (!selectedThreadId) {
+      selectionReadThreadIdRef.current = null;
       return;
     }
+    const selectionChanged =
+      selectionReadThreadIdRef.current !== selectedThreadId;
     const action = decideThreadSelectionAction({
       selectedThreadId,
       hasLocalThread: threads.some((thread) => thread.id === selectedThreadId),
@@ -416,7 +420,11 @@ function App() {
       isSubscribed: subscribedThreadIdsRef.current.has(selectedThreadId),
       isLoading: loadingThreadIdsRef.current.has(selectedThreadId),
       hasLiveCache: liveThreadIdsRef.current.has(selectedThreadId),
+      selectionChanged,
     });
+    if (selectionChanged) {
+      selectionReadThreadIdRef.current = selectedThreadId;
+    }
     if (action === "readAndSubscribe") {
       void loadThread(selectedThreadId);
       return;
@@ -2331,6 +2339,7 @@ function App() {
           isSubscribed: subscribedThreadIdsRef.current.has(selectedThreadId),
           isLoading: loadingThreadIdsRef.current.has(selectedThreadId),
           hasLiveCache: liveThreadIdsRef.current.has(selectedThreadId),
+          selectionChanged: false,
         });
         if (action === "readAndSubscribe") {
           void loadThread(selectedThreadId);
