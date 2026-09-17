@@ -181,6 +181,98 @@ async function collectRuntimeRecoveryThreads({
   return [...threadsById.values()];
 }
 
+async function runRuntimeRecoveryFanout({
+  autoResumeCoordinator,
+  expectedRestart,
+  hasDurableRestartRecovery = false,
+  listedThreads = [],
+  listLoadedThreadIds,
+  readThread,
+  recoveryOccurrenceId = null,
+  logger = console,
+} = {}) {
+  const occurrenceId = autoResumeOccurrenceId({
+    expectedRestart,
+    hasDurableRestartRecovery,
+    recoveryOccurrenceId,
+  });
+  if (
+    !hasDurableRuntimeRestartRecovery({
+      expectedRestart,
+      hasDurableRestartRecovery,
+      recoveryOccurrenceId: occurrenceId,
+    })
+  ) {
+    return emptyAutoResumeResult();
+  }
+  const recoveryThreads = await collectRuntimeRecoveryThreads({
+    listedThreads,
+    listLoadedThreadIds,
+    readThread,
+    logger,
+  });
+  return autoResumeCoordinator.runAfterRuntimeRestartRecovery({
+    hasDurableRestartRecovery,
+    recoveryOccurrenceId,
+    threads: recoveryThreads,
+    expectedRestart,
+  });
+}
+
+function scheduleRuntimeRecoveryFanoutRetries({
+  delaysMs = [],
+  logger = console,
+  runFanout,
+  setTimeoutFn = setTimeout,
+} = {}) {
+  if (typeof runFanout !== "function" || typeof setTimeoutFn !== "function") {
+    return [];
+  }
+  return delaysMs
+    .filter((delayMs) => Number.isFinite(delayMs) && delayMs >= 0)
+    .map((delayMs) =>
+      setTimeoutFn(() => {
+        return Promise.resolve()
+          .then(() => runFanout())
+          .catch((error) => {
+            logger.warn?.(
+              "[prototype] delayed restart recovery fanout failed",
+              JSON.stringify({ message: errorMessage(error) }),
+            );
+          });
+      }, delayMs),
+    );
+}
+
+function mergeAutoResumeResults(...results) {
+  const resumedThreadIds = [];
+  const skippedThreadIds = [];
+  const failedThreadIds = [];
+  const errors = [];
+  let focusThreadId = null;
+  for (const result of results) {
+    if (!result) {
+      continue;
+    }
+    appendUnique(resumedThreadIds, result.resumedThreadIds);
+    appendUnique(skippedThreadIds, result.skippedThreadIds);
+    appendUnique(failedThreadIds, result.failedThreadIds);
+    errors.push(...(Array.isArray(result.errors) ? result.errors : []));
+    focusThreadId = focusThreadId ?? result.focusThreadId ?? null;
+  }
+  removeAll(failedThreadIds, resumedThreadIds);
+  removeAll(skippedThreadIds, resumedThreadIds);
+  removeAll(skippedThreadIds, failedThreadIds);
+  const finalFailedThreadIds = new Set(failedThreadIds);
+  return {
+    resumedThreadIds,
+    skippedThreadIds,
+    failedThreadIds,
+    errors: errors.filter((error) => finalFailedThreadIds.has(error?.threadId)),
+    focusThreadId,
+  };
+}
+
 function hasDurableRuntimeRestartRecovery({
   expectedRestart,
   hasDurableRestartRecovery,
@@ -224,6 +316,23 @@ async function markCompletedAutoResume(stateStore, key, logger) {
       "[prototype] failed to persist auto-resume state",
       JSON.stringify({ key, message: errorMessage(error) }),
     );
+  }
+}
+
+function appendUnique(target, values) {
+  for (const value of Array.isArray(values) ? values : []) {
+    if (!target.includes(value)) {
+      target.push(value);
+    }
+  }
+}
+
+function removeAll(target, values) {
+  for (const value of values) {
+    const index = target.indexOf(value);
+    if (index >= 0) {
+      target.splice(index, 1);
+    }
   }
 }
 
@@ -482,6 +591,9 @@ module.exports = {
   isRecoverableLifecycleStatus,
   isInterruptedLifecycleStatus,
   isProjectRootThread,
+  mergeAutoResumeResults,
   pickAutoResumeCandidates,
+  runRuntimeRecoveryFanout,
+  scheduleRuntimeRecoveryFanoutRetries,
   threadHasAutoResumePrompt,
 };

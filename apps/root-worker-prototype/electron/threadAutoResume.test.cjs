@@ -9,7 +9,10 @@ const {
   createThreadAutoResumeCoordinator,
   isAutoResumeTargetLifecycleStatus,
   isAutoResumeEligibleThread,
+  mergeAutoResumeResults,
   pickAutoResumeCandidates,
+  runRuntimeRecoveryFanout,
+  scheduleRuntimeRecoveryFanoutRetries,
   threadHasAutoResumePrompt,
 } = require("./threadAutoResume.cjs");
 const {
@@ -462,6 +465,171 @@ test("completed expected restart recovery still fans out after an earlier empty 
     marked.has("restart-v2:runtime-restart:restart-1:root"),
     true,
   );
+});
+
+test("runtime recovery late pass reaches a waiting root from loaded discovery", async () => {
+  const marked = new Set();
+  const sent = [];
+  const reads = [];
+  const loadedCalls = [];
+  const root = projectRootThread({
+    id: "root",
+    lifecycleStatus: { type: "waiting", reason: "eventSubscription" },
+    updatedAt: 20,
+  });
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async (key) => marked.has(key),
+      mark: async (key) => marked.add(key),
+    },
+    readThread: async (threadId, includeTurns) => {
+      reads.push({ threadId, includeTurns });
+      return { thread: root };
+    },
+    subscribeThread: async () => {},
+    sendResumeInput: async (thread, text) =>
+      sent.push({ threadId: thread.id, text }),
+    logger: { warn: () => {} },
+  });
+  const expectedRestart = runtimeRestartRecovery(["self-thread"], "restart-1");
+  const runPass = (listedThreads, loadedThreadIds) =>
+    runRuntimeRecoveryFanout({
+      autoResumeCoordinator: coordinator,
+      expectedRestart,
+      listedThreads,
+      listLoadedThreadIds: async () => {
+        loadedCalls.push([...loadedThreadIds]);
+        return loadedThreadIds;
+      },
+      readThread: async (threadId, includeTurns) => {
+        reads.push({ threadId, includeTurns });
+        return { thread: root };
+      },
+      recoveryOccurrenceId: expectedRestart.recoveryOccurrenceId,
+      logger: { warn: () => {} },
+    });
+
+  const early = await runPass([], []);
+  const late = await runPass([], ["root"]);
+  const merged = mergeAutoResumeResults(early, late);
+  const duplicate = await runPass([], ["root"]);
+
+  assert.deepEqual(early.resumedThreadIds, []);
+  assert.deepEqual(late.resumedThreadIds, ["root"]);
+  assert.deepEqual(merged.resumedThreadIds, ["root"]);
+  assert.equal(merged.focusThreadId, "root");
+  assert.deepEqual(duplicate.resumedThreadIds, []);
+  assert.deepEqual(duplicate.skippedThreadIds, ["root"]);
+  assert.deepEqual(loadedCalls, [[], ["root"], ["root"]]);
+  assert.deepEqual(reads, [
+    { threadId: "root", includeTurns: false },
+    { threadId: "root", includeTurns: true },
+    { threadId: "root", includeTurns: false },
+  ]);
+  assert.deepEqual(sent, [
+    {
+      threadId: "root",
+      text: autoResumePromptForOccurrence("runtime-restart:restart-1"),
+    },
+  ]);
+  assert.equal(
+    marked.has("restart-v2:runtime-restart:restart-1:root"),
+    true,
+  );
+});
+
+test("runtime recovery fanout does not enumerate candidates without durable recovery", async () => {
+  const result = await runRuntimeRecoveryFanout({
+    autoResumeCoordinator: {
+      runAfterRuntimeRestartRecovery: async () => {
+        throw new Error("auto-resume should not run");
+      },
+    },
+    listLoadedThreadIds: async () => {
+      throw new Error("loaded threads should not be listed");
+    },
+    readThread: async () => {
+      throw new Error("threads should not be read");
+    },
+  });
+
+  assert.deepEqual(result, {
+    resumedThreadIds: [],
+    skippedThreadIds: [],
+    failedThreadIds: [],
+    errors: [],
+    focusThreadId: null,
+  });
+});
+
+test("auto-resume result merge keeps one highest-priority status per thread", () => {
+  assert.deepEqual(
+    mergeAutoResumeResults(
+      {
+        resumedThreadIds: [],
+        skippedThreadIds: [],
+        failedThreadIds: ["root"],
+        errors: [{ threadId: "root", message: "early failure" }],
+        focusThreadId: null,
+      },
+      {
+        resumedThreadIds: ["root"],
+        skippedThreadIds: [],
+        failedThreadIds: [],
+        errors: [],
+        focusThreadId: "root",
+      },
+      {
+        resumedThreadIds: [],
+        skippedThreadIds: ["root", "skipped-only", "failed-later"],
+        failedThreadIds: ["failed-later"],
+        errors: [{ threadId: "failed-later", message: "boom" }],
+        focusThreadId: null,
+      },
+    ),
+    {
+      resumedThreadIds: ["root"],
+      skippedThreadIds: ["skipped-only"],
+      failedThreadIds: ["failed-later"],
+      errors: [{ threadId: "failed-later", message: "boom" }],
+      focusThreadId: "root",
+    },
+  );
+});
+
+test("runtime recovery retry scheduler runs bounded loaded-only passes", async () => {
+  const scheduled = [];
+  const warnings = [];
+  let calls = 0;
+
+  const timers = scheduleRuntimeRecoveryFanoutRetries({
+    delaysMs: [1000, -1, Number.POSITIVE_INFINITY, 5000],
+    runFanout: async () => {
+      calls += 1;
+      if (calls === 2) {
+        throw new Error("late retry failed");
+      }
+    },
+    setTimeoutFn: (callback, delayMs) => {
+      scheduled.push({ callback, delayMs });
+      return `timer-${delayMs}`;
+    },
+    logger: {
+      warn: (...args) => warnings.push(args),
+    },
+  });
+
+  assert.deepEqual(timers, ["timer-1000", "timer-5000"]);
+  assert.deepEqual(
+    scheduled.map((entry) => entry.delayMs),
+    [1000, 5000],
+  );
+  await scheduled[0].callback();
+  await scheduled[1].callback();
+
+  assert.equal(calls, 2);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0][0], /delayed restart recovery fanout failed/);
 });
 
 test("fallback recovery skips a thread that already has any restart fanout prompt", async () => {
