@@ -16,7 +16,6 @@ function createThreadAutoResumeCoordinator({
   const inFlightKeys = new Set();
   const completedKeys = new Set();
   const inFlightPassKeys = new Set();
-  const completedPassKeys = new Set();
 
   return {
     async runAfterRuntimeRestartRecovery({
@@ -43,7 +42,7 @@ function createThreadAutoResumeCoordinator({
       const passKey = autoResumePassFingerprint(occurrence);
       if (
         passKey &&
-        (inFlightPassKeys.has(passKey) || completedPassKeys.has(passKey))
+        inFlightPassKeys.has(passKey)
       ) {
         return emptyAutoResumeResult();
       }
@@ -51,11 +50,7 @@ function createThreadAutoResumeCoordinator({
         inFlightPassKeys.add(passKey);
       }
       try {
-        const result = await run(threads, occurrence);
-        if (passKey) {
-          completedPassKeys.add(passKey);
-        }
-        return result;
+        return await run(threads, occurrence);
       } finally {
         if (passKey) {
           inFlightPassKeys.delete(passKey);
