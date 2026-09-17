@@ -200,17 +200,26 @@ pub(super) fn normalize_thread_turns_status(
 }
 
 pub(super) fn apply_persisted_thread_lifecycle_status(thread: &mut Thread, items: &[RolloutItem]) {
+    if let Some(status) = persisted_thread_lifecycle_status_from_rollout_items(thread, items) {
+        thread.lifecycle_status = status;
+    }
+}
+
+pub(super) fn persisted_thread_lifecycle_status_from_rollout_items(
+    thread: &Thread,
+    items: &[RolloutItem],
+) -> Option<ThreadLifecycleStatus> {
     match persisted_terminal_agent_status_from_rollout_items(items) {
         Some(status) if should_project_persisted_terminal_lifecycle_status(thread, &status) => {
-            thread.lifecycle_status =
-                super::ops::thread_lifecycle_status_from_agent_status(&status);
+            Some(super::ops::thread_lifecycle_status_from_agent_status(
+                &status,
+            ))
         }
-        Some(_) => {}
-        None if is_external_root_lifecycle_projection_thread(thread) => {
-            thread.lifecycle_status =
-                super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Interrupted);
-        }
-        None => {}
+        Some(_) => None,
+        None if is_external_root_lifecycle_projection_thread(thread) => Some(
+            super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Interrupted),
+        ),
+        None => None,
     }
 }
 
@@ -243,7 +252,17 @@ pub(super) fn should_project_persisted_terminal_lifecycle_status(
     thread: &Thread,
     status: &AgentStatus,
 ) -> bool {
-    is_external_root_lifecycle_projection_thread(thread) || matches!(status, AgentStatus::Shutdown)
+    is_non_root_agent_lifecycle_projection_thread(thread)
+        || is_external_root_lifecycle_projection_thread(thread)
+        || matches!(status, AgentStatus::Shutdown)
+}
+
+fn is_non_root_agent_lifecycle_projection_thread(thread: &Thread) -> bool {
+    protocol::protocol::SessionSource::from(thread.source.clone()).is_non_root_agent()
+        || matches!(
+            thread.thread_source,
+            Some(app_server_protocol::ThreadSource::Subagent)
+        )
 }
 
 pub(in crate::request_processors) fn should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(
@@ -478,6 +497,39 @@ mod persisted_lifecycle_status_tests {
         assert_eq!(
             completed_thread.lifecycle_status,
             ThreadLifecycleStatus::NotLoaded
+        );
+    }
+
+    #[test]
+    fn non_root_agent_terminal_fact_projects_completed() {
+        let mut completed_thread = external_root_thread();
+        completed_thread.model_provider = "mock_provider".to_string();
+        completed_thread.thread_source = Some(app_server_protocol::ThreadSource::Subagent);
+        completed_thread.source = protocol::protocol::SessionSource::SubAgent(
+            protocol::protocol::SubAgentSource::ThreadSpawn {
+                parent_thread_id: ThreadId::new(),
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            },
+        )
+        .into();
+        let completed_items = vec![RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: Some(1),
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )];
+
+        apply_persisted_thread_lifecycle_status(&mut completed_thread, &completed_items);
+
+        assert_eq!(
+            completed_thread.lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
         );
     }
 
