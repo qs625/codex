@@ -721,10 +721,12 @@ export function updateThreadItem(
     applyItemTimestamps(item, timestamps),
   );
   let shouldUpdateActiveCommandItems = false;
-  const finalize = (updated: Thread) =>
-    shouldUpdateActiveCommandItems
-      ? applyActiveCommandItemUpdate(updated, nextItem)
-      : updated;
+  const finalize = (updated: Thread) => {
+    const reconciled = reconcileThreadCommandExecutionExitNotifications(updated);
+    return shouldUpdateActiveCommandItems
+      ? applyActiveCommandItemUpdate(reconciled, nextItem)
+      : reconciled;
+  };
   const existingCompactItemIds = new Set(
     collectContextCompactionItemIds(thread),
   );
@@ -1588,12 +1590,19 @@ function preserveFinalLifecycleStatus(existing: Thread, next: Thread) {
 export function mergeThreadLifecycleStatus(
   existing: ThreadLifecycleStatus,
   next: ThreadLifecycleStatus,
-  options: { authoritative?: boolean } = {},
+  options: { authoritative?: boolean; allowCompletedReopen?: boolean } = {},
 ) {
   if (options.authoritative) {
     if (
       isStrongTerminalLifecycleStatus(existing) &&
       !isStrongTerminalLifecycleStatus(next)
+    ) {
+      return existing;
+    }
+    if (
+      !options.allowCompletedReopen &&
+      isCompletedFinalLifecycleStatus(existing) &&
+      next.type === "active"
     ) {
       return existing;
     }
@@ -1615,7 +1624,7 @@ export function markThreadCommandExecutionRunning(thread: Thread): Thread {
     lifecycleStatus: mergeThreadLifecycleStatus(
       thread.lifecycleStatus,
       { type: "active", activeFlags: ["running"] },
-      { authoritative: true },
+      { authoritative: true, allowCompletedReopen: true },
     ),
   };
 }
@@ -1707,7 +1716,9 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
       ? thread
       : { ...thread, turns, activeSubscriptionItems, activeCommandItems };
   return dropDuplicateInitContextItems(
-    pruneThreadSnapshotToLatestCompact(normalizedThread),
+    reconcileThreadCommandExecutionExitNotifications(
+      pruneThreadSnapshotToLatestCompact(normalizedThread),
+    ),
   );
 }
 
@@ -1832,13 +1843,16 @@ function normalizeTurnSnapshot(turn: Turn): Turn {
       index === existingIndex
         ? mergeThreadItem(existing, normalizedItem)
         : existing,
-    );
+      );
   }, []);
+  const reconciledItems = reconcileCommandExecutionExitNotificationsInItems(
+    items,
+  );
 
-  return items.length === turn.items.length &&
-    items.every((item, index) => item === turn.items[index])
+  return reconciledItems.length === turn.items.length &&
+    reconciledItems.every((item, index) => item === turn.items[index])
     ? turn
-    : { ...turn, items };
+    : { ...turn, items: reconciledItems };
 }
 
 function dropDuplicateInitContextItems(thread: Thread): Thread {
@@ -2089,6 +2103,110 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
 
 function normalizeThreadItemSnapshot(item: ThreadItem): ThreadItem {
   return item;
+}
+
+function reconcileThreadCommandExecutionExitNotifications(thread: Thread) {
+  let changed = false;
+  const exitNotifications = new Map<
+    string,
+    Extract<ThreadItem, { type: "commandExecutionNotification" }>
+  >();
+  const turns = thread.turns.map((turn) => {
+    for (const item of turn.items) {
+      if (isCommandExecutionExitNotification(item)) {
+        exitNotifications.set(item.commandItemId, item);
+      }
+    }
+    return turn;
+  });
+  const reconciledTurns = turns.map((turn) => {
+    const items = reconcileCommandExecutionExitNotificationsInItems(
+      turn.items,
+      exitNotifications,
+    );
+    if (items === turn.items) {
+      return turn;
+    }
+    changed = true;
+    return { ...turn, items };
+  });
+  const activeCommandItems = pruneCompletedActiveCommandItems(
+    thread.activeCommandItems,
+    new Set(exitNotifications.keys()),
+  );
+  if (activeCommandItems !== thread.activeCommandItems) {
+    changed = true;
+  }
+  return changed
+    ? { ...thread, turns: reconciledTurns, activeCommandItems }
+    : thread;
+}
+
+function reconcileCommandExecutionExitNotificationsInItems(
+  items: ThreadItem[],
+  exitNotifications = new Map<
+    string,
+    Extract<ThreadItem, { type: "commandExecutionNotification" }>
+  >(
+    items
+      .filter(isCommandExecutionExitNotification)
+      .map((item) => [item.commandItemId, item]),
+  ),
+) {
+  if (exitNotifications.size === 0) {
+    return items;
+  }
+  let changed = false;
+  const reconciledItems = items.map((item) => {
+    if (item.type !== "commandExecution") {
+      return item;
+    }
+    const notification = exitNotifications.get(item.id);
+    if (!notification) {
+      return item;
+    }
+    const nextItem = {
+      ...item,
+      status: commandExecutionStatusFromExitCode(notification.exitCode),
+      exitCode: notification.exitCode,
+      aggregatedOutput: item.aggregatedOutput ?? notification.output,
+      completedAtMs: item.completedAtMs ?? notification.completedAtMs,
+    };
+    if (threadItemsEqual(nextItem, item)) {
+      return item;
+    }
+    changed = true;
+    return nextItem;
+  });
+  return changed ? reconciledItems : items;
+}
+
+function isCommandExecutionExitNotification(
+  item: ThreadItem,
+): item is Extract<ThreadItem, { type: "commandExecutionNotification" }> {
+  return item.type === "commandExecutionNotification" && item.kind === "exit";
+}
+
+function commandExecutionStatusFromExitCode(exitCode: number | null) {
+  return exitCode === null || exitCode === 0 ? "completed" : "failed";
+}
+
+function pruneCompletedActiveCommandItems(
+  activeCommandItems: Thread["activeCommandItems"],
+  exitedCommandItemIds: ReadonlySet<string> = new Set(),
+) {
+  if (!activeCommandItems) {
+    return activeCommandItems;
+  }
+  const runningItems = activeCommandItems.filter(
+    (item) =>
+      item.type === "commandExecution" &&
+      !exitedCommandItemIds.has(item.id) &&
+      isRunningCommandExecutionStatus(item.status),
+  );
+  return runningItems.length === activeCommandItems.length
+    ? activeCommandItems
+    : runningItems;
 }
 
 function markStreamingAgentMessage<

@@ -1,5 +1,5 @@
 import type { ConversationEntry, Thread, ThreadItem } from "../types";
-import { selectActiveCommandItems } from "./activeCommands";
+import { selectRunningActiveCommandItems } from "./activeCommands";
 import { isLegacyOrphanCommandOutputPlaceholder } from "./conversationToolPresentation";
 
 export type ConversationFlatItemState = {
@@ -43,7 +43,7 @@ export function buildActiveCommandConversationTail({
   const flatItems: ConversationFlatItemState[] = [];
   const entries: ConversationEntry[] = [];
 
-  for (const item of selectActiveCommandItems(thread)) {
+  for (const item of selectRunningActiveCommandItems(thread)) {
     if (
       historyItemIds.has(item.id) ||
       isLegacyOrphanCommandOutputPlaceholder(item)

@@ -1297,6 +1297,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_transition_after_active_persists_canonical_completed_status() {
+        let (outgoing_tx, _outgoing_rx) = mpsc::channel(8);
+        let (persisted_tx, mut persisted_rx) = mpsc::channel(8);
+        let persist_status: PersistThreadStatusFn =
+            Arc::new(move |thread_id: ThreadId, lifecycle_status: ThreadLifecycleStatus| {
+                let persisted_tx = persisted_tx.clone();
+                Box::pin(async move {
+                    persisted_tx
+                        .send((thread_id, lifecycle_status))
+                        .await
+                        .expect("persisted status receiver should stay open");
+                })
+            });
+        let manager = ThreadWatchManager::new_with_outgoing_and_persist_status(
+            Arc::new(OutgoingMessageSender::new(
+                outgoing_tx,
+                codex_analytics::AnalyticsEventsClient::disabled(),
+            )),
+            Some(persist_status),
+        );
+        let thread_id =
+            ThreadId::from_string(INTERACTIVE_THREAD_ID).expect("interactive thread id should parse");
+
+        manager
+            .mutate_and_publish(|state| {
+                state.upsert_thread_with_lifecycle_status(
+                    INTERACTIVE_THREAD_ID.to_string(),
+                    Some(ThreadLifecycleStatus::Active {
+                        active_flags: vec![ThreadLifecycleActiveFlag::Running],
+                    }),
+                    /*emit_notification*/ true,
+                )
+            })
+            .await;
+        assert_eq!(
+            recv_persisted_status(&mut persisted_rx).await,
+            (
+                thread_id.clone(),
+                ThreadLifecycleStatus::Active {
+                    active_flags: vec![ThreadLifecycleActiveFlag::Running],
+                },
+            ),
+        );
+
+        manager
+            .mutate_and_publish(|state| {
+                state.upsert_thread_with_lifecycle_status(
+                    INTERACTIVE_THREAD_ID.to_string(),
+                    Some(ThreadLifecycleStatus::completed(Some("done".to_string()))),
+                    /*emit_notification*/ true,
+                )
+            })
+            .await;
+        assert_eq!(
+            recv_persisted_status(&mut persisted_rx).await,
+            (
+                thread_id.clone(),
+                ThreadLifecycleStatus::completed(Some("done".to_string())),
+            ),
+        );
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[tokio::test]
     async fn event_subscription_count_changes_emit_status_notifications() {
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel(8);
         let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(

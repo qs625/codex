@@ -146,6 +146,14 @@ fn thread_status_changed_lifecycle_status(
     let has_in_progress_turn =
         has_in_progress_turn || matches!(live_agent_status, Some(AgentStatus::Running));
     let resolved_watch_status = resolve_thread_status(watch_status, has_in_progress_turn);
+    if !has_in_progress_turn
+        && matches!(resolved_watch_status, ThreadLifecycleStatus::Active { .. })
+        && let Some(status) = authoritative_status
+            .or(live_agent_status)
+            .filter(|status| matches!(status, AgentStatus::Completed(_)))
+    {
+        return thread_lifecycle_status_from_agent_status(status);
+    }
     if matches!(
         resolved_watch_status,
         ThreadLifecycleStatus::Active { .. }
@@ -2077,6 +2085,40 @@ mod tests {
             ThreadLifecycleStatus::Active {
                 active_flags: vec![ThreadLifecycleActiveFlag::Running],
             }
+        );
+    }
+
+    #[test]
+    fn completed_payload_overrides_stale_active_watch_without_in_progress_turn() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            None,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            false,
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn live_completed_status_overrides_stale_active_watch_without_in_progress_turn() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            None,
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            false,
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
         );
     }
 
