@@ -33,6 +33,18 @@ function userEntry(id: string, text: string): ConversationEntry {
   };
 }
 
+function eventEntry(id: string, text: string): ConversationEntry {
+  return {
+    id,
+    kind: "event",
+    author: "root",
+    role: "system",
+    text,
+    timestamp: "now",
+    attachments: [],
+  };
+}
+
 test("keeps command entries visible while filtering command notifications", () => {
   const cells = [
     {
@@ -193,6 +205,153 @@ test("keeps top-level restart recovery row when compact details appear first", (
       ]),
     ),
     ["compact-entry", "item-34"],
+  );
+});
+
+test("filters duplicate restart recovery marker rows across compact details", () => {
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求。\n\n恢复标识：runtime-restart:call_NgZHVF9C4uSemUFbNHpzSuWG";
+  const cells = [
+    {
+      id: "current-recovery",
+      kind: "message",
+      entries: [userEntry("item-26", prompt)],
+    },
+    {
+      id: "compact",
+      kind: "compact",
+      entries: [
+        {
+          ...entry("compact-entry"),
+          replacementHistoryCells: [
+            {
+              id: "replacement-recovery",
+              kind: "message",
+              entries: [
+                userEntry(
+                  "runtime-restart-recovery:call_NgZHVF9C4uSemUFbNHpzSuWG",
+                  prompt,
+                ),
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ] satisfies ConversationCell[];
+
+  assert.deepEqual(
+    filterConversationCellsForDisplay(cells).flatMap((cell) =>
+      cell.entries.flatMap((displayEntry) => [
+        displayEntry.id,
+        ...(displayEntry.replacementHistoryCells ?? []).flatMap((nestedCell) =>
+          nestedCell.entries.map((entry) => entry.id),
+        ),
+      ]),
+    ),
+    ["item-26", "compact-entry"],
+  );
+});
+
+test("prefers durable restart recovery user row over typed client recovery event", () => {
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求。\n\n恢复标识：runtime-restart:call_same";
+  const cells = [
+    {
+      id: "typed-recovery",
+      kind: "event",
+      entries: [
+        eventEntry(
+          "runtime-restart:call_same",
+          "Runtime Capsule recovery: health check failed",
+        ),
+      ],
+    },
+    {
+      id: "durable-recovery",
+      kind: "message",
+      entries: [userEntry("item-26", prompt)],
+    },
+  ] satisfies ConversationCell[];
+
+  assert.deepEqual(
+    filterConversationCellsForDisplay(cells).flatMap((cell) =>
+      cell.entries.map((entry) => entry.id),
+    ),
+    ["item-26"],
+  );
+});
+
+test("keeps typed restart recovery event when no durable user row exists", () => {
+  const cells = [
+    {
+      id: "typed-recovery",
+      kind: "event",
+      entries: [
+        eventEntry(
+          "runtime-restart:call_only",
+          "Runtime Capsule recovery: health check failed",
+        ),
+      ],
+    },
+  ] satisfies ConversationCell[];
+
+  assert.deepEqual(
+    filterConversationCellsForDisplay(cells).flatMap((cell) =>
+      cell.entries.map((entry) => entry.id),
+    ),
+    ["runtime-restart:call_only"],
+  );
+});
+
+test("does not treat ordinary user mentions of restart ids as recovery rows", () => {
+  const cells = [
+    {
+      id: "typed-recovery",
+      kind: "event",
+      entries: [
+        eventEntry(
+          "runtime-restart:call_same",
+          "Runtime Capsule recovery: health check failed",
+        ),
+      ],
+    },
+    {
+      id: "ordinary-user",
+      kind: "message",
+      entries: [
+        userEntry(
+          "ordinary-user-message",
+          "请检查 runtime-restart:call_same 为什么显示了两次。",
+        ),
+      ],
+    },
+  ] satisfies ConversationCell[];
+
+  assert.deepEqual(
+    filterConversationCellsForDisplay(cells).flatMap((cell) =>
+      cell.entries.map((entry) => entry.id),
+    ),
+    ["runtime-restart:call_same", "ordinary-user-message"],
+  );
+});
+
+test("keeps active root restart recovery marker row once", () => {
+  const prompt =
+    "Morpheus 已恢复预期的 Runtime Capsule 重启请求。\n\n恢复标识：runtime-restart:call_active";
+  const cells = [
+    {
+      id: "active-recovery",
+      kind: "message",
+      entries: [userEntry("item-active", prompt)],
+    },
+  ] satisfies ConversationCell[];
+
+  assert.deepEqual(
+    filterConversationCellsForDisplay(cells).flatMap((cell) =>
+      cell.entries.map((entry) => entry.id),
+    ),
+    ["item-active"],
   );
 });
 
