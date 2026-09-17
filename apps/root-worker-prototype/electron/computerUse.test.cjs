@@ -297,6 +297,47 @@ test("clickText blocks ambiguous accessibility matches before native click", asy
   assert.match(state.trace.at(-1).error, /Multiple visible accessibility elements/);
 });
 
+test("confirmed clickText still blocks multiple matches before native click", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Delete",
+              bounds: { x: 10, y: 10, width: 80, height: 30 },
+              center: { x: 50, y: 25 },
+            },
+            {
+              role: "AXButton",
+              title: "Delete Message",
+              bounds: { x: 110, y: 10, width: 120, height: 30 },
+              center: { x: 170, y: 25 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({
+    nativeClient,
+    safety: { confirmRisk: "high" },
+  });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "clickText", text: "Delete" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).policy.confirmationSatisfied, true);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "multiple");
+  assert.equal(state.trace.at(-1).evidence.compiledAction, undefined);
+  assert.equal(state.trace.at(-1).audit.completion.status, "failed");
+  assert.equal(state.trace.at(-1).audit.completion.actionEvidence.source, "perception");
+});
+
 test("clickText maxMatches only limits evidence and cannot hide ambiguity", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
@@ -477,10 +518,32 @@ test("click moves the agent cursor before native desktop click", async () => {
   );
 });
 
-test("warning and drag actions execute with trace evidence", async () => {
+test("high-risk actions require confirmation before native side effects", async () => {
+  const nativeClient = fakeNativeClient();
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession();
+
+  const state = await manager.act({ type: "type", text: "send password" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace[0].status, "blocked");
+  assert.equal(state.trace[0].policy.kind, "requires-confirmation");
+  assert.equal(state.trace[0].policy.riskLevel, "high");
+  assert.equal(state.trace[0].policy.requiresConfirmation, true);
+  assert.equal(state.trace[0].policy.confirmationSatisfied, false);
+  assert.equal(state.trace[0].audit.riskLevel, "high");
+  assert.equal(state.trace[0].audit.confirmation.required, true);
+  assert.equal(state.trace[0].audit.completion.status, "blocked");
+});
+
+test("confirmed warning and drag actions execute with audit evidence", async () => {
   const nativeClient = fakeNativeClient();
   const overlayController = fakeOverlayController();
-  const manager = createComputerUseManager({ nativeClient, overlayController });
+  const manager = createComputerUseManager({
+    nativeClient,
+    overlayController,
+    safety: { confirmRisk: "high", operationBoundary: "test-boundary" },
+  });
   await manager.startSession();
 
   const warned = await manager.act({ type: "type", text: "send password" });
@@ -496,14 +559,22 @@ test("warning and drag actions execute with trace evidence", async () => {
   ]);
   assert.equal(warned.trace[0].status, "completed");
   assert.equal(warned.trace[0].policy.kind, "side-effect-warning");
+  assert.equal(warned.trace[0].policy.requiresConfirmation, true);
+  assert.equal(warned.trace[0].policy.confirmationSatisfied, true);
   assert.equal(warned.trace[0].evidence.characterCount, 13);
   assert.equal(warned.trace[0].evidence.method, "pasteboard-cmd-v");
   assert.equal(warned.trace[0].evidence.pasteboardRestored, true);
+  assert.equal(warned.trace[0].audit.operationBoundary, "test-boundary");
+  assert.equal(warned.trace[0].audit.before.observationSequence, 2);
+  assert.equal(warned.trace[0].audit.after.observationSequence, 3);
+  assert.equal(warned.trace[0].audit.completion.actionEvidence.source, "native-bridge");
   assert.equal(dragged.trace[1].status, "completed");
   assert.equal(dragged.trace[1].policy.kind, "side-effect");
+  assert.equal(dragged.trace[1].policy.riskLevel, "medium");
   assert.ok(dragged.trace[1].agentCursorPath.length >= 2);
   assert.deepEqual(dragged.agentCursor, { x: 30, y: 40 });
   assert.equal(dragged.trace[1].evidence.systemCursorRestored, false);
+  assert.equal(dragged.trace[1].audit.after.observationSequence, 5);
 });
 
 test("new semantic actions execute through manager with trace evidence", async () => {
@@ -561,41 +632,42 @@ test("wait remains low-risk for background targets without native side effects",
   assert.equal(state.trace[0].action.type, "wait");
   assert.equal(state.trace[0].status, "completed");
   assert.equal(state.trace[0].policy.kind, "low-risk");
+  assert.equal(state.trace[0].policy.requiresConfirmation, false);
   assert.equal(state.trace[0].evidence.waitMs, 0);
 });
 
 test("policy keeps safe keyboard shortcuts available", () => {
-  assert.deepEqual(classifyComputerUseAction({ type: "key", key: "t", modifiers: ["cmd"] }), {
-    kind: "side-effect",
-    allowed: true,
-    reason: "Computer Use side-effect action.",
+  const safeShortcut = classifyComputerUseAction({
+    type: "key",
+    key: "t",
+    modifiers: ["cmd"],
   });
-  assert.deepEqual(
-    classifyComputerUseAction(normalizeAction({
-      type: "key",
-      key: "q",
-      modifiers: ["command"],
-    })),
-    {
-      kind: "side-effect-warning",
-      allowed: true,
-      reason:
-        "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
-    },
-  );
-  assert.deepEqual(
-    classifyComputerUseAction(normalizeAction({
-      type: "hotkey",
-      key: "w",
-      modifiers: ["meta"],
-    })),
-    {
-      kind: "side-effect-warning",
-      allowed: true,
-      reason:
-        "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
-    },
-  );
+  assert.equal(safeShortcut.kind, "side-effect");
+  assert.equal(safeShortcut.allowed, true);
+  assert.equal(safeShortcut.riskLevel, "medium");
+
+  const riskyQuit = classifyComputerUseAction(normalizeAction({
+    type: "key",
+    key: "q",
+    modifiers: ["command"],
+  }));
+  assert.equal(riskyQuit.kind, "side-effect-warning");
+  assert.equal(riskyQuit.allowed, true);
+  assert.equal(riskyQuit.riskLevel, "high");
+  assert.equal(riskyQuit.requiresConfirmation, false);
+
+  const riskyClose = classifyComputerUseAction(normalizeAction({
+    type: "hotkey",
+    key: "w",
+    modifiers: ["meta"],
+  }));
+  assert.equal(riskyClose.kind, "side-effect-warning");
+  assert.equal(riskyClose.allowed, true);
+  assert.equal(riskyClose.riskLevel, "high");
+
+  const findText = classifyComputerUseAction({ type: "findText", text: "Open" });
+  assert.equal(findText.kind, "low-risk");
+  assert.equal(findText.requiresConfirmation, false);
 });
 
 test("actions stay blocked when activation cannot prove the target app", async () => {
@@ -975,6 +1047,30 @@ test("actions are blocked until observe proves accessibility permission", async 
   assert.deepEqual(nativeClient.actions, []);
   assert.equal(state.trace[0].status, "blocked");
   assert.equal(state.trace[0].policy.kind, "needs-permission");
+});
+
+test("permission gate preserves action risk metadata", async () => {
+  const nativeClient = fakeNativeClient({ accessibilityTrusted: false });
+  const manager = createComputerUseManager({
+    nativeClient,
+    safety: { confirmRisk: "high" },
+  });
+  await manager.startSession();
+
+  const state = await manager.act({ type: "type", text: "send password" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace[0].status, "blocked");
+  assert.equal(state.trace[0].policy.kind, "needs-permission");
+  assert.equal(state.trace[0].policy.riskLevel, "high");
+  assert.equal(state.trace[0].policy.requiresConfirmation, true);
+  assert.equal(state.trace[0].policy.confirmationSatisfied, true);
+  assert.equal(state.trace[0].audit.riskLevel, "high");
+  assert.equal(
+    state.trace[0].audit.riskCategories.includes("sensitive-or-destructive"),
+    true,
+  );
+  assert.equal(state.trace[0].audit.completion.status, "blocked");
 });
 
 test("actions without a prior observation first preflight observe the desktop", async () => {

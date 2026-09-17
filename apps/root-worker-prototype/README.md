@@ -142,6 +142,7 @@ flags and compiles them into the same action array:
 node scripts/morpheus-computer-use.mjs run \
   --app com.apple.TextEdit \
   --json \
+  --confirm-risk high \
   --click 420,360 \
   --type "hello" \
   --hotkey cmd+s \
@@ -160,7 +161,15 @@ before using the same target gate and native click path; ambiguous or missing
 matches fail with candidate evidence instead of guessing. The `run --actions`
 batch is the explicit Computer Use operation boundary for real desktop side
 effects, and shorthand flags are compiled into that same batch path. The JSON
-result includes the compiled `actions` for audit and replay.
+result includes the compiled `actions` for audit and replay. High-risk actions
+such as sensitive/destructive typed text or destructive app shortcuts are
+blocked unless the batch or REPL was started with `--confirm-risk high`. Use
+`--plan-only` to preflight a batch/session while blocking real native side
+effects before input is sent. Each traced action carries bounded typed policy
+and audit fields, including `riskLevel`, `riskCategories`,
+`requiresConfirmation`, `confirmationSatisfied`, the operation boundary,
+before/after observation sequence and target visibility, and a compact
+completion proof.
 
 For observe-think-act workflows, use the long-lived REPL instead of splitting
 work across multiple `run` processes:
@@ -172,12 +181,13 @@ node scripts/morpheus-computer-use.mjs repl \
 ```
 
 The REPL keeps one `ComputerUseManager` session alive until `stop`, `exit`, EOF,
-or failed-action cleanup. It accepts the same action vocabulary as line commands
-such as `observe`, `move 420,360`, `right-click 420,360`, `scroll 420,360 0,-240`,
-`hotkey cmd+s`, `wait 250`, plus JSON action lines. Default output is bounded
-human-readable status/evidence; pass `--json` for one structured event per
-command, `--raw` to include sanitized full state, and `trace [count]` or
-`--trace-tail <n>` for bounded trace tails.
+SIGINT/interrupt, failed-action cleanup, or policy-block cleanup. It accepts the
+same action vocabulary as line commands such as `observe`, `move 420,360`,
+`right-click 420,360`, `scroll 420,360 0,-240`, `hotkey cmd+s`, `wait 250`,
+plus JSON action lines. Default output is bounded human-readable
+status/evidence; pass `--json` for one structured event per command, `--raw` to
+include sanitized full state, and `trace [count]` or `--trace-tail <n>` for
+bounded trace tails.
 Side effects require a matched target app, Accessibility permission must be
 available, and native backend failures are reported as failed action results
 rather than fake success. If the target app is in the background, Computer Use

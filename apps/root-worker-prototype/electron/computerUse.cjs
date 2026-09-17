@@ -41,6 +41,7 @@ class ComputerUseManager {
       enabled: options.includePerception !== false,
       limit: boundedPerceptionLimit(options.perceptionLimit),
     };
+    this.safety = normalizeSafetyOptions(options.safety);
     this.session = null;
   }
 
@@ -86,7 +87,7 @@ class ComputerUseManager {
   async act(action) {
     this.ensureSession();
     const normalized = normalizeAction(action);
-    let policy = classifyComputerUseAction(normalized);
+    let policy = this.applyRuntimeSafetyPolicy(classifyComputerUseAction(normalized));
     const startedAtMs = this.clock();
     const traceItem = {
       id: randomUUID(),
@@ -98,9 +99,11 @@ class ComputerUseManager {
       startedAtMs,
       completedAtMs: policy.allowed ? null : startedAtMs,
       observationSequence: this.session.observation?.sequence ?? null,
+      audit: createActionAudit(policy, this.session, this.safety, "initial"),
     };
     appendTrace(this.session, traceItem);
     if (!policy.allowed) {
+      completeActionAudit(traceItem, this.session, "blocked");
       this.session.policy = policy;
       this.session.status = "active";
       this.session.pendingAction = null;
@@ -114,6 +117,7 @@ class ComputerUseManager {
       traceItem.status = "failed";
       traceItem.error = errorMessage(error);
       traceItem.completedAtMs = this.clock();
+      completeActionAudit(traceItem, this.session, "failed");
       this.applyError(error, "pre-action");
       return this.state();
     }
@@ -126,6 +130,7 @@ class ComputerUseManager {
         traceItem.status = "failed";
         traceItem.error = errorMessage(error);
         traceItem.completedAtMs = this.clock();
+        completeActionAudit(traceItem, this.session, "failed");
         this.applyError(error, "target-activation");
         return this.state();
       }
@@ -134,10 +139,12 @@ class ComputerUseManager {
     policy = this.policyForAction(normalized);
     traceItem.policy = policy;
     traceItem.observationSequence = this.session.observation?.sequence ?? null;
+    traceItem.audit = createActionAudit(policy, this.session, this.safety, "pre-action");
     if (!policy.allowed) {
       traceItem.status = "blocked";
       traceItem.error = policy.reason;
       traceItem.completedAtMs = this.clock();
+      completeActionAudit(traceItem, this.session, "blocked");
       this.session.policy = policy;
       this.session.status = "active";
       this.session.pendingAction = null;
@@ -188,10 +195,12 @@ class ComputerUseManager {
       traceItem.status = "completed";
       traceItem.completedAtMs = this.clock();
       await this.observe("post-action");
+      completeActionAudit(traceItem, this.session, "completed");
     } catch (error) {
       traceItem.status = "failed";
       traceItem.error = errorMessage(error);
       traceItem.completedAtMs = this.clock();
+      completeActionAudit(traceItem, this.session, "failed");
       this.applyError(error, "action");
     } finally {
       this.session.pendingAction = null;
@@ -200,12 +209,13 @@ class ComputerUseManager {
   }
 
   policyForAction(action) {
-    const basePolicy = classifyComputerUseAction(action);
+    const basePolicy = this.applyRuntimeSafetyPolicy(classifyComputerUseAction(action));
     if (!basePolicy.allowed) {
       return basePolicy;
     }
     if (this.session.observation?.accessibilityTrusted === false) {
       return {
+        ...basePolicy,
         kind: "needs-permission",
         allowed: false,
         reason: "Accessibility permission is required before controlling the desktop.",
@@ -213,6 +223,7 @@ class ComputerUseManager {
     }
     if (!this.session.observation) {
       return {
+        ...basePolicy,
         kind: "needs-observation",
         allowed: false,
         reason: "Observe the desktop before running Computer Use actions.",
@@ -223,6 +234,7 @@ class ComputerUseManager {
       this.session.targetVisibility !== "frontmost"
     ) {
       return {
+        ...basePolicy,
         kind: "target-mismatch",
         allowed: false,
         reason:
@@ -237,12 +249,17 @@ class ComputerUseManager {
         : targetMismatch(this.session.target, this.session.observation?.frontmostApp);
     if (mismatch) {
       return {
+        ...basePolicy,
         kind: "target-mismatch",
         allowed: false,
         reason: mismatch,
       };
     }
     return basePolicy;
+  }
+
+  applyRuntimeSafetyPolicy(policy) {
+    return applyRuntimeSafetyPolicy(policy, this.safety);
   }
 
   async activateTargetForAction(traceItem) {
@@ -583,27 +600,141 @@ function createEmptySession(now, options) {
   };
 }
 
+function normalizeSafetyOptions(options = {}) {
+  return {
+    operationBoundary:
+      typeof options.operationBoundary === "string" && options.operationBoundary.length > 0
+        ? options.operationBoundary
+        : "manager-session",
+    confirmRisk: normalizeConfirmedRisk(options.confirmRisk ?? options.confirmRiskLevel),
+    planOnly: options.planOnly === true || options.dryRun === true,
+  };
+}
+
+function normalizeConfirmedRisk(value) {
+  if (value === true) {
+    return "high";
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.toLowerCase();
+  if (["high", "all"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function createActionAudit(policy, session, safety, phase) {
+  return {
+    version: "computer-use-audit-v1",
+    phase,
+    operationBoundary: safety.operationBoundary,
+    planOnly: safety.planOnly,
+    riskLevel: policy.riskLevel ?? "unknown",
+    riskCategories: Array.isArray(policy.riskCategories)
+      ? policy.riskCategories.slice(0, 8)
+      : [],
+    requiresConfirmation: policy.requiresConfirmation === true,
+    confirmationSatisfied: policy.confirmationSatisfied === true,
+    confirmation: {
+      required: policy.requiresConfirmation === true,
+      satisfied: policy.confirmationSatisfied === true,
+      confirmedRisk: safety.confirmRisk ?? null,
+    },
+    before: observationAuditEvidence(session),
+    after: null,
+    completion: null,
+  };
+}
+
+function completeActionAudit(traceItem, session, phase) {
+  if (!traceItem.audit) {
+    return;
+  }
+  traceItem.audit.phase = phase;
+  traceItem.audit.after = observationAuditEvidence(session);
+  traceItem.audit.completion = {
+    status: traceItem.status,
+    completedAtMs: traceItem.completedAtMs ?? null,
+    actionEvidence: actionEvidenceSummary(traceItem),
+    afterObservationSequence: session.observation?.sequence ?? null,
+  };
+}
+
+function observationAuditEvidence(session) {
+  const observation = session?.observation ?? null;
+  return {
+    observationSequence: observation?.sequence ?? null,
+    targetVisibility: session?.targetVisibility ?? observation?.targetVisibility ?? "unknown",
+    frontmostApp: compactAppIdentity(session?.frontmostApp ?? observation?.frontmostApp),
+    targetApp: compactAppIdentity(session?.targetApp ?? observation?.targetApp),
+    accessibilityTrusted: observation?.accessibilityTrusted ?? null,
+  };
+}
+
+function actionEvidenceSummary(traceItem) {
+  const evidence = traceItem.evidence ?? {};
+  if (traceItem.action?.type === "move") {
+    return { source: "agent-cursor", pathSamples: traceItem.agentCursorPath?.length ?? 0 };
+  }
+  if (traceItem.action?.type === "findText") {
+    return { source: "perception", matchStatus: evidence.matchStatus ?? null };
+  }
+  if (traceItem.action?.type === "wait") {
+    return { source: "timer", waitMs: evidence.waitMs ?? null };
+  }
+  if (traceItem.action?.type === "clickText") {
+    const source =
+      evidence.matchStatus === "unique" && evidence.compiledAction
+        ? "native-bridge"
+        : "perception";
+    return {
+      source,
+      ok: evidence.ok === true,
+      matchStatus: evidence.matchStatus ?? null,
+      compiledAction: evidence.compiledAction ?? null,
+    };
+  }
+  return {
+    source: isSideEffectAction(traceItem.action) ? "native-bridge" : "manager",
+    ok: evidence.ok ?? null,
+    method: evidence.method ?? null,
+  };
+}
+
 function snapshotSession(session) {
   return JSON.parse(JSON.stringify(session));
 }
 
 function classifyComputerUseAction(action) {
   if (action.type === "observe") {
-    return { kind: "read-only", allowed: true, reason: null };
+    return withRisk({
+      kind: "read-only",
+      allowed: true,
+      reason: null,
+    }, "low", ["read-only"]);
   }
   const modifiers = normalizeModifiers(action.modifiers);
+  const riskyText =
+    action.type === "type"
+      ? action.text
+      : action.type === "clickText"
+        ? action.text
+        : "";
   if (
-    (action.type === "type" && DANGEROUS_TEXT_PATTERN.test(action.text ?? "")) ||
+    ((action.type === "type" || action.type === "clickText") &&
+      DANGEROUS_TEXT_PATTERN.test(riskyText ?? "")) ||
     ((action.type === "key" || action.type === "hotkey") &&
       modifiers.includes("cmd") &&
       ["delete", "q", "w"].includes(String(action.key ?? "").toLowerCase()))
   ) {
-    return {
+    return withRisk({
       kind: "side-effect-warning",
       allowed: true,
       reason:
-        "Potentially destructive or sensitive action is being executed because run --actions is the explicit Computer Use operation boundary.",
-    };
+        "Potentially destructive or sensitive Computer Use action requires explicit risk confirmation before native input is sent.",
+    }, "high", riskyActionCategories(action));
   }
   if (
     [
@@ -618,13 +749,88 @@ function classifyComputerUseAction(action) {
       "drag",
     ].includes(action.type)
   ) {
-    return {
+    return withRisk({
       kind: "side-effect",
       allowed: true,
       reason: "Computer Use side-effect action.",
+    }, "medium", ["native-side-effect"]);
+  }
+  return withRisk({ kind: "low-risk", allowed: true, reason: null }, "low", ["agent-evidence"]);
+}
+
+function withRisk(policy, riskLevel, riskCategories) {
+  return {
+    ...policy,
+    riskLevel,
+    riskCategories,
+    requiresConfirmation: false,
+    confirmationSatisfied: false,
+    operationBoundary: null,
+  };
+}
+
+function riskyActionCategories(action) {
+  const categories = ["native-side-effect", "sensitive-or-destructive"];
+  if (action.type === "type" || action.type === "clickText") {
+    categories.push("text-intent");
+  }
+  if (action.type === "key" || action.type === "hotkey") {
+    categories.push("destructive-shortcut");
+  }
+  return categories;
+}
+
+function applyRuntimeSafetyPolicy(policy, safety) {
+  const operationBoundary = safety.operationBoundary;
+  const requiresConfirmation =
+    policy.riskLevel === "high" && policy.allowed === true;
+  const confirmationSatisfied =
+    requiresConfirmation && riskLevelAllowed(policy.riskLevel, safety.confirmRisk);
+  if (safety.planOnly && isRiskySideEffectPolicy(policy)) {
+    return {
+      ...policy,
+      kind: "plan-only",
+      allowed: false,
+      reason:
+        "Computer Use plan-only mode blocked this real desktop side-effect before native input.",
+      requiresConfirmation,
+      confirmationSatisfied,
+      operationBoundary,
     };
   }
-  return { kind: "low-risk", allowed: true, reason: null };
+  if (requiresConfirmation && !confirmationSatisfied) {
+    return {
+      ...policy,
+      kind: "requires-confirmation",
+      allowed: false,
+      reason:
+        "High-risk Computer Use action requires --confirm-risk high before native input is sent.",
+      requiresConfirmation: true,
+      confirmationSatisfied: false,
+      operationBoundary,
+    };
+  }
+  return {
+    ...policy,
+    requiresConfirmation,
+    confirmationSatisfied,
+    operationBoundary,
+  };
+}
+
+function isRiskySideEffectPolicy(policy) {
+  return policy.riskLevel === "medium" || policy.riskLevel === "high";
+}
+
+function riskLevelAllowed(riskLevel, confirmedRisk) {
+  const order = { low: 0, medium: 1, high: 2 };
+  if (!confirmedRisk) {
+    return false;
+  }
+  if (confirmedRisk === "all") {
+    return true;
+  }
+  return order[confirmedRisk] >= order[riskLevel];
 }
 
 function isSideEffectAction(action) {
