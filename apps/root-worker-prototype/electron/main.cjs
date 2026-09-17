@@ -678,8 +678,8 @@ ipcMain.handle("codex:openLink", async (_event, target) => {
 
 ipcMain.handle("codex:browser:show", async (event, bounds) => {
   const panel = browserPanelForEvent(event);
-  attachBrowserPanel(panel);
   setBrowserPanelBounds(panel, bounds);
+  attachBrowserPanel(panel);
   return browserPanelState(panel);
 });
 
@@ -1722,18 +1722,15 @@ function firstAvailableWindow() {
 }
 
 function attachBrowserPanel(panel) {
-  if (panel.visible) {
-    return;
-  }
   panel.visible = true;
-  attachActiveBrowserPanelView(panel);
+  attachActiveBrowserPanelView(panel, { raise: true });
 }
 
 function detachBrowserPanel(panel) {
   if (!panel.visible) {
     return;
   }
-  detachAttachedBrowserPanelView(panel);
+  detachAllBrowserPanelViews(panel);
   panel.visible = false;
 }
 
@@ -1766,7 +1763,7 @@ function setBrowserPanelBounds(panel, bounds) {
     !panel.window.isDestroyed() &&
     !tab.view.webContents.isDestroyed()
   ) {
-    tab.view.setBounds(panel.bounds);
+    attachActiveBrowserPanelView(panel, { raise: true });
   }
 }
 
@@ -2160,14 +2157,14 @@ function selectBrowserPanelTab(panel, tabId) {
   }
   if (panel.activeTabId === nextTab.id) {
     if (panel.visible) {
-      attachActiveBrowserPanelView(panel);
+      attachActiveBrowserPanelView(panel, { raise: true });
     }
     return true;
   }
   detachAttachedBrowserPanelView(panel);
   panel.activeTabId = nextTab.id;
   if (panel.visible) {
-    attachActiveBrowserPanelView(panel);
+    attachActiveBrowserPanelView(panel, { raise: true });
   }
   return true;
 }
@@ -2196,7 +2193,7 @@ function closeBrowserPanelTab(panel, tabId) {
   if (wasActive) {
     panel.activeTabId = nextActiveTabId;
     if (panel.visible) {
-      attachActiveBrowserPanelView(panel);
+      attachActiveBrowserPanelView(panel, { raise: true });
     }
   }
   return true;
@@ -2221,7 +2218,7 @@ function removeDestroyedBrowserPanelTab(panel, tab) {
     const nextTab = panel.tabs[Math.min(index, panel.tabs.length - 1)] ?? panel.tabs[0];
     panel.activeTabId = nextTab.id;
     if (panel.visible) {
-      attachActiveBrowserPanelView(panel);
+      attachActiveBrowserPanelView(panel, { raise: true });
     }
   }
   sendBrowserPanelState(panel);
@@ -2233,7 +2230,7 @@ function closeBrowserPanelTabContents(tab) {
   }
 }
 
-function attachActiveBrowserPanelView(panel) {
+function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
   const tab = activeBrowserPanelTab(panel);
   if (
     !tab ||
@@ -2244,6 +2241,11 @@ function attachActiveBrowserPanelView(panel) {
     return;
   }
   if (panel.attachedTabId === tab.id) {
+    if (raise) {
+      detachBrowserPanelTabView(panel, tab);
+      panel.window.contentView.addChildView(tab.view);
+      panel.attachedTabId = tab.id;
+    }
     tab.view.setBounds(panel.bounds);
     return;
   }
@@ -2257,15 +2259,35 @@ function detachAttachedBrowserPanelView(panel) {
   const attachedTabId = panel.attachedTabId;
   panel.attachedTabId = null;
   const tab = panel.tabs.find((candidate) => candidate.id === attachedTabId);
+  if (tab) {
+    detachBrowserPanelTabView(panel, tab);
+  }
+}
+
+function detachAllBrowserPanelViews(panel) {
+  panel.attachedTabId = null;
+  if (panel.window.isDestroyed()) {
+    return;
+  }
+  for (const tab of panel.tabs) {
+    detachBrowserPanelTabView(panel, tab);
+  }
+}
+
+function detachBrowserPanelTabView(panel, tab) {
   const tabDestroyed = !tab || tab.view.webContents.isDestroyed();
   if (
     shouldDetachAttachedBrowserPanelView({
-      attachedTabId,
+      attachedTabId: tab?.id,
       tabDestroyed,
       windowDestroyed: panel.window.isDestroyed(),
     })
   ) {
-    panel.window.contentView.removeChildView(tab.view);
+    try {
+      panel.window.contentView.removeChildView(tab.view);
+    } catch {
+      // Electron does not expose a child-membership check for ContentView.
+    }
   }
 }
 
