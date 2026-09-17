@@ -9,6 +9,7 @@ type ThreadSelectionPolicyInput = {
   isSubscribed: boolean;
   isLoading: boolean;
   hasLiveCache: boolean;
+  selectionChanged?: boolean;
 };
 
 export function decideThreadSelectionAction({
@@ -18,6 +19,7 @@ export function decideThreadSelectionAction({
   isSubscribed,
   isLoading,
   hasLiveCache,
+  selectionChanged = false,
 }: ThreadSelectionPolicyInput): ThreadSelectionAction {
   if (!selectedThreadId) {
     return "none";
@@ -25,6 +27,10 @@ export function decideThreadSelectionAction({
 
   if (isLoading) {
     return "none";
+  }
+
+  if (selectionChanged) {
+    return "readAndSubscribe";
   }
 
   if (!hasLocalThread) {

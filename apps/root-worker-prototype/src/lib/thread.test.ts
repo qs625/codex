@@ -1092,6 +1092,46 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
 
+test("mergeThreadSnapshot refreshes stale selected conversation from thread read", () => {
+  const stale = {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [
+        makeUserMessage("old-user", "old followup request"),
+        makeAgentMessage("old-agent", "old followup reply"),
+      ]),
+    ],
+  };
+  const latestRead = {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [
+        makeUserMessage("old-user", "old followup request"),
+        makeAgentMessage("old-agent", "old followup reply"),
+      ]),
+      makeTurn("turn-new", [
+        makeUserMessage("new-user", "background followup request"),
+        makeAgentMessage("new-agent", "background followup reply"),
+      ]),
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(stale, latestRead);
+  const displayEntries = filterConversationCellsForDisplay(
+    buildConversationState(merged).cells,
+  ).flatMap((cell) => cell.entries);
+
+  assert.deepEqual(
+    displayEntries.map((entry) => entry.text),
+    [
+      "old followup request",
+      "old followup reply",
+      "background followup request",
+      "background followup reply",
+    ],
+  );
+});
+
 test("mergeThreadSnapshot consumes live reasoning fragments represented by thread/read", () => {
   const existing: Thread = {
     ...makeThread(),
