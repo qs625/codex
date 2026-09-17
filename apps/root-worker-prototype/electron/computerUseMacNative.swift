@@ -83,13 +83,23 @@ func axSize(_ element: AXUIElement, _ attribute: String) -> [String: Double]? {
   return ["width": size.width, "height": size.height]
 }
 
-func focusedWindow(pid: pid_t) -> [String: Any]? {
-  let app = AXUIElementCreateApplication(pid)
-  var value: CFTypeRef?
-  guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success else {
+func axRect(_ element: AXUIElement) -> [String: Double]? {
+  guard
+    let position = axPoint(element, kAXPositionAttribute),
+    let size = axSize(element, kAXSizeAttribute),
+    let x = position["x"],
+    let y = position["y"],
+    let width = size["width"],
+    let height = size["height"],
+    width > 0,
+    height > 0
+  else {
     return nil
   }
-  let window = value as! AXUIElement
+  return ["x": x, "y": y, "width": width, "height": height]
+}
+
+func windowSummary(_ window: AXUIElement) -> [String: Any] {
   var result: [String: Any] = [:]
   result["title"] = axString(window, kAXTitleAttribute)
   result["role"] = axString(window, kAXRoleAttribute)
@@ -97,6 +107,22 @@ func focusedWindow(pid: pid_t) -> [String: Any]? {
   result["position"] = axPoint(window, kAXPositionAttribute)
   result["size"] = axSize(window, kAXSizeAttribute)
   return result
+}
+
+func focusedWindowElement(pid: pid_t) -> AXUIElement? {
+  let app = AXUIElementCreateApplication(pid)
+  var value: CFTypeRef?
+  guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success else {
+    return nil
+  }
+  return (value as! AXUIElement)
+}
+
+func focusedWindow(pid: pid_t) -> [String: Any]? {
+  guard let window = focusedWindowElement(pid: pid) else {
+    return nil
+  }
+  return windowSummary(window)
 }
 
 func firstWindow(pid: pid_t) -> [String: Any]? {
@@ -108,13 +134,115 @@ func firstWindow(pid: pid_t) -> [String: Any]? {
   guard let windows = value as? [AXUIElement], let window = windows.first else {
     return nil
   }
-  var result: [String: Any] = [:]
-  result["title"] = axString(window, kAXTitleAttribute)
-  result["role"] = axString(window, kAXRoleAttribute)
-  result["subrole"] = axString(window, kAXSubroleAttribute)
-  result["position"] = axPoint(window, kAXPositionAttribute)
-  result["size"] = axSize(window, kAXSizeAttribute)
+  return windowSummary(window)
+}
+
+func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+  var value: CFTypeRef?
+  guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success else {
+    return []
+  }
+  return value as? [AXUIElement] ?? []
+}
+
+func boundedText(_ value: String?, _ maxLength: Int = 160) -> String? {
+  guard let value = value else {
+    return nil
+  }
+  let trimmed = value
+    .components(separatedBy: .whitespacesAndNewlines)
+    .filter { !$0.isEmpty }
+    .joined(separator: " ")
+  guard !trimmed.isEmpty else {
+    return nil
+  }
+  if trimmed.count <= maxLength {
+    return trimmed
+  }
+  return String(trimmed.prefix(maxLength - 1)) + "…"
+}
+
+func axElementCandidate(_ element: AXUIElement) -> [String: Any]? {
+  let role = axString(element, kAXRoleAttribute)
+  let subrole = axString(element, kAXSubroleAttribute)
+  let title = boundedText(axString(element, kAXTitleAttribute))
+  let value = boundedText(axString(element, kAXValueAttribute))
+  let description = boundedText(axString(element, kAXDescriptionAttribute))
+  let includedRoles = Set([
+    "AXButton",
+    "AXCheckBox",
+    "AXComboBox",
+    "AXLink",
+    "AXMenuButton",
+    "AXPopUpButton",
+    "AXRadioButton",
+    "AXSearchField",
+    "AXStaticText",
+    "AXTextArea",
+    "AXTextField",
+  ])
+  guard title != nil || value != nil || description != nil || includedRoles.contains(role ?? "") else {
+    return nil
+  }
+  guard let bounds = axRect(element) else {
+    return nil
+  }
+  let center: [String: Double] = [
+    "x": (bounds["x"] ?? 0) + ((bounds["width"] ?? 0) / 2),
+    "y": (bounds["y"] ?? 0) + ((bounds["height"] ?? 0) / 2),
+  ]
+  var result: [String: Any] = [
+    "bounds": bounds,
+    "center": center,
+    "confidence": 0.85,
+    "source": "macos-accessibility",
+  ]
+  result["role"] = role
+  result["subrole"] = subrole
+  result["title"] = title
+  result["value"] = value
+  result["description"] = description
   return result
+}
+
+func accessibilityElements(window: AXUIElement, limit: Int) -> (elements: [[String: Any]], limitations: [[String: String]]) {
+  guard limit > 0 else {
+    return ([], [[
+      "code": "accessibility-elements-truncated",
+      "message": "Accessibility element output limit is 0; no candidates were returned.",
+    ]])
+  }
+  var result: [[String: Any]] = []
+  var limitations: [[String: String]] = []
+  var queue: [(AXUIElement, Int)] = [(window, 0)]
+  var visited = 0
+  while !queue.isEmpty && visited < 600 {
+    let (element, depth) = queue.removeFirst()
+    visited += 1
+    if let candidate = axElementCandidate(element) {
+      if result.count >= limit {
+        limitations.append([
+          "code": "accessibility-elements-truncated",
+          "message": "Accessibility element output reached the configured candidate limit before traversal completed.",
+        ])
+        break
+      }
+      result.append(candidate)
+    }
+    if depth >= 6 {
+      continue
+    }
+    for child in axChildren(element).prefix(80) {
+      queue.append((child, depth + 1))
+    }
+  }
+  if visited >= 600 && !queue.isEmpty {
+    limitations.append([
+      "code": "accessibility-traversal-truncated",
+      "message": "Accessibility traversal reached the safety visit cap before exhausting the target window tree.",
+    ])
+  }
+  return (result, limitations)
 }
 
 func appSummary(_ app: NSRunningApplication, trusted: Bool, frontmost: Bool) -> [String: Any] {
@@ -147,6 +275,8 @@ func targetApplication(_ identifier: String?) -> NSRunningApplication? {
 
 func observe(_ object: [String: Any]) {
   let trusted = AXIsProcessTrusted()
+  let includePerception = (object["includePerception"] as? Bool) ?? true
+  let perceptionLimit = min(max(Int(number(object["perceptionLimit"]) ?? 40), 0), 80)
   let cursor = CGEvent(source: nil)?.location ?? CGPoint.zero
   let frontmost = NSWorkspace.shared.frontmostApplication
   var frontmostApp: [String: Any] = [:]
@@ -180,11 +310,62 @@ func observe(_ object: [String: Any]) {
   if let targetApp = targetApp {
     response["targetApp"] = targetApp
   }
+  var limitations: [[String: String]] = []
   if targetVisibility == "background" {
-    response["limitations"] = [[
+    limitations.append([
       "code": "background-observe-metadata-only",
       "message": "Background target observe is limited to app/window metadata; the screenshot remains the current desktop capture.",
-    ]]
+    ])
+  }
+  var perception: [String: Any] = [
+    "enabled": includePerception,
+    "source": "macos-accessibility",
+    "limit": perceptionLimit,
+    "accessibilityElements": [],
+    "limitations": [],
+  ]
+  var perceptionLimitations: [[String: String]] = []
+  if !includePerception {
+    perceptionLimitations.append([
+      "code": "perception-disabled",
+      "message": "Perception extraction was disabled for this observation.",
+    ])
+  } else if !trusted {
+    perceptionLimitations.append([
+      "code": "accessibility-permission-required",
+      "message": "Accessibility permission is required for AX element extraction.",
+    ])
+  } else if targetVisibility != "frontmost" {
+    perceptionLimitations.append([
+      "code": "target-not-frontmost",
+      "message": "Target window crop and AX element extraction require the target app to be frontmost.",
+    ])
+  } else if let app = frontmost, let window = focusedWindowElement(pid: app.processIdentifier) {
+    if let bounds = axRect(window) {
+      perception["windowCrop"] = [
+        "source": "target-window",
+        "coordinateSpace": "screen",
+        "bounds": bounds,
+      ]
+    } else {
+      perceptionLimitations.append([
+        "code": "target-window-bounds-unavailable",
+        "message": "Target window bounds were not available for crop metadata.",
+      ])
+    }
+    let extracted = accessibilityElements(window: window, limit: perceptionLimit)
+    perception["accessibilityElements"] = extracted.elements
+    perceptionLimitations.append(contentsOf: extracted.limitations)
+  } else {
+    perceptionLimitations.append([
+      "code": "target-window-unavailable",
+      "message": "The frontmost target window was not available through Accessibility.",
+    ])
+  }
+  perception["limitations"] = perceptionLimitations
+  response["perception"] = perception
+  if !limitations.isEmpty {
+    response["limitations"] = limitations
   }
   json(response)
 }

@@ -17,13 +17,16 @@ const {
 
 function fakeNativeClient(options = {}) {
   const actions = [];
+  const observePayloads = [];
   let observeCount = 0;
   return {
     actions,
+    observePayloads,
     get observeCount() {
       return observeCount;
     },
-    async observe() {
+    async observe(payload = {}) {
+      observePayloads.push(payload);
       observeCount += 1;
       const targetVisibility =
         options.targetVisibilitySequence?.[observeCount - 1] ??
@@ -64,6 +67,7 @@ function fakeNativeClient(options = {}) {
         },
         targetVisibility,
         accessibilityTrusted: true,
+        perception: options.perception,
         screenshot: {
           path: `/tmp/screen-${observeCount}.png`,
           mimeType: "image/png",
@@ -396,6 +400,10 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     "70,80",
     "--scroll",
     "90,100:0,-240",
+    "--find-text",
+    "Open",
+    "--click-text",
+    "Save",
     "--type",
     "hello",
     "--key",
@@ -418,6 +426,8 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     { type: "doubleClick", x: 50, y: 60 },
     { type: "rightClick", x: 70, y: 80 },
     { type: "scroll", x: 90, y: 100, deltaX: 0, deltaY: -240 },
+    { type: "findText", text: "Open" },
+    { type: "clickText", text: "Save" },
     { type: "type", text: "hello" },
     { type: "key", key: "s", modifiers: ["cmd"] },
     { type: "hotkey", key: "p", modifiers: ["cmd", "shift"] },
@@ -426,6 +436,30 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     { type: "observe" },
     { type: "stop" },
   ]);
+});
+
+test("computer use CLI passes bounded perception options to observe", async () => {
+  const nativeClient = fakeNativeClient();
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--no-perception",
+      "--perception-limit",
+      "7",
+      "--actions",
+      JSON.stringify([{ type: "start" }]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(nativeClient.observePayloads[0].includePerception, false);
+  assert.equal(nativeClient.observePayloads[0].perceptionLimit, 7);
 });
 
 test("computer use CLI rejects mixing shorthand flags with --actions", () => {
@@ -502,6 +536,8 @@ test("computer use CLI runs semantic side effects and wait by default", async ()
       "doubleClick",
       "rightClick",
       "scroll",
+      "findText",
+      "clickText",
       "key",
       "hotkey",
       "type",
@@ -992,7 +1028,22 @@ test("computer use CLI reports target-bound overlay limitation when helper is di
 });
 
 test("computer use CLI output keeps bounded screenshot data without stale temp path", async () => {
-  const includedHarness = managerHarness();
+  const cropScreenshot = {
+    path: "/tmp/crop.png",
+    mimeType: "image/png",
+    byteSize: 5,
+    dataUrl: "data:image/png;base64,CROP",
+  };
+  const includedNativeClient = fakeNativeClient({
+    perception: {
+      windowCrop: { screenshot: cropScreenshot },
+      accessibilityElements: [],
+    },
+  });
+  const includedHarness = {
+    nativeClient: includedNativeClient,
+    manager: createComputerUseManager({ nativeClient: includedNativeClient }),
+  };
   const included = await runComputerUseRequest(
     parseComputerUseCliArgs(["run", "--actions", '[{"type":"start"}]']),
     () => includedHarness.manager,
@@ -1008,8 +1059,25 @@ test("computer use CLI output keeps bounded screenshot data without stale temp p
     /cleaned up after the CLI run/,
   );
   assert.equal(included.results[0].state.observation.screenshot.byteSize, 10);
+  assert.equal(
+    included.results[0].state.observation.perception.windowCrop.screenshot.dataUrl,
+    "data:image/png;base64,CROP",
+  );
+  assert.equal(
+    included.results[0].state.observation.perception.windowCrop.screenshot.path,
+    undefined,
+  );
 
-  const omittedHarness = managerHarness();
+  const omittedNativeClient = fakeNativeClient({
+    perception: {
+      windowCrop: { screenshot: cropScreenshot },
+      accessibilityElements: [],
+    },
+  });
+  const omittedHarness = {
+    nativeClient: omittedNativeClient,
+    manager: createComputerUseManager({ nativeClient: omittedNativeClient }),
+  };
   const omitted = await runComputerUseRequest(
     parseComputerUseCliArgs([
       "run",
@@ -1026,6 +1094,18 @@ test("computer use CLI output keeps bounded screenshot data without stale temp p
     true,
   );
   assert.equal(omitted.results[0].state.observation.screenshot.path, undefined);
+  assert.equal(
+    omitted.results[0].state.observation.perception.windowCrop.screenshot.dataUrl,
+    undefined,
+  );
+  assert.equal(
+    omitted.results[0].state.observation.perception.windowCrop.screenshot.dataUrlOmitted,
+    true,
+  );
+  assert.equal(
+    omitted.results[0].state.observation.perception.windowCrop.screenshot.path,
+    undefined,
+  );
 });
 
 test("computer use CLI rejects stateless move command form", () => {

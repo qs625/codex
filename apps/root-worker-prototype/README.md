@@ -151,13 +151,16 @@ node scripts/morpheus-computer-use.mjs run \
 The CLI keeps a Computer Use session inside a single `run` process and reuses
 the Electron ComputerUseManager safety gates, target preflight, trace evidence,
 and native macOS bridge. CLI supports `start`, `observe`, `move`, `click`,
-`doubleClick`, `rightClick`, `scroll`, `key`, `hotkey`, `type`, `drag`, `wait`,
-and `stop`; `move` only updates the agent cursor/path evidence and does not move
-the macOS system cursor. `wait` pauses the same session for a bounded duration
-and records timer evidence. The `run --actions` batch is the explicit Computer
-Use operation boundary for real desktop side effects, and shorthand flags are
-compiled into that same batch path. The JSON result includes the compiled
-`actions` for audit and replay.
+`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `key`, `hotkey`,
+`type`, `drag`, `wait`, and `stop`; `move` only updates the agent cursor/path
+evidence and does not move the macOS system cursor. `wait` pauses the same
+session for a bounded duration and records timer evidence. `clickText` resolves
+a unique visible Accessibility text candidate to ordinary screen coordinates
+before using the same target gate and native click path; ambiguous or missing
+matches fail with candidate evidence instead of guessing. The `run --actions`
+batch is the explicit Computer Use operation boundary for real desktop side
+effects, and shorthand flags are compiled into that same batch path. The JSON
+result includes the compiled `actions` for audit and replay.
 
 For observe-think-act workflows, use the long-lived REPL instead of splitting
 work across multiple `run` processes:
@@ -183,12 +186,16 @@ action after the target is confirmed frontmost/matched; activation failure or a
 different foreground app is reported as a failed or blocked action. Screenshot
 evidence includes a bounded data URL by default and omits the temporary capture
 path because the CLI cleans up that file before returning; pass
-`--omit-screenshot-data` for metadata-only output. CLI runs create a narrow
-Electron overlay helper for target-bound agent cursor feedback; the helper is
-click-through, non-focusable, and cleaned up on `stop`/process exit. Background
-targets are not drawn over an unrelated foreground app before activation. After
-a visible `move`, the CLI keeps the overlay on screen briefly before the next
-batch action; pass `--overlay-hold-ms 0` to disable that delay.
+`--omit-screenshot-data` for metadata-only output. Foreground target observes
+also include bounded perception facts: target window crop metadata/screenshot
+when bounds are available, and a limited Accessibility element candidate list
+with screen-coordinate bounds/centers. Use `--no-perception` to disable this
+extraction or `--perception-limit <n>` to lower the AX candidate cap. CLI runs
+create a narrow Electron overlay helper for target-bound agent cursor feedback;
+the helper is click-through, non-focusable, and cleaned up on `stop`/process
+exit. Background targets are not drawn over an unrelated foreground app before
+activation. After a visible `move`, the CLI keeps the overlay on screen briefly
+before the next batch action; pass `--overlay-hold-ms 0` to disable that delay.
 
 ## Electron
 
