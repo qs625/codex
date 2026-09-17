@@ -40,8 +40,12 @@ pub(crate) struct PendingThreadResumeRequest {
 mod tests {
     use super::*;
     use app_server_protocol::TurnStatus;
+    use app_server_protocol::ThreadItem;
     use pretty_assertions::assert_eq;
     use protocol::config_types::ModeKind;
+    use protocol::parse_command::ParsedCommand;
+    use protocol::protocol::ExecCommandBeginEvent;
+    use protocol::protocol::ExecCommandSource;
     use protocol::protocol::TurnCompleteEvent;
     use protocol::protocol::TurnStartedEvent;
 
@@ -76,6 +80,72 @@ mod tests {
         );
 
         assert_eq!(state.active_in_progress_turn_snapshot(), None);
+    }
+
+    #[test]
+    fn terminal_turn_snapshot_retains_live_command_for_wait_command_projection() {
+        let mut state = ThreadState::default();
+
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: ModeKind::default(),
+            }),
+        );
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "exec-1".to_string(),
+                started_at_ms: 1_000,
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-1".to_string(),
+                command: vec!["pnpm".to_string(), "test".to_string()],
+                cwd: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp"))
+                    .expect("absolute cwd"),
+                parsed_cmd: vec![ParsedCommand::Unknown {
+                    cmd: "pnpm test".to_string(),
+                }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: Some(1_000),
+                notify_on: None,
+            }),
+        );
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
+                last_agent_message: None,
+                completed_at: Some(2),
+                duration_ms: Some(1_000),
+                time_to_first_token_ms: None,
+            }),
+        );
+
+        assert_eq!(state.active_in_progress_turn_snapshot(), None);
+        let terminal_snapshot = state
+            .last_terminal_turn_snapshot()
+            .expect("terminal snapshot should be retained");
+        assert_eq!(terminal_snapshot.id, "turn-1");
+        assert_eq!(terminal_snapshot.status, TurnStatus::Completed);
+        assert!(matches!(
+            terminal_snapshot.items.as_slice(),
+            [ThreadItem::CommandExecution { id, .. }] if id == "exec-1"
+        ));
+
+        state.track_current_turn_event(
+            "turn-2",
+            &EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-2".to_string(),
+                started_at: Some(3),
+                model_context_window: None,
+                collaboration_mode_kind: ModeKind::default(),
+            }),
+        );
+        assert_eq!(state.last_terminal_turn_snapshot(), None);
     }
 }
 
@@ -120,6 +190,7 @@ pub(crate) struct ThreadState {
     pub(crate) listener_generation: u64,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
+    last_terminal_turn_snapshot: Option<Turn>,
     listener_session_id: Option<SessionId>,
     watch_registration: WatchRegistration,
 }
@@ -152,6 +223,7 @@ impl ThreadState {
         }
         self.listener_command_tx = None;
         self.current_turn_history.reset();
+        self.last_terminal_turn_snapshot = None;
         self.listener_session_id = None;
         self.watch_registration = WatchRegistration::default();
     }
@@ -166,6 +238,10 @@ impl ThreadState {
         self.current_turn_history.active_turn_snapshot()
     }
 
+    pub(crate) fn last_terminal_turn_snapshot(&self) -> Option<Turn> {
+        self.last_terminal_turn_snapshot.clone()
+    }
+
     pub(crate) fn active_in_progress_turn_snapshot(&self) -> Option<Turn> {
         self.current_turn_history
             .has_active_turn()
@@ -176,12 +252,14 @@ impl ThreadState {
     pub(crate) fn track_current_turn_event(&mut self, event_turn_id: &str, event: &EventMsg) {
         if let EventMsg::TurnStarted(payload) = event {
             self.turn_summary.started_at = payload.started_at;
+            self.last_terminal_turn_snapshot = None;
         }
         self.current_turn_history.handle_event(event);
         if matches!(event, EventMsg::TurnAborted(_) | EventMsg::TurnComplete(_))
             && !self.current_turn_history.has_active_turn()
         {
             self.last_terminal_turn_id = Some(event_turn_id.to_string());
+            self.last_terminal_turn_snapshot = self.current_turn_history.active_turn_snapshot();
             self.current_turn_history.reset();
         }
     }

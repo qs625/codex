@@ -685,6 +685,119 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn live_wait_command_turn_snapshot_overlays_persisted_read_without_command_items() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::Command,
+            },
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(
+                protocol::protocol::TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
+                    started_at: Some(1),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::UserMessage(
+                protocol::protocol::UserMessageEvent {
+                    message: "run tests".to_string(),
+                    images: Some(Vec::new()),
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "starting tests".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ];
+        let live_wait_command_turn = Turn {
+            id: "turn-1".to_string(),
+            items: vec![ThreadItem::CommandExecution {
+                id: "exec-live".to_string(),
+                command: "pnpm test".to_string(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("pid-1".to_string()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::InProgress,
+                initial_wait_ms: Some(1_000),
+                notify_on: None,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "pnpm test".to_string(),
+                }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            }],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::Completed,
+            started_at: Some(1),
+            completed_at: Some(2),
+            duration_ms: Some(1_000),
+        };
+
+        populate_thread_turns_from_history(
+            &mut thread,
+            &persisted_items,
+            Some(&live_wait_command_turn),
+        );
+        apply_live_active_command_items_from_active_turn(
+            &mut thread,
+            Some(&live_wait_command_turn),
+        );
+
+        assert_eq!(thread.turns.len(), 1);
+        assert!(
+            thread.turns[0].items.iter().any(|item| matches!(
+                item,
+                ThreadItem::CommandExecution { id, status, .. }
+                    if id == "exec-live" && *status == CommandExecutionStatus::InProgress
+            )),
+            "live wait-command snapshot should overlay command rows missing from persisted read"
+        );
+        assert_eq!(
+            thread
+                .active_command_items
+                .as_ref()
+                .expect("active commands should be projected")
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["exec-live"]
+        );
+    }
+
+    #[test]
     fn populate_thread_turns_from_history_prefers_stable_active_agent_message_duplicate() {
         let mut thread = Thread {
             id: "thread-1".to_string(),
