@@ -30,6 +30,12 @@ const {
   browserSessionPartition,
 } = require("./browserPanelConfig.cjs");
 const {
+  browserPanelLoadErrorMessage,
+  browserPanelUrlsEqual,
+  shouldCompleteRejectedBrowserPanelNavigation,
+  shouldDeferBrowserPanelFailure: shouldDeferBrowserPanelLoadFailureState,
+} = require("./browserPanelNavigationState.cjs");
+const {
   normalizeBrowserBoundsUpdate,
 } = require("./browserPanelBounds.cjs");
 const {
@@ -1799,6 +1805,10 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
     view,
     state: emptyBrowserPanelTabState(),
     allowNextAboutBlankNavigation: false,
+    navigationSequence: 0,
+    finishedNavigationSequence: 0,
+    finishedUrl: null,
+    pendingDeferredFailure: null,
   };
   panel.tabs.push(tab);
   bindBrowserPanelTab(panel, tab);
@@ -1823,8 +1833,34 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
     sendBrowserPanelState(panel);
     throw new Error(normalized.reason);
   }
+  const navigationSequence = ++tab.navigationSequence;
+  tab.pendingDeferredFailure = null;
   tab.state.error = null;
-  await tab.view.webContents.loadURL(normalized.url);
+  tab.state.loading = true;
+  sendBrowserPanelState(panel);
+  try {
+    await tab.view.webContents.loadURL(normalized.url);
+    await waitForBrowserPanelLoadStop(tab.view.webContents);
+    if (tab.navigationSequence === navigationSequence) {
+      completeBrowserPanelNavigation(panel, tab);
+    }
+  } catch (error) {
+    await delay(100);
+    updateBrowserPanelLocationState(tab);
+    if (browserPanelTabHasFinishedTarget(tab, normalized.url, navigationSequence)) {
+      if (tab.navigationSequence === navigationSequence) {
+        completeBrowserPanelNavigation(panel, tab);
+      }
+      return;
+    }
+    if (tab.navigationSequence === navigationSequence) {
+      failBrowserPanelNavigation(panel, tab, {
+        errorDescription: error instanceof Error ? error.message : String(error),
+        validatedUrl: normalized.url,
+      });
+    }
+    throw error;
+  }
 }
 
 function bindBrowserPanelTab(panel, tab) {
@@ -1856,9 +1892,13 @@ function bindBrowserPanelTab(panel, tab) {
     tab.state.loading = false;
     sendBrowserPanelState(panel);
   });
+  tab.view.webContents.on("did-finish-load", () => {
+    completeBrowserPanelNavigation(panel, tab);
+  });
   tab.view.webContents.on("did-navigate", (_event, url) => {
     tab.state.url = url || null;
     updateBrowserPanelLocationState(tab);
+    tab.state.error = null;
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("did-navigate-in-page", (_event, url) => {
@@ -1876,15 +1916,113 @@ function bindBrowserPanelTab(panel, tab) {
       if (!isMainFrame || errorCode === -3) {
         return;
       }
-      tab.state.url = validatedUrl || tab.state.url;
-      tab.state.loading = false;
-      tab.state.error = errorDescription || "Page failed to load";
-      updateBrowserPanelLocationState(tab);
-      sendBrowserPanelState(panel);
+      const failure = { errorCode, errorDescription, validatedUrl };
+      if (shouldDeferBrowserPanelFailure(tab, failure)) {
+        deferBrowserPanelFailure(panel, tab, failure);
+        return;
+      }
+      failBrowserPanelNavigation(panel, tab, failure);
     },
   );
   tab.view.webContents.on("destroyed", () => {
     removeDestroyedBrowserPanelTab(panel, tab);
+  });
+}
+
+function completeBrowserPanelNavigation(panel, tab) {
+  tab.pendingDeferredFailure = null;
+  updateBrowserPanelLocationState(tab);
+  tab.finishedNavigationSequence = tab.navigationSequence;
+  tab.finishedUrl = tab.state.url;
+  tab.state.loading = false;
+  tab.state.error = null;
+  sendBrowserPanelState(panel);
+}
+
+function failBrowserPanelNavigation(panel, tab, failure) {
+  tab.pendingDeferredFailure = null;
+  tab.state.url = failure.validatedUrl || tab.state.url;
+  tab.state.loading = false;
+  tab.state.error = browserPanelLoadErrorMessage(failure);
+  updateBrowserPanelLocationState(tab);
+  tab.state.loading = false;
+  sendBrowserPanelState(panel);
+}
+
+function shouldDeferBrowserPanelFailure(tab, failure) {
+  return shouldDeferBrowserPanelLoadFailureState({
+    ...failure,
+    currentUrl: tab.state.url,
+    loading: tab.state.loading,
+  });
+}
+
+function deferBrowserPanelFailure(panel, tab, failure) {
+  const deferredFailure = {
+    ...failure,
+    navigationSequence: tab.navigationSequence,
+  };
+  tab.pendingDeferredFailure = deferredFailure;
+  setTimeout(() => {
+    if (
+      tab.pendingDeferredFailure !== deferredFailure ||
+      tab.navigationSequence !== deferredFailure.navigationSequence ||
+      tab.view.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    updateBrowserPanelLocationState(tab);
+    if (
+      browserPanelTabHasFinishedTarget(
+        tab,
+        deferredFailure.validatedUrl,
+        deferredFailure.navigationSequence,
+      )
+    ) {
+      completeBrowserPanelNavigation(panel, tab);
+      return;
+    }
+    failBrowserPanelNavigation(panel, tab, deferredFailure);
+  }, 100);
+}
+
+function browserPanelTabIsAtUrl(tab, target) {
+  updateBrowserPanelLocationState(tab);
+  return browserPanelUrlsEqual(tab.state.url, target);
+}
+
+function browserPanelTabHasFinishedTarget(tab, target, navigationSequence) {
+  updateBrowserPanelLocationState(tab);
+  return shouldCompleteRejectedBrowserPanelNavigation({
+    navigationSequence,
+    finishedNavigationSequence: tab.finishedNavigationSequence,
+    finishedUrl: tab.finishedUrl,
+    currentUrl: tab.state.url,
+    targetUrl: target,
+  });
+}
+
+function waitForBrowserPanelLoadStop(webContents, timeoutMs = 1_000) {
+  if (webContents.isDestroyed() || !webContents.isLoading()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let timeout = null;
+    const cleanup = () => {
+      if (timeout !== null) {
+        clearTimeout(timeout);
+      }
+      webContents.removeListener("did-stop-loading", onStop);
+      webContents.removeListener("destroyed", onDestroyed);
+      resolve();
+    };
+    const onStop = () => cleanup();
+    const onDestroyed = () => cleanup();
+
+    webContents.once("did-stop-loading", onStop);
+    webContents.once("destroyed", onDestroyed);
+    timeout = setTimeout(cleanup, timeoutMs);
   });
 }
 

@@ -943,6 +943,9 @@ function BrowserPanel({
         (tab) => tab.id === normalizedState.activeTabId,
       ) ?? normalizedState.tabs[0] ?? null;
     setAddress(normalizedActiveTab?.url ?? "");
+    if (shouldClearBrowserLocalError(normalizedState, normalizedActiveTab)) {
+      setLocalError(null);
+    }
   };
 
   useEffect(() => {
@@ -1285,6 +1288,13 @@ export function normalizeBrowserPanelState(
     activeTabId: activeTab?.id ?? null,
     tabs,
   };
+}
+
+export function shouldClearBrowserLocalError(
+  state: BrowserPanelState,
+  activeTab: BrowserPanelTabState | null,
+) {
+  return !state.error && !activeTab?.error;
 }
 
 function browserTabsFromActiveState(state: BrowserPanelActiveState) {

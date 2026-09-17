@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const { subscribeIpcState } = require("./preloadSubscriptions.cjs");
 
 contextBridge.exposeInMainWorld("codexDesktop", {
   health: () => ipcRenderer.invoke("codex:health"),
@@ -147,25 +148,9 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     };
   },
   subscribeBrowserState(listener) {
-    const onBrowserState = (_event, state) => {
-      listener(state);
-    };
-
-    ipcRenderer.on("codex:browser:state", onBrowserState);
-
-    return () => {
-      ipcRenderer.removeListener("codex:browser:state", onBrowserState);
-    };
+    return subscribeIpcState(ipcRenderer, "codex:browser:state", listener);
   },
   subscribeTerminalState(listener) {
-    const onTerminalState = (_event, state) => {
-      listener(state);
-    };
-
-    ipcRenderer.on("codex:terminal:state", onTerminalState);
-
-    return () => {
-      ipcRenderer.removeListener("codex:terminal:state", onTerminalState);
-    };
+    return subscribeIpcState(ipcRenderer, "codex:terminal:state", listener);
   },
 });
