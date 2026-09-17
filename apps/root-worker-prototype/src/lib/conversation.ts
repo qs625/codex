@@ -10,6 +10,7 @@ import {
   buildActiveCommandConversationTail,
   type ConversationFlatItemState,
 } from "./conversationActiveCommands";
+import { selectRunningActiveCommandItems } from "./activeCommands";
 import {
   buildConversationCells,
   type ConversationCellBuildOptions,
@@ -99,28 +100,38 @@ export function buildConversationState(
   const canReusePrevious =
     previous?.threadId === thread.id && previous.author === author;
   const flatItems: ConversationFlatItemState[] = [];
-  const entries: ConversationEntry[] = [];
   const historyItemIds = new Set<string>();
+  const activeCommandItemsById = new Map(
+    selectRunningActiveCommandItems(thread).map((item) => [item.id, item]),
+  );
   let flatItemIndex = 0;
+  let flatItemSequence = 0;
+  let latestCompactOrderKeyMs: number | null = null;
 
   for (const turn of thread.turns) {
-    const turnTimestamp = formatClockTime(
-      turn.completedAt ?? turn.startedAt ?? thread.updatedAt,
+    const turnTimestampSeconds = turn.completedAt ?? turn.startedAt;
+    const fallbackTimestampSeconds = turnTimestampSeconds ?? thread.updatedAt;
+    const turnTimestamp = formatClockTime(fallbackTimestampSeconds);
+    const turnOrderKeyMs = timestampMsFromSeconds(
+      turnTimestampSeconds ?? thread.updatedAt,
     );
 
     for (const item of turn.items) {
       historyItemIds.add(item.id);
-      const timestamp = formatItemTimestamp(item) ?? turnTimestamp;
+      const displayItem = liveCommandDisplayItem(item, activeCommandItemsById);
+      const timestamp = formatItemTimestamp(displayItem) ?? turnTimestamp;
+      const orderKeyMs =
+        itemOrderKeyMs(displayItem) ?? turnOrderKeyMs ?? flatItemSequence;
       const previousFlatItem = canReusePrevious
         ? previous.flatItems[flatItemIndex]
         : undefined;
       const rebuiltEntries =
         previousFlatItem &&
-        previousFlatItem.id === item.id &&
-        previousFlatItem.item === item &&
+        previousFlatItem.id === displayItem.id &&
+        previousFlatItem.item === displayItem &&
         previousFlatItem.timestamp === timestamp
           ? previousFlatItem.entries
-          : buildConversationItemEntries(item, {
+          : buildConversationItemEntries(displayItem, {
               author,
               timestamp,
               commandLookup,
@@ -130,33 +141,55 @@ export function buildConversationState(
             }));
 
       flatItems.push({
-        id: item.id,
-        item,
+        id: displayItem.id,
+        item: displayItem,
         timestamp,
+        orderKeyMs,
+        sequence: flatItemSequence,
         entries: rebuiltEntries,
       });
-      entries.push(...rebuiltEntries);
+      if (displayItem.type === "contextCompaction") {
+        latestCompactOrderKeyMs =
+          latestCompactOrderKeyMs === null
+            ? orderKeyMs
+            : Math.max(latestCompactOrderKeyMs, orderKeyMs);
+      }
       flatItemIndex += 1;
+      flatItemSequence += 1;
     }
   }
 
-  const activeTimestamp = formatClockTime(thread.updatedAt);
   const activeTail = buildActiveCommandConversationTail({
     thread,
     author,
-    timestamp: activeTimestamp,
+    timestamp: (item) =>
+      formatItemTimestamp(item) ?? formatClockTime(thread.updatedAt),
+    orderKeyMs: (item) => {
+      const itemOrderKey =
+        itemOrderKeyMs(item) ??
+        timestampMsFromSeconds(thread.updatedAt) ??
+        flatItemSequence;
+      return latestCompactOrderKeyMs === null
+        ? itemOrderKey
+        : Math.max(itemOrderKey, latestCompactOrderKeyMs);
+    },
+    sequenceStart: flatItemSequence,
     commandLookup,
     historyItemIds,
     previous: canReusePrevious ? previous : null,
     buildItemEntries: buildConversationItemEntries,
   });
   flatItems.push(...activeTail.flatItems);
-  entries.push(...activeTail.entries);
+  const orderedFlatItems =
+    activeTail.flatItems.length === 0
+      ? flatItems
+      : [...flatItems].sort(compareConversationFlatItems);
+  const entries = orderedFlatItems.flatMap((item) => item.entries);
 
   return {
     threadId: thread.id,
     author,
-    flatItems,
+    flatItems: orderedFlatItems,
     entries,
     cells: buildConversationCells(
       entries,
@@ -164,6 +197,37 @@ export function buildConversationState(
       options,
     ),
   };
+}
+
+function liveCommandDisplayItem(
+  item: ThreadItem,
+  activeCommandItemsById: ReadonlyMap<string, ThreadItem>,
+): ThreadItem {
+  if (item.type !== "commandExecution") {
+    return item;
+  }
+  const activeItem = activeCommandItemsById.get(item.id);
+  if (!activeItem || activeItem.type !== "commandExecution") {
+    return item;
+  }
+  return {
+    ...item,
+    ...activeItem,
+    startedAtMs: item.startedAtMs ?? activeItem.startedAtMs,
+    completedAtMs: activeItem.completedAtMs ?? item.completedAtMs,
+  };
+}
+
+function compareConversationFlatItems(
+  left: ConversationFlatItemState,
+  right: ConversationFlatItemState,
+) {
+  const leftOrder = left.orderKeyMs ?? Number.POSITIVE_INFINITY;
+  const rightOrder = right.orderKeyMs ?? Number.POSITIVE_INFINITY;
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+  return (left.sequence ?? 0) - (right.sequence ?? 0);
 }
 
 function buildConversationItemEntries(
@@ -778,6 +842,15 @@ function formatItemTimestamp(item: ThreadItem) {
   return timestampMs === null || timestampMs === undefined
     ? null
     : formatClockTime(timestampMs / 1000);
+}
+
+function itemOrderKeyMs(item: ThreadItem) {
+  const timestampMs = item.completedAtMs ?? item.startedAtMs;
+  return Number.isFinite(timestampMs) ? timestampMs! : null;
+}
+
+function timestampMsFromSeconds(timestampSeconds?: number | null) {
+  return Number.isFinite(timestampSeconds) ? timestampSeconds! * 1000 : null;
 }
 
 function buildCollabAgentMessageEntry(

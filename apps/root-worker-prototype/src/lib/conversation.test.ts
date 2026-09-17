@@ -1219,6 +1219,213 @@ test("renders live active command current state as compact command anchors", () 
   );
 });
 
+test("places older active command snapshots by command start time instead of at the conversation tail", () => {
+  const thread = {
+    ...makeThreadWithTurns([
+      {
+        id: "turn-later",
+        items: [
+          {
+            type: "userMessage",
+            id: "user-later",
+            content: [{ type: "text", text: "later question" }],
+          },
+          {
+            type: "agentMessage",
+            id: "agent-later",
+            text: "later answer",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 120,
+        completedAt: 120,
+        durationMs: 0,
+      },
+    ]),
+    updatedAt: 180,
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-running",
+        command: "pnpm package:root-worker-prototype:mac",
+        cwd: "/tmp/project",
+        processId: "process-running",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [
+          {
+            type: "unknown",
+            command: "pnpm package:root-worker-prototype:mac",
+          },
+        ],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+        startedAtMs: 60_000,
+      },
+    ],
+  } satisfies Thread;
+
+  const entries = buildConversationEntries(thread);
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.turnId, entry.timestamp]),
+    [
+      ["exec-running", "active-command:exec-running", formatClockTime(60)],
+      ["user-later", "turn-later", formatClockTime(120)],
+      ["agent-later", "turn-later", formatClockTime(120)],
+    ],
+  );
+});
+
+test("keeps pre-compact orphan active command visible after the compact marker", () => {
+  const thread = {
+    ...makeThreadWithTurns([
+      {
+        id: "turn-compact",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistory: [],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 100,
+        completedAt: 100,
+        durationMs: 0,
+      },
+      {
+        id: "turn-later",
+        items: [
+          {
+            type: "agentMessage",
+            id: "agent-later",
+            text: "later message",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 120,
+        completedAt: 120,
+        durationMs: 0,
+      },
+    ]),
+    updatedAt: 180,
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-pre-compact",
+        command: "pnpm build",
+        cwd: "/tmp/project",
+        processId: "process-pre-compact",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm build" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+        startedAtMs: 60_000,
+      },
+    ],
+  } satisfies Thread;
+
+  const state = buildConversationState(thread);
+
+  assert.deepEqual(
+    state.entries.map((entry) => [entry.id, entry.turnId, entry.timestamp]),
+    [
+      ["compact-1", "turn-compact", formatClockTime(100)],
+      [
+        "exec-pre-compact",
+        "active-command:exec-pre-compact",
+        formatClockTime(60),
+      ],
+      ["agent-later", "turn-later", formatClockTime(120)],
+    ],
+  );
+  assert.deepEqual(
+    state.cells.map((cell) => cell.entries.map((entry) => entry.id)),
+    [["compact-1"], ["exec-pre-compact"], ["agent-later"]],
+  );
+});
+
+test("updates matching persisted command from active current state without duplicating it", () => {
+  const thread = {
+    ...makeThread([
+      {
+        type: "commandExecution",
+        id: "exec-existing",
+        command: "pnpm test",
+        cwd: "/tmp/project",
+        processId: "process-existing",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm test" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+        startedAtMs: 1_000,
+      },
+      {
+        type: "agentMessage",
+        id: "agent-later",
+        text: "still working",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-existing",
+        command: "pnpm test",
+        cwd: "/tmp/project",
+        processId: "process-existing",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm test" }],
+        aggregatedOutput: "live output\n",
+        exitCode: null,
+        durationMs: null,
+        startedAtMs: 1_000,
+      },
+    ],
+  } satisfies Thread;
+
+  const entries = buildConversationEntries(thread);
+
+  assert.deepEqual(
+    entries.map((entry) => [
+      entry.id,
+      entry.turnId,
+      entry.toolStatus,
+      entry.timestamp,
+    ]),
+    [
+      ["exec-existing", "turn-1", "running", formatClockTime(1)],
+      ["agent-later", "turn-1", undefined, formatClockTime(1)],
+    ],
+  );
+});
+
 test("does not render legacy orphan command output placeholder as active tail", () => {
   const thread = normalizeThreadSnapshot({
     ...makeThread([]),
