@@ -183,6 +183,26 @@ class ComputerUseManager {
           ...actionResult,
           compiledAction: { type: "click", ...match.point },
         });
+      } else if (normalized.type === "setText") {
+        const match = findTextInObservation(
+          { ...normalized, requireWritable: true },
+          this.session.observation,
+        );
+        applyActionEvidence(traceItem, {
+          ...match,
+          targetVisibility: this.session.targetVisibility ?? "unknown",
+          characterCount: normalized.text.length,
+        });
+        if (!match.ok || match.matchStatus !== "unique") {
+          throw new Error(match.reason || `Could not uniquely match writable text: ${normalized.query}`);
+        }
+        const actionResult = await this.nativeClient.act({
+          type: "setText",
+          targetApp: this.session.target?.app,
+          query: normalized.query,
+          text: normalized.text,
+        });
+        applyActionEvidence(traceItem, actionResult);
       } else {
         if (["click", "doubleClick", "rightClick", "scroll"].includes(normalized.type)) {
           await this.moveAgentCursor(normalized, traceItem);
@@ -230,7 +250,7 @@ class ComputerUseManager {
       };
     }
     if (
-      isSideEffectAction(action) &&
+      isForegroundRequiredSideEffectAction(action) &&
       this.session.targetVisibility !== "frontmost"
     ) {
       return {
@@ -244,7 +264,7 @@ class ComputerUseManager {
       };
     }
     const mismatch =
-      action.type === "move" || !isSideEffectAction(action)
+      action.type === "move" || !isForegroundRequiredSideEffectAction(action)
         ? null
         : targetMismatch(this.session.target, this.session.observation?.frontmostApp);
     if (mismatch) {
@@ -696,6 +716,19 @@ function actionEvidenceSummary(traceItem) {
       compiledAction: evidence.compiledAction ?? null,
     };
   }
+  if (traceItem.action?.type === "setText") {
+    return {
+      source:
+        evidence.method === "accessibility-set-value"
+          ? "native-bridge"
+          : "perception",
+      ok: evidence.ok === true,
+      method: evidence.method ?? null,
+      matchStatus: evidence.matchStatus ?? null,
+      targetVisibility: evidence.targetVisibility ?? null,
+      characterCount: evidence.characterCount ?? null,
+    };
+  }
   return {
     source: isSideEffectAction(traceItem.action) ? "native-bridge" : "manager",
     ok: evidence.ok ?? null,
@@ -721,9 +754,11 @@ function classifyComputerUseAction(action) {
       ? action.text
       : action.type === "clickText"
         ? action.text
+        : action.type === "setText"
+          ? action.text
         : "";
   if (
-    ((action.type === "type" || action.type === "clickText") &&
+    ((action.type === "type" || action.type === "clickText" || action.type === "setText") &&
       DANGEROUS_TEXT_PATTERN.test(riskyText ?? "")) ||
     ((action.type === "key" || action.type === "hotkey") &&
       modifiers.includes("cmd") &&
@@ -747,6 +782,7 @@ function classifyComputerUseAction(action) {
       "key",
       "hotkey",
       "drag",
+      "setText",
     ].includes(action.type)
   ) {
     return withRisk({
@@ -771,7 +807,7 @@ function withRisk(policy, riskLevel, riskCategories) {
 
 function riskyActionCategories(action) {
   const categories = ["native-side-effect", "sensitive-or-destructive"];
-  if (action.type === "type" || action.type === "clickText") {
+  if (action.type === "type" || action.type === "clickText" || action.type === "setText") {
     categories.push("text-intent");
   }
   if (action.type === "key" || action.type === "hotkey") {
@@ -844,15 +880,20 @@ function isSideEffectAction(action) {
     "key",
     "hotkey",
     "drag",
+    "setText",
   ].includes(action?.type);
 }
 
 function shouldActivateTargetBeforeAction(action, session) {
   return (
-    isSideEffectAction(action) &&
+    isForegroundRequiredSideEffectAction(action) &&
     Boolean(session?.target?.app) &&
     session.targetVisibility !== "frontmost"
   );
+}
+
+function isForegroundRequiredSideEffectAction(action) {
+  return isSideEffectAction(action) && action?.type !== "setText";
 }
 
 function normalizeAction(action) {
@@ -882,6 +923,13 @@ function normalizeAction(action) {
       return {
         type: "clickText",
         text: requireTextQuery(action.text),
+        maxMatches: boundedMaxMatches(action.maxMatches),
+      };
+    case "setText":
+      return {
+        type: "setText",
+        query: requireTextQuery(action.query ?? action.target ?? action.textQuery),
+        text: String(action.text ?? ""),
         maxMatches: boundedMaxMatches(action.maxMatches),
       };
     case "type":
@@ -1064,13 +1112,6 @@ function resolveObservationLimitations({ hasTarget, targetApp, targetVisibility 
       message: "The target app is not visible to the current macOS observation pass.",
     });
   }
-  if (targetVisibility === "background") {
-    limitations.push({
-      code: "background-observe-metadata-only",
-      message:
-        "Background target observe is limited to app/window metadata; the screenshot remains the current desktop capture.",
-    });
-  }
   return limitations;
 }
 
@@ -1219,8 +1260,17 @@ function applyActionEvidence(traceItem, actionResult) {
   if (Number.isSafeInteger(actionResult.matchCount)) {
     evidence.matchCount = actionResult.matchCount;
   }
+  if (Number.isSafeInteger(actionResult.characterCount)) {
+    evidence.characterCount = actionResult.characterCount;
+  }
   if (Array.isArray(actionResult.candidates)) {
     evidence.candidates = actionResult.candidates.slice(0, 20);
+  }
+  if (actionResult.matchedElement && typeof actionResult.matchedElement === "object") {
+    evidence.matchedElement = normalizeAccessibilityElement(actionResult.matchedElement);
+  }
+  if (typeof actionResult.targetVisibility === "string") {
+    evidence.targetVisibility = actionResult.targetVisibility;
   }
   if (actionResult.point) {
     evidence.point = normalizePoint(actionResult.point);
@@ -1280,16 +1330,17 @@ function normalizeObservationPerception({
   const targetWindow = targetWindowBounds(targetApp?.window);
   const frontmostWindow = targetWindowBounds(frontmostApp?.window);
   const targetIsFrontmost = targetVisibility === "frontmost";
+  const targetIsReadable = targetIsFrontmost || targetVisibility === "background";
   if (!enabled) {
     limitations.push({
       code: "perception-disabled",
       message: "Perception extraction was disabled for this observation.",
     });
   }
-  if (!targetIsFrontmost) {
+  if (!targetIsReadable) {
     limitations.push({
-      code: "target-not-frontmost",
-      message: "Target window crop and AX element extraction require the target app to be frontmost.",
+      code: "target-unavailable",
+      message: "Target window crop and AX element extraction require a resolved target app.",
     });
   }
   if (observation.accessibilityTrusted === false) {
@@ -1313,27 +1364,45 @@ function normalizeObservationPerception({
     }
   }
 
-  const windowBounds = targetIsFrontmost ? targetWindow ?? frontmostWindow : null;
+  const windowBounds = targetIsFrontmost
+    ? targetWindow ?? frontmostWindow
+    : targetVisibility === "background"
+      ? targetWindow
+      : null;
   const windowCrop =
-    enabled && targetIsFrontmost && windowBounds
+    enabled && targetIsReadable && windowBounds
       ? {
           source: "target-window",
           coordinateSpace: "screen",
           bounds: windowBounds,
-          screenshot: normalizeCropScreenshot(nativePerception.windowCrop?.screenshot, screenshot),
+          screenshot: normalizeCropScreenshot(
+            nativePerception.windowCrop?.screenshot,
+            targetIsFrontmost ? screenshot : null,
+          ),
         }
       : null;
-  if (enabled && targetIsFrontmost && !windowBounds) {
+  if (enabled && targetIsReadable && !windowBounds) {
     limitations.push({
       code: "target-window-bounds-unavailable",
       message: "Target window bounds were not available for crop metadata.",
     });
   }
+  if (
+    enabled &&
+    targetVisibility === "background" &&
+    windowBounds &&
+    !nativePerception.windowCrop?.screenshot
+  ) {
+    limitations.push({
+      code: "background-window-capture-unavailable",
+      message: "Background target window bounds were available, but a native window screenshot was not available.",
+    });
+  }
 
-  const elements = enabled && targetIsFrontmost
+  const elements = enabled && targetIsReadable
     ? normalizeAccessibilityElements(nativePerception.accessibilityElements, limit)
     : [];
-  if (enabled && targetIsFrontmost && Array.isArray(nativePerception.accessibilityElements)) {
+  if (enabled && targetIsReadable && Array.isArray(nativePerception.accessibilityElements)) {
     const total = nativePerception.accessibilityElements.length;
     if (total > elements.length) {
       limitations.push({
@@ -1399,6 +1468,7 @@ function normalizeAccessibilityElement(element) {
     title: boundedString(element.title, 160),
     value: boundedString(element.value, 160),
     description: boundedString(element.description, 160),
+    writable: element.writable === true,
     bounds,
     center,
     confidence: Number.isFinite(element.confidence) ? element.confidence : 0.8,
@@ -1476,18 +1546,19 @@ function dedupeLimitations(limitations) {
 
 function findTextInObservation(action, observation) {
   const incompleteReason = perceptionCompletenessReason(observation?.perception);
-  if (action.type === "clickText" && incompleteReason) {
+  if ((action.type === "clickText" || action.type === "setText") && incompleteReason) {
     return {
       ok: false,
       method: "accessibility-text-match",
       matchStatus: "incomplete",
-      query: action.text,
+      query: action.query ?? action.text,
       matchCount: 0,
       candidates: [],
       reason: incompleteReason,
     };
   }
-  const query = action.text.toLowerCase();
+  const rawQuery = action.query ?? action.text;
+  const query = rawQuery.toLowerCase();
   const elements = observation?.perception?.accessibilityElements ?? [];
   const allCandidates = elements
     .map((element, index) => {
@@ -1504,6 +1575,7 @@ function findTextInObservation(action, observation) {
         title: element.title ?? null,
         value: element.value ?? null,
         description: element.description ?? null,
+        writable: element.writable === true,
         bounds: element.bounds,
         center: element.center,
         confidence: element.confidence ?? null,
@@ -1511,27 +1583,33 @@ function findTextInObservation(action, observation) {
       };
     })
     .filter(Boolean);
-  const candidates = allCandidates.slice(0, action.maxMatches);
+  const writableCandidates = action.requireWritable
+    ? allCandidates.filter((candidate) => candidate.writable === true)
+    : allCandidates;
+  const consideredCandidates = action.requireWritable ? writableCandidates : allCandidates;
+  const candidates = consideredCandidates.slice(0, action.maxMatches);
   if (candidates.length === 0) {
     return {
       ok: false,
       method: "accessibility-text-match",
       matchStatus: "none",
-      query: action.text,
-      matchCount: allCandidates.length,
+      query: rawQuery,
+      matchCount: consideredCandidates.length,
       candidates: [],
-      reason: `No visible accessibility element matched text: ${action.text}`,
+      reason: action.requireWritable && allCandidates.length > 0
+        ? `No writable accessibility element matched text: ${rawQuery}`
+        : `No visible accessibility element matched text: ${rawQuery}`,
     };
   }
-  if (allCandidates.length > 1) {
+  if (consideredCandidates.length > 1) {
     return {
       ok: false,
       method: "accessibility-text-match",
       matchStatus: "multiple",
-      query: action.text,
-      matchCount: allCandidates.length,
+      query: rawQuery,
+      matchCount: consideredCandidates.length,
       candidates,
-      reason: `Multiple visible accessibility elements matched text: ${action.text}`,
+      reason: `Multiple visible accessibility elements matched text: ${rawQuery}`,
     };
   }
   const point = normalizePoint(candidates[0].center);
@@ -1539,17 +1617,17 @@ function findTextInObservation(action, observation) {
     ok: Boolean(point),
     method: "accessibility-text-match",
     matchStatus: point ? "unique" : "missing-bounds",
-    query: action.text,
-    matchCount: allCandidates.length,
+    query: rawQuery,
+    matchCount: consideredCandidates.length,
     candidates,
     point,
-    reason: point ? null : `Matched text but the candidate has no usable center: ${action.text}`,
+    reason: point ? null : `Matched text but the candidate has no usable center: ${rawQuery}`,
   };
 }
 
 function perceptionCompletenessReason(perception) {
   if (!perception || perception.enabled !== true) {
-    return "Text targeting requires enabled foreground perception.";
+    return "Text targeting requires enabled target perception.";
   }
   const blockingCodes = new Set([
     "accessibility-elements-truncated",
@@ -1557,6 +1635,7 @@ function perceptionCompletenessReason(perception) {
     "accessibility-permission-required",
     "perception-disabled",
     "target-not-frontmost",
+    "target-unavailable",
     "target-window-unavailable",
   ]);
   const limitation = (perception.limitations ?? []).find((item) =>
@@ -1625,15 +1704,26 @@ function createMacNativeComputerUseClientWithAdapters({
           native.targetVisibility === "frontmost"
             ? targetWindowBounds(native.targetApp?.window ?? native.frontmostApp?.window)
             : null;
-        if (payload.includePerception !== false && cropBounds) {
-          cropScreenshot = await screenshotCapture(root, cropBounds);
-          native.perception = {
-            ...(native.perception ?? {}),
-            windowCrop: {
-              ...(native.perception?.windowCrop ?? {}),
-              screenshot: cropScreenshot,
-            },
-          };
+        const windowId = Number(native.targetApp?.window?.windowId);
+        const captureTarget =
+          native.targetVisibility === "background" && Number.isSafeInteger(windowId)
+            ? { windowId }
+            : cropBounds;
+        if (payload.includePerception !== false && captureTarget) {
+          try {
+            cropScreenshot = await screenshotCapture(root, captureTarget);
+            native.perception = {
+              ...(native.perception ?? {}),
+              windowCrop: {
+                ...(native.perception?.windowCrop ?? {}),
+                screenshot: cropScreenshot,
+              },
+            };
+          } catch (error) {
+            if (native.targetVisibility !== "background") {
+              throw error;
+            }
+          }
         }
         const previousScreenshotPath = lastScreenshotPath;
         const previousCropScreenshotPath = lastCropScreenshotPath;
@@ -1711,7 +1801,11 @@ function parseNativeError(stdout) {
 async function captureScreenshot(tmpDir, bounds = null) {
   const file = path.join(tmpDir, `morpheus-computer-use-${randomUUID()}.png`);
   const args = ["-x", "-t", "png"];
-  const rect = normalizeRect(bounds);
+  const windowId = Number(bounds?.windowId);
+  const rect = Number.isSafeInteger(windowId) ? null : normalizeRect(bounds);
+  if (Number.isSafeInteger(windowId)) {
+    args.push("-l", String(windowId));
+  }
   if (rect) {
     args.push(
       "-R",

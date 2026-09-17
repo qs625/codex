@@ -76,6 +76,23 @@ function fakeNativeClient(options = {}) {
           pasteboardRestored: true,
         };
       }
+      if (action.type === "setText") {
+        return {
+          ok: true,
+          method: "accessibility-set-value",
+          targetVisibility: "background",
+          query: action.query,
+          matchStatus: "unique",
+          matchedElement: {
+            role: "AXTextField",
+            title: action.query,
+            writable: true,
+            bounds: { x: 30, y: 40, width: 200, height: 30 },
+            center: { x: 130, y: 55 },
+          },
+          characterCount: action.text.length,
+        };
+      }
       if (action.type === "key" || action.type === "hotkey") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
       }
@@ -190,7 +207,7 @@ test("observe adds bounded foreground perception facts", async () => {
   );
 });
 
-test("background target observe records perception limitation without fake crop", async () => {
+test("background target observe accepts real window and AX perception evidence", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
       {
@@ -210,6 +227,20 @@ test("background target observe records perception limitation without fake crop"
           bundleIdentifier: "com.apple.mail",
           processIdentifier: 84,
         },
+        perception: {
+          windowCrop: {
+            bounds: { x: 40, y: 50, width: 500, height: 400 },
+          },
+          accessibilityElements: [
+            {
+              role: "AXTextField",
+              title: "Search",
+              writable: true,
+              bounds: { x: 80, y: 90, width: 200, height: 30 },
+              center: { x: 180, y: 105 },
+            },
+          ],
+        },
       },
     ],
   });
@@ -218,11 +249,21 @@ test("background target observe records perception limitation without fake crop"
   const state = await manager.startSession({ app: "Firefox" });
 
   assert.equal(state.targetVisibility, "background");
-  assert.equal(state.observation.perception.windowCrop, null);
-  assert.equal(state.observation.perception.accessibilityElements.length, 0);
+  assert.deepEqual(state.observation.perception.windowCrop.bounds, {
+    x: 40,
+    y: 50,
+    width: 500,
+    height: 400,
+  });
+  assert.equal(
+    state.observation.perception.windowCrop.screenshot,
+    null,
+  );
+  assert.equal(state.observation.perception.accessibilityElements.length, 1);
+  assert.equal(state.observation.perception.accessibilityElements[0].writable, true);
   assert.equal(
     state.observation.perception.limitations.some(
-      (item) => item.code === "target-not-frontmost",
+      (item) => item.code === "background-window-capture-unavailable",
     ),
     true,
   );
@@ -411,6 +452,146 @@ test("clickText fails when perception candidates are truncated", async () => {
   assert.equal(state.trace.at(-1).status, "failed");
   assert.equal(state.trace.at(-1).evidence.matchStatus, "incomplete");
   assert.match(state.trace.at(-1).error, /candidate limit/);
+});
+
+test("background setText writes one unique writable AX element without activation", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+        },
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: {
+            title: "Firefox background",
+            position: { x: 40, y: 50 },
+            size: { width: 500, height: 400 },
+          },
+        },
+        targetVisibility: "background",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXTextField",
+              title: "Search",
+              writable: true,
+              bounds: { x: 80, y: 90, width: 200, height: 30 },
+              center: { x: 180, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({
+    type: "setText",
+    query: "Search",
+    text: "hello background",
+  });
+
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["setText"]);
+  assert.equal(nativeClient.actions[0].targetApp, "org.mozilla.firefox");
+  assert.equal(state.trace.at(-1).status, "completed");
+  assert.equal(state.trace.at(-1).policy.kind, "side-effect");
+  assert.equal(state.trace.at(-1).evidence.method, "accessibility-set-value");
+  assert.equal(state.trace.at(-1).evidence.targetVisibility, "background");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "unique");
+  assert.equal(state.trace.at(-1).evidence.characterCount, 16);
+  assert.equal(state.trace.at(-1).evidence.matchedElement.writable, true);
+  assert.equal(
+    state.trace.at(-1).audit.completion.actionEvidence.method,
+    "accessibility-set-value",
+  );
+});
+
+test("background setText blocks non-writable matches before native action", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: {
+            title: "Firefox background",
+            position: { x: 40, y: 50 },
+            size: { width: 500, height: 400 },
+          },
+        },
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXStaticText",
+              title: "Search",
+              writable: false,
+              bounds: { x: 80, y: 90, width: 200, height: 30 },
+              center: { x: 180, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({
+    type: "setText",
+    query: "Search",
+    text: "hello",
+  });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "none");
+  assert.match(state.trace.at(-1).error, /No writable accessibility element/);
+});
+
+test("high-risk background setText requires confirmation before native action", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+        },
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXTextField",
+              title: "Token",
+              writable: true,
+              bounds: { x: 80, y: 90, width: 200, height: 30 },
+              center: { x: 180, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "org.mozilla.firefox" });
+
+  const state = await manager.act({
+    type: "setText",
+    query: "Token",
+    text: "secret token",
+  });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "blocked");
+  assert.equal(state.trace.at(-1).policy.kind, "requires-confirmation");
 });
 
 test("move updates agent cursor and overlay path without moving native cursor", async () => {
@@ -1035,6 +1216,12 @@ test("background target without window metadata does not inherit frontmost windo
   assert.equal(state.targetApp.bundleIdentifier, "org.mozilla.firefox");
   assert.equal(state.targetVisibility, "background");
   assert.equal(state.target.window, null);
+  assert.equal(state.observation.perception.windowCrop, null);
+  assert(
+    state.observation.perception.limitations.some(
+      (limitation) => limitation.code === "target-window-bounds-unavailable",
+    ),
+  );
 });
 
 test("actions are blocked until observe proves accessibility permission", async () => {
@@ -1180,6 +1367,121 @@ test("native screenshot cache removes the previous observe evidence", async () =
   await client.cleanup();
 
   assert.deepEqual(removed, ["/tmp/screen-1.png", "/tmp/screen-2.png"]);
+});
+
+test("native adapter captures background target window by window id", async () => {
+  const captureTargets = [];
+  const client = createMacNativeComputerUseClientWithAdapters({
+    scriptPath: "/tmp/native.swift",
+    tmpDir: "/tmp",
+    async runNative() {
+      return {
+        cursor: { x: 1, y: 2 },
+        activeApp: null,
+        targetVisibility: "background",
+        targetApp: {
+          window: {
+            windowId: 123,
+            position: { x: 10, y: 20 },
+            size: { width: 300, height: 200 },
+          },
+        },
+        perception: {
+          windowCrop: {
+            bounds: { x: 10, y: 20, width: 300, height: 200 },
+          },
+        },
+        accessibilityTrusted: true,
+      };
+    },
+    async screenshotCapture(_root, target = null) {
+      captureTargets.push(target);
+      return {
+        path: `/tmp/screen-${captureTargets.length}.png`,
+        mimeType: "image/png",
+        byteSize: 1,
+        dataUrl: "data:image/png;base64,AA==",
+      };
+    },
+    async removeFile() {},
+  });
+
+  const observed = await client.observe({ includePerception: true });
+
+  assert.deepEqual(captureTargets, [null, { windowId: 123 }]);
+  assert.equal(
+    observed.perception.windowCrop.screenshot.path,
+    "/tmp/screen-2.png",
+  );
+});
+
+test("background target window capture failure keeps observe with typed limitation", async () => {
+  const captureTargets = [];
+  const client = createMacNativeComputerUseClientWithAdapters({
+    scriptPath: "/tmp/native.swift",
+    tmpDir: "/tmp",
+    async runNative() {
+      return {
+        cursor: { x: 1, y: 2 },
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+        },
+        targetVisibility: "background",
+        targetApp: {
+          name: "Firefox",
+          bundleIdentifier: "org.mozilla.firefox",
+          processIdentifier: 42,
+          window: {
+            windowId: 123,
+            position: { x: 10, y: 20 },
+            size: { width: 300, height: 200 },
+          },
+        },
+        perception: {
+          windowCrop: {
+            bounds: { x: 10, y: 20, width: 300, height: 200 },
+          },
+          accessibilityElements: [
+            {
+              role: "AXTextField",
+              title: "Search",
+              writable: true,
+              bounds: { x: 20, y: 30, width: 120, height: 30 },
+              center: { x: 80, y: 45 },
+            },
+          ],
+        },
+        accessibilityTrusted: true,
+      };
+    },
+    async screenshotCapture(_root, target = null) {
+      captureTargets.push(target);
+      if (target) {
+        throw new Error("window capture failed");
+      }
+      return {
+        path: "/tmp/screen-1.png",
+        mimeType: "image/png",
+        byteSize: 1,
+        dataUrl: "data:image/png;base64,AA==",
+      };
+    },
+    async removeFile() {},
+  });
+  const manager = createComputerUseManager({ nativeClient: client });
+
+  const state = await manager.startSession({ app: "org.mozilla.firefox" });
+
+  assert.deepEqual(captureTargets, [null, { windowId: 123 }]);
+  assert.equal(state.observation.perception.windowCrop.screenshot, null);
+  assert.equal(state.observation.perception.accessibilityElements.length, 1);
+  assert(
+    state.observation.perception.limitations.some(
+      (limitation) => limitation.code === "background-window-capture-unavailable",
+    ),
+  );
 });
 
 test("native observe failure removes the just-captured screenshot", async () => {

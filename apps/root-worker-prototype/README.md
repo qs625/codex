@@ -152,17 +152,20 @@ node scripts/morpheus-computer-use.mjs run \
 The CLI keeps a Computer Use session inside a single `run` process and reuses
 the Electron ComputerUseManager safety gates, target preflight, trace evidence,
 and native macOS bridge. CLI supports `start`, `observe`, `move`, `click`,
-`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `key`, `hotkey`,
-`type`, `drag`, `wait`, and `stop`; `move` only updates the agent cursor/path
+`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `setText`,
+`key`, `hotkey`, `type`, `drag`, `wait`, and `stop`; `move` only updates the agent cursor/path
 evidence and does not move the macOS system cursor. `wait` pauses the same
 session for a bounded duration and records timer evidence. `clickText` resolves
 a unique visible Accessibility text candidate to ordinary screen coordinates
 before using the same target gate and native click path; ambiguous or missing
-matches fail with candidate evidence instead of guessing. The `run --actions`
+matches fail with candidate evidence instead of guessing. `setText` is a
+semantic macOS Accessibility write: it sets one unique writable AX value element
+in the target app, including background targets when real AX evidence is
+available, and it never sends background keyboard events. The `run --actions`
 batch is the explicit Computer Use operation boundary for real desktop side
 effects, and shorthand flags are compiled into that same batch path. The JSON
 result includes the compiled `actions` for audit and replay. High-risk actions
-such as sensitive/destructive typed text or destructive app shortcuts are
+such as sensitive/destructive typed or `setText` text, or destructive app shortcuts are
 blocked unless the batch or REPL was started with `--confirm-risk high`. Use
 `--plan-only` to preflight a batch/session while blocking real native side
 effects before input is sent. Each traced action carries bounded typed policy
@@ -190,16 +193,19 @@ include sanitized full state, and `trace [count]` or `--trace-tail <n>` for
 bounded trace tails.
 Side effects require a matched target app, Accessibility permission must be
 available, and native backend failures are reported as failed action results
-rather than fake success. If the target app is in the background, Computer Use
-activates that target, re-observes the desktop, and only sends the side-effect
-action after the target is confirmed frontmost/matched; activation failure or a
-different foreground app is reported as a failed or blocked action. Screenshot
+rather than fake success. Background `observe` and `findText` may read real
+target-window/AX evidence without activating the app. Ordinary keyboard and
+mouse side effects (`click`, `clickText`, `scroll`, `key`, `hotkey`, `type`,
+`drag`) still activate a background target, re-observe the desktop, and only
+send native input after the target is confirmed frontmost/matched; activation
+failure or a different foreground app is reported as a failed or blocked action. Screenshot
 evidence includes a bounded data URL by default and omits the temporary capture
 path because the CLI cleans up that file before returning; pass
-`--omit-screenshot-data` for metadata-only output. Foreground target observes
-also include bounded perception facts: target window crop metadata/screenshot
-when bounds are available, and a limited Accessibility element candidate list
-with screen-coordinate bounds/centers. Use `--no-perception` to disable this
+`--omit-screenshot-data` for metadata-only output. Target observes include
+bounded perception facts when macOS exposes real evidence: target window crop
+metadata/screenshot when available, and a limited Accessibility element
+candidate list with screen-coordinate bounds/centers and writable flags. Use
+`--no-perception` to disable this
 extraction or `--perception-limit <n>` to lower the AX candidate cap. CLI runs
 create a narrow Electron overlay helper for target-bound agent cursor feedback;
 the helper is click-through, non-focusable, and cleaned up on `stop`/process

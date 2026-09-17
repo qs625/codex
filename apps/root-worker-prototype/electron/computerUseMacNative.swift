@@ -30,6 +30,7 @@ func payload() -> [String: Any] {
 func number(_ value: Any?) -> Double? {
   if let value = value as? Double { return value }
   if let value = value as? Int { return Double(value) }
+  if let value = value as? NSNumber { return value.doubleValue }
   if let value = value as? String { return Double(value) }
   return nil
 }
@@ -99,13 +100,27 @@ func axRect(_ element: AXUIElement) -> [String: Double]? {
   return ["x": x, "y": y, "width": width, "height": height]
 }
 
-func windowSummary(_ window: AXUIElement) -> [String: Any] {
+func axAttributeSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
+  var settable = DarwinBoolean(false)
+  return AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) == .success &&
+    settable.boolValue
+}
+
+func axWritable(_ element: AXUIElement, role: String?) -> Bool {
+  let writableRoles = Set(["AXComboBox", "AXSearchField", "AXTextArea", "AXTextField"])
+  return writableRoles.contains(role ?? "") && axAttributeSettable(element, kAXValueAttribute)
+}
+
+func windowSummary(_ window: AXUIElement, pid: pid_t? = nil) -> [String: Any] {
   var result: [String: Any] = [:]
   result["title"] = axString(window, kAXTitleAttribute)
   result["role"] = axString(window, kAXRoleAttribute)
   result["subrole"] = axString(window, kAXSubroleAttribute)
   result["position"] = axPoint(window, kAXPositionAttribute)
   result["size"] = axSize(window, kAXSizeAttribute)
+  if let pid = pid, let windowId = windowIdentifier(pid: pid, summary: result) {
+    result["windowId"] = windowId
+  }
   return result
 }
 
@@ -122,10 +137,10 @@ func focusedWindow(pid: pid_t) -> [String: Any]? {
   guard let window = focusedWindowElement(pid: pid) else {
     return nil
   }
-  return windowSummary(window)
+  return windowSummary(window, pid: pid)
 }
 
-func firstWindow(pid: pid_t) -> [String: Any]? {
+func firstWindowElement(pid: pid_t) -> AXUIElement? {
   let app = AXUIElementCreateApplication(pid)
   var value: CFTypeRef?
   guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success else {
@@ -134,7 +149,61 @@ func firstWindow(pid: pid_t) -> [String: Any]? {
   guard let windows = value as? [AXUIElement], let window = windows.first else {
     return nil
   }
-  return windowSummary(window)
+  return window
+}
+
+func firstWindow(pid: pid_t) -> [String: Any]? {
+  guard let window = firstWindowElement(pid: pid) else {
+    return nil
+  }
+  return windowSummary(window, pid: pid)
+}
+
+func windowIdentifier(pid: pid_t, summary: [String: Any]) -> Int? {
+  guard
+    let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+      as? [[String: Any]]
+  else {
+    return nil
+  }
+  let title = summary["title"] as? String
+  let position = summary["position"] as? [String: Double]
+  let size = summary["size"] as? [String: Double]
+  let candidates = info.filter { item in
+    guard Int32(number(item[kCGWindowOwnerPID as String]) ?? -1) == pid else {
+      return false
+    }
+    if let title = title, !title.isEmpty,
+       let windowName = item[kCGWindowName as String] as? String,
+       !windowName.isEmpty,
+       windowName != title {
+      return false
+    }
+    guard
+      let bounds = item[kCGWindowBounds as String] as? [String: Any],
+      let x = number(bounds["X"]),
+      let y = number(bounds["Y"]),
+      let width = number(bounds["Width"]),
+      let height = number(bounds["Height"])
+    else {
+      return true
+    }
+    if
+      let px = position?["x"],
+      let py = position?["y"],
+      let sw = size?["width"],
+      let sh = size?["height"] {
+      return abs(px - x) < 2 && abs(py - y) < 2 && abs(sw - width) < 2 && abs(sh - height) < 2
+    }
+    return true
+  }
+  guard candidates.count == 1 else {
+    return nil
+  }
+  guard let windowId = number(candidates[0][kCGWindowNumber as String]) else {
+    return nil
+  }
+  return Int(windowId)
 }
 
 func axChildren(_ element: AXUIElement) -> [AXUIElement] {
@@ -196,6 +265,7 @@ func axElementCandidate(_ element: AXUIElement) -> [String: Any]? {
     "center": center,
     "confidence": 0.85,
     "source": "macos-accessibility",
+    "writable": axWritable(element, role: role),
   ]
   result["role"] = role
   result["subrole"] = subrole
@@ -243,6 +313,43 @@ func accessibilityElements(window: AXUIElement, limit: Int) -> (elements: [[Stri
     ])
   }
   return (result, limitations)
+}
+
+func textMatchHaystack(_ element: AXUIElement) -> String {
+  return [
+    axString(element, kAXTitleAttribute),
+    axString(element, kAXValueAttribute),
+    axString(element, kAXDescriptionAttribute),
+  ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+}
+
+func matchingWritableElements(window: AXUIElement, query: String, limit: Int) -> (matches: [(AXUIElement, [String: Any])], truncated: Bool) {
+  var matches: [(AXUIElement, [String: Any])] = []
+  var queue: [(AXUIElement, Int)] = [(window, 0)]
+  var visited = 0
+  let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  while !queue.isEmpty && visited < 600 {
+    let (element, depth) = queue.removeFirst()
+    visited += 1
+    if textMatchHaystack(element).contains(normalizedQuery),
+       let candidate = axElementCandidate(element),
+       candidate["writable"] as? Bool == true {
+      if matches.count >= limit {
+        return (matches, true)
+      }
+      matches.append((element, candidate))
+    }
+    if depth >= 6 {
+      continue
+    }
+    for child in axChildren(element).prefix(80) {
+      queue.append((child, depth + 1))
+    }
+  }
+  return (matches, visited >= 600 && !queue.isEmpty)
 }
 
 func appSummary(_ app: NSRunningApplication, trusted: Bool, frontmost: Bool) -> [String: Any] {
@@ -311,12 +418,6 @@ func observe(_ object: [String: Any]) {
     response["targetApp"] = targetApp
   }
   var limitations: [[String: String]] = []
-  if targetVisibility == "background" {
-    limitations.append([
-      "code": "background-observe-metadata-only",
-      "message": "Background target observe is limited to app/window metadata; the screenshot remains the current desktop capture.",
-    ])
-  }
   var perception: [String: Any] = [
     "enabled": includePerception,
     "source": "macos-accessibility",
@@ -335,12 +436,16 @@ func observe(_ object: [String: Any]) {
       "code": "accessibility-permission-required",
       "message": "Accessibility permission is required for AX element extraction.",
     ])
-  } else if targetVisibility != "frontmost" {
+  } else if targetVisibility != "frontmost" && targetVisibility != "background" {
     perceptionLimitations.append([
-      "code": "target-not-frontmost",
-      "message": "Target window crop and AX element extraction require the target app to be frontmost.",
+      "code": "target-unavailable",
+      "message": "Target window crop and AX element extraction require a resolved target app.",
     ])
-  } else if let app = frontmost, let window = focusedWindowElement(pid: app.processIdentifier) {
+  } else if
+    let app = targetVisibility == "background" ? target : frontmost,
+    let window = targetVisibility == "background"
+      ? firstWindowElement(pid: app.processIdentifier)
+      : focusedWindowElement(pid: app.processIdentifier) {
     if let bounds = axRect(window) {
       perception["windowCrop"] = [
         "source": "target-window",
@@ -359,7 +464,7 @@ func observe(_ object: [String: Any]) {
   } else {
     perceptionLimitations.append([
       "code": "target-window-unavailable",
-      "message": "The frontmost target window was not available through Accessibility.",
+      "message": "The target window was not available through Accessibility.",
     ])
   }
   perception["limitations"] = perceptionLimitations
@@ -595,6 +700,56 @@ func typeText(_ object: [String: Any]) {
   ])
 }
 
+func setText(_ object: [String: Any]) {
+  guard AXIsProcessTrusted() else {
+    error("Accessibility permission is required before setting AX text")
+  }
+  guard let targetIdentifier = object["targetApp"] as? String else {
+    error("setText requires targetApp")
+  }
+  guard let query = object["query"] as? String, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    error("setText requires a non-empty query")
+  }
+  guard let text = object["text"] as? String else {
+    error("setText requires text")
+  }
+  guard let target = targetApplication(targetIdentifier) else {
+    error("Target app \(targetIdentifier) is not running")
+  }
+  guard let window = firstWindowElement(pid: target.processIdentifier) else {
+    error("Target window was not available through Accessibility")
+  }
+  let frontmost = NSWorkspace.shared.frontmostApplication
+  let targetVisibility = frontmost?.processIdentifier == target.processIdentifier ? "frontmost" : "background"
+  let matched = matchingWritableElements(window: window, query: query, limit: 2)
+  if matched.truncated {
+    error("Writable AX text match is ambiguous because traversal was truncated")
+  }
+  if matched.matches.isEmpty {
+    error("No unique writable AX text element matched query: \(query)")
+  }
+  if matched.matches.count > 1 {
+    error("Multiple writable AX text elements matched query: \(query)")
+  }
+  let (element, candidate) = matched.matches[0]
+  guard axAttributeSettable(element, kAXValueAttribute) else {
+    error("Matched AX element is not writable")
+  }
+  let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
+  guard result == .success else {
+    error("AX set value failed: \(result.rawValue)")
+  }
+  json([
+    "ok": true,
+    "method": "accessibility-set-value",
+    "targetVisibility": targetVisibility,
+    "query": query,
+    "matchStatus": "unique",
+    "matchedElement": candidate,
+    "characterCount": text.count,
+  ])
+}
+
 let keyCodes: [String: CGKeyCode] = [
   "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
   "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19,
@@ -763,6 +918,8 @@ case "scroll":
   scroll(object)
 case "type":
   typeText(object)
+case "setText":
+  setText(object)
 case "key":
   pressKey(object)
 case "hotkey":
