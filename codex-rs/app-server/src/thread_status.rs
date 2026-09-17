@@ -168,20 +168,6 @@ impl ThreadWatchManager {
         self.state.lock().await.loaded_status_for_thread(thread_id)
     }
 
-    pub(crate) async fn loaded_statuses_for_threads(
-        &self,
-        thread_ids: Vec<String>,
-    ) -> HashMap<String, ThreadLifecycleStatus> {
-        let state = self.state.lock().await;
-        thread_ids
-            .into_iter()
-            .map(|thread_id| {
-                let status = state.loaded_status_for_thread(&thread_id);
-                (thread_id, status)
-            })
-            .collect()
-    }
-
     #[cfg(test)]
     pub(crate) async fn running_turn_count(&self) -> usize {
         self.state
@@ -1141,36 +1127,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loaded_statuses_default_to_not_loaded_for_untracked_threads() {
-        let manager = ThreadWatchManager::new();
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-
-        let statuses = manager
-            .loaded_statuses_for_threads(vec![
-                INTERACTIVE_THREAD_ID.to_string(),
-                NON_INTERACTIVE_THREAD_ID.to_string(),
-            ])
-            .await;
-
-        assert_eq!(
-            statuses.get(INTERACTIVE_THREAD_ID),
-            Some(&ThreadLifecycleStatus::Active {
-                active_flags: vec![ThreadLifecycleActiveFlag::Running],
-            }),
-        );
-        assert_eq!(
-            statuses.get(NON_INTERACTIVE_THREAD_ID),
-            Some(&ThreadLifecycleStatus::NotLoaded),
-        );
-    }
-
-    #[tokio::test]
     async fn has_running_turns_tracks_runtime_running_flag_only() {
         let manager = ThreadWatchManager::new();
         manager
@@ -1265,6 +1221,32 @@ mod tests {
                 INTERACTIVE_THREAD_ID,
                 app_server_protocol::SessionSource::Cli,
             ))
+            .await;
+        assert_eq!(
+            recv_persisted_status(&mut persisted_rx).await,
+            (
+                ThreadId::from_string(INTERACTIVE_THREAD_ID)
+                    .expect("interactive thread id should parse"),
+                ThreadLifecycleStatus::completed(None),
+            ),
+        );
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 1)
+            .await;
+        assert_eq!(
+            recv_persisted_status(&mut persisted_rx).await,
+            (
+                ThreadId::from_string(INTERACTIVE_THREAD_ID)
+                    .expect("interactive thread id should parse"),
+                ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::EventSubscription,
+                },
+            ),
+        );
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 0)
             .await;
         assert_eq!(
             recv_persisted_status(&mut persisted_rx).await,

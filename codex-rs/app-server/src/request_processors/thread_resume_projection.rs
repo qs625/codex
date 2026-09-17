@@ -255,6 +255,7 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
 mod tests {
     use super::*;
     use app_server_protocol::ThreadLifecycleActiveFlag;
+    use app_server_protocol::ThreadLifecycleWaitReason;
     use protocol::protocol::AgentStatus;
 
     fn turn_with_status(status: TurnStatus) -> Turn {
@@ -374,6 +375,28 @@ mod tests {
         assert_eq!(
             thread.lifecycle_status,
             ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+        assert_eq!(thread.turns[0].status, TurnStatus::Interrupted);
+    }
+
+    #[test]
+    fn not_loaded_overlay_preserves_persisted_waiting_status() {
+        let mut thread = thread_with_in_progress_turn();
+        thread.lifecycle_status = ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        };
+
+        set_thread_status_and_interrupt_stale_turns(
+            &mut thread,
+            ThreadLifecycleStatus::NotLoaded,
+            /*has_live_in_progress_turn*/ false,
+        );
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            }
         );
         assert_eq!(thread.turns[0].status, TurnStatus::Interrupted);
     }

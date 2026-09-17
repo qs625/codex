@@ -1302,8 +1302,11 @@ impl ThreadRequestProcessor {
             .loaded_thread_initial_lifecycle_status(&stored_thread, thread_id)
             .await;
         self.thread_watch_manager
-            .upsert_thread_silently_with_lifecycle_status(loaded_thread, lifecycle_status)
+            .upsert_thread_silently_with_lifecycle_status(loaded_thread, lifecycle_status.clone())
             .await;
+        if let Some(lifecycle_status) = lifecycle_status {
+            self.persist_thread_status(thread_id, &lifecycle_status).await;
+        }
         Ok(())
     }
 
