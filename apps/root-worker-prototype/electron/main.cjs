@@ -68,7 +68,10 @@ const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
 } = require("./threadConfig.cjs");
-const { listThreads: listAllThreads } = require("./threadList.cjs");
+const {
+  listLoadedThreadIds,
+  listThreads: listAllThreads,
+} = require("./threadList.cjs");
 const {
   ensureSelfProjectSync,
   recordSystemSelfThreadIdSync,
@@ -105,6 +108,7 @@ const {
   updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 const {
+  collectRuntimeRecoveryThreads,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
 } = require("./threadAutoResume.cjs");
@@ -400,6 +404,12 @@ ipcMain.handle("codex:bootstrap", async () => {
   const initialThreads = initialListResult.threads;
   const expectedRestart =
     await getRuntimeRestartController().recoverPending();
+  const recoveryThreads = await collectRuntimeRecoveryThreads({
+    listedThreads: initialThreads,
+    listLoadedThreadIds: () => listLoadedThreadIds(appServerClient),
+    readThread: (threadId, includeTurns) => readThread(threadId, includeTurns),
+    logger: console,
+  });
   const autoResume =
     await getAutoResumeCoordinator().runAfterRuntimeRestartRecovery({
       hasDurableRestartRecovery:
@@ -407,7 +417,7 @@ ipcMain.handle("codex:bootstrap", async () => {
       recoveryOccurrenceId:
         expectedRestart.recoveryOccurrenceId ??
         startupRuntimeRecovery.recoveryOccurrenceId,
-      threads: initialThreads,
+      threads: recoveryThreads,
       expectedRestart,
     });
   const listResult = await listThreads(defaultWorkspace);
