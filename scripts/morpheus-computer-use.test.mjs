@@ -164,11 +164,15 @@ async function runReplHarness({
   const request = parseComputerUseCliArgs(["repl", ...args]);
   const stdout = [];
   const abortController = interruptAfterOutput === null ? null : new AbortController();
-  const manager = createComputerUseManager({
+  let manager = null;
+  const managerFactory = createComputerUseCliManagerFactory({
     nativeClient: nativeClient ?? fakeNativeClient(),
-    ...(overlayController ? { overlayController } : {}),
+    overlayControllerFactory: async () => overlayController ?? null,
   });
-  const result = await runComputerUseRepl(request, async () => manager, {
+  const result = await runComputerUseRepl(request, async (replRequest) => {
+    manager = await managerFactory(replRequest);
+    return manager;
+  }, {
     input: Readable.from(lines.map((line) => `${line}\n`)),
     interruptSignal: abortController?.signal,
     writeStdout: (value) => {
@@ -287,6 +291,57 @@ test("computer use REPL allows background pause without native act", async () =>
   assert.equal(pauseEvent.policy.kind, "low-risk");
   assert.equal(pauseEvent.evidence.waitMs, 0);
   assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL blocks high-risk action and cleans up", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: ["--app", "com.apple.finder", "--json", "--overlay-hold-ms", "0"],
+    lines: ["start", "type send password token", "click 30,40"],
+    nativeClient,
+  });
+
+  const blocked = JSON.parse(stdout[1]);
+  const cleanup = JSON.parse(stdout[2]);
+  assert.equal(result.ok, false);
+  assert.equal(stdout.length, 3);
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.policy.kind, "requires-confirmation");
+  assert.equal(blocked.audit.operationBoundary, "computer-use-repl-session");
+  assert.equal(blocked.audit.confirmation.required, true);
+  assert.equal(blocked.audit.completion.status, "blocked");
+  assert.equal(cleanup.reason, "policy-block");
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use REPL executes confirmed high-risk action through native bridge", async () => {
+  const nativeClient = fakeNativeClient();
+  const { result, stdout } = await runReplHarness({
+    args: [
+      "--app",
+      "com.apple.finder",
+      "--json",
+      "--confirm-risk",
+      "high",
+      "--overlay-hold-ms",
+      "0",
+    ],
+    lines: ["start", "type send password token", "exit"],
+    nativeClient,
+  });
+
+  const typed = JSON.parse(stdout[1]);
+  assert.equal(result.ok, true);
+  assert.equal(typed.status, "completed");
+  assert.equal(typed.policy.kind, "side-effect-warning");
+  assert.equal(typed.policy.confirmationSatisfied, true);
+  assert.equal(typed.audit.operationBoundary, "computer-use-repl-session");
+  assert.equal(typed.audit.completion.actionEvidence.source, "native-bridge");
+  assert.equal(typed.evidence.characterCount, "send password token".length);
+  assert.deepEqual(nativeClient.actions, [
+    { type: "type", text: "send password token" },
+    { type: "cleanup" },
+  ]);
 });
 
 test("computer use REPL does not reuse wait evidence for stop action", async () => {
@@ -662,7 +717,7 @@ test("computer use CLI reports activation failures without native side effects",
   assert.deepEqual(nativeClient.actions.map((action) => action.type), ["activate", "cleanup"]);
 });
 
-test("computer use CLI executes warning side effects with policy evidence", async () => {
+test("computer use CLI blocks high-risk side effects without confirmation", async () => {
   const nativeClient = fakeNativeClient();
 
   const result = await runComputerUseRequest(
@@ -670,6 +725,42 @@ test("computer use CLI executes warning side effects with policy evidence", asyn
       "run",
       "--app",
       "com.apple.finder",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([
+        { type: "type", text: "send password token" },
+        { type: "click", x: 10, y: 20 },
+      ]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].status, "blocked");
+  assert.equal(result.results[0].policy.kind, "requires-confirmation");
+  assert.equal(result.results[0].policy.riskLevel, "high");
+  assert.equal(result.results[0].audit.operationBoundary, "computer-use-run-batch");
+  assert.equal(result.results[0].audit.confirmation.required, true);
+  assert.equal(result.results[0].audit.completion.status, "blocked");
+  assert.equal(result.results[0].evidence, null);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
+});
+
+test("computer use CLI executes confirmed warning side effects with policy evidence", async () => {
+  const nativeClient = fakeNativeClient();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--confirm-risk",
+      "high",
       "--overlay-hold-ms",
       "0",
       "--actions",
@@ -693,6 +784,9 @@ test("computer use CLI executes warning side effects with policy evidence", asyn
     result.results.map((item) => item.state.trace.at(-1).policy.kind),
     ["side-effect-warning", "side-effect-warning"],
   );
+  assert.equal(result.results[0].policy.confirmationSatisfied, true);
+  assert.equal(result.results[0].audit.after.observationSequence, 3);
+  assert.equal(result.results[0].audit.completion.actionEvidence.source, "native-bridge");
   assert.deepEqual(nativeClient.actions, [
     { type: "type", text: "send password token" },
     { type: "key", key: "q", modifiers: ["cmd"] },
@@ -703,6 +797,38 @@ test("computer use CLI executes warning side effects with policy evidence", asyn
     "send password token".length,
   );
   assert.equal(result.results[1].state.trace.at(-1).evidence.key, "q");
+});
+
+test("computer use CLI plan-only blocks side effects before native input", async () => {
+  const nativeClient = fakeNativeClient();
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.apple.finder",
+      "--plan-only",
+      "--overlay-hold-ms",
+      "0",
+      "--actions",
+      JSON.stringify([
+        { type: "click", x: 30, y: 40 },
+        { type: "wait", ms: 0 },
+      ]),
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.policy.planOnly, true);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].status, "blocked");
+  assert.equal(result.results[0].policy.kind, "plan-only");
+  assert.equal(result.results[0].audit.planOnly, true);
+  assert.deepEqual(nativeClient.actions, [{ type: "cleanup" }]);
 });
 
 test("computer use CLI reports native side-effect failures without fake success", async () => {

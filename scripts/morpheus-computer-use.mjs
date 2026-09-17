@@ -94,6 +94,10 @@ export async function runComputerUseRequest(request, managerFactory) {
         index,
       });
       results.push(result);
+      if (result.status === "blocked" || result.status === "failed") {
+        context.needsCleanup = await cleanupBatchSession(manager, context.needsCleanup);
+        break;
+      }
     }
     context.needsCleanup = await cleanupBatchSession(manager, context.needsCleanup);
     const finalState = sanitizeState(manager.state(), request);
@@ -217,13 +221,13 @@ export async function runComputerUseRepl(
       if (interrupted) {
         break;
       }
-      if (result.status === "failed") {
+      if (result.status === "blocked" || result.status === "failed") {
         ok = false;
         cleanup = await cleanupReplSession(manager, context, request);
         write(formatReplControlResult({
           sessionId,
           command: "cleanup",
-          reason: "failed-action",
+          reason: result.status === "blocked" ? "policy-block" : "failed-action",
           cleanup,
         }, settings));
         break;
@@ -418,6 +422,8 @@ export function parseComputerUseCliArgs(argv) {
     traceTail: 3,
     includePerception: true,
     perceptionLimit: 40,
+    confirmRisk: null,
+    planOnly: false,
     shorthandActions: [],
   };
 
@@ -541,6 +547,13 @@ export function parseComputerUseCliArgs(argv) {
           arg,
         );
         break;
+      case "--confirm-risk":
+        request.confirmRisk = parseConfirmRisk(requireValue(args, ++index, arg), arg);
+        break;
+      case "--plan-only":
+      case "--dry-run":
+        request.planOnly = true;
+        break;
       case "--no-overlay":
         request.noOverlay = true;
         break;
@@ -605,6 +618,14 @@ export function createComputerUseCliManagerFactory({
       overlayController,
       includePerception: request.includePerception,
       perceptionLimit: request.perceptionLimit,
+      safety: {
+        operationBoundary:
+          request.command === "repl"
+            ? "computer-use-repl-session"
+            : "computer-use-run-batch",
+        confirmRisk: request.confirmRisk,
+        planOnly: request.planOnly,
+      },
     });
   };
 }
@@ -1114,6 +1135,8 @@ function managerActionResult(index, action, state, request, traceItem = null) {
       action,
       status: "blocked",
       policy: traceItem.policy ?? null,
+      evidence: traceItem.evidence ?? null,
+      audit: traceItem.audit ?? null,
       state: sanitizeState(state, request),
     };
   }
@@ -1123,11 +1146,21 @@ function managerActionResult(index, action, state, request, traceItem = null) {
       action,
       status: "failed",
       policy: traceItem.policy ?? null,
+      evidence: traceItem.evidence ?? null,
+      audit: traceItem.audit ?? null,
       error: traceItem.error ?? null,
       state: sanitizeState(state, request),
     };
   }
-  return completedResult(index, action, state, request);
+  return {
+    index,
+    action,
+    status: "completed",
+    policy: traceItem?.policy ?? null,
+    evidence: traceItem?.evidence ?? null,
+    audit: traceItem?.audit ?? null,
+    state: sanitizeState(state, request),
+  };
 }
 
 function blockedResult(index, action, state, request, policy = null) {
@@ -1233,7 +1266,8 @@ function formatReplActionResult({ sessionId, action, result, traceItem = null },
     status: result.status,
     policy: result.policy ?? trace?.policy ?? null,
     error: result.error ?? trace?.error ?? null,
-    evidence: trace?.evidence ?? null,
+    evidence: result.evidence ?? trace?.evidence ?? null,
+    audit: result.audit ?? trace?.audit ?? null,
     targetVisibility: state?.targetVisibility ?? null,
     traceTail: traceTailFromState(state, settings.traceTail),
   };
@@ -1362,6 +1396,7 @@ function traceTailFromState(state, requestedCount) {
     policy: item.policy ?? null,
     error: item.error ?? null,
     evidence: item.evidence ?? null,
+    audit: item.audit ?? null,
     activation: item.activation ?? null,
   }));
 }
@@ -1373,10 +1408,17 @@ function truncate(value, maxLength) {
   return `${value.slice(0, maxLength - 1)}…`;
 }
 
-function cliPolicy() {
+function cliPolicy(request = {}) {
   return {
-    version: "computer-use-cli-v1",
+    version: "computer-use-cli-v2",
     sessionMode: "single-process-batch",
+    operationBoundary:
+      request.command === "repl"
+        ? "computer-use-repl-session"
+        : "computer-use-run-batch",
+    planOnly: request.planOnly === true,
+    confirmRisk: request.confirmRisk ?? null,
+    highRiskRequiresConfirmation: true,
     allowedActions: [
       "start",
       "observe",
@@ -1409,6 +1451,7 @@ function cliLimitations() {
     "Foreground target observations include bounded perception facts by default; pass --no-perception to disable AX/window crop extraction.",
     "Visible agent cursor feedback is target-bound. Background targets are not drawn over unrelated foreground apps before activation.",
     "After a visible move, the CLI waits --overlay-hold-ms before the next action so the cursor can be seen.",
+    "High-risk actions require --confirm-risk high; --plan-only blocks real side effects before native input.",
   ];
 }
 
@@ -1434,6 +1477,14 @@ function parsePositiveInteger(value, flag) {
     throw new Error(`${flag} requires a positive integer`);
   }
   return parsed;
+}
+
+function parseConfirmRisk(value, flag) {
+  const normalized = String(value ?? "").toLowerCase();
+  if (["high", "all"].includes(normalized)) {
+    return normalized;
+  }
+  throw new Error(`${flag} requires high or all`);
 }
 
 async function delay(ms) {
@@ -1478,6 +1529,8 @@ function usage() {
     "  --omit-screenshot-data  Return screenshot metadata without the bounded data URL.",
     "  --no-perception         Disable foreground window crop and AX element extraction.",
     "  --perception-limit <n>  Bound returned AX element candidates (default: 40, max: 80).",
+    "  --confirm-risk high     Explicitly allow high-risk side effects such as destructive shortcuts or sensitive text.",
+    "  --plan-only             Preflight actions but block real side effects before native input.",
     "  --json                  For repl, emit one JSON event per command.",
     "  --raw                   For repl JSON output, include sanitized full state.",
     "  --trace-tail <n>        Include at most n recent trace items in repl output (bounded to 20).",
