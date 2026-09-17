@@ -1,6 +1,8 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { EventEmitter } = require("node:events");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const { subscribeIpcState } = require("./preloadSubscriptions.cjs");
 
@@ -36,4 +38,20 @@ test("subscribeIpcState delivers valid state and unsubscribes cleanly", () => {
 
   assert.deepEqual(received, [{ url: "https://example.com/" }]);
   assert.equal(ipcRenderer.listenerCount("codex:browser:state"), 0);
+});
+
+test("preload entry keeps subscription helper self-contained for sandbox", () => {
+  const preloadSource = readFileSync(join(__dirname, "preload.cjs"), "utf8");
+
+  assert.doesNotMatch(preloadSource, /require\("\.\/preloadSubscriptions\.cjs"\)/);
+  assert.match(preloadSource, /function subscribeIpcState\(channel, listener\)/);
+  assert.match(preloadSource, /typeof listener !== "function"/);
+  assert.match(
+    preloadSource,
+    /subscribeBrowserState\(listener\) \{[\s\S]*subscribeIpcState\("codex:browser:state", listener\)/,
+  );
+  assert.match(
+    preloadSource,
+    /subscribeTerminalState\(listener\) \{[\s\S]*subscribeIpcState\("codex:terminal:state", listener\)/,
+  );
 });
