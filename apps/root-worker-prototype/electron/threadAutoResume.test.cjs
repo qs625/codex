@@ -268,7 +268,7 @@ test("restart recovery fanout resumes once and submits recovery input", async ()
   assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
   assert.equal(first.focusThreadId, "thread-a");
   assert.deepEqual(second.resumedThreadIds, []);
-  assert.deepEqual(second.skippedThreadIds, []);
+  assert.deepEqual(second.skippedThreadIds, ["thread-a"]);
   assert.deepEqual(calls, [
     ["read", "thread-a"],
     ["subscribe", "thread-a"],
@@ -391,7 +391,7 @@ test("restart-scoped auto-resume markers allow a later restart with unchanged up
 
   assert.deepEqual(first.resumedThreadIds, ["thread-a"]);
   assert.deepEqual(repeatedFirst.resumedThreadIds, []);
-  assert.deepEqual(repeatedFirst.skippedThreadIds, []);
+  assert.deepEqual(repeatedFirst.skippedThreadIds, ["thread-a"]);
   assert.deepEqual(second.resumedThreadIds, ["thread-a"]);
   assert.deepEqual(calls, [
     ["subscribe", "thread-a"],
@@ -406,6 +406,60 @@ test("restart-scoped auto-resume markers allow a later restart with unchanged up
   );
   assert.equal(
     marked.has("restart-v2:runtime-restart:restart-b:thread-a"),
+    true,
+  );
+});
+
+test("completed expected restart recovery still fans out after an earlier empty pass", async () => {
+  const marked = new Set();
+  const sent = [];
+  const reads = [];
+  const root = projectRootThread({
+    id: "root",
+    lifecycleStatus: { type: "waiting", reason: "eventSubscription" },
+  });
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: {
+      has: async (key) => marked.has(key),
+      mark: async (key) => marked.add(key),
+    },
+    readThread: async (threadId) => {
+      reads.push(threadId);
+      return { thread: root };
+    },
+    subscribeThread: async () => {},
+    sendResumeInput: async (thread, text) =>
+      sent.push({ threadId: thread.id, text }),
+    logger: { warn: () => {} },
+  });
+  const expectedRestart = runtimeRestartRecovery(["self-thread"], "restart-1");
+
+  const emptyPass = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [],
+    expectedRestart,
+  });
+  const fanout = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [root],
+    expectedRestart,
+  });
+  const duplicate = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: [root],
+    expectedRestart,
+  });
+
+  assert.deepEqual(emptyPass.resumedThreadIds, []);
+  assert.deepEqual(fanout.resumedThreadIds, ["root"]);
+  assert.deepEqual(duplicate.resumedThreadIds, []);
+  assert.deepEqual(duplicate.skippedThreadIds, ["root"]);
+  assert.deepEqual(reads, ["root"]);
+  assert.deepEqual(sent, [
+    {
+      threadId: "root",
+      text: autoResumePromptForOccurrence("runtime-restart:restart-1"),
+    },
+  ]);
+  assert.equal(
+    marked.has("restart-v2:runtime-restart:restart-1:root"),
     true,
   );
 });
