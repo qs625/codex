@@ -53,6 +53,7 @@ const {
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
+  shouldClearBrowserLocalError,
   shouldClearGitDiffPreviewForFilePreviewChange,
   syncFilePreviewEditState,
   updateFilePreviewDraft,
@@ -443,6 +444,44 @@ test("browser tab helpers preserve active tab state and readable labels", () => 
   assert.equal(legacyState.activeTabId, "browser-tab-active");
   assert.equal(legacyState.tabs.length, 1);
   assert.equal(legacyState.tabs[0]?.title, "Legacy page");
+});
+
+test("browser successful state clears stale local errors", () => {
+  const state = normalizeBrowserPanelState({
+    activeTabId: "tab-1",
+    tabs: [
+      {
+        id: "tab-1",
+        url: "https://example.com/",
+        title: "Example Domain",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ],
+  });
+
+  assert.equal(shouldClearBrowserLocalError(state, state.tabs[0] ?? null), true);
+});
+
+test("browser real tab error keeps local error visible", () => {
+  const state = normalizeBrowserPanelState({
+    activeTabId: "tab-1",
+    tabs: [
+      {
+        id: "tab-1",
+        url: "https://offline.invalid/",
+        title: null,
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: "Page failed to load",
+      },
+    ],
+  });
+
+  assert.equal(shouldClearBrowserLocalError(state, state.tabs[0] ?? null), false);
 });
 
 test("browser API detection requires tab actions", () => {
