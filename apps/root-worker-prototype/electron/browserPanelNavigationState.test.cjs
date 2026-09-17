@@ -179,3 +179,46 @@ test("waitForBrowserPanelNavigationResult resolves completed loadURL before time
   await waitForBrowserPanelNavigationResult(Promise.resolve(), 3_000, timers);
   assert.equal(timeoutScheduled, true);
 });
+
+test("waitForBrowserPanelNavigationResult resolves observed target navigation when loadURL hangs", async () => {
+  let timeoutCallback = null;
+  let clearedTimeout = null;
+  const timers = {
+    setTimeout(callback) {
+      timeoutCallback = callback;
+      return 7;
+    },
+    clearTimeout(timeout) {
+      clearedTimeout = timeout;
+    },
+  };
+
+  await waitForBrowserPanelNavigationResult(
+    new Promise(() => {}),
+    3_000,
+    timers,
+    Promise.resolve(),
+  );
+
+  assert.equal(typeof timeoutCallback, "function");
+  assert.equal(clearedTimeout, 7);
+});
+
+test("waitForBrowserPanelNavigationResult rejects observed navigation failure before timeout", async () => {
+  const timers = {
+    setTimeout() {
+      return 1;
+    },
+    clearTimeout() {},
+  };
+
+  await assert.rejects(
+    waitForBrowserPanelNavigationResult(
+      new Promise(() => {}),
+      3_000,
+      timers,
+      Promise.reject(new Error("ERR_NAME_NOT_RESOLVED (-105)")),
+    ),
+    /ERR_NAME_NOT_RESOLVED \(-105\)/,
+  );
+});

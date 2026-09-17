@@ -1852,16 +1852,25 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
   tab.state.loading = true;
   stopBrowserPanelWebContentsLoad(tab);
   sendBrowserPanelState(panel);
+  const observedNavigation = observeBrowserPanelTargetNavigation(
+    tab,
+    normalized.url,
+    navigationSequence,
+  );
   try {
     await waitForBrowserPanelNavigationResult(
       tab.view.webContents.loadURL(normalized.url),
       BROWSER_PANEL_NAVIGATION_TIMEOUT_MS,
+      {},
+      observedNavigation.promise,
     );
+    observedNavigation.dispose();
     await waitForBrowserPanelLoadStop(tab.view.webContents);
     if (tab.navigationSequence === navigationSequence) {
       completeBrowserPanelNavigation(panel, tab, navigationSequence);
     }
   } catch (error) {
+    observedNavigation.dispose();
     if (isBrowserPanelNavigationTimeoutError(error)) {
       stopBrowserPanelWebContentsLoad(tab);
     }
@@ -1967,6 +1976,77 @@ function bindBrowserPanelTab(panel, tab) {
   tab.view.webContents.on("destroyed", () => {
     removeDestroyedBrowserPanelTab(panel, tab);
   });
+}
+
+function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence) {
+  const webContents = tab.view.webContents;
+  let settled = false;
+  let resolveObserved;
+  let rejectObserved;
+  const cleanup = () => {
+    webContents.removeListener("did-navigate", handleNavigate);
+    webContents.removeListener("did-finish-load", handleFinish);
+    webContents.removeListener("did-fail-load", handleFail);
+    webContents.removeListener("destroyed", handleDestroyed);
+  };
+  const settle = (callback, value) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    cleanup();
+    callback(value);
+  };
+  const isCurrentTarget = (url) =>
+    tab.navigationSequence === navigationSequence &&
+    browserPanelUrlsEqual(url, targetUrl);
+  const handleNavigate = (_event, url) => {
+    if (isCurrentTarget(url)) {
+      settle(resolveObserved);
+    }
+  };
+  const handleFinish = () => {
+    updateBrowserPanelLocationState(tab);
+    if (isCurrentTarget(tab.state.url)) {
+      settle(resolveObserved);
+    }
+  };
+  const handleFail = (
+    _event,
+    errorCode,
+    errorDescription,
+    validatedUrl,
+    isMainFrame,
+  ) => {
+    if (!isMainFrame || errorCode === -3) {
+      return;
+    }
+    settle(
+      rejectObserved,
+      new Error(
+        browserPanelLoadErrorMessage({
+          errorCode,
+          errorDescription,
+          validatedUrl,
+        }),
+      ),
+    );
+  };
+  const handleDestroyed = () => {
+    settle(rejectObserved, new Error("Browser panel webContents was destroyed"));
+  };
+  const promise = new Promise((resolve, reject) => {
+    resolveObserved = resolve;
+    rejectObserved = reject;
+  });
+  webContents.on("did-navigate", handleNavigate);
+  webContents.on("did-finish-load", handleFinish);
+  webContents.on("did-fail-load", handleFail);
+  webContents.on("destroyed", handleDestroyed);
+  return {
+    promise,
+    dispose: cleanup,
+  };
 }
 
 function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {

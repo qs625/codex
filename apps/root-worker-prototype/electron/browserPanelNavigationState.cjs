@@ -56,7 +56,12 @@ function shouldExposeBrowserPanelLoading({
   return Boolean(observedLoading && pendingNavigationSequence !== null);
 }
 
-function waitForBrowserPanelNavigationResult(loadPromise, timeoutMs, timers = {}) {
+function waitForBrowserPanelNavigationResult(
+  loadPromise,
+  timeoutMs,
+  timers = {},
+  observedNavigationPromise = null,
+) {
   const setTimer = timers.setTimeout ?? setTimeout;
   const clearTimer = timers.clearTimeout ?? clearTimeout;
   let timeout = null;
@@ -69,7 +74,12 @@ function waitForBrowserPanelNavigationResult(loadPromise, timeoutMs, timers = {}
     }, timeoutMs);
   });
 
-  return Promise.race([loadPromise, timeoutPromise]).finally(() => {
+  const navigationSignals = [loadPromise, timeoutPromise];
+  if (observedNavigationPromise) {
+    navigationSignals.push(observedNavigationPromise);
+  }
+
+  return Promise.race(navigationSignals).finally(() => {
     if (timeout !== null) {
       clearTimer(timeout);
     }
