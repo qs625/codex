@@ -226,7 +226,14 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
     let status = resolve_thread_status(loaded_status, has_live_in_progress_turn);
     let preserve_persisted_status = matches!(status, ThreadLifecycleStatus::NotLoaded)
         && should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(thread);
+    let preserve_completed_from_stale_active = !has_live_in_progress_turn
+        && matches!(thread.lifecycle_status, ThreadLifecycleStatus::Final {
+            result: app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. },
+        })
+        && matches!(status, ThreadLifecycleStatus::Active { .. });
     let effective_status = if preserve_persisted_status {
+        thread.lifecycle_status.clone()
+    } else if preserve_completed_from_stale_active {
         thread.lifecycle_status.clone()
     } else {
         status
@@ -239,7 +246,7 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
             }
         }
     }
-    if !preserve_persisted_status {
+    if !preserve_persisted_status && !preserve_completed_from_stale_active {
         thread.lifecycle_status = effective_status;
     }
 }
@@ -247,6 +254,7 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use app_server_protocol::ThreadLifecycleActiveFlag;
     use protocol::protocol::AgentStatus;
 
     fn turn_with_status(status: TurnStatus) -> Turn {
@@ -348,5 +356,47 @@ mod tests {
         );
 
         assert_eq!(projection.thread.turns[0].status, TurnStatus::Interrupted);
+    }
+
+    #[test]
+    fn stale_active_overlay_does_not_reopen_completed_thread_without_live_turn() {
+        let mut thread = thread_with_in_progress_turn();
+        thread.lifecycle_status = ThreadLifecycleStatus::completed(Some("done".to_string()));
+
+        set_thread_status_and_interrupt_stale_turns(
+            &mut thread,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            /*has_live_in_progress_turn*/ false,
+        );
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+        assert_eq!(thread.turns[0].status, TurnStatus::Interrupted);
+    }
+
+    #[test]
+    fn live_in_progress_turn_can_reopen_completed_thread_as_active() {
+        let mut thread = thread_with_in_progress_turn();
+        thread.lifecycle_status = ThreadLifecycleStatus::completed(Some("done".to_string()));
+
+        set_thread_status_and_interrupt_stale_turns(
+            &mut thread,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            /*has_live_in_progress_turn*/ true,
+        );
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            }
+        );
+        assert_eq!(thread.turns[0].status, TurnStatus::InProgress);
     }
 }

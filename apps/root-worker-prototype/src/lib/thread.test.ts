@@ -1540,7 +1540,7 @@ test("preserveTerminalLifecycleStatus ignores stale waiting status notifications
   );
 });
 
-test("authoritative active status notification overrides stale completed lifecycle", () => {
+test("authoritative active status notification does not reopen completed lifecycle", () => {
   const completed = {
     type: "final" as const,
     result: { type: "completed" as const },
@@ -1554,7 +1554,22 @@ test("authoritative active status notification overrides stale completed lifecyc
     mergeThreadLifecycleStatus(completed, liveActive, {
       authoritative: true,
     }),
-    liveActive,
+    completed,
+  );
+});
+
+test("explicit live activity can reopen completed lifecycle", () => {
+  const completedThread = {
+    ...makeThread(),
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
+  };
+
+  assert.deepEqual(
+    markThreadCommandExecutionRunning(completedThread).lifecycleStatus,
+    { type: "active", activeFlags: ["running"] },
   );
 });
 
@@ -1860,6 +1875,106 @@ test("conversation display keeps exec command item and typed notification summar
     ).includes("889b416d"),
     false,
   );
+});
+
+test("command exit notification completes matching cross-turn running command item", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "git rev-parse --short HEAD",
+    cwd: "/repo",
+    status: "inProgress",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const exitNotification: ThreadItem = {
+    type: "commandExecutionNotification",
+    id: "cmd-1:notification:exit",
+    commandItemId: "cmd-1",
+    kind: "exit",
+    message: "Command cmd-1 has exited with code 0.",
+    output: "889b416d\n",
+    exitCode: 0,
+    createdAtMs: 3_000,
+  };
+
+  const started = updateThreadItem(makeThread(), "turn-1", commandStart, {
+    startedAtMs: 1_000,
+  });
+  const notified = updateThreadItem(started, "turn-exit", exitNotification, {
+    completedAtMs: 3_000,
+  });
+
+  assert.deepEqual(notified.activeCommandItems, []);
+  assert.deepEqual(notified.turns[0]?.items, [
+    {
+      ...commandStart,
+      status: "completed",
+      aggregatedOutput: "889b416d\n",
+      exitCode: 0,
+      startedAtMs: 1_000,
+      completedAtMs: 3_000,
+    },
+  ]);
+  assert.deepEqual(notified.turns[1]?.items, [
+    {
+      ...exitNotification,
+      completedAtMs: 3_000,
+    },
+  ]);
+});
+
+test("stale active command tail does not reorder command after later messages", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "git rev-parse --short HEAD",
+    cwd: "/repo",
+    status: "inProgress",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const exitNotification: ThreadItem = {
+    type: "commandExecutionNotification",
+    id: "cmd-1:notification:exit",
+    commandItemId: "cmd-1",
+    kind: "exit",
+    message: "Command cmd-1 has exited with code 0.",
+    output: "889b416d\n",
+    exitCode: 0,
+    createdAtMs: 3_000,
+  };
+  const thread = normalizeThreadSnapshot({
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-command", [commandStart]),
+      makeTurn("turn-exit", [
+        exitNotification,
+        makeUserMessage("user-after", "next request"),
+        makeAgentMessage("agent-after", "next response"),
+      ]),
+    ],
+    activeCommandItems: [commandStart],
+  });
+
+  const entries = buildConversationEntries(thread);
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.toolStatus]),
+    [
+      ["cmd-1", "completed"],
+      ["cmd-1:notification:exit", "completed"],
+      ["user-after", undefined],
+      ["agent-after", undefined],
+    ],
+  );
+  assert.deepEqual(thread.activeCommandItems, []);
 });
 
 test("command output delta without command start does not create a visible placeholder", () => {

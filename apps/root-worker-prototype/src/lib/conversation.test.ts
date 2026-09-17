@@ -1191,14 +1191,6 @@ test("renders live active command current state as compact command anchors", () 
         false,
         "running",
       ],
-      [
-        "exec-2",
-        "tool",
-        "bun dev",
-        "active-command:exec-2",
-        false,
-        "completed",
-      ],
     ],
   );
   assert.deepEqual(
@@ -1222,11 +1214,6 @@ test("renders live active command current state as compact command anchors", () 
         id: "exec-1",
         kind: "tool",
         entries: ["exec-1"],
-      },
-      {
-        id: "exec-2",
-        kind: "tool",
-        entries: ["exec-2"],
       },
     ],
   );

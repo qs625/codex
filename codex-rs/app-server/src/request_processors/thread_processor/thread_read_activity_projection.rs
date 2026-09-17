@@ -1,10 +1,14 @@
 use super::*;
+use app_server_protocol::CommandExecutionNotificationKind;
 use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallStatus;
 use protocol::subscriptions::PersistedSubscription;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub(super) fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
     restore_persisted_injected_context_turns(thread, persisted_turns);
+    reconcile_command_execution_exit_notifications(thread);
 }
 
 pub(crate) fn restore_persisted_display_turns_from_rollout_items(
@@ -57,23 +61,145 @@ pub(super) fn apply_live_active_command_items_from_active_turn(
     thread: &mut Thread,
     active_turn: Option<&Turn>,
 ) {
+    let mut exited_command_item_ids = reconcile_command_execution_exit_notifications(thread);
+    if let Some(active_turn) = active_turn {
+        collect_command_execution_exit_notification_ids(active_turn, &mut exited_command_item_ids);
+    }
     let active_command_items = active_turn
-        .map(active_command_items_from_live_turn)
+        .map(|turn| active_command_items_from_live_turn(turn, &exited_command_item_ids))
         .unwrap_or_default();
     thread.active_command_items = Some(active_command_items);
 }
 
-fn active_command_items_from_live_turn(turn: &Turn) -> Vec<ThreadItem> {
-    turn.items
+fn active_command_items_from_live_turn(
+    turn: &Turn,
+    exited_command_item_ids: &HashSet<String>,
+) -> Vec<ThreadItem> {
+    let mut reconciled_turn = turn.clone();
+    let exit_notifications = command_execution_exit_notifications_from_turn(&reconciled_turn);
+    reconcile_turn_command_execution_exit_notifications(&mut reconciled_turn, &exit_notifications);
+    reconciled_turn
+        .items
         .iter()
         .filter_map(|item| match item {
             ThreadItem::CommandExecution {
+                id,
                 status: CommandExecutionStatus::InProgress,
                 ..
-            } => Some(item.clone()),
+            } if !exited_command_item_ids.contains(id) => Some(item.clone()),
             _ => None,
         })
         .collect()
+}
+
+fn reconcile_command_execution_exit_notifications(thread: &mut Thread) -> HashSet<String> {
+    let exit_notifications = command_execution_exit_notifications_from_turns(&thread.turns);
+    let exited_command_item_ids = exit_notifications.keys().cloned().collect::<HashSet<_>>();
+    for turn in &mut thread.turns {
+        reconcile_turn_command_execution_exit_notifications(turn, &exit_notifications);
+    }
+    prune_completed_active_command_items(thread, &exited_command_item_ids);
+    exited_command_item_ids
+}
+
+fn collect_command_execution_exit_notification_ids(
+    turn: &Turn,
+    exited_command_item_ids: &mut HashSet<String>,
+) {
+    for item in &turn.items {
+        if let ThreadItem::CommandExecutionNotification {
+            command_item_id,
+            kind: CommandExecutionNotificationKind::Exit,
+            ..
+        } = item
+        {
+            exited_command_item_ids.insert(command_item_id.clone());
+        }
+    }
+}
+
+fn command_execution_exit_notifications_from_turns(
+    turns: &[Turn],
+) -> HashMap<String, (Option<String>, Option<i32>)> {
+    let mut exit_notifications = HashMap::new();
+    for turn in turns {
+        exit_notifications.extend(command_execution_exit_notifications_from_turn(turn));
+    }
+    exit_notifications
+}
+
+fn command_execution_exit_notifications_from_turn(
+    turn: &Turn,
+) -> HashMap<String, (Option<String>, Option<i32>)> {
+    turn
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::CommandExecutionNotification {
+                command_item_id,
+                kind: CommandExecutionNotificationKind::Exit,
+                output,
+                exit_code,
+                ..
+            } => Some((command_item_id.clone(), (output.clone(), *exit_code))),
+            _ => None,
+        })
+        .collect()
+}
+
+fn reconcile_turn_command_execution_exit_notifications(
+    turn: &mut Turn,
+    exit_notifications: &HashMap<String, (Option<String>, Option<i32>)>,
+) {
+    if exit_notifications.is_empty() {
+        return;
+    }
+
+    for item in &mut turn.items {
+        let ThreadItem::CommandExecution {
+            id,
+            status,
+            aggregated_output,
+            exit_code: command_exit_code,
+            ..
+        } = item
+        else {
+            continue;
+        };
+        if let Some((output, exit_code)) = exit_notifications.get(id) {
+            *status = command_status_from_exit_code(*exit_code);
+            *command_exit_code = *exit_code;
+            if aggregated_output.is_none() {
+                *aggregated_output = output.clone();
+            }
+        }
+    }
+}
+
+fn command_status_from_exit_code(exit_code: Option<i32>) -> CommandExecutionStatus {
+    match exit_code {
+        Some(0) | None => CommandExecutionStatus::Completed,
+        Some(_) => CommandExecutionStatus::Failed,
+    }
+}
+
+fn prune_completed_active_command_items(
+    thread: &mut Thread,
+    exited_command_item_ids: &HashSet<String>,
+) {
+    let Some(active_command_items) = thread.active_command_items.as_mut() else {
+        return;
+    };
+    active_command_items.retain(|item| {
+        matches!(
+            item,
+            ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::InProgress,
+                ..
+            } if !exited_command_item_ids.contains(id)
+        )
+    });
 }
 
 fn apply_runtime_activity_items_from_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
@@ -98,6 +224,7 @@ fn apply_runtime_activity_items_from_turns(thread: &mut Thread, persisted_turns:
     if has_command_activity_turn {
         thread.active_command_items = Some(command_items);
     }
+    reconcile_command_execution_exit_notifications(thread);
 }
 
 pub(super) fn is_active_subscriptions_turn(turn: &Turn) -> bool {
@@ -303,6 +430,23 @@ mod restore_persisted_injected_context_turns_tests {
             aggregated_output: None,
             exit_code: None,
             duration_ms: None,
+        }
+    }
+
+    fn command_exit_notification_item(
+        id: &str,
+        command_item_id: &str,
+        exit_code: i32,
+        output: &str,
+    ) -> ThreadItem {
+        ThreadItem::CommandExecutionNotification {
+            id: id.to_string(),
+            command_item_id: command_item_id.to_string(),
+            kind: CommandExecutionNotificationKind::Exit,
+            message: format!("Command {command_item_id} has exited with code {exit_code}."),
+            output: Some(output.to_string()),
+            exit_code: Some(exit_code),
+            created_at_ms: 3_000,
         }
     }
 
@@ -718,6 +862,68 @@ mod restore_persisted_injected_context_turns_tests {
                 "exec-running",
                 CommandExecutionStatus::InProgress
             )])
+        );
+    }
+
+    #[test]
+    fn command_exit_notification_completes_cross_turn_command_and_clears_stale_active_item() {
+        let mut thread = thread_with_turns(vec![
+            turn(
+                "turn-command",
+                vec![command_execution_item(
+                    "exec-running",
+                    CommandExecutionStatus::InProgress,
+                )],
+            ),
+            turn(
+                "turn-exit",
+                vec![
+                    command_exit_notification_item(
+                        "exec-running:notification:exit",
+                        "exec-running",
+                        0,
+                        "done\n",
+                    ),
+                    agent_message_item("msg-after", "next output"),
+                ],
+            ),
+        ]);
+        thread.active_command_items = Some(vec![command_execution_item(
+            "exec-running",
+            CommandExecutionStatus::InProgress,
+        )]);
+        let live_turn = turn(
+            "turn-live",
+            vec![command_execution_item(
+                "exec-running",
+                CommandExecutionStatus::InProgress,
+            )],
+        );
+
+        apply_live_active_command_items_from_active_turn(&mut thread, Some(&live_turn));
+
+        assert_eq!(thread.active_command_items, Some(Vec::new()));
+        let command_item = thread.turns[0]
+            .items
+            .iter()
+            .find(|item| item.id() == "exec-running")
+            .expect("command item should remain in its original turn");
+        assert!(matches!(
+            command_item,
+            ThreadItem::CommandExecution {
+                status: CommandExecutionStatus::Completed,
+                aggregated_output: Some(output),
+                exit_code: Some(0),
+                ..
+            } if output == "done\n"
+        ));
+        assert_eq!(
+            thread.turns[1]
+                .items
+                .iter()
+                .map(|item| item.id())
+                .collect::<Vec<_>>(),
+            vec!["exec-running:notification:exit", "msg-after"]
         );
     }
 

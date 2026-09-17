@@ -18,9 +18,17 @@ export function summarizeCommandExecution(
   const cwd = trimPath(item.cwd);
   const exitCode =
     item.exitCode === null || item.exitCode === undefined
-      ? item.status || "running"
+      ? displayCommandExecutionStatus(item.status)
       : `exit ${item.exitCode}`;
   return `${cwd} • ${exitCode}`;
+}
+
+function displayCommandExecutionStatus(status: string | null | undefined) {
+  if (!status) {
+    return "running";
+  }
+  const normalized = status.trim().toLowerCase().replace(/[_-]/g, "");
+  return normalized === "inprogress" ? "running" : status;
 }
 
 export function formatCommandExecutionDetails(
