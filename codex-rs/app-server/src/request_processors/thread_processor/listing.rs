@@ -1,4 +1,12 @@
 use super::*;
+use app_server_protocol::GitInfo as ApiGitInfo;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleWaitReason;
+use codex_git_info::collect_git_info;
+use codex_git_info::get_git_repo_root;
+use thread_service_api::AgentDirectoryEntry;
+use thread_service_api::AgentDirectoryListRequest;
 
 struct ThreadListFilters {
     model_providers: Option<Vec<String>>,
@@ -21,6 +29,27 @@ struct ThreadListQuery {
     cwd_filters: Option<Vec<PathBuf>>,
     search_term: Option<String>,
     use_state_db_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct LiveThreadLifecycleOverlay {
+    status: ThreadLifecycleStatus,
+    has_live_in_progress_turn: bool,
+    has_live_metadata_evidence: bool,
+}
+
+impl LiveThreadLifecycleOverlay {
+    fn new(
+        status: ThreadLifecycleStatus,
+        has_live_in_progress_turn: bool,
+        has_live_metadata_evidence: bool,
+    ) -> Self {
+        Self {
+            status,
+            has_live_in_progress_turn,
+            has_live_metadata_evidence,
+        }
+    }
 }
 
 impl ThreadListQuery {
@@ -300,21 +329,28 @@ impl ThreadRequestProcessor {
         }
 
         let mut projected_threads = Vec::with_capacity(threads.len());
+        let agent_directory_entries = self
+            .agent_directory_entries_by_thread_id(threads.first().map(|(thread_id, _)| *thread_id))
+            .await;
         for (thread_id, mut thread) in threads {
-            let has_live_in_progress_turn = if self
-                .live_thread_inspection
-                .is_live_thread_loaded(thread_id)
-                .await
-            {
-                self.active_in_progress_turn_snapshot(thread_id).await.is_some()
-            } else {
-                false
-            };
+            let LiveThreadLifecycleOverlay {
+                status,
+                has_live_in_progress_turn,
+                has_live_metadata_evidence,
+            } = self
+                .live_thread_lifecycle_overlay(thread_id, thread.lifecycle_status.clone())
+                .await;
             set_thread_status_and_interrupt_stale_turns(
                 &mut thread,
-                ThreadLifecycleStatus::NotLoaded,
+                status,
                 has_live_in_progress_turn,
             );
+            self.apply_live_thread_metadata_overlay(
+                &mut thread,
+                has_live_metadata_evidence,
+                agent_directory_entries.get(&thread_id),
+            )
+            .await;
             projected_threads.push(thread);
         }
         projected_threads
@@ -380,7 +416,7 @@ impl ThreadRequestProcessor {
             .live_thread_snapshot(thread_id)
             .await
             .ok();
-        let (mut thread, has_live_in_progress_turn) = if include_turns {
+        let (mut thread, _) = if include_turns {
             if let Some(live_snapshot) = live_snapshot.as_ref() {
                 // Loaded thread with turns: keep the persisted turn projection available
                 // so richer init-context items survive live-history reconstruction.
@@ -448,12 +484,114 @@ impl ThreadRequestProcessor {
             )));
         };
 
-        set_thread_status_and_interrupt_stale_turns(
-            &mut thread,
-            ThreadLifecycleStatus::NotLoaded,
+        let LiveThreadLifecycleOverlay {
+            status,
             has_live_in_progress_turn,
-        );
+            has_live_metadata_evidence,
+        } = self
+            .live_thread_lifecycle_overlay(thread_id, thread.lifecycle_status.clone())
+            .await;
+        set_thread_status_and_interrupt_stale_turns(&mut thread, status, has_live_in_progress_turn);
+        let agent_directory_entry = self.agent_directory_entry_for_thread(thread_id).await;
+        self.apply_live_thread_metadata_overlay(
+            &mut thread,
+            has_live_metadata_evidence,
+            agent_directory_entry.as_ref(),
+        )
+        .await;
         Ok(thread)
+    }
+
+    async fn agent_directory_entries_by_thread_id(
+        &self,
+        current_thread_id: Option<ThreadId>,
+    ) -> HashMap<ThreadId, AgentDirectoryEntry> {
+        let Some(current_thread_id) = current_thread_id else {
+            return HashMap::new();
+        };
+        self.thread_agent_directory_runtime
+            .list_agent_directory(AgentDirectoryListRequest {
+                current_thread_id,
+                current_session_source: protocol::protocol::SessionSource::Unknown,
+                path_prefix: Some("/".to_string()),
+            })
+            .await
+            .map(|directory| {
+                directory
+                    .entries
+                    .into_iter()
+                    .map(|entry| (entry.thread_id, entry))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn agent_directory_entry_for_thread(
+        &self,
+        thread_id: ThreadId,
+    ) -> Option<AgentDirectoryEntry> {
+        self.agent_directory_entries_by_thread_id(Some(thread_id))
+            .await
+            .remove(&thread_id)
+    }
+
+    async fn apply_live_thread_metadata_overlay(
+        &self,
+        thread: &mut Thread,
+        has_live_metadata_evidence: bool,
+        agent_directory_entry: Option<&AgentDirectoryEntry>,
+    ) {
+        if !has_live_metadata_evidence {
+            return;
+        }
+        if let Some(preview) = agent_directory_entry
+            .and_then(|entry| entry.last_task_message.as_deref())
+            .map(str::trim)
+            .filter(|preview| !preview.is_empty())
+        {
+            thread.preview = preview.to_string();
+        }
+        if let Some(git_info) = live_thread_git_info(&thread.cwd).await {
+            thread.git_info = Some(git_info);
+        }
+        thread.updated_at = live_overlay_updated_at(thread.updated_at);
+    }
+
+    async fn live_thread_lifecycle_overlay(
+        &self,
+        thread_id: ThreadId,
+        stored_status: ThreadLifecycleStatus,
+    ) -> LiveThreadLifecycleOverlay {
+        if !self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
+            return LiveThreadLifecycleOverlay::new(ThreadLifecycleStatus::NotLoaded, false, false);
+        }
+        let live_agent_status = self
+            .thread_lifecycle_runtime
+            .live_thread_agent_status(thread_id)
+            .await
+            .ok();
+        let runtime_status = self
+            .thread_lifecycle_runtime
+            .live_thread_runtime_status(thread_id)
+            .await
+            .ok();
+        let has_live_in_progress_turn = matches!(
+            runtime_status,
+            Some(thread_service_api::ThreadRuntimeStatus::Active)
+        ) || self
+            .active_in_progress_turn_snapshot(thread_id)
+            .await
+            .is_some();
+        live_thread_lifecycle_overlay_from_facts(
+            stored_status,
+            live_agent_status.as_ref(),
+            runtime_status,
+            has_live_in_progress_turn,
+        )
     }
 
     fn is_include_turns_unavailable_before_first_user_message(message: &str) -> bool {
@@ -838,4 +976,228 @@ impl ThreadRequestProcessor {
 fn is_unknown_agent_type_resume_error(err: &JSONRPCErrorError) -> bool {
     err.code == crate::error_code::INVALID_REQUEST_ERROR_CODE
         && err.message.starts_with("unknown agent_type ")
+}
+
+fn live_thread_lifecycle_overlay_from_facts(
+    stored_status: ThreadLifecycleStatus,
+    live_agent_status: Option<&AgentStatus>,
+    runtime_status: Option<thread_service_api::ThreadRuntimeStatus>,
+    has_active_turn: bool,
+) -> LiveThreadLifecycleOverlay {
+    if is_strong_terminal_thread_status(&stored_status) {
+        return LiveThreadLifecycleOverlay::new(stored_status, false, false);
+    }
+    match runtime_status {
+        Some(thread_service_api::ThreadRuntimeStatus::Active) => LiveThreadLifecycleOverlay::new(
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            true,
+            true,
+        ),
+        Some(thread_service_api::ThreadRuntimeStatus::IdleWaitCommand) => {
+            LiveThreadLifecycleOverlay::new(
+                ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::Command,
+                },
+                false,
+                true,
+            )
+        }
+        Some(thread_service_api::ThreadRuntimeStatus::IdleWaitChild) => {
+            LiveThreadLifecycleOverlay::new(
+                ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::Child,
+                },
+                false,
+                true,
+            )
+        }
+        Some(thread_service_api::ThreadRuntimeStatus::IdleWaitEventSubscription) => {
+            LiveThreadLifecycleOverlay::new(
+                ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::EventSubscription,
+                },
+                false,
+                true,
+            )
+        }
+        Some(thread_service_api::ThreadRuntimeStatus::Complete) => LiveThreadLifecycleOverlay::new(
+            live_agent_status
+                .filter(|status| is_terminal_or_not_found_agent_status(status))
+                .map(super::ops::thread_lifecycle_status_from_agent_status)
+                .unwrap_or(stored_status),
+            false,
+            false,
+        ),
+        None if has_active_turn => LiveThreadLifecycleOverlay::new(
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+            true,
+            true,
+        ),
+        None => LiveThreadLifecycleOverlay::new(
+            live_agent_status
+                .filter(|status| !matches!(status, AgentStatus::Running))
+                .map(super::ops::thread_lifecycle_status_from_agent_status)
+                .unwrap_or(stored_status),
+            false,
+            false,
+        ),
+    }
+}
+
+fn live_overlay_updated_at(stored_updated_at: i64) -> i64 {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    now.max(stored_updated_at.saturating_add(1))
+}
+
+async fn live_thread_git_info(cwd: &AbsolutePathBuf) -> Option<ApiGitInfo> {
+    if get_git_repo_root(cwd.as_path()).is_none() {
+        return None;
+    }
+    let git_info = collect_git_info(cwd.as_path()).await?;
+    Some(ApiGitInfo {
+        sha: git_info.commit_hash.map(|sha| sha.0),
+        branch: git_info.branch,
+        origin_url: git_info.repository_url,
+    })
+}
+
+fn is_terminal_or_not_found_agent_status(status: &AgentStatus) -> bool {
+    matches!(
+        status,
+        AgentStatus::Completed(_)
+            | AgentStatus::Errored(_)
+            | AgentStatus::Interrupted
+            | AgentStatus::Shutdown
+            | AgentStatus::NotFound
+    )
+}
+
+fn is_strong_terminal_thread_status(status: &ThreadLifecycleStatus) -> bool {
+    matches!(
+        status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Errored { .. }
+                | ThreadLifecycleFinalStatus::Interrupted
+                | ThreadLifecycleFinalStatus::Shutdown,
+        }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thread_service_api::ThreadRuntimeStatus;
+
+    #[test]
+    fn live_overlay_updated_at_advances_stored_timestamp() {
+        let updated_at = live_overlay_updated_at(i64::MAX - 1);
+
+        assert_eq!(updated_at, i64::MAX);
+    }
+
+    #[test]
+    fn complete_runtime_ignores_stale_running_agent_status() {
+        let overlay = live_thread_lifecycle_overlay_from_facts(
+            ThreadLifecycleStatus::completed(None),
+            Some(&AgentStatus::Running),
+            Some(ThreadRuntimeStatus::Complete),
+            false,
+        );
+
+        assert_eq!(overlay.status, ThreadLifecycleStatus::completed(None));
+        assert!(!overlay.has_live_in_progress_turn);
+        assert!(!overlay.has_live_metadata_evidence);
+    }
+
+    #[test]
+    fn missing_runtime_ignores_running_agent_status_without_active_turn() {
+        let overlay = live_thread_lifecycle_overlay_from_facts(
+            ThreadLifecycleStatus::completed(None),
+            Some(&AgentStatus::Running),
+            None,
+            false,
+        );
+
+        assert_eq!(overlay.status, ThreadLifecycleStatus::completed(None));
+        assert!(!overlay.has_live_in_progress_turn);
+        assert!(!overlay.has_live_metadata_evidence);
+    }
+
+    #[test]
+    fn active_runtime_reopens_completed_lifecycle() {
+        let overlay = live_thread_lifecycle_overlay_from_facts(
+            ThreadLifecycleStatus::completed(None),
+            Some(&AgentStatus::Running),
+            Some(ThreadRuntimeStatus::Active),
+            false,
+        );
+
+        assert_eq!(
+            overlay.status,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            }
+        );
+        assert!(overlay.has_live_in_progress_turn);
+        assert!(overlay.has_live_metadata_evidence);
+    }
+
+    #[test]
+    fn waiting_runtime_reopens_completed_lifecycle() {
+        let overlay = live_thread_lifecycle_overlay_from_facts(
+            ThreadLifecycleStatus::completed(None),
+            Some(&AgentStatus::Running),
+            Some(ThreadRuntimeStatus::IdleWaitChild),
+            false,
+        );
+
+        assert_eq!(
+            overlay.status,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::Child,
+            }
+        );
+        assert!(!overlay.has_live_in_progress_turn);
+        assert!(overlay.has_live_metadata_evidence);
+    }
+
+    #[test]
+    fn complete_runtime_preserves_stored_waiting_without_metadata_evidence() {
+        let overlay = live_thread_lifecycle_overlay_from_facts(
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            },
+            Some(&AgentStatus::Running),
+            Some(ThreadRuntimeStatus::Complete),
+            false,
+        );
+
+        assert_eq!(
+            overlay.status,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            }
+        );
+        assert!(!overlay.has_live_in_progress_turn);
+        assert!(!overlay.has_live_metadata_evidence);
+    }
+
+    #[test]
+    fn strong_terminal_stored_status_is_not_reopened() {
+        let stored = ThreadLifecycleStatus::errored(Some("failed".to_string()));
+        let overlay = live_thread_lifecycle_overlay_from_facts(
+            stored.clone(),
+            Some(&AgentStatus::Running),
+            Some(ThreadRuntimeStatus::Active),
+            false,
+        );
+
+        assert_eq!(overlay.status, stored);
+        assert!(!overlay.has_live_in_progress_turn);
+        assert!(!overlay.has_live_metadata_evidence);
+    }
 }

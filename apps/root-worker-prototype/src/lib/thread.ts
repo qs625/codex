@@ -1620,10 +1620,44 @@ function validCompactionCount(value: number) {
 }
 
 function preserveFinalLifecycleStatus(existing: Thread, next: Thread) {
+  const allowCompletedReopen = shouldAllowCompletedLifecycleReopen(
+    existing,
+    next,
+  );
   return mergeThreadLifecycleStatus(
     existing.lifecycleStatus,
     next.lifecycleStatus,
+    allowCompletedReopen
+      ? { authoritative: true, allowCompletedReopen: true }
+      : {},
   );
+}
+
+function shouldAllowCompletedLifecycleReopen(existing: Thread, next: Thread) {
+  if (!isCompletedFinalLifecycleStatus(existing.lifecycleStatus)) {
+    return false;
+  }
+  if (
+    next.lifecycleStatus.type !== "active" &&
+    next.lifecycleStatus.type !== "waiting"
+  ) {
+    return false;
+  }
+  return isThreadSnapshotNewer(existing, next);
+}
+
+function isThreadSnapshotNewer(existing: Thread, next: Thread) {
+  const existingUpdatedAt = finiteTimestamp(existing.updatedAt);
+  const nextUpdatedAt = finiteTimestamp(next.updatedAt);
+  return (
+    existingUpdatedAt !== null &&
+    nextUpdatedAt !== null &&
+    nextUpdatedAt > existingUpdatedAt
+  );
+}
+
+function finiteTimestamp(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 export function mergeThreadLifecycleStatus(
