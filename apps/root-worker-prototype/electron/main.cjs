@@ -108,9 +108,11 @@ const {
   updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 const {
-  collectRuntimeRecoveryThreads,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
+  mergeAutoResumeResults,
+  runRuntimeRecoveryFanout,
+  scheduleRuntimeRecoveryFanoutRetries,
 } = require("./threadAutoResume.cjs");
 const {
   createRuntimeRestartController,
@@ -400,27 +402,40 @@ ipcMain.handle("codex:relaunchApp", async (_event, payload = {}) => {
 
 ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
-  const initialListResult = await listThreads(defaultWorkspace);
-  const initialThreads = initialListResult.threads;
   const expectedRestart =
     await getRuntimeRestartController().recoverPending();
-  const recoveryThreads = await collectRuntimeRecoveryThreads({
-    listedThreads: initialThreads,
-    listLoadedThreadIds: () => listLoadedThreadIds(appServerClient),
-    readThread: (threadId, includeTurns) => readThread(threadId, includeTurns),
-    logger: console,
-  });
-  const autoResume =
-    await getAutoResumeCoordinator().runAfterRuntimeRestartRecovery({
+  const recoveryOccurrenceId =
+    expectedRestart.recoveryOccurrenceId ??
+    startupRuntimeRecovery.recoveryOccurrenceId;
+  const runRecoveryFanout = (listedThreads) =>
+    runRuntimeRecoveryFanout({
+      autoResumeCoordinator: getAutoResumeCoordinator(),
+      expectedRestart,
       hasDurableRestartRecovery:
         startupRuntimeRecovery.hasDurableRestartRecovery,
-      recoveryOccurrenceId:
-        expectedRestart.recoveryOccurrenceId ??
-        startupRuntimeRecovery.recoveryOccurrenceId,
-      threads: recoveryThreads,
-      expectedRestart,
+      listedThreads,
+      listLoadedThreadIds: () => listLoadedThreadIds(appServerClient),
+      readThread: (threadId, includeTurns) =>
+        readThread(threadId, includeTurns),
+      recoveryOccurrenceId,
+      logger: console,
     });
+  const loadedAutoResume = await runRecoveryFanout([]);
+  scheduleRuntimeRecoveryFanoutRetries({
+    delaysMs: [1_000, 5_000],
+    runFanout: () => runRecoveryFanout([]),
+    logger: console,
+  });
+  const initialListResult = await listThreads(defaultWorkspace);
+  const initialAutoResume =
+    await runRecoveryFanout(initialListResult.threads);
   const listResult = await listThreads(defaultWorkspace);
+  const lateAutoResume = await runRecoveryFanout(listResult.threads);
+  const autoResume = mergeAutoResumeResults(
+    loadedAutoResume,
+    initialAutoResume,
+    lateAutoResume,
+  );
   return {
     workspace: defaultWorkspace,
     threads: listResult.threads,
