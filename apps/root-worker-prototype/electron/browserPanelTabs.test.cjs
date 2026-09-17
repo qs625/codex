@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const {
   nextBrowserTabIdAfterClose,
@@ -57,4 +59,30 @@ test("shouldDetachAttachedBrowserPanelView skips destroyed windows and tabs", ()
     }),
     false,
   );
+});
+
+test("browser panel native view lifecycle raises active view and detaches hidden views", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+
+  assert.match(
+    mainSource,
+    /ipcMain\.handle\("codex:browser:show"[\s\S]*setBrowserPanelBounds\(panel, bounds\);[\s\S]*attachBrowserPanel\(panel\);/,
+  );
+  assert.match(
+    mainSource,
+    /function attachBrowserPanel\(panel\) \{[\s\S]*attachActiveBrowserPanelView\(panel, \{ raise: true \}\);[\s\S]*\}/,
+  );
+  assert.match(
+    mainSource,
+    /function detachBrowserPanel\(panel\) \{[\s\S]*detachAllBrowserPanelViews\(panel\);[\s\S]*panel\.visible = false;/,
+  );
+  assert.match(
+    mainSource,
+    /function setBrowserPanelBounds\(panel, bounds\) \{[\s\S]*attachActiveBrowserPanelView\(panel, \{ raise: true \}\);[\s\S]*\}/,
+  );
+  assert.match(
+    mainSource,
+    /function attachActiveBrowserPanelView\(panel, \{ raise = false \} = \{\}\)/,
+  );
+  assert.match(mainSource, /function detachAllBrowserPanelViews\(panel\)/);
 });
