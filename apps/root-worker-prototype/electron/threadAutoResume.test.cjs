@@ -5,6 +5,7 @@ const {
   autoResumePromptForOccurrence,
   autoResumeFingerprint,
   autoResumeOccurrenceId,
+  collectRuntimeRecoveryThreads,
   createThreadAutoResumeCoordinator,
   isAutoResumeTargetLifecycleStatus,
   isAutoResumeEligibleThread,
@@ -795,6 +796,80 @@ test("durable restart fans out exactly once to eligible affected threads except 
     [],
   );
   assert.deepEqual(sent, ["child", "running", "waiting"]);
+});
+
+test("runtime recovery includes loaded active subagents missing from thread list", async () => {
+  const listedThreads = [
+    projectRootThread({ id: "root", updatedAt: 3 }),
+    projectRootThread({
+      id: "completed-root",
+      lifecycleStatus: { type: "final", result: { type: "completed" } },
+    }),
+  ];
+  const loadedSnapshots = {
+    owner: projectRootThread({
+      id: "owner",
+      agentPath: "/project/owner",
+      parentThreadId: "root",
+      threadSource: "subagent",
+      updatedAt: 4,
+    }),
+    "completed-owner": projectRootThread({
+      id: "completed-owner",
+      agentPath: "/project/completed_owner",
+      parentThreadId: "root",
+      threadSource: "subagent",
+      lifecycleStatus: { type: "final", result: { type: "completed" } },
+      updatedAt: 5,
+    }),
+  };
+  const candidateReads = [];
+  const fanoutReads = [];
+  const sent = [];
+
+  const recoveryThreads = await collectRuntimeRecoveryThreads({
+    listedThreads,
+    listLoadedThreadIds: async () => ["root", "owner", "completed-owner"],
+    readThread: async (threadId) => {
+      candidateReads.push(threadId);
+      return { thread: loadedSnapshots[threadId] };
+    },
+    logger: { warn: () => {} },
+  });
+  const threadById = new Map(
+    recoveryThreads.map((thread) => [thread.id, thread]),
+  );
+  const coordinator = createThreadAutoResumeCoordinator({
+    stateStore: { has: async () => false, mark: async () => {} },
+    readThread: async (threadId) => {
+      fanoutReads.push(threadId);
+      return { thread: threadById.get(threadId) };
+    },
+    subscribeThread: async () => {},
+    sendResumeInput: async (thread, text) =>
+      sent.push({ threadId: thread.id, text }),
+    logger: { warn: () => {} },
+  });
+
+  const result = await coordinator.runAfterRuntimeRestartRecovery({
+    threads: recoveryThreads,
+    expectedRestart: runtimeRestartRecovery(["system-self"], "restart-1"),
+  });
+
+  assert.deepEqual(candidateReads, ["owner", "completed-owner"]);
+  assert.deepEqual(result.resumedThreadIds, ["owner", "root"]);
+  assert.deepEqual(result.skippedThreadIds, []);
+  assert.deepEqual(fanoutReads, ["owner", "root"]);
+  assert.deepEqual(sent, [
+    {
+      threadId: "owner",
+      text: autoResumePromptForOccurrence("runtime-restart:restart-1"),
+    },
+    {
+      threadId: "root",
+      text: autoResumePromptForOccurrence("runtime-restart:restart-1"),
+    },
+  ]);
 });
 
 test("auto-resume skips active threads that already contain recovery input", async () => {

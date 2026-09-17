@@ -134,6 +134,58 @@ function createThreadAutoResumeCoordinator({
   }
 }
 
+async function collectRuntimeRecoveryThreads({
+  listedThreads = [],
+  listLoadedThreadIds,
+  readThread,
+  logger = console,
+} = {}) {
+  const threadsById = new Map();
+  for (const thread of listedThreads) {
+    if (thread?.id) {
+      threadsById.set(thread.id, thread);
+    }
+  }
+  if (typeof listLoadedThreadIds !== "function" || typeof readThread !== "function") {
+    return [...threadsById.values()];
+  }
+
+  let loadedThreadIds = [];
+  try {
+    loadedThreadIds = await listLoadedThreadIds();
+  } catch (error) {
+    logger.warn?.(
+      "[prototype] failed to list loaded threads for restart recovery",
+      JSON.stringify({ message: errorMessage(error) }),
+    );
+    return [...threadsById.values()];
+  }
+
+  for (const threadId of loadedThreadIds) {
+    if (typeof threadId !== "string" || !threadId.trim()) {
+      continue;
+    }
+    const id = threadId.trim();
+    if (threadsById.has(id)) {
+      continue;
+    }
+    try {
+      const readResult = await readThread(id, false);
+      const thread = readResult?.thread;
+      if (thread?.id) {
+        threadsById.set(thread.id, thread);
+      }
+    } catch (error) {
+      logger.warn?.(
+        "[prototype] failed to read loaded thread for restart recovery",
+        JSON.stringify({ threadId: id, message: errorMessage(error) }),
+      );
+    }
+  }
+
+  return [...threadsById.values()];
+}
+
 function hasDurableRuntimeRestartRecovery({
   expectedRestart,
   hasDurableRestartRecovery,
@@ -424,6 +476,7 @@ module.exports = {
   autoResumePromptForOccurrence,
   autoResumeFingerprint,
   autoResumeOccurrenceId,
+  collectRuntimeRecoveryThreads,
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
   hasDurableRuntimeRestartRecovery,
