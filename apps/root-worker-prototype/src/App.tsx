@@ -98,6 +98,7 @@ import {
   mergeDefaultCollapsedProjectIds,
   normalizeProjectCwd,
   normalizeThreadSnapshot,
+  orderSidebarProjectsStable,
   pickBootstrapInitialProjectThread,
   pickInitialProjectThread,
   pickInitialThread,
@@ -304,6 +305,7 @@ function App() {
     new Map<string, Set<() => void>>(),
   );
   const touchedProjectCollapseIdsRef = useRef<Set<string>>(new Set());
+  const projectOrderIdsRef = useRef<string[]>([]);
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -868,10 +870,25 @@ function App() {
         getTreeRootThreadId(threads, thread.id) === selectedTreeRootId,
     );
   }, [selectedTreeRootId, threads]);
-  const projectSidebar = useMemo(
+  const rawProjectSidebar = useMemo(
     () => buildProjectAgentSidebar(threads),
     [threads],
   );
+  const projectSidebar = useMemo(() => {
+    const orderedProjects = orderSidebarProjectsStable(
+      rawProjectSidebar.projects,
+      projectOrderIdsRef.current,
+    );
+    return {
+      ...rawProjectSidebar,
+      projects: orderedProjects,
+    };
+  }, [rawProjectSidebar]);
+  useEffect(() => {
+    projectOrderIdsRef.current = projectSidebar.projects.map(
+      (project) => project.id,
+    );
+  }, [projectSidebar.projects]);
   const projectIds = useMemo(
     () => projectSidebar.projects.map((project) => project.id),
     [projectSidebar],

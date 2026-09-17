@@ -191,6 +191,45 @@ export function buildProjectAgentSidebar(
   };
 }
 
+export function orderSidebarProjectsStable(
+  projects: readonly SidebarProjectNode[],
+  previousProjectIds: readonly string[],
+): SidebarProjectNode[] {
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  const ordered: SidebarProjectNode[] = [];
+  const seen = new Set<string>();
+
+  const appendProject = (project: SidebarProjectNode | undefined) => {
+    if (!project || seen.has(project.id)) {
+      return;
+    }
+    ordered.push(project);
+    seen.add(project.id);
+  };
+
+  for (const project of [...projects]
+    .filter(isSelfSidebarProject)
+    .sort(compareSidebarProjectIdentity)) {
+    appendProject(project);
+  }
+
+  for (const projectId of previousProjectIds) {
+    const project = byId.get(projectId);
+    if (!project || isSelfSidebarProject(project)) {
+      continue;
+    }
+    appendProject(project);
+  }
+
+  for (const project of [...projects]
+    .filter((project) => !isSelfSidebarProject(project))
+    .sort(compareSidebarProjectIdentity)) {
+    appendProject(project);
+  }
+
+  return ordered;
+}
+
 export function pickInitialProjectThread(
   threads: Thread[],
   options: { excludedThreadIds?: ReadonlySet<string> } = {},
@@ -2872,6 +2911,29 @@ function projectIdentityKey(cwd: string, projectPath: string | null) {
 
 function projectNodeId(cwd: string, projectPath: string | null) {
   return projectPath ? `project:${cwd}|path:${projectPath}` : `project:${cwd}`;
+}
+
+function isSelfSidebarProject(project: SidebarProjectNode) {
+  const rootThread = project.tree.thread;
+  return rootThread
+    ? projectPathIdentityForThread(rootThread) === "/self"
+    : project.id.endsWith("|path:/self");
+}
+
+function compareSidebarProjectIdentity(
+  left: SidebarProjectNode,
+  right: SidebarProjectNode,
+) {
+  const selfDelta =
+    Number(isSelfSidebarProject(right)) - Number(isSelfSidebarProject(left));
+  if (selfDelta !== 0) {
+    return selfDelta;
+  }
+  return (
+    left.label.localeCompare(right.label) ||
+    left.cwd.localeCompare(right.cwd) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function compareCanonicalProjectRoot(left: Thread, right: Thread) {
