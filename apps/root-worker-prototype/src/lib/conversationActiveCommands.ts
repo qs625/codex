@@ -6,6 +6,8 @@ export type ConversationFlatItemState = {
   id: string;
   item: ThreadItem;
   timestamp: string;
+  orderKeyMs?: number;
+  sequence?: number;
   entries: ConversationEntry[];
 };
 
@@ -26,6 +28,8 @@ export function buildActiveCommandConversationTail({
   thread,
   author,
   timestamp,
+  orderKeyMs,
+  sequenceStart,
   commandLookup,
   historyItemIds,
   previous,
@@ -33,7 +37,9 @@ export function buildActiveCommandConversationTail({
 }: {
   thread: Pick<Thread, "activeCommandItems">;
   author: string;
-  timestamp: string;
+  timestamp: (item: ThreadItem) => string;
+  orderKeyMs: (item: ThreadItem) => number;
+  sequenceStart: number;
   commandLookup: Map<string, string>;
   historyItemIds: ReadonlySet<string>;
   previous: { flatItems: ConversationFlatItemState[] } | null | undefined;
@@ -51,16 +57,17 @@ export function buildActiveCommandConversationTail({
       continue;
     }
     const previousFlatItem = previousFlatItems.get(item.id);
+    const itemTimestamp = timestamp(item);
     const activeTurnId = activeCommandTurnId(item.id);
     const rebuiltEntries =
       previousFlatItem &&
       previousFlatItem.id === item.id &&
       previousFlatItem.itemSignature === threadItemSignature(item) &&
-      previousFlatItem.timestamp === timestamp
+      previousFlatItem.timestamp === itemTimestamp
         ? previousFlatItem.entries
         : buildItemEntries(item, {
             author,
-            timestamp,
+            timestamp: itemTimestamp,
             commandLookup,
           }).map((entry) => ({
             ...entry,
@@ -70,7 +77,9 @@ export function buildActiveCommandConversationTail({
     flatItems.push({
       id: item.id,
       item,
-      timestamp,
+      timestamp: itemTimestamp,
+      orderKeyMs: orderKeyMs(item),
+      sequence: sequenceStart + flatItems.length,
       entries: rebuiltEntries,
     });
     entries.push(...rebuiltEntries);
