@@ -16,6 +16,20 @@ const OLD_CONTEXT_WINDOW_FATAL_PREFIX: &str = "Codex ran out of room in the mode
 const OLD_CONTEXT_WINDOW_FATAL_ACTION: &str =
     "Start a new thread or clear earlier history before retrying";
 
+fn auto_compact_hook_session_key(session: &std::sync::Arc<Session>) -> usize {
+    std::sync::Arc::as_ptr(session) as usize
+}
+
+fn is_auto_compact_hook_target(
+    session: &Session,
+    turn_context: &TurnContext,
+    target_session_key: usize,
+    target_turn_id: &str,
+) -> bool {
+    (session as *const Session as usize) == target_session_key
+        && turn_context.sub_id == target_turn_id
+}
+
 async fn recv_error_event(rx: &async_channel::Receiver<Event>) -> ErrorEvent {
     loop {
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
@@ -94,11 +108,19 @@ async fn pre_turn_compact_quarantines_invalid_model_input_before_retrying() {
     let compact_attempts = Arc::new(AtomicUsize::new(0));
     let compact_attempts_for_hook = Arc::clone(&compact_attempts);
     let target_for_hook = target.clone();
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id
-                || !matches!(reason, CompactionReason::ContextLimit)
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
+                return None;
+            }
+            if !matches!(reason, CompactionReason::ContextLimit)
                 || !matches!(phase, CompactionPhase::PreTurn)
             {
                 return Some(Ok(false));
@@ -320,11 +342,19 @@ async fn invalid_model_input_quarantine_cap_is_shared_across_compact_and_samplin
     let compact_attempts_for_hook = Arc::clone(&compact_attempts);
     let compact_target = targets[0].clone();
     let retained_targets = [targets[1].clone(), targets[2].clone()];
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id
-                || !matches!(reason, CompactionReason::ContextLimit)
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
+                return None;
+            }
+            if !matches!(reason, CompactionReason::ContextLimit)
                 || !matches!(phase, CompactionPhase::PreTurn)
             {
                 return Some(Ok(false));
@@ -748,11 +778,19 @@ async fn suffix_compact_quarantines_invalid_model_input_and_retries_same_plan() 
     let compact_attempts = Arc::new(AtomicUsize::new(0));
     let compact_attempts_for_hook = Arc::clone(&compact_attempts);
     let target_for_hook = target.clone();
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id
-                || !matches!(reason, CompactionReason::ContextLimit)
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
+                return None;
+            }
+            if !matches!(reason, CompactionReason::ContextLimit)
                 || !matches!(phase, CompactionPhase::MidTurn)
             {
                 return Some(Ok(false));
@@ -1301,10 +1339,16 @@ async fn provider_context_window_compacts_prefix_with_one_item_suffix_then_retri
         Arc::new(StdMutex::new(Vec::new()));
     let staged_prefix_texts: Arc<StdMutex<Vec<Vec<String>>>> = Arc::new(StdMutex::new(Vec::new()));
     let staged_prefix_texts_for_hook = Arc::clone(&staged_prefix_texts);
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id {
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
                 return None;
             }
             if matches!(reason, CompactionReason::ContextLimit)
@@ -1407,10 +1451,16 @@ async fn provider_context_window_trims_suffix_when_compact_attempt_overflows() {
     let compact_attempt_count_for_hook = Arc::clone(&compact_attempt_count);
     let staged_prefix_texts: Arc<StdMutex<Vec<Vec<String>>>> = Arc::new(StdMutex::new(Vec::new()));
     let staged_prefix_texts_for_hook = Arc::clone(&staged_prefix_texts);
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id {
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
                 return None;
             }
             if matches!(reason, CompactionReason::ContextLimit)
@@ -1525,10 +1575,16 @@ async fn provider_context_window_trims_suffix_tail_until_compact_succeeds() {
         Arc::new(StdMutex::new(Vec::new()));
     let compact_attempt_count = Arc::new(AtomicUsize::new(0));
     let compact_attempt_count_for_hook = Arc::clone(&compact_attempt_count);
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id {
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
                 return None;
             }
             if matches!(reason, CompactionReason::ContextLimit)
@@ -1834,10 +1890,16 @@ async fn provider_context_window_recovery_trims_retained_suffix_after_second_ove
         Arc::new(StdMutex::new(Vec::new()));
     let compact_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count_for_hook = Arc::clone(&compact_request_count);
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
         move |session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id {
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
                 return None;
             }
             if matches!(reason, CompactionReason::ContextLimit)
@@ -1950,10 +2012,16 @@ async fn provider_context_window_full_compact_failure_emits_one_controlled_error
     let regular_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count_for_hook = Arc::clone(&compact_request_count);
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
-        move |_session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id {
+        move |session, turn_context, reason, phase| {
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
                 return None;
             }
             if matches!(reason, CompactionReason::ContextLimit)
@@ -2025,10 +2093,16 @@ async fn provider_context_window_bounded_recovery_failure_emits_controlled_error
     let regular_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count_for_hook = Arc::clone(&compact_request_count);
+    let target_session_key = auto_compact_hook_session_key(&session);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
-        move |_session, turn_context, reason, phase| {
-            if turn_context.sub_id != target_turn_id {
+        move |session, turn_context, reason, phase| {
+            if !is_auto_compact_hook_target(
+                session,
+                turn_context,
+                target_session_key,
+                &target_turn_id,
+            ) {
                 return None;
             }
             if matches!(reason, CompactionReason::ContextLimit)
