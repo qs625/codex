@@ -397,6 +397,7 @@ async fn compact_without_injected_context_updates_session_baseline_without_persi
     session
         .replace_compacted_history(
             compacted_history.clone(),
+            Vec::new(),
             None,
             CompactedItem {
                 message: "compacted summary".to_string(),
@@ -436,6 +437,31 @@ async fn compact_without_injected_context_updates_session_baseline_without_persi
         .collect::<Vec<_>>()
         .join("\n");
     assert!(initial_context_text.contains("fresh compact instruction"));
+}
+
+#[tokio::test]
+async fn resumed_compact_window_start_includes_persisted_post_compact_baseline() {
+    let (_session, turn_context) = make_session_and_context().await;
+    let compacted_item = CompactedItem {
+        message: "summary after compaction".to_string(),
+        replacement_history: None,
+        visible_replacement_history_len: None,
+    };
+    let summary_echo: ResponseItem = compacted_item.clone().into();
+    let fresh_context_item = assistant_message("fresh compact initial context");
+    let retained_suffix_item = user_message("retained suffix user input");
+    let rollout_items = vec![
+        RolloutItem::Compacted(compacted_item),
+        RolloutItem::ResponseItem(summary_echo),
+        RolloutItem::ResponseItem(fresh_context_item),
+        RolloutItem::ResponseItem(retained_suffix_item),
+        RolloutItem::TurnContext(turn_context.to_turn_context_item()),
+    ];
+
+    assert_eq!(
+        Session::last_compact_window_start_from_rollout(&rollout_items),
+        Some(3)
+    );
 }
 
 #[tokio::test]
@@ -1127,7 +1153,11 @@ async fn task_finish_restarts_turn_for_leftover_pending_user_input() {
 
     timeout(Duration::from_secs(5), async {
         loop {
-            if sess.active_turn_context_and_cancellation_token().await.is_some() {
+            if sess
+                .active_turn_context_and_cancellation_token()
+                .await
+                .is_some()
+            {
                 break;
             }
             let event = rx.recv().await.expect("event");
@@ -1256,7 +1286,11 @@ async fn task_finish_prioritizes_thread_pending_work_without_losing_leftover_inp
 
     timeout(Duration::from_secs(5), async {
         loop {
-            if sess.active_turn_context_and_cancellation_token().await.is_some() {
+            if sess
+                .active_turn_context_and_cancellation_token()
+                .await
+                .is_some()
+            {
                 break;
             }
             let event = rx.recv().await.expect("event");
@@ -1367,7 +1401,8 @@ async fn compact_task_continues_pending_input_with_regularized_metadata() {
         protocol::protocol::InterAgentOperation::Unknown,
     )
     .with_trigger_turn(false);
-    sess.enqueue_mailbox_communication(communication.clone()).await;
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
 
     continue_tx
         .send(())
@@ -1426,7 +1461,11 @@ async fn trigger_turn_mailbox_input_starts_idle_turn() {
 
     timeout(Duration::from_secs(2), async {
         loop {
-            if sess.active_turn_context_and_cancellation_token().await.is_some() {
+            if sess
+                .active_turn_context_and_cancellation_token()
+                .await
+                .is_some()
+            {
                 break;
             }
             tokio::task::yield_now().await;
@@ -2637,7 +2676,8 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     .await;
 
     sess.defer_async_input_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone()).await;
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
 
     assert!(
         !sess.has_pending_input().await,
@@ -2695,7 +2735,8 @@ async fn pending_mailbox_input_can_be_peeked_without_consuming() {
     )
     .with_trigger_turn(false);
 
-    sess.enqueue_mailbox_communication(communication.clone()).await;
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
 
     let found = sess
         .find_pending_input(|item| match item {
@@ -2791,7 +2832,10 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
             match event.msg {
                 EventMsg::InterAgentCommunicationCompleted(_) => return anyhow::Ok(()),
                 EventMsg::ItemCompleted(completed)
-                    if matches!(completed.item, protocol::items::TurnItem::CollabAgentMessage(_)) =>
+                    if matches!(
+                        completed.item,
+                        protocol::items::TurnItem::CollabAgentMessage(_)
+                    ) =>
                 {
                     return anyhow::Ok(());
                 }
@@ -2862,7 +2906,10 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
             match event.msg {
                 EventMsg::InterAgentCommunicationCompleted(_) => return anyhow::Ok(()),
                 EventMsg::ItemCompleted(completed)
-                    if matches!(completed.item, protocol::items::TurnItem::CollabAgentMessage(_)) =>
+                    if matches!(
+                        completed.item,
+                        protocol::items::TurnItem::CollabAgentMessage(_)
+                    ) =>
                 {
                     return anyhow::Ok(());
                 }
@@ -2944,7 +2991,8 @@ async fn clearing_stale_child_completion_preserves_non_completion_messages() {
     .with_thread_ids(child_thread_id, parent_thread_id);
 
     sess.enqueue_mailbox_communication(stale_completion).await;
-    sess.enqueue_mailbox_communication(progress_update.clone()).await;
+    sess.enqueue_mailbox_communication(progress_update.clone())
+        .await;
 
     let removed = sess
         .clear_child_completion_pending_input(child_thread_id)
@@ -3509,10 +3557,12 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
     assert_eq!(poll_result.source_hint.as_deref(), Some("command_exit"));
     assert!(matches!(
         poll_result.event,
-        Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
-            kind: protocol::models::CommandExecutionNotificationKind::Exit,
-            ..
-        })
+        Some(
+            thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+                kind: protocol::models::CommandExecutionNotificationKind::Exit,
+                ..
+            }
+        )
     ));
 
     while let Ok(event) = rx.try_recv() {
@@ -3579,7 +3629,8 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn leftover_command_exit_display_does_not_enter_provider_request_history() -> anyhow::Result<()> {
+async fn leftover_command_exit_display_does_not_enter_provider_request_history()
+-> anyhow::Result<()> {
     let server = start_mock_server().await;
     let responses = mount_sse_sequence(
         &server,
@@ -3869,14 +3920,16 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     .await;
 
     sess.defer_async_input_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(InterAgentCommunication::new(
-        AgentPath::try_from("/root/worker").expect("worker path should parse"),
-        AgentPath::root(),
-        Vec::new(),
-        "late trigger update".to_string(),
-        protocol::protocol::InterAgentOperation::Unknown,
+    sess.enqueue_mailbox_communication(
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("worker path should parse"),
+            AgentPath::root(),
+            Vec::new(),
+            "late trigger update".to_string(),
+            protocol::protocol::InterAgentOperation::Unknown,
+        )
+        .with_trigger_turn(true),
     )
-    .with_trigger_turn(true))
     .await;
 
     assert!(
@@ -3911,7 +3964,8 @@ async fn steered_input_reopens_async_input_for_current_turn() {
     .await;
 
     sess.defer_async_input_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone()).await;
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
     sess.steer_input(
         vec![UserInput::Text {
             text: "follow up".to_string(),
@@ -3957,7 +4011,8 @@ async fn stale_defer_async_input_does_not_override_steered_input() {
     .await;
 
     sess.defer_async_input_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone()).await;
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
     sess.steer_input(
         vec![UserInput::Text {
             text: "follow up".to_string(),
@@ -4005,7 +4060,8 @@ async fn tool_calls_reopen_async_input_for_current_turn() {
     .await;
 
     sess.defer_async_input_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone()).await;
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
 
     let item = ResponseItem::FunctionCall {
         id: None,
@@ -4186,17 +4242,13 @@ async fn sample_rollout(
     rollout_items.push(RolloutItem::ResponseItem(assistant1.clone()));
 
     let summary1 = "summary one";
-    let snapshot1 = live_history
-        .clone()
-        .for_prompt(&reconstruction_turn.model_info.input_modalities);
-    let user_messages1 = collect_user_messages(&snapshot1);
-    let rebuilt1 = compact::build_compacted_history(Vec::new(), &user_messages1, summary1);
-    live_history.replace(rebuilt1);
-    rollout_items.push(RolloutItem::Compacted(CompactedItem {
+    let compacted1 = CompactedItem {
         message: summary1.to_string(),
         replacement_history: None,
-                visible_replacement_history_len: None,
-    }));
+        visible_replacement_history_len: None,
+    };
+    live_history.replace(vec![compacted1.clone().into()]);
+    rollout_items.push(RolloutItem::Compacted(compacted1));
 
     let user2 = ResponseItem::Message {
         id: None,
@@ -4227,17 +4279,13 @@ async fn sample_rollout(
     rollout_items.push(RolloutItem::ResponseItem(assistant2.clone()));
 
     let summary2 = "summary two";
-    let snapshot2 = live_history
-        .clone()
-        .for_prompt(&reconstruction_turn.model_info.input_modalities);
-    let user_messages2 = collect_user_messages(&snapshot2);
-    let rebuilt2 = compact::build_compacted_history(Vec::new(), &user_messages2, summary2);
-    live_history.replace(rebuilt2);
-    rollout_items.push(RolloutItem::Compacted(CompactedItem {
+    let compacted2 = CompactedItem {
         message: summary2.to_string(),
         replacement_history: None,
-                visible_replacement_history_len: None,
-    }));
+        visible_replacement_history_len: None,
+    };
+    live_history.replace(vec![compacted2.clone().into()]);
+    rollout_items.push(RolloutItem::Compacted(compacted2));
 
     let user3 = ResponseItem::Message {
         id: None,

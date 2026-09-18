@@ -27,7 +27,6 @@ use codex_turn_items::raw_assistant_output_text_from_item;
 use compact_service::FsCompactService;
 use compact_service_api::CompactMemoryRole;
 use compact_service_api::CompactReplacementFile;
-use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
 use compact_service_api::SoftCompactThresholds;
 use futures::StreamExt;
@@ -40,9 +39,7 @@ use protocol::error::ModelContextQuarantineReference;
 use protocol::error::ModelInputItemKind;
 use protocol::error::Result as CodexResult;
 use protocol::items::ContextCompactionItem;
-use protocol::items::ContextCompactionReplacementItem;
 use protocol::items::TurnItem;
-use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::models::model_context_item_fingerprint;
@@ -60,14 +57,14 @@ pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_pref
 pub(crate) const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
 pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str = "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 
-/// Controls whether compaction replacement history must include initial context.
+/// Controls whether the post-compaction context segment must include initial context.
 ///
 /// Pre-turn compaction may use `DoNotInject`: it replaces history with a summary and clears
 /// `reference_context_item`, so the next regular turn will fully reinject initial context after
 /// compaction.
 ///
-/// Manual and mid-turn compaction use `BeforeLastUserMessage` so the rebuilt initial context lands
-/// ahead of the retained compact checkpoint block and remains visible in replacement history.
+/// Manual and mid-turn compaction use `BeforeLastUserMessage` so the fresh context lands in the
+/// new model-visible segment immediately after the compaction summary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InitialContextInjection {
     BeforeLastUserMessage,
@@ -244,8 +241,6 @@ async fn run_compact_task_inner_impl(
     emit_context_window_error: bool,
     model_context_quarantines: Option<ModelContextQuarantineState>,
 ) -> CodexResult<String> {
-    let compact_service = FsCompactService::new();
-    let replacement_files = compact_replacement_files(turn_context.as_ref());
     let staged_recovery = !retained_suffix.is_empty();
 
     let compaction_item = ContextCompactionItem::new();
@@ -407,23 +402,9 @@ async fn run_compact_task_inner_impl(
 
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
-    let memory_bundle = compact_service
-        .read_memory_bundle(&replacement_files)
-        .await
-        .map_err(|err| {
-            CodexErr::Fatal(format!("failed to read compact replacement files: {err}"))
-        })?;
-    let compact_window_summary =
-        compact_service.summarize_compact_window(history_items, SUMMARY_PREFIX);
     let compacted_message = isolated_compacted_message.unwrap_or_else(|| {
         compact_turn_final_output(history_items, turn_context.compact_prompt())
             .unwrap_or_else(|| DEFAULT_COMPACTED_MESSAGE.to_string())
-    });
-    let mut new_history = compact_service.build_replacement_history(ReplacementHistoryInput {
-        initial_context: Vec::new(),
-        memory_bundle: memory_bundle.clone(),
-        recent_real_user_messages: compact_window_summary.recent_real_user_messages,
-        final_output: Some(compacted_message.clone()),
     });
 
     if let PostCompactHookOutcome::Stopped =
@@ -434,55 +415,45 @@ async fn run_compact_task_inner_impl(
     let fresh_initial_context = sess
         .build_fresh_compact_initial_context(turn_context.as_ref())
         .await?;
-    let mut injected_initial_context_item = None;
-    let mut injected_initial_context_len = 0;
-    if matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
-    ) {
-        let initial_context = fresh_initial_context.response_items;
-        injected_initial_context_len = initial_context.len();
-        injected_initial_context_item = injected_context_item_from_response_items(&initial_context);
-        new_history =
-            prepend_initial_context_to_memory_checkpoint_history(new_history, initial_context);
-    }
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage => {
             Some(fresh_initial_context.reference_context_item)
         }
     };
-    let visible_replacement_history_len = new_history.len();
-    let mut persisted_replacement_history = new_history.clone();
-    persisted_replacement_history.extend(retained_suffix);
-    reconcile_model_context_quarantines(history_items, &mut persisted_replacement_history);
-    let replacement_history = Some(persisted_replacement_history.clone());
+    let initial_context_items = if matches!(
+        initial_context_injection,
+        InitialContextInjection::BeforeLastUserMessage
+    ) {
+        fresh_initial_context.response_items.clone()
+    } else {
+        Vec::new()
+    };
+    let mut post_compact_history = vec![
+        CompactedItem {
+            message: compacted_message.clone(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }
+        .into(),
+    ];
+    post_compact_history.extend(initial_context_items.clone());
+    post_compact_history.extend(retained_suffix.clone());
+    reconcile_model_context_quarantines(history_items, &mut post_compact_history);
+    let post_compact_response_items = persisted_post_compact_response_items(&post_compact_history);
     let compacted_item = CompactedItem {
         message: compacted_message.clone(),
-        replacement_history: replacement_history.clone(),
-        visible_replacement_history_len: (visible_replacement_history_len
-            != persisted_replacement_history.len())
-        .then_some(visible_replacement_history_len),
+        replacement_history: None,
+        visible_replacement_history_len: None,
     };
-    let replacement_history_tail = new_history
-        .iter()
-        .skip(injected_initial_context_len)
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut replacement_history_items = Vec::new();
-    if let Some(TurnItem::InjectedContext(item)) = injected_initial_context_item {
-        replacement_history_items.push(ContextCompactionReplacementItem::InjectedContext(item));
-    }
-    replacement_history_items.extend(context_compaction_replacement_items_from_response_items(
-        replacement_history_tail,
-    ));
     let compaction_item = ContextCompactionItem {
         summary: Some(compacted_message.clone()),
-        replacement_history: replacement_history_items,
+        replacement_history: Vec::new(),
         ..compaction_item
     };
     sess.replace_compacted_history(
-        persisted_replacement_history,
+        post_compact_history,
+        post_compact_response_items,
         reference_context_item,
         compacted_item,
         fresh_initial_context.user_instructions,
@@ -493,11 +464,20 @@ async fn run_compact_task_inner_impl(
 
     sess.emit_turn_item_completed(&turn_context, TurnItem::ContextCompaction(compaction_item))
         .await;
+    if let Some(item) = injected_context_item_from_response_items(&initial_context_items) {
+        sess.emit_turn_item_completed(&turn_context, item).await;
+    }
     let warning = EventMsg::Warning(WarningEvent {
         message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),
     });
     sess.send_event(&turn_context, warning).await;
     Ok(compacted_message)
+}
+
+fn persisted_post_compact_response_items(
+    post_compact_history: &[ResponseItem],
+) -> Vec<ResponseItem> {
+    post_compact_history.iter().skip(1).cloned().collect()
 }
 
 fn reconcile_model_context_quarantines(
@@ -852,6 +832,7 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
     )
 }
 
+#[cfg(test)]
 fn prepend_initial_context_to_memory_checkpoint_history(
     mut compacted_history: Vec<ResponseItem>,
     initial_context: Vec<ResponseItem>,
@@ -859,15 +840,6 @@ fn prepend_initial_context_to_memory_checkpoint_history(
     let mut refreshed = initial_context;
     refreshed.append(&mut compacted_history);
     refreshed
-}
-
-#[cfg(test)]
-pub(crate) fn build_compacted_history(
-    initial_context: Vec<ResponseItem>,
-    user_messages: &[String],
-    summary_text: &str,
-) -> Vec<ResponseItem> {
-    codex_context_manager::build_compacted_history(initial_context, user_messages, summary_text)
 }
 
 #[cfg(test)]

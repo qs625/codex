@@ -272,9 +272,10 @@ fn rollback_clears_history_and_metadata_when_exceeding_user_turns() {
 }
 
 #[test]
-fn replacement_history_checkpoint_seeds_replay_suffix() {
+fn compaction_checkpoint_ignores_legacy_replacement_history_and_seeds_replay_suffix_from_summary() {
     let first_context_item = turn_context_item("turn-1", "model-1");
-    let replacement_user = user_message("replacement user");
+    let legacy_replacement_user = user_message("legacy replacement user");
+    let compact_summary = assistant_message("summary");
     let suffix_assistant = assistant_message("suffix assistant");
     let rollout_items = vec![
         turn_started("turn-1"),
@@ -282,7 +283,7 @@ fn replacement_history_checkpoint_seeds_replay_suffix() {
         RolloutItem::TurnContext(first_context_item.clone()),
         RolloutItem::Compacted(CompactedItem {
             message: "summary".to_string(),
-            replacement_history: Some(vec![replacement_user.clone()]),
+            replacement_history: Some(vec![legacy_replacement_user]),
             visible_replacement_history_len: None,
         }),
         RolloutItem::ResponseItem(suffix_assistant.clone()),
@@ -293,7 +294,7 @@ fn replacement_history_checkpoint_seeds_replay_suffix() {
 
     assert_eq!(
         reconstructed.history,
-        vec![replacement_user, suffix_assistant]
+        vec![compact_summary, suffix_assistant]
     );
     assert_eq!(
         reconstructed.previous_turn_settings,
@@ -307,16 +308,17 @@ fn replacement_history_checkpoint_seeds_replay_suffix() {
 
 #[test]
 fn replacement_history_checkpoint_skips_persisted_summary_echo() {
-    let replacement_summary = assistant_message("summary");
+    let compact_summary = assistant_message("summary");
+    let legacy_replacement_user = user_message("legacy replacement user");
     let suffix_assistant = assistant_message("suffix assistant");
     let rollout_items = vec![
         turn_started("turn-1"),
         RolloutItem::Compacted(CompactedItem {
             message: "summary".to_string(),
-            replacement_history: Some(vec![replacement_summary.clone()]),
+            replacement_history: Some(vec![legacy_replacement_user]),
             visible_replacement_history_len: None,
         }),
-        RolloutItem::ResponseItem(replacement_summary.clone()),
+        RolloutItem::ResponseItem(compact_summary.clone()),
         RolloutItem::ResponseItem(suffix_assistant.clone()),
         turn_complete("turn-1"),
     ];
@@ -325,22 +327,22 @@ fn replacement_history_checkpoint_skips_persisted_summary_echo() {
 
     assert_eq!(
         reconstructed.history,
-        vec![replacement_summary, suffix_assistant]
+        vec![compact_summary, suffix_assistant]
     );
 }
 
 #[test]
 fn replacement_history_checkpoint_only_skips_immediate_summary_echo() {
-    let replacement_summary = assistant_message("summary");
+    let compact_summary = assistant_message("summary");
     let rollout_items = vec![
         turn_started("turn-1"),
         RolloutItem::Compacted(CompactedItem {
             message: "summary".to_string(),
-            replacement_history: Some(vec![replacement_summary.clone()]),
+            replacement_history: Some(vec![user_message("legacy replacement user")]),
             visible_replacement_history_len: None,
         }),
         RolloutItem::TurnContext(turn_context_item("turn-1", "model-1")),
-        RolloutItem::ResponseItem(replacement_summary.clone()),
+        RolloutItem::ResponseItem(compact_summary.clone()),
         turn_complete("turn-1"),
     ];
 
@@ -348,7 +350,7 @@ fn replacement_history_checkpoint_only_skips_immediate_summary_echo() {
 
     assert_eq!(
         reconstructed.history,
-        vec![replacement_summary.clone(), replacement_summary]
+        vec![compact_summary.clone(), compact_summary]
     );
 }
 
@@ -383,10 +385,7 @@ fn legacy_compaction_without_replacement_history_filters_context_and_warning_mes
 
     assert_eq!(
         reconstructed.history,
-        vec![
-            user_message("real user message"),
-            user_message("legacy summary")
-        ]
+        vec![assistant_message("legacy summary")]
     );
     assert!(reconstructed.reference_context_item.is_none());
 }
@@ -409,15 +408,14 @@ fn legacy_compaction_without_replacement_history_skips_persisted_summary_echo() 
     assert_eq!(
         reconstructed.history,
         vec![
-            user_message("real user message"),
-            user_message("legacy summary"),
+            assistant_message("legacy summary"),
             assistant_message("suffix assistant"),
         ]
     );
 }
 
 #[test]
-fn legacy_compaction_without_replacement_history_clears_later_reference_context_item() {
+fn legacy_compaction_without_replacement_history_preserves_later_reference_context_item() {
     let current_context_item = turn_context_item("current-turn", "model-1");
     let rollout_items = vec![
         RolloutItem::ResponseItem(user_message("before compact")),
@@ -428,13 +426,17 @@ fn legacy_compaction_without_replacement_history_clears_later_reference_context_
         }),
         turn_started("current-turn"),
         user_event("after legacy compact"),
-        RolloutItem::TurnContext(current_context_item),
+        RolloutItem::TurnContext(current_context_item.clone()),
         turn_complete("current-turn"),
     ];
 
     let reconstructed = reconstruct_history_from_rollout(&rollout_items, options());
 
-    assert!(reconstructed.reference_context_item.is_none());
+    assert_eq!(
+        serde_json::to_value(reconstructed.reference_context_item)
+            .expect("serialize reconstructed reference context"),
+        serde_json::to_value(Some(current_context_item)).expect("serialize expected context")
+    );
 }
 
 #[test]

@@ -550,8 +550,8 @@ use self::thread_resume_projection::*;
 use self::thread_resume_redaction::*;
 use self::thread_summary::*;
 
-pub(crate) use self::thread_resume_projection::populate_thread_turns_from_history;
 pub(crate) use self::thread_processor::thread_from_stored_thread;
+pub(crate) use self::thread_resume_projection::populate_thread_turns_from_history;
 #[cfg(test)]
 pub(crate) use self::thread_summary::read_summary_from_rollout;
 #[cfg(test)]
@@ -626,7 +626,6 @@ mod build_api_turns_from_rollout_items_tests {
     use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
     use app_server_protocol::CommandExecutionSource;
     use app_server_protocol::CommandExecutionStatus;
-    use app_server_protocol::ContextCompactionReplacementItem;
     use app_server_protocol::DynamicToolCallStatus;
     use app_server_protocol::ThreadItem;
     use app_server_protocol::Turn;
@@ -675,12 +674,7 @@ mod build_api_turns_from_rollout_items_tests {
         ThreadItem::ContextCompaction {
             id: id.into(),
             summary: Some("summary".into()),
-            replacement_history: Some(vec![ContextCompactionReplacementItem::AgentMessage {
-                id: "replacement-agent".into(),
-                text: "summary".into(),
-                phase: None,
-                memory_citation: None,
-            }]),
+            replacement_history: None,
         }
     }
 
@@ -762,7 +756,7 @@ mod build_api_turns_from_rollout_items_tests {
             ThreadItem::ContextCompaction {
                 replacement_history,
                 ..
-            } if replacement_history.as_ref().is_some_and(|history| !history.is_empty())
+            } if replacement_history.is_none()
         ));
     }
 
@@ -799,11 +793,7 @@ mod build_api_turns_from_rollout_items_tests {
                 summary,
                 replacement_history,
                 ..
-            } if summary.as_deref() == Some("summary") && replacement_history.as_ref().is_some_and(|history| history.iter().any(|item| matches!(
-                item,
-                ContextCompactionReplacementItem::AgentMessage { text, .. }
-                    if text == "summary"
-            )))
+            } if summary.as_deref() == Some("summary") && replacement_history.is_none()
         ));
     }
 

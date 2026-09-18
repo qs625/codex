@@ -198,8 +198,6 @@ use tracing::warn;
 use transport_client_identity::originator;
 use uuid::Uuid;
 
-#[cfg(test)]
-use crate::compact::collect_user_messages;
 use crate::thread::ThreadConfigSnapshot;
 use codex_config_types::ConfigLayerSource;
 use codex_context_manager::ContextManager;
@@ -1103,10 +1101,7 @@ impl Session {
             .await;
     }
 
-    pub fn set_preferred_terminal_size(
-        &self,
-        size: thread_service_api::PreferredTerminalSize,
-    ) {
+    pub fn set_preferred_terminal_size(&self, size: thread_service_api::PreferredTerminalSize) {
         *self.preferred_terminal_size.lock().expect("mutex poisoned") = Some(size);
     }
 
@@ -1290,10 +1285,7 @@ impl Session {
     }
 
     #[cfg(test)]
-    pub(crate) async fn set_user_instructions_for_test(
-        &self,
-        user_instructions: Option<String>,
-    ) {
+    pub(crate) async fn set_user_instructions_for_test(&self, user_instructions: Option<String>) {
         let mut state = self.state.lock().await;
         state.session_configuration.user_instructions = user_instructions;
     }
@@ -1566,13 +1558,40 @@ impl Session {
     }
 
     fn last_compact_window_start_from_rollout(rollout_items: &[RolloutItem]) -> Option<usize> {
-        rollout_items.iter().rev().find_map(|item| match item {
-            RolloutItem::Compacted(compacted) => compacted
-                .replacement_history
-                .as_ref()
-                .map(std::vec::Vec::len),
-            _ => None,
-        })
+        let (compact_index, compacted) =
+            rollout_items
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, item)| match item {
+                    RolloutItem::Compacted(compacted) => Some((index, compacted)),
+                    _ => None,
+                })?;
+
+        let compact_summary: Option<ResponseItem> = if compacted.message.trim().is_empty() {
+            None
+        } else {
+            Some(compacted.clone().into())
+        };
+        let mut compact_window_start = usize::from(compact_summary.is_some());
+        let mut skip_compact_summary_echo = compact_summary;
+        for item in &rollout_items[compact_index + 1..] {
+            match item {
+                RolloutItem::ResponseItem(response_item) => {
+                    if skip_compact_summary_echo
+                        .as_ref()
+                        .is_some_and(|summary| summary == response_item)
+                    {
+                        skip_compact_summary_echo = None;
+                        continue;
+                    }
+                    skip_compact_summary_echo = None;
+                    compact_window_start += 1;
+                }
+                _ => break,
+            }
+        }
+        Some(compact_window_start)
     }
 
     fn last_token_info_from_rollout(rollout_items: &[RolloutItem]) -> Option<TokenUsageInfo> {

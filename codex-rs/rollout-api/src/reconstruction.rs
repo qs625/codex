@@ -1,8 +1,6 @@
 //! Rollout replay and model-visible history reconstruction.
 
 use codex_context_manager::ContextManager;
-use codex_context_manager::build_compacted_history;
-use codex_context_manager::collect_compaction_user_messages;
 use codex_context_manager::is_user_turn_boundary;
 use codex_utils_output_truncation::TruncationPolicy;
 use protocol::models::ResponseItem;
@@ -56,12 +54,12 @@ enum TurnReferenceContextItem {
 }
 
 #[derive(Debug, Default)]
-struct ActiveReplaySegment<'a> {
+struct ActiveReplaySegment {
     turn_id: Option<String>,
     counts_as_user_turn: bool,
     previous_turn_settings: Option<PreviousTurnSettings>,
     reference_context_item: TurnReferenceContextItem,
-    base_replacement_history: Option<&'a [ResponseItem]>,
+    base_compaction_summary: Option<Option<ResponseItem>>,
 }
 
 fn turn_ids_are_compatible(active_turn_id: Option<&str>, item_turn_id: Option<&str>) -> bool {
@@ -69,9 +67,9 @@ fn turn_ids_are_compatible(active_turn_id: Option<&str>, item_turn_id: Option<&s
         .is_none_or(|turn_id| item_turn_id.is_none_or(|item_turn_id| item_turn_id == turn_id))
 }
 
-fn finalize_active_segment<'a>(
-    active_segment: ActiveReplaySegment<'a>,
-    base_replacement_history: &mut Option<&'a [ResponseItem]>,
+fn finalize_active_segment(
+    active_segment: ActiveReplaySegment,
+    base_compaction_summary: &mut Option<Option<ResponseItem>>,
     previous_turn_settings: &mut Option<PreviousTurnSettings>,
     reference_context_item: &mut TurnReferenceContextItem,
     pending_rollback_turns: &mut usize,
@@ -86,13 +84,13 @@ fn finalize_active_segment<'a>(
         return;
     }
 
-    // A surviving replacement-history checkpoint is a complete history base.
-    // Once we know the newest surviving one, older rollout items do not affect
-    // rebuilt history.
-    if base_replacement_history.is_none()
-        && let Some(segment_base_replacement_history) = active_segment.base_replacement_history
+    // A surviving compaction checkpoint starts a new chained context segment.
+    // Once we know the newest surviving checkpoint, older rollout items do not
+    // affect rebuilt model-visible history.
+    if base_compaction_summary.is_none()
+        && let Some(segment_base_compaction_summary) = active_segment.base_compaction_summary
     {
-        *base_replacement_history = Some(segment_base_replacement_history);
+        *base_compaction_summary = Some(segment_base_compaction_summary);
     }
 
     // `previous_turn_settings` come from the newest surviving user turn that
@@ -123,24 +121,23 @@ pub fn reconstruct_history_from_rollout(
 ) -> RolloutReconstruction {
     // Replay metadata should already match the shape of the future lazy reverse
     // loader, even while history materialization still uses an eager bridge.
-    // Scan newest-to-oldest, stopping once a surviving replacement-history
-    // checkpoint and the required resume metadata are both known; then replay
-    // only the buffered surviving tail forward to preserve exact history
-    // semantics.
-    let mut base_replacement_history: Option<&[ResponseItem]> = None;
+    // Scan newest-to-oldest, stopping once a surviving compaction checkpoint
+    // and the required resume metadata are both known; then replay only the
+    // buffered surviving tail forward to preserve exact history semantics.
+    let mut base_compaction_summary: Option<Option<ResponseItem>> = None;
     let mut previous_turn_settings = None;
     let mut reference_context_item = TurnReferenceContextItem::NeverSet;
     // Rollback is "drop the newest N user turns". While scanning in reverse,
     // that becomes "skip the next N user-turn segments we finalize".
     let mut pending_rollback_turns = 0usize;
     // Borrowed suffix of rollout items newer than the newest surviving
-    // replacement-history checkpoint. If no such checkpoint exists, this
-    // remains the full rollout.
+    // compaction checkpoint. If no such checkpoint exists, this remains the
+    // full rollout.
     let mut rollout_suffix = rollout_items;
     // Reverse replay accumulates rollout items into the newest in-progress turn
     // segment until we hit its matching `TurnStarted`, at which point the
     // segment can be finalized.
-    let mut active_segment: Option<ActiveReplaySegment<'_>> = None;
+    let mut active_segment: Option<ActiveReplaySegment> = None;
 
     for (index, item) in rollout_items.iter().enumerate().rev() {
         match item {
@@ -156,10 +153,9 @@ pub fn reconstruct_history_from_rollout(
                 ) {
                     active_segment.reference_context_item = TurnReferenceContextItem::Cleared;
                 }
-                if active_segment.base_replacement_history.is_none()
-                    && let Some(replacement_history) = &compacted.replacement_history
-                {
-                    active_segment.base_replacement_history = Some(replacement_history);
+                if active_segment.base_compaction_summary.is_none() {
+                    active_segment.base_compaction_summary =
+                        Some(compact_summary_response_item(compacted));
                     rollout_suffix = &rollout_items[index + 1..];
                 }
             }
@@ -234,7 +230,7 @@ pub fn reconstruct_history_from_rollout(
                 {
                     finalize_active_segment(
                         active_segment,
-                        &mut base_replacement_history,
+                        &mut base_compaction_summary,
                         &mut previous_turn_settings,
                         &mut reference_context_item,
                         &mut pending_rollback_turns,
@@ -249,12 +245,12 @@ pub fn reconstruct_history_from_rollout(
             RolloutItem::EventMsg(_) | RolloutItem::SessionMeta(_) => {}
         }
 
-        if base_replacement_history.is_some()
+        if base_compaction_summary.is_some()
             && previous_turn_settings.is_some()
             && !matches!(reference_context_item, TurnReferenceContextItem::NeverSet)
         {
             // At this point we have both eager resume metadata values and the
-            // replacement-history base for the surviving tail, so older rollout
+            // compaction checkpoint for the surviving tail, so older rollout
             // items cannot affect this result.
             break;
         }
@@ -263,7 +259,7 @@ pub fn reconstruct_history_from_rollout(
     if let Some(active_segment) = active_segment.take() {
         finalize_active_segment(
             active_segment,
-            &mut base_replacement_history,
+            &mut base_compaction_summary,
             &mut previous_turn_settings,
             &mut reference_context_item,
             &mut pending_rollback_turns,
@@ -271,21 +267,13 @@ pub fn reconstruct_history_from_rollout(
     }
 
     let mut history = ContextManager::new();
-    let mut saw_legacy_compaction_without_replacement_history = false;
-    if let Some(base_replacement_history) = base_replacement_history {
-        history.replace(base_replacement_history.to_vec());
+    if let Some(base_compaction_summary) = &base_compaction_summary {
+        history.replace(base_compaction_summary.clone().into_iter().collect());
     }
     // Materialize exact history semantics from the replay-derived suffix. The
     // eventual lazy design should keep this same replay shape, but drive it from
     // a resumable reverse source instead of an eagerly loaded `&[RolloutItem]`.
-    let mut skip_compact_summary_echo = base_replacement_history.and_then(|_| {
-        rollout_items
-            .get(rollout_items.len().saturating_sub(rollout_suffix.len() + 1))
-            .and_then(|item| match item {
-                RolloutItem::Compacted(compacted) => compact_summary_response_item(compacted),
-                _ => None,
-            })
-    });
+    let mut skip_compact_summary_echo = base_compaction_summary.clone().flatten();
     for item in rollout_suffix {
         match item {
             RolloutItem::ResponseItem(response_item) => {
@@ -300,29 +288,9 @@ pub fn reconstruct_history_from_rollout(
                 history.record_items(std::iter::once(response_item), options.truncation_policy);
             }
             RolloutItem::Compacted(compacted) => {
-                if let Some(replacement_history) = &compacted.replacement_history {
-                    // This should never happen, because the reverse loop above
-                    // should stop before any compaction with replacement history.
-                    history.replace(replacement_history.clone());
-                    skip_compact_summary_echo = compact_summary_response_item(compacted);
-                } else {
-                    saw_legacy_compaction_without_replacement_history = true;
-                    // Legacy rollouts without `replacement_history` should
-                    // rebuild the historical TurnContext at the correct
-                    // insertion point from persisted `TurnContextItem`s. These
-                    // are rare enough that we currently clear
-                    // `reference_context_item`, reinject canonical context at
-                    // the end of the resumed conversation, and accept the
-                    // temporary out-of-distribution prompt shape.
-                    let user_messages = collect_compaction_user_messages(
-                        history.raw_items(),
-                        options.summary_prefix,
-                    );
-                    let rebuilt =
-                        build_compacted_history(Vec::new(), &user_messages, &compacted.message);
-                    history.replace(rebuilt);
-                    skip_compact_summary_echo = compact_summary_response_item(compacted);
-                }
+                let summary = compact_summary_response_item(compacted);
+                history.replace(summary.clone().into_iter().collect());
+                skip_compact_summary_echo = summary;
             }
             RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback)) => {
                 skip_compact_summary_echo = None;
@@ -342,12 +310,6 @@ pub fn reconstruct_history_from_rollout(
             Some(*turn_reference_context_item)
         }
     };
-    let reference_context_item = if saw_legacy_compaction_without_replacement_history {
-        None
-    } else {
-        reference_context_item
-    };
-
     RolloutReconstruction {
         history: history.raw_items().to_vec(),
         previous_turn_settings,

@@ -311,11 +311,5 @@ function shouldDiscardCellBeforeCompact(
     return false;
   }
   const cellTurnId = cell.entries.find((entry) => entry.turnId)?.turnId;
-  return cellTurnId === compactTurnId && !isUserMessageCell(cell);
-}
-
-function isUserMessageCell(cell: ConversationCell) {
-  return cell.entries.some(
-    (entry) => entry.kind === "message" && entry.role === "user",
-  );
+  return cellTurnId === compactTurnId;
 }

@@ -3152,7 +3152,7 @@ test("hides compact turn entries while preserving later visible items", () => {
   );
 });
 
-test("keeps same-turn user messages visible across compact display boundary", () => {
+test("hides pre-compact same-turn user messages while preserving post-compact user messages", () => {
   const firstPrompt =
     "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";
   const followupPrompt = "等下刚才发送的user message没显示";
@@ -3227,7 +3227,14 @@ test("keeps same-turn user messages visible across compact display boundary", ()
         ),
       )
       .map((cell) => cell.id),
-    ["item-12", "item-16"],
+    ["item-16"],
+  );
+  assert.deepEqual(
+    state.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["item-16", "message"],
+    ],
   );
 });
 

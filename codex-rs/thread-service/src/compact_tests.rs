@@ -541,6 +541,34 @@ fn compact_preserves_quarantine_when_retained_transaction_survives() {
 }
 
 #[test]
+fn persisted_post_compact_items_follow_reconciled_history_without_summary_seed() {
+    let call_id = "call-quarantined".to_string();
+    let summary = assistant_message("compact summary");
+    let call = ResponseItem::FunctionCall {
+        id: None,
+        name: "lookup".to_string(),
+        namespace: None,
+        arguments: "{}".to_string(),
+        call_id: call_id.clone(),
+    };
+    let quarantine = ResponseItem::ModelContextQuarantine {
+        target: ModelInputItemReference {
+            kind: ModelInputItemKind::FunctionCall,
+            call_id,
+        }
+        .into(),
+        reason: "provider rejected transaction".to_string(),
+        error_code: Some("invalid_value".to_string()),
+        error_param: Some("input[0].arguments".to_string()),
+    };
+    let post_compact_history = vec![summary, call.clone(), quarantine.clone()];
+
+    let persisted_items = persisted_post_compact_response_items(&post_compact_history);
+
+    assert_eq!(persisted_items, vec![call, quarantine]);
+}
+
+#[test]
 fn compact_drops_quarantine_marker_when_no_transaction_fragment_survives() {
     let quarantine = ResponseItem::ModelContextQuarantine {
         target: protocol::error::ModelContextQuarantineReference::ModelItem {

@@ -1491,12 +1491,18 @@ impl Session {
     pub(crate) async fn replace_compacted_history(
         &self,
         items: Vec<ResponseItem>,
+        post_compact_response_items: Vec<ResponseItem>,
         reference_context_item: Option<TurnContextItem>,
         compacted_item: CompactedItem,
         user_instructions: Option<String>,
     ) -> CodexResult<()> {
         let compact_window_start = items.len();
         let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
+        rollout_items.extend(
+            post_compact_response_items
+                .into_iter()
+                .map(RolloutItem::ResponseItem),
+        );
         if let Some(turn_context_item) = reference_context_item.clone() {
             rollout_items.push(RolloutItem::TurnContext(turn_context_item));
         }

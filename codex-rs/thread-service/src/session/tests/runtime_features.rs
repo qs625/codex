@@ -442,11 +442,9 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
 
 #[tokio::test]
 async fn thread_rollback_restores_cleared_reference_context_item_after_compaction() {
-    let (mut sess, tc, rx) = make_session_and_context_with_rx().await;
-    attach_thread_persistence(
-        Arc::get_mut(&mut sess).expect("session should not have additional references"),
-    )
-    .await;
+    let (mut raw_sess, tc) = make_session_and_context().await;
+    attach_thread_persistence(&mut raw_sess).await;
+    let sess = Arc::new(raw_sess);
 
     let first_context_item = tc.to_turn_context_item();
     let first_turn_id = first_context_item
@@ -459,6 +457,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         user_message("turn 1 user"),
         user_message("summary after compaction"),
     ];
+    let expected_compacted_history = vec![assistant_message("summary after compaction")];
 
     sess.persist_rollout_items(&[
         RolloutItem::EventMsg(EventMsg::TurnStarted(
@@ -544,10 +543,11 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
     .await;
 
     handlers::thread_rollback(&sess, "sub-1".to_string(), /*num_turns*/ 1).await;
-    let rollback_event = wait_for_thread_rolled_back(&rx).await;
-    assert_eq!(rollback_event.num_turns, 1);
 
-    assert_eq!(sess.clone_history().await.raw_items(), compacted_history);
+    assert_eq!(
+        sess.clone_history().await.raw_items(),
+        expected_compacted_history
+    );
     assert!(sess.reference_context_item().await.is_none());
 }
 

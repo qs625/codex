@@ -595,7 +595,6 @@ pub fn item_event_to_server_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ContextCompactionReplacementItem;
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
     use protocol::ThreadId;
@@ -608,7 +607,6 @@ mod tests {
     use protocol::items::EventDrivenToolItem;
     use protocol::items::TurnItem;
     use protocol::items::UserMessageItem;
-    use protocol::models::ContentItem;
     use protocol::models::ResponseItem;
     use protocol::protocol::AgentStatus;
     use protocol::protocol::CollabResumeBeginEvent;
@@ -1049,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn item_completed_preserves_context_compaction_replacement_history() {
+    fn item_completed_hides_context_compaction_replacement_history() {
         let event = ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-ignored".to_string(),
@@ -1089,14 +1087,7 @@ mod tests {
                 item: ThreadItem::ContextCompaction {
                     id: "compact-1".to_string(),
                     summary: None,
-                    replacement_history: Some(vec![
-                        ContextCompactionReplacementItem::AgentMessage {
-                            id: "compact-seed".to_string(),
-                            text: "LOCAL_SUMMARY".to_string(),
-                            phase: None,
-                            memory_citation: None,
-                        },
-                    ]),
+                    replacement_history: None,
                 },
             },
         );
