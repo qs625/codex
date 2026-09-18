@@ -23,6 +23,8 @@ const PAYLOAD_EXECUTABLE_RELATIVE_PATH = path.join(
   APP_NAME,
 );
 const COMPUTER_USE_NATIVE_SCRIPT_FILE = "computerUseMacNative.swift";
+const COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE =
+  "morpheus-computer-use-native";
 const COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
   COMPUTER_USE_NATIVE_SCRIPT_FILE,
@@ -40,6 +42,12 @@ const COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
   "Contents",
   "MacOS",
   COMPUTER_USE_HELPER_APP_NAME,
+);
+const COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  "Contents",
+  "MacOS",
+  COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE,
 );
 const COMPUTER_USE_HELPER_SERVER_RESOURCE_RELATIVE_PATH = path.join(
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
@@ -211,7 +219,11 @@ function updateInstalledArtifacts(plan, options = {}) {
   fsOps.mkdirSync(incomingRoot, { recursive: false, mode: 0o755 });
   try {
     buildRuntimeSources(plan, { runCommand });
-    stagePayloadResources(plan, resourceRoot, fsOps);
+    stagePayloadResources(plan, resourceRoot, {
+      compileNativeHelper: options.compileNativeHelper,
+      fsOps,
+      runCommand,
+    });
     runCommand(
       "pnpm",
       [
@@ -316,8 +328,10 @@ function buildRuntimeSources(plan, { runCommand }) {
 function stagePayloadResources(
   plan,
   resourceRoot,
-  fsOps = resolveInstalledArtifactFileSystem(),
+  options = {},
 ) {
+  const stageOptions = normalizeStagePayloadResourcesOptions(options);
+  const { compileNativeHelper, fsOps, runCommand } = stageOptions;
   const appServerTarget = path.join(resourceRoot, "bin", "app-server");
   const compactTarget = path.join(
     resourceRoot,
@@ -363,13 +377,43 @@ function stagePayloadResources(
     packagedComputerUseMcpConfigToml(),
     { encoding: "utf8", mode: 0o644 },
   );
-  stageComputerUseHelperApp(plan, resourceRoot, { fsOps, nativeSource });
+  stageComputerUseHelperApp(plan, resourceRoot, {
+    compileNativeHelper,
+    fsOps,
+    nativeSource,
+    runCommand,
+  });
+}
+
+function normalizeStagePayloadResourcesOptions(options) {
+  if (
+    options &&
+    typeof options.copyFileSync === "function" &&
+    typeof options.writeFileSync === "function"
+  ) {
+    return {
+      compileNativeHelper: compileComputerUseNativeHelper,
+      fsOps: options,
+      runCommand: null,
+    };
+  }
+  return {
+    compileNativeHelper:
+      options.compileNativeHelper ?? compileComputerUseNativeHelper,
+    fsOps: options.fsOps ?? resolveInstalledArtifactFileSystem(),
+    runCommand: options.runCommand ?? null,
+  };
 }
 
 function stageComputerUseHelperApp(
   plan,
   resourceRoot,
-  { fsOps = resolveInstalledArtifactFileSystem(), nativeSource } = {},
+  {
+    compileNativeHelper = compileComputerUseNativeHelper,
+    fsOps = resolveInstalledArtifactFileSystem(),
+    nativeSource,
+    runCommand,
+  } = {},
 ) {
   const repoRoot =
     plan.workspace ??
@@ -382,6 +426,10 @@ function stageComputerUseHelperApp(
   const helperExecutable = path.join(
     resourceRoot,
     ...COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
+  );
+  const nativeHelperExecutable = path.join(
+    resourceRoot,
+    ...COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
   );
   const serverResourceDir = path.join(
     resourceRoot,
@@ -418,6 +466,13 @@ function stageComputerUseHelperApp(
     computerUseHelperLauncherScript(),
     { encoding: "utf8", mode: 0o755 },
   );
+  compileNativeHelper({
+    env: plan.commandEnv,
+    fsOps,
+    runCommand,
+    sourcePath: nativeBridgeSource,
+    targetPath: nativeHelperExecutable,
+  });
   fsOps.copyFileSync(
     mcpServerSource,
     path.join(serverResourceDir, "morpheus-computer-use-mcp.mjs"),
@@ -441,17 +496,47 @@ function stageComputerUseHelperApp(
 function computerUseHelperLauncherScript() {
   return `#!/bin/sh
 set -eu
-HELPER_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-SERVER_DIR="$HELPER_DIR/Resources/server"
-PAYLOAD_ELECTRON="$HELPER_DIR/../../../../MacOS/${APP_NAME}"
+HELPER_CONTENTS_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+HELPER_BUNDLE_DIR="$(CDPATH= cd -- "$HELPER_CONTENTS_DIR/.." && pwd)"
+SERVER_DIR="$HELPER_CONTENTS_DIR/Resources/server"
+PAYLOAD_ELECTRON="$HELPER_CONTENTS_DIR/../../../../MacOS/${APP_NAME}"
 export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
 export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}"
-export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_DIR"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_BUNDLE_DIR"
 export MORPHEUS_COMPUTER_USE_MANAGER_MODULE="$SERVER_DIR/computerUse.cjs"
+export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE}"
 export MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT="$SERVER_DIR/${COMPUTER_USE_NATIVE_SCRIPT_FILE}"
 export ELECTRON_RUN_AS_NODE=1
 exec "$PAYLOAD_ELECTRON" "$SERVER_DIR/morpheus-computer-use-mcp.mjs"
 `;
+}
+
+function compileComputerUseNativeHelper({
+  env,
+  fsOps = resolveInstalledArtifactFileSystem(),
+  runCommand,
+  sourcePath,
+  targetPath,
+}) {
+  fsOps.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o755 });
+  const args = [
+    sourcePath,
+    "-O",
+    "-framework",
+    "AppKit",
+    "-framework",
+    "ApplicationServices",
+    "-framework",
+    "ScreenCaptureKit",
+    "-o",
+    targetPath,
+  ];
+  if (runCommand) {
+    runCommand("swiftc", args, { env });
+  } else {
+    run("swiftc", args, { env });
+  }
+  fsOps.chmodSync(targetPath, 0o755);
 }
 
 function computerUseHelperInfoPlist() {
@@ -760,6 +845,8 @@ function currentResourcesPath() {
 module.exports = {
   APP_NAME,
   COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
+  COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE,
+  COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH,
   COMPUTER_USE_NATIVE_SCRIPT_FILE,
   COMPUTER_USE_HELPER_APP_NAME,
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,

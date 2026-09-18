@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { PassThrough } from "node:stream";
 import { createRequire } from "node:module";
@@ -210,14 +213,33 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     bundleId: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
     bundlePath: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
     executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+    nativeExecutable:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
   };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-helper-"));
+  const helperBundlePath = path.join(root, "Root Worker Computer Use.app");
+  const helperExecutable = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const nativeHelperExecutable = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "morpheus-computer-use-native",
+  );
+  fs.mkdirSync(path.dirname(nativeHelperExecutable), { recursive: true });
+  fs.writeFileSync(helperExecutable, "#!/bin/sh\n", { mode: 0o755 });
+  fs.writeFileSync(nativeHelperExecutable, "native", { mode: 0o755 });
   process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
   process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID =
     "com.openai.root-worker-prototype.computer-use.dev";
-  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH =
-    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app";
-  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE =
-    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app/Contents/MacOS/Root Worker Computer Use";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helperBundlePath;
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE =
+    nativeHelperExecutable;
   try {
     const server = createComputerUseMcpServer({
       managerFactory: managerFactoryWithNative(fakeNativeClient()),
@@ -239,21 +261,28 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject.stablePermissionSubject,
-      false,
+      true,
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject.nativeControlSubject,
-      "delegated-swift-script-and-screencapture",
+      "packaged-native-helper-executable",
     );
-    assert.match(
+    assert.equal(
       result.structuredContent.diagnostics.permissionSubject.executablePath,
-      /Root Worker Computer Use$/,
+      nativeHelperExecutable,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.helperExecutablePath,
+      helperExecutable,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.nativeHelperExecutablePath,
+      nativeHelperExecutable,
     );
     assert.ok(
-      result.structuredContent.limitations.some(
+      !result.structuredContent.limitations.some(
         (limitation) =>
-          limitation.code === "native-permission-subject-not-contained" &&
-          /delegates to Swift and screencapture/.test(limitation.message),
+          limitation.code === "native-permission-subject-not-contained",
       ),
     );
     await server.close();
@@ -262,6 +291,129 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", previous.bundleId);
     restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", previous.bundlePath);
     restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", previous.executable);
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE",
+      previous.nativeExecutable,
+    );
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("computer use MCP permissions_status keeps delegated limitation without native helper executable", async () => {
+  const previous = {
+    mode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE,
+    bundleId: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
+    bundlePath: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+    nativeExecutable:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
+  };
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID =
+    "com.openai.root-worker-prototype.computer-use.dev";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH =
+    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE =
+    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app/Contents/MacOS/Root Worker Computer Use";
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE =
+    "/missing/morpheus-computer-use-native";
+  try {
+    const server = createComputerUseMcpServer({
+      managerFactory: managerFactoryWithNative(fakeNativeClient()),
+    });
+    const result = await server.callTool("computer.permissions_status", {
+      includeObservation: false,
+    });
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.stablePermissionSubject,
+      false,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.nativeControlSubject,
+      "delegated-swift-script-and-screencapture",
+    );
+    assert.ok(
+      result.structuredContent.limitations.some(
+        (limitation) =>
+          limitation.code === "native-permission-subject-not-contained" &&
+          /no packaged native helper executable/.test(limitation.message),
+      ),
+    );
+    await server.close();
+  } finally {
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_MODE", previous.mode);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", previous.bundleId);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", previous.bundlePath);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", previous.executable);
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE",
+      previous.nativeExecutable,
+    );
+  }
+});
+
+test("computer use MCP permissions_status resolves native helper executable from bundle", async () => {
+  const previous = {
+    mode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE,
+    bundleId: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
+    bundlePath: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+    nativeExecutable:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
+  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-helper-"));
+  const helperBundlePath = path.join(root, "Root Worker Computer Use.app");
+  const helperExecutable = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const nativeHelperExecutable = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "morpheus-computer-use-native",
+  );
+  fs.mkdirSync(path.dirname(nativeHelperExecutable), { recursive: true });
+  fs.writeFileSync(helperExecutable, "#!/bin/sh\n", { mode: 0o755 });
+  fs.writeFileSync(nativeHelperExecutable, "native", { mode: 0o755 });
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID =
+    "com.openai.root-worker-prototype.computer-use.dev";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helperBundlePath;
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
+  delete process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE;
+  try {
+    const server = createComputerUseMcpServer({
+      managerFactory: managerFactoryWithNative(fakeNativeClient()),
+    });
+    const result = await server.callTool("computer.permissions_status", {
+      includeObservation: false,
+    });
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.stablePermissionSubject,
+      true,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.executablePath,
+      nativeHelperExecutable,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.nativeControlSubject,
+      "packaged-native-helper-executable",
+    );
+    await server.close();
+  } finally {
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_MODE", previous.mode);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", previous.bundleId);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", previous.bundlePath);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", previous.executable);
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE",
+      previous.nativeExecutable,
+    );
+    fs.rmSync(root, { force: true, recursive: true });
   }
 });
 

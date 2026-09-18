@@ -19,6 +19,7 @@ const MAC_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
   "computerUseMacNative.swift",
 );
+const MAC_NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
 const DANGEROUS_TEXT_PATTERN =
   /\b(password|passcode|token|secret|delete|remove|send|submit|purchase|buy|transfer|bank|credit|sudo|rm\s+-rf)\b/i;
 
@@ -1657,13 +1658,82 @@ function pointInRect(point, rect) {
 }
 
 function createMacNativeComputerUseClient({ scriptPath, tmpDir } = {}) {
+  const backend = resolveMacNativeComputerUseBackend({ scriptPath });
   return createMacNativeComputerUseClientWithAdapters({
-    scriptPath: scriptPath ?? resolveMacNativeComputerUseScriptPath(),
+    scriptPath: backend.scriptPath,
+    executablePath: backend.executablePath,
     tmpDir,
-    runNative: runSwiftComputerUse,
-    screenshotCapture: captureScreenshot,
+    runNative: backend.executablePath
+      ? runNativeComputerUseExecutable
+      : runSwiftComputerUse,
+    screenshotCapture: backend.executablePath
+      ? captureScreenshotWithNativeExecutable
+      : captureScreenshotWithScreencapture,
     removeFile: removeScreenshot,
   });
+}
+
+function resolveMacNativeComputerUseBackend(options = {}) {
+  const envExecutablePath =
+    options.executablePath ??
+    process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE ??
+    null;
+  const executablePath = isUsableMacNativeExecutablePath(envExecutablePath, options)
+    ? envExecutablePath
+    : resolveMacNativeComputerUseExecutablePath(options);
+  if (executablePath) {
+    return {
+      mode: "packaged-native-helper-executable",
+      executablePath,
+      scriptPath: null,
+    };
+  }
+  return {
+    mode: "delegated-swift-script",
+    executablePath: null,
+    scriptPath: options.scriptPath ?? resolveMacNativeComputerUseScriptPath(options),
+  };
+}
+
+function resolveMacNativeComputerUseExecutablePath(options = {}) {
+  const helperBundlePath =
+    options.helperBundlePath ?? process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH;
+  const isExecutable =
+    options.isExecutable ?? ((targetPath) => isExecutableFile(targetPath));
+  if (!helperBundlePath) {
+    return null;
+  }
+  const candidate = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    MAC_NATIVE_HELPER_EXECUTABLE_FILE,
+  );
+  return isExecutable(candidate) ? candidate : null;
+}
+
+function isUsableMacNativeExecutablePath(targetPath, options = {}) {
+  if (!targetPath) {
+    return false;
+  }
+  const isExecutable =
+    options.isExecutable ??
+    options.fileExists ??
+    ((candidate) => isExecutableFile(candidate));
+  return isExecutable(targetPath);
+}
+
+function isExecutableFile(targetPath) {
+  try {
+    const stat = fsSync.statSync(targetPath);
+    if (!stat.isFile()) {
+      return false;
+    }
+    fsSync.accessSync(targetPath, fsSync.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveMacNativeComputerUseScriptPath(options = {}) {
@@ -1685,6 +1755,7 @@ function resolveMacNativeComputerUseScriptPath(options = {}) {
 
 function createMacNativeComputerUseClientWithAdapters({
   scriptPath,
+  executablePath,
   tmpDir,
   runNative,
   screenshotCapture,
@@ -1698,8 +1769,12 @@ function createMacNativeComputerUseClientWithAdapters({
       let screenshot = null;
       let cropScreenshot = null;
       try {
-        screenshot = await screenshotCapture(root);
-        const native = await runNative(scriptPath, "observe", payload);
+        screenshot = await screenshotCapture(root, null, executablePath);
+        const native = await runNative(
+          executablePath ?? scriptPath,
+          "observe",
+          payload,
+        );
         const cropBounds =
           native.targetVisibility === "frontmost"
             ? targetWindowBounds(native.targetApp?.window ?? native.frontmostApp?.window)
@@ -1711,7 +1786,11 @@ function createMacNativeComputerUseClientWithAdapters({
             : cropBounds;
         if (payload.includePerception !== false && captureTarget) {
           try {
-            cropScreenshot = await screenshotCapture(root, captureTarget);
+            cropScreenshot = await screenshotCapture(
+              root,
+              captureTarget,
+              executablePath,
+            );
             native.perception = {
               ...(native.perception ?? {}),
               windowCrop: {
@@ -1750,10 +1829,10 @@ function createMacNativeComputerUseClientWithAdapters({
       }
     },
     async act(action) {
-      return runNative(scriptPath, action.type, action);
+      return runNative(executablePath ?? scriptPath, action.type, action);
     },
     async activateTarget(payload) {
-      return runNative(scriptPath, "activate", payload);
+      return runNative(executablePath ?? scriptPath, "activate", payload);
     },
     async cleanup() {
       if (lastScreenshotPath) {
@@ -1766,6 +1845,25 @@ function createMacNativeComputerUseClientWithAdapters({
       lastCropScreenshotPath = null;
     },
   };
+}
+
+async function runNativeComputerUseExecutable(executablePath, command, payload) {
+  const encoded = Buffer.from(JSON.stringify(payload ?? {})).toString("base64");
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(executablePath, [command, encoded], {
+      maxBuffer: 1024 * 1024,
+    }));
+  } catch (error) {
+    const nativeError = parseNativeError(error.stdout);
+    throw new Error(nativeError || errorMessage(error));
+  }
+  const parsed = JSON.parse(String(stdout || "{}"));
+  if (!parsed.ok) {
+    throw new Error(parsed.error || `${command} failed`);
+  }
+  delete parsed.ok;
+  return parsed;
 }
 
 async function runSwiftComputerUse(scriptPath, command, payload) {
@@ -1798,7 +1896,20 @@ function parseNativeError(stdout) {
   }
 }
 
-async function captureScreenshot(tmpDir, bounds = null) {
+async function captureScreenshotWithNativeExecutable(
+  tmpDir,
+  bounds = null,
+  executablePath,
+) {
+  const result = await runNativeComputerUseExecutable(
+    executablePath,
+    "screenshot",
+    { tmpDir, bounds },
+  );
+  return readScreenshotFile(result.screenshot?.path);
+}
+
+async function captureScreenshotWithScreencapture(tmpDir, bounds = null) {
   const file = path.join(tmpDir, `morpheus-computer-use-${randomUUID()}.png`);
   const args = ["-x", "-t", "png"];
   const windowId = Number(bounds?.windowId);
@@ -1816,6 +1927,13 @@ async function captureScreenshot(tmpDir, bounds = null) {
   await execFileAsync("/usr/sbin/screencapture", args, {
     maxBuffer: 1024 * 1024,
   });
+  return readScreenshotFile(file);
+}
+
+async function readScreenshotFile(file) {
+  if (!file) {
+    throw new Error("Screenshot backend did not return a file path");
+  }
   const stat = await fs.stat(file);
   if (stat.size > MAX_SCREENSHOT_BYTES) {
     await fs.rm(file, { force: true });
@@ -1848,6 +1966,7 @@ function currentResourcesPath() {
 
 module.exports = {
   MAC_NATIVE_RESOURCE_RELATIVE_PATH,
+  MAC_NATIVE_HELPER_EXECUTABLE_FILE,
   buildAgentCursorPath,
   createComputerUseManager,
   createMacNativeComputerUseClient,
@@ -1855,6 +1974,8 @@ module.exports = {
   classifyComputerUseAction,
   normalizeAction,
   normalizeModifiers,
+  resolveMacNativeComputerUseBackend,
+  resolveMacNativeComputerUseExecutablePath,
   resolveMacNativeComputerUseScriptPath,
   targetMismatch,
   shouldAllowComputerUseAction: (action) => classifyComputerUseAction(normalizeAction(action)),
