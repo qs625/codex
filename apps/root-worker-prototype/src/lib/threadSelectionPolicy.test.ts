@@ -22,7 +22,7 @@ test("selection policy does nothing for a loaded and subscribed thread", () => {
   );
 });
 
-test("selection policy refreshes a newly selected loaded subscribed thread", () => {
+test("selection policy uses loaded subscribed threads as fresh on selection change", () => {
   assert.equal(
     decideThreadSelectionAction({
       selectedThreadId: "thread-1",
@@ -33,7 +33,22 @@ test("selection policy refreshes a newly selected loaded subscribed thread", () 
       hasLiveCache: false,
       selectionChanged: true,
     }),
-    "readAndSubscribe",
+    "none",
+  );
+});
+
+test("selection policy trusts subscribed live cache updates when switching back", () => {
+  assert.equal(
+    decideThreadSelectionAction({
+      selectedThreadId: "thread-1",
+      hasLocalThread: true,
+      isLoaded: true,
+      isSubscribed: true,
+      isLoading: false,
+      hasLiveCache: true,
+      selectionChanged: true,
+    }),
+    "none",
   );
 });
 
@@ -61,6 +76,21 @@ test("selection policy reads to subscribe loaded local threads", () => {
       isSubscribed: false,
       isLoading: false,
       hasLiveCache: false,
+    }),
+    "readAndSubscribe",
+  );
+});
+
+test("selection policy reads idle-unsubscribed threads when switching back", () => {
+  assert.equal(
+    decideThreadSelectionAction({
+      selectedThreadId: "thread-1",
+      hasLocalThread: true,
+      isLoaded: true,
+      isSubscribed: false,
+      isLoading: false,
+      hasLiveCache: true,
+      selectionChanged: true,
     }),
     "readAndSubscribe",
   );
