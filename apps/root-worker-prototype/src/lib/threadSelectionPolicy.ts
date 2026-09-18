@@ -29,11 +29,15 @@ export function decideThreadSelectionAction({
     return "none";
   }
 
-  if (selectionChanged) {
-    return "readAndSubscribe";
+  if (hasLocalThread && isLoaded && isSubscribed) {
+    return "none";
   }
 
   if (!hasLocalThread) {
+    return "readAndSubscribe";
+  }
+
+  if (selectionChanged) {
     return "readAndSubscribe";
   }
 
