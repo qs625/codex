@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
+  COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
   LAUNCHER_BINARY_NAME,
   assembleOuterApp,
   assertMacRuntimeLayout,
@@ -31,6 +32,10 @@ test("package plan separates outer app, payload staging, and Seed Capsule", () =
   );
   assert.match(plan.launcherExecutablePath, /Contents\/MacOS\/MorpheusLauncher$/);
   assert.match(plan.nativeResourceDir, /dist-package-resources\/native$/);
+  assert.match(
+    plan.computerUseHelperResourceDir,
+    new RegExp(`dist-package-resources\\/${COMPUTER_USE_HELPER_RESOURCE_DIR_NAME}$`),
+  );
 });
 
 test("Electron packager creates the complete inner Runtime app", () => {
@@ -38,6 +43,7 @@ test("Electron packager creates the complete inner Runtime app", () => {
     cwd: "/repo/apps/root-worker-prototype",
     payloadStagingDir: "/repo/payload",
     binResourceDir: "/repo/resources/bin",
+    computerUseHelperResourceDir: "/repo/resources/computer-use-helper",
     defaultConfigResourceDir: "/repo/resources/default-config",
     nativeResourceDir: "/repo/resources/native",
   });
@@ -53,6 +59,7 @@ test("Electron packager creates the complete inner Runtime app", () => {
     assert.ok(args.includes(`--ignore=^/${generated}($|/)`));
   }
   assert.ok(args.includes("--extra-resource=../../resources/bin"));
+  assert.ok(args.includes("--extra-resource=../../resources/computer-use-helper"));
   assert.ok(args.includes("--extra-resource=../../resources/default-config"));
   assert.ok(args.includes("--extra-resource=../../resources/native"));
 });

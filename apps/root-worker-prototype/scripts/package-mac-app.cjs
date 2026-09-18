@@ -6,6 +6,7 @@ const { spawnSync } = require("node:child_process");
 const {
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
   PAYLOAD_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
   GENERATED_SOURCE_DIR_NAMES,
   clearExtendedAttributes,
   normalizeRuntimeCapsuleTree,
@@ -71,6 +72,10 @@ function buildMacAppPackagePlan({
       "prompt.md",
     ),
     defaultConfigResourceDir: path.join(resourceStagingDir, "default-config"),
+    computerUseHelperResourceDir: path.join(
+      resourceStagingDir,
+      COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
+    ),
     distDir: path.join(cwd, distDirName),
     launcherBinaryPath: path.join(
       codexRsDir,
@@ -108,6 +113,7 @@ function buildElectronPackagerArgs({
   binResourceDir,
   defaultConfigResourceDir,
   nativeResourceDir,
+  computerUseHelperResourceDir,
 } = {}) {
   return [
     ".",
@@ -127,6 +133,7 @@ function buildElectronPackagerArgs({
     `--extra-resource=${path.relative(cwd, binResourceDir)}`,
     `--extra-resource=${path.relative(cwd, defaultConfigResourceDir)}`,
     `--extra-resource=${path.relative(cwd, nativeResourceDir)}`,
+    `--extra-resource=${path.relative(cwd, computerUseHelperResourceDir)}`,
   ];
 }
 
@@ -307,6 +314,7 @@ function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}
       binResourceDir: plan.binResourceDir,
       defaultConfigResourceDir: plan.defaultConfigResourceDir,
       nativeResourceDir: plan.nativeResourceDir,
+      computerUseHelperResourceDir: plan.computerUseHelperResourceDir,
     })], { cwd });
     const sourceCommit = capture("git", ["rev-parse", "HEAD"], { cwd }).trim();
     const manifest = prepareSeedCapsule(plan, { sourceCommit });
@@ -347,6 +355,7 @@ if (require.main === module) {
 
 module.exports = {
   APP_NAME,
+  COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
   LAUNCHER_BINARY_NAME,
   LAUNCHER_EXECUTABLE_NAME,
   PAYLOAD_APP_NAME,
