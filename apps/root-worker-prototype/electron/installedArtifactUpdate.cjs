@@ -571,6 +571,7 @@ function packagedComputerUseMcpConfigToml() {
   return `[mcp_servers.computer_use]
 command = "sh"
 args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\""]
+env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"]
 startup_timeout_sec = 5
 tool_timeout_sec = 30
 default_tools_approval_mode = "prompt"

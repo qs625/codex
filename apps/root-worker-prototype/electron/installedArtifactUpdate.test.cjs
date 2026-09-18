@@ -510,7 +510,16 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
       "utf8",
     );
     assert.match(config, /\[mcp_servers\.computer_use\]/);
-    assert.match(config, /MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE/);
+    assert.ok(
+      config.includes(
+        'args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\""]',
+      ),
+    );
+    assert.ok(
+      config.includes(
+        'env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"]',
+      ),
+    );
     assert.doesNotMatch(config, /computerUseMacNative\.swift/);
     const helperExecutable = path.join(
       target,
