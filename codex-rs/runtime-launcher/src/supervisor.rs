@@ -298,24 +298,11 @@ fn reconcile_active_launch(paths: &LauncherPaths, state: ControlState) -> Result
                  the stale launch record was discarded",
                 payload.payload.pid
             )),
-            None => match cleanup_payload(
-                paths,
-                &active.launch_instance_id,
-                payload,
-                active.known_descendants.iter().copied().collect(),
-            ) {
-                Ok(_) => None,
-                Err(ProcessCleanupError::Blocked(error)) => Some(format!(
-                    "prior payload root is gone and remaining processes cannot be safely \
-                     attributed: {error}; no signal was sent to untracked processes and \
-                     manual cleanup may be required"
-                )),
-                Err(error) => {
-                    return Err(LauncherError::Launch(format!(
-                        "best-effort cleanup of prior payload descendants failed: {error}"
-                    )));
-                }
-            },
+            None => Some(format!(
+                "prior payload root {} is gone; its persisted descendant list is no longer \
+                 safe to signal, so the stale launch record was discarded",
+                payload.payload.pid
+            )),
         }
     } else {
         None
@@ -1671,6 +1658,51 @@ mod tests {
                 .expect("read diagnostic")
                 .expect("stale launch diagnostic");
         assert!(diagnostic.message.contains("different start identity"));
+    }
+
+    #[test]
+    fn missing_payload_is_diagnostic_not_a_sticky_launch_gate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = LauncherPaths::new(temp.path().join("state"));
+        paths.ensure().expect("paths");
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 1"])
+            .spawn()
+            .expect("spawn short-lived child");
+        let child_pid = i32::try_from(child.id()).expect("child pid fits i32");
+        let payload = ProcessIdentity::observe(child_pid)
+            .expect("observe child process")
+            .expect("child process is live");
+        child.kill().expect("kill child");
+        child.wait().expect("wait for child");
+        assert!(
+            ProcessIdentity::observe(payload.pid)
+                .expect("observe exited child")
+                .is_none(),
+            "test needs an exited payload root"
+        );
+        let state = active_state(temp.path(), payload);
+        crate::control::write_json_atomic(&paths.control.control, &state)
+            .expect("write active state");
+
+        let reconciled = reconcile_active_launch(&paths, state).expect("reconcile missing launch");
+        assert!(reconciled.active_launch.is_none());
+        assert!(
+            ControlState::load(&paths.control)
+                .expect("load state")
+                .expect("state")
+                .active_launch
+                .is_none()
+        );
+        let diagnostic =
+            crate::control::read_json_if_exists::<FailureProjection>(&paths.failure_evidence)
+                .expect("read diagnostic")
+                .expect("missing payload diagnostic");
+        assert!(
+            diagnostic
+                .message
+                .contains("persisted descendant list is no longer safe")
+        );
     }
 
     #[test]
