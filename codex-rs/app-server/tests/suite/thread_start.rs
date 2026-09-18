@@ -1,6 +1,7 @@
 use anyhow::Result;
 use app_server_protocol::AskForApproval;
 use app_server_protocol::DeprecationNoticeNotification;
+use app_server_protocol::ItemCompletedNotification;
 use app_server_protocol::JSONRPCError;
 use app_server_protocol::JSONRPCMessage;
 use app_server_protocol::JSONRPCResponse;
@@ -9,6 +10,7 @@ use app_server_protocol::McpServerStatusUpdatedNotification;
 use app_server_protocol::RequestId;
 use app_server_protocol::SandboxMode;
 use app_server_protocol::ServerNotification;
+use app_server_protocol::Thread;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListParams;
@@ -61,9 +63,6 @@ use super::analytics::wait_for_analytics_payload;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
-const STARTUP_NOTIFICATION_QUIET_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_millis(200);
-
 fn write_workflow(root: &Path, id: &str, description: &str) -> Result<()> {
     let workflow_dir = root.join(id);
     std::fs::create_dir_all(&workflow_dir)?;
@@ -130,18 +129,28 @@ fn prepend_path_env(path: &Path) -> Result<String> {
     Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
 }
 
-async fn assert_no_startup_injected_context_replay(
+async fn wait_for_startup_injected_context_completed(
     mcp: &mut McpProcess,
     thread_id: &str,
-) -> Result<()> {
+) -> Result<ItemCompletedNotification> {
     loop {
-        let message =
-            match timeout(STARTUP_NOTIFICATION_QUIET_TIMEOUT, mcp.read_next_message()).await {
-                Ok(result) => result?,
-                Err(_) => return Ok(()),
-            };
+        let message = match timeout(DEFAULT_READ_TIMEOUT, mcp.read_next_message()).await {
+            Ok(result) => result?,
+            Err(_) => {
+                anyhow::bail!("thread/start should replay Init Context as live item/completed")
+            }
+        };
         if is_injected_context_item_completed_for_thread(&message, thread_id) {
-            anyhow::bail!("thread/start should not replay Init Context as item/completed");
+            let JSONRPCMessage::Notification(notification) = message else {
+                unreachable!(
+                    "is_injected_context_item_completed_for_thread only matches notifications"
+                );
+            };
+            return Ok(serde_json::from_value(
+                notification
+                    .params
+                    .expect("item/completed params should be present"),
+            )?);
         }
     }
 }
@@ -165,6 +174,26 @@ fn is_injected_context_item_completed_for_thread(
             .and_then(|item| item.get("type"))
             .and_then(Value::as_str)
             == Some("injectedContext")
+}
+
+async fn assert_startup_injected_context_replayed_if_present(
+    mcp: &mut McpProcess,
+    thread: &Thread,
+) -> Result<()> {
+    if thread
+        .turns
+        .iter()
+        .flat_map(|turn| &turn.items)
+        .any(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+    {
+        let completed = wait_for_startup_injected_context_completed(mcp, &thread.id).await?;
+        assert_completed_init_context_item(
+            completed,
+            &thread.id,
+            "startup item/completed notification",
+        );
+    }
+    Ok(())
 }
 
 fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
@@ -275,6 +304,46 @@ fn assert_single_completed_external_init_context_turn(
         !init_context_text.contains("Original task:"),
         "{context} should not include a concrete user task before first input"
     );
+}
+
+fn assert_completed_init_context_item(
+    completed: ItemCompletedNotification,
+    thread_id: &str,
+    context: &str,
+) {
+    assert_eq!(completed.thread_id, thread_id, "{context}");
+    let turn = Turn {
+        id: completed.turn_id,
+        items: vec![completed.item],
+        items_view: app_server_protocol::TurnItemsView::Full,
+        status: TurnStatus::Completed,
+        error: None,
+        started_at: None,
+        completed_at: Some(completed.completed_at_ms / 1000),
+        duration_ms: None,
+    };
+    assert_single_completed_init_context_turn(&[turn], context);
+}
+
+fn assert_completed_external_init_context_item(
+    completed: ItemCompletedNotification,
+    thread_id: &str,
+    agent_path: &str,
+    agent_role: &str,
+    context: &str,
+) {
+    assert_eq!(completed.thread_id, thread_id, "{context}");
+    let turn = Turn {
+        id: completed.turn_id,
+        items: vec![completed.item],
+        items_view: app_server_protocol::TurnItemsView::Full,
+        status: TurnStatus::Completed,
+        error: None,
+        started_at: None,
+        completed_at: Some(completed.completed_at_ms / 1000),
+        duration_ms: None,
+    };
+    assert_single_completed_external_init_context_turn(&[turn], agent_path, agent_role, context);
 }
 
 #[tokio::test]
@@ -437,7 +506,14 @@ async fn thread_start_accepts_hidden_external_root_provider_and_emits_started() 
         "claude_cli",
         "thread/started notification",
     );
-    assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
+    let completed = wait_for_startup_injected_context_completed(&mut mcp, &thread.id).await?;
+    assert_completed_external_init_context_item(
+        completed,
+        &thread.id,
+        "/root",
+        "claude_cli",
+        "startup item/completed notification",
+    );
 
     Ok(())
 }
@@ -861,7 +937,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;
     assert_eq!(started.thread, thread);
-    assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
+    assert_startup_injected_context_replayed_if_present(&mut mcp, &thread).await?;
 
     Ok(())
 }
@@ -1223,7 +1299,12 @@ instruction_files = [
         &started.thread.turns,
         "project thread/started notification should include initial context display turns",
     );
-    assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
+    let completed = wait_for_startup_injected_context_completed(&mut mcp, &thread.id).await?;
+    assert_completed_init_context_item(
+        completed,
+        &thread.id,
+        "project startup item/completed notification",
+    );
 
     Ok(())
 }

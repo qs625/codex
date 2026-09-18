@@ -25,11 +25,18 @@ use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_fake_rollout_with_token_usage;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::rollout_path;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use config_service::types::AuthCredentialsStoreMode;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::items::InjectedContextItem;
+use protocol::items::InjectedContextSection;
+use protocol::items::TurnItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ItemCompletedEvent;
 use serde_json::Value;
 use serde_json::json;
 use std::path::Path;
@@ -50,6 +57,71 @@ use super::analytics::wait_for_analytics_payload;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const QUIET_NOTIFICATION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+
+fn append_persisted_injected_context(
+    codex_home: &Path,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+    thread_id: &str,
+) -> Result<()> {
+    let payload = serde_json::to_value(EventMsg::ItemCompleted(ItemCompletedEvent {
+        thread_id: ThreadId::from_string(thread_id)?,
+        turn_id: "turn-init-context".to_string(),
+        item: TurnItem::InjectedContext(InjectedContextItem {
+            id: "ctx-persisted".to_string(),
+            title: "Init Context".to_string(),
+            preview: "Init Context".to_string(),
+            sections: vec![InjectedContextSection {
+                label: "Instructions".to_string(),
+                text: "Persisted init context copied into fork history.".to_string(),
+            }],
+        }),
+        completed_at_ms: 1_735_737_000_000,
+    }))?;
+    let file_path = rollout_path(codex_home, filename_ts, thread_id);
+    let line = json!({
+        "timestamp": meta_rfc3339,
+        "type": "event_msg",
+        "payload": payload,
+    })
+    .to_string();
+    std::fs::write(
+        &file_path,
+        format!("{}{}\n", std::fs::read_to_string(&file_path)?, line),
+    )?;
+    Ok(())
+}
+
+async fn assert_no_injected_context_item_completed_for_thread(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+) -> Result<()> {
+    loop {
+        let message = match timeout(QUIET_NOTIFICATION_TIMEOUT, mcp.read_next_message()).await {
+            Ok(message) => message?,
+            Err(_) => return Ok(()),
+        };
+        let JSONRPCMessage::Notification(notification) = message else {
+            continue;
+        };
+        if notification.method != "item/completed" {
+            continue;
+        }
+        let Some(params) = notification.params.as_ref() else {
+            continue;
+        };
+        if params.get("threadId").and_then(Value::as_str) == Some(thread_id)
+            && params
+                .get("item")
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("injectedContext")
+        {
+            anyhow::bail!("thread/fork should not replay copied InjectedContext as item/completed");
+        }
+    }
+}
 
 #[tokio::test]
 async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
@@ -212,6 +284,71 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     let mut expected_started_thread = thread;
     expected_started_thread.turns.clear();
     assert_eq!(started.thread, expected_started_thread);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_fork_does_not_live_replay_copied_injected_context() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let meta_rfc3339 = "2025-01-05T12:00:00Z";
+    let conversation_id = create_fake_rollout(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        "Saved user message",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    append_persisted_injected_context(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        &conversation_id,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: conversation_id,
+            thread_source: Some(ThreadSource::User),
+            ..Default::default()
+        })
+        .await?;
+    let fork_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(fork_id)),
+    )
+    .await??;
+    let ThreadForkResponse { thread, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
+    assert!(
+        thread
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .any(|item| matches!(item, ThreadItem::InjectedContext { .. })),
+        "thread/fork response should still include copied InjectedContext in history"
+    );
+
+    let started = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/started"),
+    )
+    .await??;
+    let started: ThreadStartedNotification =
+        serde_json::from_value(started.params.expect("params must be present"))?;
+    assert_eq!(started.thread.id, thread.id);
+    assert!(
+        started.thread.turns.is_empty(),
+        "thread/fork live started notification should not include copied turns"
+    );
+    assert_no_injected_context_item_completed_for_thread(&mut mcp, &thread.id).await?;
 
     Ok(())
 }
