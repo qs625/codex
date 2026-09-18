@@ -220,6 +220,35 @@ test("builds command monitors from active command current state items", () => {
   );
 });
 
+test("shows active command monitors when lifecycle status has not caught up", () => {
+  const thread = {
+    ...makeThread([], { type: "idle", reason: "eventSubscription" }),
+    turns: [] as Thread["turns"],
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "pnpm package:root-worker-prototype:mac",
+        cwd: "/repo",
+        processId: "process-1",
+        status: "running",
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.equal(analysis.monitors.totalCount, 1);
+  assert.equal(
+    analysis.monitors.sections.find((section) => section.kind === "command")
+      ?.monitors[0]?.label,
+    "pnpm package:root-worker-prototype:mac",
+  );
+});
+
 test("does not build live command monitors from historical command items", () => {
   const thread = makeThread(
     [
@@ -817,6 +846,33 @@ test("ignores stale running command residue after reload when thread is complete
         durationMs: null,
       },
     ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("ignores stale running command residue after terminal errors", () => {
+  const analysis = buildThreadAnalysis(
+    {
+      ...makeThread([], {
+        type: "final",
+        result: { type: "errored", message: "command failed" },
+      }),
+      activeCommandItems: [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "rtk cargo test -p app-server",
+          cwd: "/repo",
+          status: "running",
+          aggregatedOutput: "Compiling app-server\n",
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+    },
     0,
   );
 

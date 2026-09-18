@@ -440,20 +440,17 @@ function threadAllowsLiveCommandMonitors(thread: Thread | null) {
   if (!thread) {
     return false;
   }
-  if (thread.lifecycleStatus.type === "active") {
-    return thread.lifecycleStatus.activeFlags.includes("running");
+  if (thread.lifecycleStatus.type === "final") {
+    return false;
   }
-  if (thread.lifecycleStatus.type === "idle") {
-    return (
-      thread.lifecycleStatus.reason === "waitCommand" ||
-      thread.lifecycleStatus.reason === "waitChild"
-    );
+  if (
+    thread.lifecycleStatus.type === "active" &&
+    thread.lifecycleStatus.activeFlags.includes("waitingOnApproval") &&
+    !thread.lifecycleStatus.activeFlags.includes("running")
+  ) {
+    return false;
   }
-  return (
-    thread.lifecycleStatus.type === "waiting" &&
-    (thread.lifecycleStatus.reason === "command" ||
-      thread.lifecycleStatus.reason === "child")
-  );
+  return true;
 }
 
 function buildMonitorSummary(

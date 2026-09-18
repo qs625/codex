@@ -2154,6 +2154,35 @@ test("command item notifications create a visible running command and complete t
   });
 });
 
+test("command start notifications create new active command identity for live projections", () => {
+  const thread = makeThread();
+  const commandStart = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "pnpm package:root-worker-prototype:mac",
+    cwd: "/tmp/project",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "output",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  } satisfies Extract<ThreadItem, { type: "commandExecution" }>;
+
+  const updated = updateThreadItem(
+    markThreadCommandExecutionRunning(thread),
+    "turn-1",
+    commandStart,
+    { startedAtMs: 2_000 },
+  );
+
+  assert.notEqual(updated, thread);
+  assert.notEqual(updated.activeCommandItems, thread.activeCommandItems);
+  assert.deepEqual(updated.activeCommandItems, [
+    { ...commandStart, startedAtMs: 2_000 },
+  ]);
+});
+
 test("conversation display keeps exec command item and typed notification summaries", () => {
   const commandStart: ThreadItem = {
     type: "commandExecution",

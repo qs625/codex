@@ -783,6 +783,39 @@ test("keeps live commands visible without output while rendering schedules", () 
   );
 });
 
+test("thread analysis active view rerenders live command section and badge from active command state", () => {
+  const activeCommand = {
+    type: "commandExecution",
+    id: "command-1",
+    command: "pnpm package:root-worker-prototype:mac",
+    cwd: "/repo",
+    processId: "pid-1",
+    status: "running",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  } satisfies NonNullable<Thread["activeCommandItems"]>[number];
+  const thread = {
+    ...makeThread([], { type: "idle", reason: "eventSubscription" }),
+    activeCommandItems: [activeCommand],
+  } satisfies Thread;
+  const initialMarkup = renderRightPanel(
+    makeThread([], { type: "idle", reason: "eventSubscription" }),
+    "skills",
+  );
+  const updatedMarkup = renderRightPanel(thread, "skills");
+
+  assert.match(initialMarkup, /No live commands\./);
+  assert.doesNotMatch(initialMarkup, /pnpm package:root-worker-prototype:mac/);
+  assert.match(updatedMarkup, /Live Commands/);
+  assert.match(updatedMarkup, /pnpm package:root-worker-prototype:mac/);
+  assert.doesNotMatch(updatedMarkup, /No live commands\./);
+  assert.match(
+    updatedMarkup,
+    /aria-label="Thread Analysis"[\s\S]*<span class="panel-rail-badge">1<\/span>/,
+  );
+});
+
 test("keeps newer terminal focus request current over initial state load", () => {
   const sequencer = createTerminalStateRequestSequencer();
   const initialLoad = sequencer.begin();
