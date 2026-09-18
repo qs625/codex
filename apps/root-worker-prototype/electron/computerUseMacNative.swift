@@ -15,6 +15,8 @@ func error(_ message: String) -> Never {
   exit(1)
 }
 
+var injectedPayload: [String: Any]? = nil
+
 extension Array where Element == String {
   func withCStringArray<Result>(_ body: ([UnsafeMutablePointer<CChar>?]) -> Result) -> Result {
     var cStrings = map { strdup($0) }
@@ -94,6 +96,7 @@ func launchMcpServerIfAvailable() -> Bool {
   setenv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", paths.executable.path, 1)
   setenv("MORPHEUS_COMPUTER_USE_MANAGER_MODULE", paths.server.appendingPathComponent("computerUse.cjs").path, 1)
   setenv("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE", paths.executable.path, 1)
+  setenv("MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE", "launchservices-app-host", 1)
   setenv("MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT", paths.server.appendingPathComponent("computerUseMacNative.swift").path, 1)
   setenv("ELECTRON_RUN_AS_NODE", "1", 1)
   let args = [payload, server.path]
@@ -107,6 +110,9 @@ func launchMcpServerIfAvailable() -> Bool {
 }
 
 func payload() -> [String: Any] {
+  if let injectedPayload = injectedPayload {
+    return injectedPayload
+  }
   guard CommandLine.arguments.count > 2 else { return [:] }
   guard let data = Data(base64Encoded: CommandLine.arguments[2]) else {
     error("Invalid payload encoding")
@@ -118,6 +124,27 @@ func payload() -> [String: Any] {
     error("Invalid payload JSON")
   }
   return object
+}
+
+func ipcRequest(_ path: String) -> (command: String, payload: [String: Any]) {
+  guard let data = FileManager.default.contents(atPath: path) else {
+    error("IPC request file is unavailable")
+  }
+  guard
+    let decoded = try? JSONSerialization.jsonObject(with: data),
+    let object = decoded as? [String: Any],
+    let command = object["command"] as? String
+  else {
+    error("Invalid IPC request")
+  }
+  return (command: command, payload: (object["payload"] as? [String: Any]) ?? [:])
+}
+
+func redirectStandardOutput(to path: String) {
+  FileManager.default.createFile(atPath: path, contents: nil)
+  guard freopen(path, "w", stdout) != nil else {
+    error("Could not open IPC response file")
+  }
 }
 
 func number(_ value: Any?) -> Double? {
@@ -1207,40 +1234,56 @@ func captureScreenshot(_ object: [String: Any]) {
   ])
 }
 
+func dispatch(_ command: String, _ object: [String: Any]) {
+  switch command {
+  case "screenshot":
+    captureScreenshot(object)
+  case "observe":
+    observe(object)
+  case "activate":
+    activate(object)
+  case "move":
+    move(object)
+  case "click":
+    click(object)
+  case "doubleClick":
+    doubleClick(object)
+  case "rightClick":
+    rightClick(object)
+  case "scroll":
+    scroll(object)
+  case "type":
+    typeText(object)
+  case "setText":
+    setText(object)
+  case "key":
+    pressKey(object)
+  case "hotkey":
+    pressHotkey(object)
+  case "drag":
+    drag(object)
+  default:
+    error("Unsupported command: \(command)")
+  }
+}
+
+if CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "mcp-server" {
+  _ = launchMcpServerIfAvailable()
+  error("Computer Use MCP server resources are unavailable")
+}
+
+if CommandLine.arguments.count > 3 && CommandLine.arguments[1] == "ipc-command" {
+  let request = ipcRequest(CommandLine.arguments[2])
+  injectedPayload = request.payload
+  redirectStandardOutput(to: CommandLine.arguments[3])
+  dispatch(request.command, request.payload)
+  exit(0)
+}
+
 if CommandLine.arguments.count <= 1 && launchMcpServerIfAvailable() {
   exit(0)
 }
 
 let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "observe"
 let object = payload()
-
-switch command {
-case "screenshot":
-  captureScreenshot(object)
-case "observe":
-  observe(object)
-case "activate":
-  activate(object)
-case "move":
-  move(object)
-case "click":
-  click(object)
-case "doubleClick":
-  doubleClick(object)
-case "rightClick":
-  rightClick(object)
-case "scroll":
-  scroll(object)
-case "type":
-  typeText(object)
-case "setText":
-  setText(object)
-case "key":
-  pressKey(object)
-case "hotkey":
-  pressHotkey(object)
-case "drag":
-  drag(object)
-default:
-  error("Unsupported command: \(command)")
-}
+dispatch(command, object)

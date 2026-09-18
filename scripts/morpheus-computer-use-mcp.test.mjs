@@ -232,6 +232,8 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
     nativeExecutable:
       process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
+    nativeInvocationMode:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE,
     stableHelperAppPath:
       process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH,
   };
@@ -260,6 +262,8 @@ test("computer use MCP permissions_status reports packaged helper app identity",
   process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
   process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE =
     nativeHelperExecutable;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE =
+    "launchservices-app-host";
   process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH = helperBundlePath;
   try {
     const server = createComputerUseMcpServer({
@@ -294,6 +298,10 @@ test("computer use MCP permissions_status reports packaged helper app identity",
       true,
     );
     assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.nativeInvocationMode,
+      "launchservices-app-host",
+    );
+    assert.equal(
       result.structuredContent.diagnostics.permissionSubject.executablePath,
       nativeHelperExecutable,
     );
@@ -320,6 +328,10 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     restoreEnv(
       "MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE",
       previous.nativeExecutable,
+    );
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE",
+      previous.nativeInvocationMode,
     );
     restoreEnv(
       "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
@@ -385,6 +397,83 @@ test("computer use MCP permissions_status keeps delegated limitation without nat
       "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
       previous.stableHelperAppPath,
     );
+  }
+});
+
+test("computer use MCP permissions_status does not overclaim direct-exec bundle main", async () => {
+  const previous = {
+    mode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE,
+    bundleId: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
+    bundlePath: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+    nativeExecutable:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
+    nativeInvocationMode:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE,
+    stableHelperAppPath:
+      process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH,
+  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-helper-"));
+  const helperBundlePath = path.join(root, "Root Worker Computer Use.app");
+  const helperExecutable = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  fs.mkdirSync(path.dirname(helperExecutable), { recursive: true });
+  writeHelperInfoPlist(helperBundlePath);
+  fs.writeFileSync(helperExecutable, "native", { mode: 0o755 });
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID =
+    "com.openai.root-worker-prototype.computer-use.dev";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helperBundlePath;
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE = helperExecutable;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE = "direct-exec";
+  process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH = helperBundlePath;
+  try {
+    const server = createComputerUseMcpServer({
+      managerFactory: managerFactoryWithNative(fakeNativeClient()),
+    });
+    const result = await server.callTool("computer.permissions_status", {
+      includeObservation: false,
+    });
+    const subject = result.structuredContent.diagnostics.permissionSubject;
+    assert.equal(subject.usesStableHelperApp, true);
+    assert.equal(subject.nativeHelperIsBundleExecutable, true);
+    assert.equal(subject.nativeInvocationMode, "direct-exec");
+    assert.equal(subject.stablePermissionSubject, false);
+    assert.equal(
+      subject.nativeControlSubject,
+      "stable-direct-exec-native-helper-executable",
+    );
+    assert.ok(
+      result.structuredContent.limitations.some(
+        (limitation) =>
+          limitation.code === "native-permission-subject-not-contained" &&
+          /direct exec/.test(limitation.message),
+      ),
+    );
+    await server.close();
+  } finally {
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_MODE", previous.mode);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", previous.bundleId);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", previous.bundlePath);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", previous.executable);
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE",
+      previous.nativeExecutable,
+    );
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE",
+      previous.nativeInvocationMode,
+    );
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
+      previous.stableHelperAppPath,
+    );
+    fs.rmSync(root, { force: true, recursive: true });
   }
 });
 
@@ -576,6 +665,8 @@ test("computer use MCP permissions_status resolves native helper executable from
     executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
     nativeExecutable:
       process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
+    nativeInvocationMode:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE,
     stableHelperAppPath:
       process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH,
   };
@@ -603,6 +694,8 @@ test("computer use MCP permissions_status resolves native helper executable from
   process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helperBundlePath;
   process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
   process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH = helperBundlePath;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE =
+    "launchservices-app-host";
   delete process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE;
   try {
     const server = createComputerUseMcpServer({
@@ -639,6 +732,10 @@ test("computer use MCP permissions_status resolves native helper executable from
       previous.nativeExecutable,
     );
     restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE",
+      previous.nativeInvocationMode,
+    );
+    restoreEnv(
       "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
       previous.stableHelperAppPath,
     );
@@ -662,6 +759,7 @@ test("computer use MCP stdio defaults to RMCP line JSON initialize, tools/list, 
         packagedHelperBundle: true,
         packagedNativeHelperExecutable: true,
         nativeHelperIsBundleExecutable: true,
+        nativeInvocationMode: "launchservices-app-host",
         stablePermissionSubject: true,
         nativeControlSubject: "stable-packaged-native-helper-executable",
       },
