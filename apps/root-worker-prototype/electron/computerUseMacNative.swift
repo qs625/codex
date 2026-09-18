@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import Foundation
 import ScreenCaptureKit
 
@@ -12,6 +13,97 @@ func json(_ value: Any) {
 func error(_ message: String) -> Never {
   json(["ok": false, "error": message])
   exit(1)
+}
+
+extension Array where Element == String {
+  func withCStringArray<Result>(_ body: ([UnsafeMutablePointer<CChar>?]) -> Result) -> Result {
+    var cStrings = map { strdup($0) }
+    cStrings.append(nil)
+    defer {
+      for pointer in cStrings {
+        if let pointer = pointer {
+          free(pointer)
+        }
+      }
+    }
+    return body(cStrings)
+  }
+}
+
+func executableURL() -> URL {
+  if let url = Bundle.main.executableURL {
+    return url
+  }
+  return URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+}
+
+func helperBundlePaths() -> (
+  executable: URL,
+  contents: URL,
+  bundle: URL,
+  resources: URL,
+  server: URL
+) {
+  let executable = executableURL()
+  let contents = executable.deletingLastPathComponent().deletingLastPathComponent()
+  let bundle = contents.deletingLastPathComponent()
+  let resources = contents.appendingPathComponent("Resources")
+  return (
+    executable: executable,
+    contents: contents,
+    bundle: bundle,
+    resources: resources,
+    server: resources.appendingPathComponent("server")
+  )
+}
+
+func trim(_ value: String) -> String {
+  return value.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func payloadElectronPath(paths: (
+  executable: URL,
+  contents: URL,
+  bundle: URL,
+  resources: URL,
+  server: URL
+)) -> String {
+  let configured = paths.resources.appendingPathComponent("payload-electron-path")
+  if let value = try? String(contentsOf: configured, encoding: .utf8) {
+    let trimmed = trim(value)
+    if !trimmed.isEmpty {
+      return trimmed
+    }
+  }
+  return paths.contents
+    .appendingPathComponent("../../../../MacOS/Root Worker Runtime")
+    .standardizedFileURL
+    .path
+}
+
+func launchMcpServerIfAvailable() -> Bool {
+  let paths = helperBundlePaths()
+  let server = paths.server.appendingPathComponent("morpheus-computer-use-mcp.mjs")
+  guard FileManager.default.fileExists(atPath: server.path) else {
+    return false
+  }
+  let payload = payloadElectronPath(paths: paths)
+  setenv("MORPHEUS_COMPUTER_USE_HELPER_MODE", "packaged-helper-app", 1)
+  setenv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", "com.openai.root-worker-prototype.computer-use.dev", 1)
+  setenv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", paths.bundle.path, 1)
+  setenv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", paths.executable.path, 1)
+  setenv("MORPHEUS_COMPUTER_USE_MANAGER_MODULE", paths.server.appendingPathComponent("computerUse.cjs").path, 1)
+  setenv("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE", paths.executable.path, 1)
+  setenv("MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT", paths.server.appendingPathComponent("computerUseMacNative.swift").path, 1)
+  setenv("ELECTRON_RUN_AS_NODE", "1", 1)
+  let args = [payload, server.path]
+  args.withCStringArray { argv in
+    var mutableArgv = argv
+    _ = mutableArgv.withUnsafeMutableBufferPointer { buffer in
+      execv(payload, buffer.baseAddress)
+    }
+  }
+  error("Failed to launch Computer Use MCP server: \(String(cString: strerror(errno)))")
 }
 
 func payload() -> [String: Any] {
@@ -1113,6 +1205,10 @@ func captureScreenshot(_ object: [String: Any]) {
       "byteSize": data.count,
     ],
   ])
+}
+
+if CommandLine.arguments.count <= 1 && launchMcpServerIfAvailable() {
+  exit(0)
 }
 
 let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "observe"

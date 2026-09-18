@@ -539,12 +539,13 @@ function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {
     environmentOptions.stableComputerUseHelperAppPath ??
     baseEnv.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
     COMPUTER_USE_STABLE_HELPER_APP_PATH;
-  materializeCurrentComputerUseHelperApp({
+  const selfHealResult = materializeCurrentComputerUseHelperApp({
     ...environmentOptions,
     stableComputerUseHelperAppPath: stableHelperAppPath,
   });
   const helper = findPackagedComputerUseHelper({
     ...environmentOptions,
+    ignoreStableComputerUseHelperApp: selfHealResult.status === "failed",
     stableComputerUseHelperAppPath: stableHelperAppPath,
   });
   env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH =
@@ -1134,6 +1135,7 @@ function findPackagedComputerUseHelper(options = {}) {
   );
   const stableExecutableExists = existsSync(stableExecutablePath);
   const stableHelperValid =
+    !options.ignoreStableComputerUseHelperApp &&
     stableExecutableExists &&
     isComputerUseHelperBundle(stableHelperAppPath, { readFileSync });
   if (stableHelperValid) {
@@ -1145,9 +1147,11 @@ function findPackagedComputerUseHelper(options = {}) {
       stable: true,
     };
   }
-  const stableFallbackReason = stableExecutableExists
-    ? "stable Computer Use helper path contains a different app bundle"
-    : "stable Computer Use helper app is unavailable";
+  const stableFallbackReason = options.ignoreStableComputerUseHelperApp
+    ? "stable Computer Use helper materialization failed"
+    : stableExecutableExists
+      ? "stable Computer Use helper path contains a different app bundle"
+      : "stable Computer Use helper app is unavailable";
   if (!resourcesPath) {
     return {
       stableHelperAppPath,

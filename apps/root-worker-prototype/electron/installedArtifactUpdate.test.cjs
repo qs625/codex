@@ -16,6 +16,7 @@ const {
   COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH,
   COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
   COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
+  COMPUTER_USE_NATIVE_SCRIPT_FILE,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
   materializeStableComputerUseHelperApp,
@@ -54,7 +55,34 @@ function writeComputerUseHelperSources(workspace, sourceAppDir) {
 function compileFakeNativeHelper({ fsOps = fs, sourcePath, targetPath }) {
   assert.match(sourcePath, /computerUseMacNative\.swift$/);
   fsOps.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fsOps.writeFileSync(targetPath, "native-helper", { mode: 0o755 });
+  fsOps.writeFileSync(
+    targetPath,
+    `#!/bin/sh
+set -eu
+HELPER_CONTENTS_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+HELPER_BUNDLE_DIR="$(CDPATH= cd -- "$HELPER_CONTENTS_DIR/.." && pwd)"
+SERVER_DIR="$HELPER_CONTENTS_DIR/Resources/server"
+PAYLOAD_FILE="$HELPER_CONTENTS_DIR/Resources/payload-electron-path"
+if [ -f "$PAYLOAD_FILE" ]; then
+  PAYLOAD_ELECTRON="$(cat "$PAYLOAD_FILE")"
+else
+  PAYLOAD_ELECTRON="$HELPER_CONTENTS_DIR/../../../../MacOS/${APP_NAME}"
+fi
+export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_BUNDLE_DIR"
+export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_HELPER_APP_NAME}"
+export MORPHEUS_COMPUTER_USE_MANAGER_MODULE="$SERVER_DIR/computerUse.cjs"
+export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_HELPER_APP_NAME}"
+export MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT="$SERVER_DIR/${COMPUTER_USE_NATIVE_SCRIPT_FILE}"
+export ELECTRON_RUN_AS_NODE=1
+if [ "$#" -eq 0 ]; then
+  exec "$PAYLOAD_ELECTRON" "$SERVER_DIR/morpheus-computer-use-mcp.mjs"
+fi
+printf '%s\\n' native-helper
+`,
+    { mode: 0o755 },
+  );
   fsOps.chmodSync(targetPath, 0o755);
 }
 
@@ -69,6 +97,8 @@ function writeHelperApp(appPath, { bundleIdentifier = COMPUTER_USE_HELPER_BUNDLE
 <dict>
   <key>CFBundleIdentifier</key>
   <string>${bundleIdentifier}</string>
+  <key>CFBundleExecutable</key>
+  <string>${COMPUTER_USE_HELPER_APP_NAME}</string>
 </dict>
 </plist>
 `,
@@ -79,6 +109,13 @@ function writeHelperApp(appPath, { bundleIdentifier = COMPUTER_USE_HELPER_BUNDLE
 function readHelperExecutable(appPath) {
   return fs.readFileSync(
     path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+    "utf8",
+  );
+}
+
+function readHelperPayloadPath(appPath) {
+  return fs.readFileSync(
+    path.join(appPath, "Contents", "Resources", "payload-electron-path"),
     "utf8",
   );
 }
@@ -622,14 +659,11 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
     assert.equal(fs.statSync(helperExecutable).mode & 0o111, 0o111);
     assert.ok(fs.statSync(nativeHelperExecutable).isFile());
     assert.equal(fs.statSync(nativeHelperExecutable).mode & 0o111, 0o111);
-    assert.equal(fs.readFileSync(nativeHelperExecutable, "utf8"), "native-helper");
-    const helperLauncher = fs.readFileSync(helperExecutable, "utf8");
-    assert.match(helperLauncher, /ELECTRON_RUN_AS_NODE=1/);
-    assert.match(helperLauncher, /PAYLOAD_ELECTRON=/);
-    assert.match(helperLauncher, /HELPER_BUNDLE_DIR=/);
-    assert.match(helperLauncher, /MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE/);
-    assert.match(helperLauncher, /morpheus-computer-use-native/);
-    assert.doesNotMatch(helperLauncher, /exec node/);
+    assert.equal(helperExecutable, nativeHelperExecutable);
+    assert.doesNotMatch(
+      fs.readFileSync(nativeHelperExecutable, "utf8"),
+      /morpheus-computer-use-native/,
+    );
     assert.match(
       fs.readFileSync(
         path.join(
@@ -821,7 +855,7 @@ test("materialized stable Computer Use helper launches MCP server", async () => 
           args[4].endsWith(".staged"),
       ),
     );
-    assert.match(readHelperExecutable(target), new RegExp(payloadElectronPath));
+    assert.equal(readHelperPayloadPath(target), `${payloadElectronPath}\n`);
 
     child = spawn(
       path.join(target, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),

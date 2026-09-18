@@ -23,13 +23,13 @@ const PAYLOAD_EXECUTABLE_RELATIVE_PATH = path.join(
   APP_NAME,
 );
 const COMPUTER_USE_NATIVE_SCRIPT_FILE = "computerUseMacNative.swift";
-const COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE =
-  "morpheus-computer-use-native";
 const COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
   COMPUTER_USE_NATIVE_SCRIPT_FILE,
 );
 const COMPUTER_USE_HELPER_APP_NAME = "Root Worker Computer Use";
+const COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE =
+  COMPUTER_USE_HELPER_APP_NAME;
 const COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER =
   "com.openai.root-worker-prototype.computer-use.dev";
 const COMPUTER_USE_STABLE_HELPER_APP_PATH = path.join(
@@ -58,6 +58,15 @@ const COMPUTER_USE_HELPER_SERVER_RESOURCE_RELATIVE_PATH = path.join(
   "Contents",
   "Resources",
   "server",
+);
+const COMPUTER_USE_HELPER_PAYLOAD_PATH_INSIDE_APP = path.join(
+  "Contents",
+  "Resources",
+  "payload-electron-path",
+);
+const COMPUTER_USE_HELPER_PAYLOAD_PATH_RELATIVE_PATH = path.join(
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_PAYLOAD_PATH_INSIDE_APP,
 );
 const COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH = path.join(
   "default-config",
@@ -474,17 +483,12 @@ function stageComputerUseHelperApp(
     "APPL????",
     { encoding: "ascii", mode: 0o644 },
   );
-  fsOps.writeFileSync(
-    helperExecutable,
-    computerUseHelperLauncherScript(),
-    { encoding: "utf8", mode: 0o755 },
-  );
   compileNativeHelper({
     env: plan.commandEnv,
     fsOps,
     runCommand,
     sourcePath: nativeBridgeSource,
-    targetPath: nativeHelperExecutable,
+    targetPath: helperExecutable,
   });
   fsOps.copyFileSync(
     mcpServerSource,
@@ -504,37 +508,6 @@ function stageComputerUseHelperApp(
     path.join(serverResourceDir, COMPUTER_USE_NATIVE_SCRIPT_FILE),
     0o644,
   );
-}
-
-function computerUseHelperLauncherScript() {
-  return computerUseHelperLauncherScriptForPayload({
-    payloadElectronPath: `$HELPER_CONTENTS_DIR/../../../../MacOS/${APP_NAME}`,
-  });
-}
-
-function computerUseHelperLauncherScriptForPayload({ payloadElectronPath }) {
-  const payloadElectronAssignment = path.isAbsolute(payloadElectronPath)
-    ? shellSingleQuote(payloadElectronPath)
-    : `"${payloadElectronPath}"`;
-  return `#!/bin/sh
-set -eu
-HELPER_CONTENTS_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-HELPER_BUNDLE_DIR="$(CDPATH= cd -- "$HELPER_CONTENTS_DIR/.." && pwd)"
-SERVER_DIR="$HELPER_CONTENTS_DIR/Resources/server"
-PAYLOAD_ELECTRON=${payloadElectronAssignment}
-export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
-export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}"
-export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_BUNDLE_DIR"
-export MORPHEUS_COMPUTER_USE_MANAGER_MODULE="$SERVER_DIR/computerUse.cjs"
-export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_FILE}"
-export MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT="$SERVER_DIR/${COMPUTER_USE_NATIVE_SCRIPT_FILE}"
-export ELECTRON_RUN_AS_NODE=1
-exec "$PAYLOAD_ELECTRON" "$SERVER_DIR/morpheus-computer-use-mcp.mjs"
-`;
-}
-
-function shellSingleQuote(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 function compileComputerUseNativeHelper({
@@ -655,18 +628,19 @@ function materializeStableComputerUseHelperApp({
     fsOps.rmSync(backupPath, { force: true, recursive: true });
     copyDirectorySync(sourceAppPath, stagedPath, fsOps);
     if (payloadElectronPath) {
-      const stagedLauncher = path.join(
+      const stagedPayloadPath = path.join(
         stagedPath,
-        "Contents",
-        "MacOS",
-        COMPUTER_USE_HELPER_APP_NAME,
+        COMPUTER_USE_HELPER_PAYLOAD_PATH_INSIDE_APP,
       );
+      fsOps.mkdirSync(path.dirname(stagedPayloadPath), {
+        recursive: true,
+        mode: 0o755,
+      });
       fsOps.writeFileSync(
-        stagedLauncher,
-        computerUseHelperLauncherScriptForPayload({ payloadElectronPath }),
-        { encoding: "utf8", mode: 0o755 },
+        stagedPayloadPath,
+        `${payloadElectronPath}\n`,
+        { encoding: "utf8", mode: 0o644 },
       );
-      fsOps.chmodSync(stagedLauncher, 0o755);
     }
     normalizeRuntimeCapsuleTree(stagedPath, fsOps);
     if (runCommand) {
@@ -1056,6 +1030,7 @@ module.exports = {
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
   COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
   COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_PAYLOAD_PATH_RELATIVE_PATH,
   COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
   COMPUTER_USE_STABLE_HELPER_APP_PATH,
   COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,

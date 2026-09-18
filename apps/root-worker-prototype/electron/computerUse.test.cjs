@@ -1557,7 +1557,7 @@ test("mac native backend resolver prefers packaged native helper executable", ()
     helperBundlePath,
     "Contents",
     "MacOS",
-    "morpheus-computer-use-native",
+    "Root Worker Computer Use",
   );
 
   assert.equal(
@@ -1578,6 +1578,25 @@ test("mac native backend resolver prefers packaged native helper executable", ()
       executablePath,
       scriptPath: null,
     },
+  );
+});
+
+test("mac native backend resolver keeps legacy nested helper as fallback", () => {
+  const helperBundlePath =
+    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app";
+  const executablePath = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "morpheus-computer-use-native",
+  );
+
+  assert.equal(
+    resolveMacNativeComputerUseExecutablePath({
+      helperBundlePath,
+      isExecutable: (targetPath) => targetPath === executablePath,
+    }),
+    executablePath,
   );
 });
 
@@ -1607,6 +1626,7 @@ test("mac native backend resolver keeps delegated Swift fallback honest", () => 
       resourcesPath: "/missing/Resources",
       sourceDirectory: "/repo/apps/root-worker-prototype/electron",
       fileExists: () => false,
+      isExecutable: () => false,
     }),
     {
       mode: "delegated-swift-script",
@@ -1623,7 +1643,7 @@ test("mac native executable adapter uses native helper for observe and screensho
   const nativeCalls = [];
   const screenshotCalls = [];
   const client = createMacNativeComputerUseClientWithAdapters({
-    executablePath: "/helper/Contents/MacOS/morpheus-computer-use-native",
+    executablePath: "/helper/Contents/MacOS/Root Worker Computer Use",
     tmpDir: "/tmp",
     async runNative(targetPath, command, payload) {
       nativeCalls.push({ targetPath, command, payload });
@@ -1650,7 +1670,7 @@ test("mac native executable adapter uses native helper for observe and screensho
 
   assert.deepEqual(nativeCalls, [
     {
-      targetPath: "/helper/Contents/MacOS/morpheus-computer-use-native",
+      targetPath: "/helper/Contents/MacOS/Root Worker Computer Use",
       command: "observe",
       payload: {},
     },
@@ -1659,7 +1679,7 @@ test("mac native executable adapter uses native helper for observe and screensho
     {
       root: "/tmp",
       bounds: null,
-      executablePath: "/helper/Contents/MacOS/morpheus-computer-use-native",
+      executablePath: "/helper/Contents/MacOS/Root Worker Computer Use",
     },
   ]);
 });

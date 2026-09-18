@@ -27,6 +27,8 @@ function computerUseHelperInfoPlist(bundleId = "com.openai.root-worker-prototype
 <dict>
   <key>CFBundleIdentifier</key>
   <string>${bundleId}</string>
+  <key>CFBundleExecutable</key>
+  <string>Root Worker Computer Use</string>
 </dict>
 </plist>
 `;
@@ -219,10 +221,18 @@ test("app-server environment self-heals missing stable Computer Use helper befor
     assert.equal(commands.length, 1);
     assert.equal(commands[0].command, "codesign");
     assert.match(commands[0].args.at(-1), /\.staged$/);
-    assert.match(fs.readFileSync(stableHelperExecutable, "utf8"), /exec/);
-    assert.match(
-      fs.readFileSync(stableHelperExecutable, "utf8"),
-      new RegExp(payloadExecutable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    assert.equal(fs.readFileSync(stableHelperExecutable, "utf8"), "release-helper");
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          stableHelperAppPath,
+          "Contents",
+          "Resources",
+          "payload-electron-path",
+        ),
+        "utf8",
+      ),
+      `${payloadExecutable}\n`,
     );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -339,6 +349,68 @@ test("app-server environment falls back when stable Computer Use helper self-hea
       releaseHelperExecutable,
     );
     assert.equal(fs.existsSync(stableHelperAppPath), false);
+    assert.deepEqual(warnings, [
+      "[Computer Use] stable Computer Use helper materialization failed: codesign unavailable",
+    ]);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("app-server environment ignores old stable Computer Use helper when self-heal update fails", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "app-server-helper-self-heal-"));
+  try {
+    const { resourcesPath } = writeRuntimePayload(root);
+    const stableHelperAppPath = path.join(
+      root,
+      "Applications",
+      "Root Worker Computer Use.app",
+    );
+    writeComputerUseHelperApp(stableHelperAppPath, "old-stable-helper");
+    const stableHelperExecutable = path.join(
+      stableHelperAppPath,
+      "Contents",
+      "MacOS",
+      "Root Worker Computer Use",
+    );
+    const releaseHelperExecutable = path.join(
+      resourcesPath,
+      "computer-use-helper",
+      "Root Worker Computer Use.app",
+      "Contents",
+      "MacOS",
+      "Root Worker Computer Use",
+    );
+    const warnings = [];
+
+    const env = buildAppServerEnvironment(
+      {
+        HOME: "/Users/alice",
+        PATH: "/usr/bin",
+      },
+      {
+        platform: "darwin",
+        resourcesPath,
+        runCommand() {
+          throw new Error("codesign unavailable");
+        },
+        selfHealComputerUseHelper: true,
+        stableComputerUseHelperAppPath: stableHelperAppPath,
+        warn(message) {
+          warnings.push(message);
+        },
+      },
+    );
+
+    assert.equal(
+      env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+      releaseHelperExecutable,
+    );
+    assert.notEqual(
+      env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+      stableHelperExecutable,
+    );
+    assert.equal(fs.readFileSync(stableHelperExecutable, "utf8"), "old-stable-helper");
     assert.deepEqual(warnings, [
       "[Computer Use] stable Computer Use helper materialization failed: codesign unavailable",
     ]);

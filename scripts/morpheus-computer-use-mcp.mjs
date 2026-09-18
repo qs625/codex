@@ -21,7 +21,8 @@ const SERVER_INFO = {
 const PROTOCOL_VERSION = "2025-06-18";
 const DEFAULT_SESSION_ID = "default";
 const SIDE_EFFECT_TOOLS = new Set(["computer.act"]);
-const NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
+const NATIVE_HELPER_EXECUTABLE_FILE = "Root Worker Computer Use";
+const LEGACY_NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
 const MCP_TRANSPORT_ENV = "MORPHEUS_COMPUTER_USE_MCP_TRANSPORT";
 const TEXT_ACTION_TOOLS = new Map([
   ["computer.find_text", "findText"],
@@ -565,8 +566,15 @@ function defaultPermissionDiagnostics() {
   const packagedNativeHelperExecutable = Boolean(
     packagedHelperBundle && resolvedNativeHelperExecutable,
   );
+  const nativeHelperIsBundleExecutable = Boolean(
+    packagedNativeHelperExecutable &&
+      helperBundlePath &&
+      isBundleMainExecutablePath(helperBundlePath, resolvedNativeHelperExecutable),
+  );
   const stablePermissionSubject = Boolean(
-    packagedNativeHelperExecutable && usesStableHelperApp,
+    packagedNativeHelperExecutable &&
+      usesStableHelperApp &&
+      nativeHelperIsBundleExecutable,
   );
   return {
     contract: "helper-as-mcp-server",
@@ -595,17 +603,22 @@ function defaultPermissionDiagnostics() {
       usesStableHelperApp,
       packagedHelperBundle,
       packagedNativeHelperExecutable,
+      nativeHelperIsBundleExecutable,
       stablePermissionSubject,
       nativeControlSubject: packagedNativeHelperExecutable
         ? stablePermissionSubject
           ? "stable-packaged-native-helper-executable"
+          : usesStableHelperApp
+            ? "stable-nested-native-helper-executable"
           : "release-local-packaged-native-helper-executable"
         : packagedHelperBundle
           ? "delegated-swift-script-and-screencapture"
           : "repo-local-node-process",
       note: packagedNativeHelperExecutable
         ? stablePermissionSubject
-          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by the packaged native helper executable inside this stable helper app bundle."
+          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by the stable helper app bundle executable."
+          : usesStableHelperApp
+            ? "The stable Computer Use helper app is used, but native desktop control is executed by a nested helper executable instead of the app bundle executable, so macOS Accessibility authorization for the visible app may not apply."
           : "This packaged Computer Use helper is release-local, so macOS authorization may not remain stable across Runtime Capsule releases. Native desktop control and screenshots are executed by the packaged native helper executable inside this helper app bundle."
         : "Authorize the process macOS presents for Screen Recording and Accessibility. The packaged helper bundle is the intended MCP server identity, but native desktop calls are delegated in this mode, so the stable TCC permission subject is not proven.",
     },
@@ -633,8 +646,50 @@ function resolveNativeHelperExecutable({
   if (!helperBundlePath) {
     return null;
   }
-  const candidate = `${helperBundlePath}/Contents/MacOS/${NATIVE_HELPER_EXECUTABLE_FILE}`;
-  return isExecutableFile(candidate) ? candidate : null;
+  for (const candidate of nativeHelperExecutableCandidates(helperBundlePath)) {
+    if (isExecutableFile(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function nativeHelperExecutableCandidates(helperBundlePath) {
+  const bundleExecutable = readBundleExecutable(helperBundlePath);
+  return [
+    bundleExecutable
+      ? `${helperBundlePath}/Contents/MacOS/${bundleExecutable}`
+      : null,
+    `${helperBundlePath}/Contents/MacOS/${NATIVE_HELPER_EXECUTABLE_FILE}`,
+    `${helperBundlePath}/Contents/MacOS/${LEGACY_NATIVE_HELPER_EXECUTABLE_FILE}`,
+  ].filter(Boolean);
+}
+
+function readBundleExecutable(helperBundlePath) {
+  try {
+    const plist = fsSync.readFileSync(
+      `${helperBundlePath}/Contents/Info.plist`,
+      "utf8",
+    );
+    const match = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(
+      plist,
+    );
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isBundleMainExecutablePath(helperBundlePath, executablePath) {
+  const bundleExecutable = readBundleExecutable(helperBundlePath);
+  return Boolean(
+    bundleExecutable &&
+      executablePath &&
+      pathsEqual(
+        executablePath,
+        `${helperBundlePath}/Contents/MacOS/${bundleExecutable}`,
+      ),
+  );
 }
 
 function isExecutableFile(targetPath) {
@@ -671,7 +726,9 @@ function permissionLimitations(diagnostics) {
       code: "native-permission-subject-not-contained",
       message:
         subject.packagedNativeHelperExecutable
-          ? "The helper app bundle is release-local instead of the configured stable Computer Use helper app path; macOS may require authorization again after a Runtime Capsule release changes."
+          ? subject.usesStableHelperApp
+            ? "The stable helper app bundle is used, but native desktop control is not executed by the app bundle executable, so macOS may not apply Accessibility authorization for the visible app."
+            : "The helper app bundle is release-local instead of the configured stable Computer Use helper app path; macOS may require authorization again after a Runtime Capsule release changes."
           : "The packaged helper bundle starts the MCP server, but this mode has no packaged native helper executable, so native desktop control may still delegate to Swift and screencapture and macOS may require authorization for that delegated process.",
     });
   }

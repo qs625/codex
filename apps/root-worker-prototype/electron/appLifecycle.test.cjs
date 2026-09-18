@@ -25,6 +25,8 @@ function writeComputerUseHelperApp(appPath, marker = "helper") {
 <dict>
   <key>CFBundleIdentifier</key>
   <string>${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}</string>
+  <key>CFBundleExecutable</key>
+  <string>${COMPUTER_USE_HELPER_APP_NAME}</string>
 </dict>
 </plist>
 `,
@@ -35,6 +37,13 @@ function writeComputerUseHelperApp(appPath, marker = "helper") {
 function readComputerUseHelperExecutable(appPath) {
   return fs.readFileSync(
     path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+    "utf8",
+  );
+}
+
+function readComputerUseHelperPayloadPath(appPath) {
+  return fs.readFileSync(
+    path.join(appPath, "Contents", "Resources", "payload-electron-path"),
     "utf8",
   );
 }
@@ -401,7 +410,7 @@ test("selected candidate installs stable Computer Use helper from selected artif
     );
     assert.deepEqual(events, [{ type: "exit", code: CAPSULE_SWITCH_EXIT_CODE }]);
     assert.ok(
-      readComputerUseHelperExecutable(stableHelperPath).includes(
+      readComputerUseHelperPayloadPath(stableHelperPath).includes(
         path.join(selectedRoot, "payload"),
       ),
     );

@@ -19,7 +19,8 @@ const MAC_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
   "computerUseMacNative.swift",
 );
-const MAC_NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
+const MAC_NATIVE_HELPER_EXECUTABLE_FILE = "Root Worker Computer Use";
+const LEGACY_MAC_NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
 const DANGEROUS_TEXT_PATTERN =
   /\b(password|passcode|token|secret|delete|remove|send|submit|purchase|buy|transfer|bank|credit|sudo|rm\s+-rf)\b/i;
 
@@ -1698,18 +1699,71 @@ function resolveMacNativeComputerUseBackend(options = {}) {
 function resolveMacNativeComputerUseExecutablePath(options = {}) {
   const helperBundlePath =
     options.helperBundlePath ?? process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH;
+  const readFileSync = options.readFileSync ?? fsSync.readFileSync;
   const isExecutable =
     options.isExecutable ?? ((targetPath) => isExecutableFile(targetPath));
   if (!helperBundlePath) {
     return null;
   }
-  const candidate = path.join(
-    helperBundlePath,
-    "Contents",
-    "MacOS",
-    MAC_NATIVE_HELPER_EXECUTABLE_FILE,
+  const bundleExecutable = readBundleExecutable(helperBundlePath, { readFileSync });
+  const candidates = [
+    bundleExecutable
+      ? path.join(helperBundlePath, "Contents", "MacOS", bundleExecutable)
+      : null,
+    path.join(
+      helperBundlePath,
+      "Contents",
+      "MacOS",
+      MAC_NATIVE_HELPER_EXECUTABLE_FILE,
+    ),
+    path.join(
+      helperBundlePath,
+      "Contents",
+      "MacOS",
+      LEGACY_MAC_NATIVE_HELPER_EXECUTABLE_FILE,
+    ),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function readBundleExecutable(bundlePath, { readFileSync = fsSync.readFileSync } = {}) {
+  try {
+    const plist = readFileSync(
+      path.join(bundlePath, "Contents", "Info.plist"),
+      "utf8",
+    );
+    const match = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(
+      plist,
+    );
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isBundleMainExecutablePath(bundlePath, executablePath, options = {}) {
+  const bundleExecutable = readBundleExecutable(bundlePath, options);
+  if (!bundleExecutable || !executablePath) {
+    return false;
+  }
+  return pathsEqual(
+    executablePath,
+    path.join(
+      bundlePath,
+      "Contents",
+      "MacOS",
+      bundleExecutable,
+    ),
   );
-  return isExecutable(candidate) ? candidate : null;
+}
+
+function pathsEqual(left, right) {
+  return path.resolve(String(left)) === path.resolve(String(right));
 }
 
 function isUsableMacNativeExecutablePath(targetPath, options = {}) {
