@@ -19,3 +19,10 @@ role = "project-understanding"
 [[memories.compact_replacement_files]]
 path = "instructions/user-preferences.md"
 role = "user-preferences"
+
+[mcp_servers.computer_use]
+command = "node"
+args = ["scripts/morpheus-computer-use-mcp.mjs"]
+startup_timeout_sec = 5
+tool_timeout_sec = 30
+default_tools_approval_mode = "prompt"
