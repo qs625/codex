@@ -1,4 +1,4 @@
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -18,6 +18,9 @@ const {
   ensureSelfProjectSync,
   removeSelfProjectIfManagedSync,
 } = require("./selfProject.cjs");
+const {
+  materializeStableComputerUseHelperApp,
+} = require("./installedArtifactUpdate.cjs");
 
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
@@ -532,12 +535,20 @@ function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {
   );
   env.HOME = home;
   env.MORPHEUS_HOME = baseEnv.MORPHEUS_HOME ?? resolvePrototypeMorpheusHome(env);
-  const helper = findPackagedComputerUseHelper(environmentOptions);
-  env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH =
-    helper?.stableHelperAppPath ??
+  const stableHelperAppPath =
     environmentOptions.stableComputerUseHelperAppPath ??
     baseEnv.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
     COMPUTER_USE_STABLE_HELPER_APP_PATH;
+  materializeCurrentComputerUseHelperApp({
+    ...environmentOptions,
+    stableComputerUseHelperAppPath: stableHelperAppPath,
+  });
+  const helper = findPackagedComputerUseHelper({
+    ...environmentOptions,
+    stableComputerUseHelperAppPath: stableHelperAppPath,
+  });
+  env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH =
+    helper?.stableHelperAppPath ?? stableHelperAppPath;
   if (helper?.executablePath) {
     env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
     env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helper.executablePath;
@@ -545,6 +556,90 @@ function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {
     env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helper.bundlePath;
   }
   return env;
+}
+
+function materializeCurrentComputerUseHelperApp(options = {}) {
+  const platform = options.platform ?? process.platform;
+  const resourcesPath = options.resourcesPath ?? currentResourcesPath();
+  const shouldAttempt =
+    options.selfHealComputerUseHelper ?? options.resourcesPath === undefined;
+  if (!shouldAttempt || platform !== "darwin" || !resourcesPath) {
+    return {
+      status: "skipped",
+      reason: "stable Computer Use helper self-healing is unavailable",
+    };
+  }
+  const stableHelperAppPath =
+    options.stableComputerUseHelperAppPath ??
+    process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
+    COMPUTER_USE_STABLE_HELPER_APP_PATH;
+  const sourceAppPath = path.join(
+    resourcesPath,
+    COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  );
+  const payloadElectronPath = path.normalize(
+    path.join(resourcesPath, "..", "MacOS", "Root Worker Runtime"),
+  );
+  const runCommand =
+    options.runCommand ??
+    ((command, args, commandOptions) =>
+      runAppServerPreparationCommand(command, args, commandOptions));
+  try {
+    const result = materializeStableComputerUseHelperApp({
+      payloadElectronPath,
+      runCommand,
+      sourceAppPath,
+      targetAppPath: stableHelperAppPath,
+    });
+    if (
+      result.status === "skipped" &&
+      result.reason !== "source app is not the packaged Computer Use helper"
+    ) {
+      warnComputerUseHelperSelfHeal(options.warn, result.reason);
+    }
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnComputerUseHelperSelfHeal(
+      options.warn,
+      `stable Computer Use helper materialization failed: ${message}`,
+    );
+    return {
+      status: "failed",
+      reason: message,
+      sourceAppPath,
+      targetAppPath: stableHelperAppPath,
+    };
+  }
+}
+
+function warnComputerUseHelperSelfHeal(warn, message) {
+  const logger = warn === undefined ? console.warn : warn;
+  if (typeof logger === "function") {
+    logger(`[Computer Use] ${message}`);
+  }
+}
+
+function runAppServerPreparationCommand(command, args, options = {}) {
+  const result = (options.spawnSync ?? spawnSync)(command, args, {
+    cwd: options.cwd,
+    encoding: "utf8",
+    env: options.env,
+    stdio: options.stdio ?? "pipe",
+  });
+  if (result?.error) {
+    throw result.error;
+  }
+  if (result?.status !== 0) {
+    const stderr =
+      typeof result?.stderr === "string" && result.stderr.trim()
+        ? result.stderr.trim()
+        : null;
+    throw new Error(
+      `${command} ${args.join(" ")} exited with ${String(result?.status)}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  return result.stdout ?? "";
 }
 
 function resolveAppServerCommand(baseEnv = process.env) {
