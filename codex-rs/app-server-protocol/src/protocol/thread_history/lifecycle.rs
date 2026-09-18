@@ -5,8 +5,6 @@ use super::support::render_review_output_text;
 use crate::protocol::ThreadItem;
 use crate::protocol::TurnError as V2TurnError;
 use crate::protocol::TurnStatus;
-use crate::protocol::event_item_projection::context_compaction_replacement_item_from_core;
-use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::protocol::CompactedItem;
 use protocol::protocol::ContextCompactedEvent;
 use protocol::protocol::ErrorEvent;
@@ -232,18 +230,7 @@ impl ThreadHistoryBuilder {
 
     pub(super) fn handle_compacted(&mut self, payload: &CompactedItem) {
         let summary = compact_summary(payload);
-        let replacement_history = payload.replacement_history.as_ref().map(|history| {
-            let visible_len = payload
-                .visible_replacement_history_len
-                .unwrap_or(history.len())
-                .min(history.len());
-            context_compaction_replacement_items_from_response_items(
-                history[..visible_len].to_vec(),
-            )
-            .into_iter()
-            .map(context_compaction_replacement_item_from_core)
-            .collect()
-        });
+        let replacement_history = None;
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;

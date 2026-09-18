@@ -1653,8 +1653,51 @@ async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution()
     .await;
 
     assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    fn inspect_staged_compact_turn_item(
+        turn_item: TurnItem,
+        saw_agent_message_pollution: &mut bool,
+        saw_compaction_summary: &mut bool,
+    ) {
+        match turn_item {
+            TurnItem::AgentMessage(message) => {
+                *saw_agent_message_pollution |= message.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        protocol::items::AgentMessageContent::Text { text }
+                            if text == "real compact summary"
+                    )
+                });
+            }
+            TurnItem::ContextCompaction(compaction) => {
+                *saw_compaction_summary |= compaction
+                    .summary
+                    .as_deref()
+                    .is_some_and(|summary| summary.contains("real compact summary"));
+            }
+            _ => {}
+        }
+    }
+
     let mut saw_agent_message_pollution = false;
     let mut saw_compaction_summary = false;
+    while !saw_compaction_summary {
+        let event = timeout(StdDuration::from_secs(5), rx.recv())
+            .await
+            .expect("timeout waiting for staged compact summary event")
+            .expect("event");
+        let turn_item = match event.msg {
+            EventMsg::ItemStarted(item) => Some(item.item),
+            EventMsg::ItemCompleted(item) => Some(item.item),
+            _ => None,
+        };
+        if let Some(turn_item) = turn_item {
+            inspect_staged_compact_turn_item(
+                turn_item,
+                &mut saw_agent_message_pollution,
+                &mut saw_compaction_summary,
+            );
+        }
+    }
     while let Ok(event) = rx.try_recv() {
         let turn_item = match event.msg {
             EventMsg::ItemStarted(item) => Some(item.item),
@@ -1662,31 +1705,11 @@ async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution()
             _ => None,
         };
         if let Some(turn_item) = turn_item {
-            match turn_item {
-                TurnItem::AgentMessage(message) => {
-                    saw_agent_message_pollution |= message.content.iter().any(|content| {
-                        matches!(
-                            content,
-                            protocol::items::AgentMessageContent::Text { text }
-                                if text == "real compact summary"
-                        )
-                    });
-                }
-                TurnItem::ContextCompaction(compaction) => {
-                    saw_compaction_summary |= compaction.replacement_history.iter().any(|item| {
-                        matches!(
-                            item,
-                            protocol::items::ContextCompactionReplacementItem::AgentMessage(message)
-                                if message.content.iter().any(|content| matches!(
-                                    content,
-                                    protocol::items::AgentMessageContent::Text { text }
-                                        if text == "real compact summary"
-                                ))
-                        )
-                    });
-                }
-                _ => {}
-            }
+            inspect_staged_compact_turn_item(
+                turn_item,
+                &mut saw_agent_message_pollution,
+                &mut saw_compaction_summary,
+            );
         }
     }
     assert!(
@@ -1695,7 +1718,7 @@ async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution()
     );
     assert!(
         saw_compaction_summary,
-        "staged compact summary should appear in the compaction replacement item"
+        "staged compact summary should appear in the compaction summary"
     );
 
     let history = session.clone_history().await;
@@ -3557,12 +3580,12 @@ async fn reconstruct_history_matches_live_compactions() {
 }
 
 #[tokio::test]
-async fn reconstruct_history_uses_replacement_history_verbatim() {
+async fn reconstruct_history_ignores_legacy_replacement_history_details() {
     let (session, turn_context) = make_session_and_context().await;
     let summary_item = ResponseItem::Message {
         id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText {
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
             text: "summary".to_string(),
         }],
         phase: None,
@@ -3579,7 +3602,7 @@ async fn reconstruct_history_uses_replacement_history_verbatim() {
         },
     ];
     let rollout_items = vec![RolloutItem::Compacted(CompactedItem {
-        message: String::new(),
+        message: "summary".to_string(),
         replacement_history: Some(replacement_history.clone()),
         visible_replacement_history_len: None,
     })];
@@ -3588,7 +3611,7 @@ async fn reconstruct_history_uses_replacement_history_verbatim() {
         .reconstruct_history_from_rollout(&turn_context, &rollout_items)
         .await;
 
-    assert_eq!(reconstructed.history, replacement_history);
+    assert_eq!(reconstructed.history, vec![summary_item]);
 }
 
 #[tokio::test]
@@ -3834,7 +3857,7 @@ async fn thread_context_usage_counts_compaction_summary_as_compact() {
 }
 
 #[tokio::test]
-async fn thread_context_usage_counts_compaction_replacement_seed_as_compact() {
+async fn thread_context_usage_ignores_legacy_compaction_replacement_seed() {
     let (session, _turn_context) = make_session_and_context().await;
     let user_item = user_message("recent user message");
     let compact_seed = ResponseItem::Message {
@@ -3865,7 +3888,7 @@ async fn thread_context_usage_counts_compaction_replacement_seed_as_compact() {
 
     assert_eq!(usage.categories.compact, compact_seed_bytes);
     assert_eq!(usage.categories.llm_messages, 0);
-    assert!(usage.categories.user_messages > 0);
+    assert_eq!(usage.categories.user_messages, 0);
 }
 
 #[tokio::test]

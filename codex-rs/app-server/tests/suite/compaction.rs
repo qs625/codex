@@ -241,10 +241,9 @@ description: Mid-turn compact role fixture.
     else {
         unreachable!("completed item should be context compaction");
     };
-    let replacement_history_json = serde_json::to_string(&replacement_history)?;
     assert!(
-        replacement_history_json.contains(ROLE_BODY),
-        "mid-turn replacement history should include agent role body: {replacement_history_json}"
+        replacement_history.as_ref().is_none_or(Vec::is_empty),
+        "completed compact item should not expose full replacement history: {replacement_history:?}"
     );
 
     let response_requests = responses_log.requests();
@@ -422,7 +421,7 @@ async fn thread_compact_start_preserves_project_agent_path() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn thread_compact_start_preserves_project_agent_role_in_replacement_history() -> Result<()> {
+async fn thread_compact_start_preserves_project_agent_role_in_compact_request() -> Result<()> {
     skip_if_no_network!(Ok(()));
     const ROLE_BODY: &str = "ROLE_MANUAL_COMPACT_AGENT_MD_UNIQUE_INSTRUCTION";
 
@@ -431,7 +430,7 @@ async fn thread_compact_start_preserves_project_agent_role_in_replacement_histor
         responses::ev_assistant_message("m1", "ROLE_COMPACT_SUMMARY"),
         responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200),
     ]);
-    responses::mount_sse_sequence(&server, vec![sse]).await;
+    let responses_log = responses::mount_sse_sequence(&server, vec![sse]).await;
 
     let codex_home = TempDir::new()?;
     write_mock_responses_config_toml(
@@ -475,11 +474,19 @@ description: Manual compact role fixture.
     else {
         unreachable!("completed item should be context compaction");
     };
-    let replacement_history_json = serde_json::to_string(&replacement_history)?;
-
     assert!(
-        replacement_history_json.contains(ROLE_BODY),
-        "replacement history should include agent role body after manual compaction: {replacement_history_json}"
+        replacement_history.as_ref().is_none_or(Vec::is_empty),
+        "completed compact item should not expose full replacement history: {replacement_history:?}"
+    );
+
+    let response_requests = responses_log.requests();
+    let compact_request = response_requests
+        .last()
+        .expect("expected compact model request after manual compaction");
+    assert!(
+        compact_request.body_contains_text(ROLE_BODY),
+        "compact request should include agent role body, got {:?}",
+        compact_request.body_json()
     );
 
     Ok(())
@@ -786,17 +793,8 @@ fn assert_context_compaction_lifecycle(
     assert!(
         completed_replacement_history
             .as_ref()
-            .is_some_and(|history| !history.is_empty()),
-        "replacement history should preserve at least one item after compaction"
-    );
-    let completed_replacement_history_json = serde_json::to_string(&completed_replacement_history)?;
-    assert!(
-        !completed_replacement_history_json.contains("Memory checkpoint:"),
-        "replacement history should no longer duplicate memory checkpoints: {completed_replacement_history_json}"
-    );
-    assert!(
-        completed_replacement_history_json.contains(expected_final_output),
-        "replacement history should include the compact final output `{expected_final_output}`: {completed_replacement_history_json}"
+            .is_none_or(Vec::is_empty),
+        "completed compact item should not expose full replacement history: {completed_replacement_history:?}"
     );
 
     Ok(())
