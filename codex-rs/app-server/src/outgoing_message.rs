@@ -1176,6 +1176,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn thread_scoped_notifications_target_subscribed_connections_but_global_broadcasts() {
+        let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(4);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(7)],
+            ThreadId::new(),
+        );
+        let notification = ServerNotification::ModelRerouted(ModelReroutedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            from_model: "gpt-5.3-codex".to_string(),
+            to_model: "gpt-5.2".to_string(),
+            reason: ModelRerouteReason::HighRiskCyberActivity,
+        });
+
+        thread_outgoing
+            .send_server_notification(notification.clone())
+            .await;
+        let envelope = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("should receive scoped notification before timeout")
+            .expect("channel should contain scoped notification");
+        let OutgoingEnvelope::ToConnection {
+            connection_id,
+            message,
+            ..
+        } = envelope
+        else {
+            panic!("expected targeted envelope for thread-scoped notification");
+        };
+        assert_eq!(connection_id, ConnectionId(7));
+        assert!(matches!(
+            message,
+            OutgoingMessage::AppServerNotification(ServerNotification::ModelRerouted(
+                ModelReroutedNotification { thread_id, .. }
+            )) if thread_id == "thread-1"
+        ));
+
+        thread_outgoing
+            .send_global_server_notification(notification.clone())
+            .await;
+        let envelope = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("should receive global notification before timeout")
+            .expect("channel should contain global notification");
+        let OutgoingEnvelope::Broadcast { message } = envelope else {
+            panic!("expected broadcast envelope for global notification");
+        };
+        assert!(matches!(
+            message,
+            OutgoingMessage::AppServerNotification(ServerNotification::ModelRerouted(
+                ModelReroutedNotification { thread_id, .. }
+            )) if thread_id == "thread-1"
+        ));
+    }
+
+    #[tokio::test]
     async fn connection_closed_clears_registered_request_contexts() {
         let (tx, _rx) = mpsc::channel::<OutgoingEnvelope>(4);
         let outgoing =

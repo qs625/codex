@@ -1873,6 +1873,32 @@ test("authoritative active status notification does not reopen completed lifecyc
   );
 });
 
+test("status notification updates a non-selected local thread without synthesizing turns", () => {
+  const existing = {
+    ...makeThread(),
+    id: "thread-background",
+    lifecycleStatus: { type: "notLoaded" as const },
+    turns: [],
+  };
+  const next = {
+    ...existing,
+    lifecycleStatus: mergeThreadLifecycleStatus(
+      existing.lifecycleStatus,
+      { type: "waiting" as const, reason: "eventSubscription" as const },
+      { authoritative: true },
+    ),
+  };
+
+  const threads = upsertThreadMetadataPreservingTurns([existing], next);
+
+  assert.deepEqual(threads[0]?.lifecycleStatus, {
+    type: "waiting",
+    reason: "eventSubscription",
+  });
+  assert.deepEqual(threads[0]?.turns, []);
+  assert.equal(threadStatusClass(threads[0]!.lifecycleStatus), "waiting-subscription");
+});
+
 test("explicit live activity can reopen completed lifecycle", () => {
   const completedThread = {
     ...makeThread(),

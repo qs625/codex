@@ -33,6 +33,57 @@ fn thread_goal_updated_notification() -> ServerNotification {
 }
 
 #[tokio::test]
+async fn broadcast_notifications_reach_initialized_connections_only() {
+    let initialized_connection_id = ConnectionId(1);
+    let uninitialized_connection_id = ConnectionId(2);
+    let (initialized_tx, mut initialized_rx) = mpsc::channel(1);
+    let (uninitialized_tx, mut uninitialized_rx) = mpsc::channel(1);
+
+    let mut connections = HashMap::new();
+    connections.insert(
+        initialized_connection_id,
+        OutboundConnectionState::new(
+            initialized_tx,
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(RwLock::new(HashSet::new())),
+            /*disconnect_sender*/ None,
+        ),
+    );
+    connections.insert(
+        uninitialized_connection_id,
+        OutboundConnectionState::new(
+            uninitialized_tx,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(RwLock::new(HashSet::new())),
+            /*disconnect_sender*/ None,
+        ),
+    );
+
+    route_outgoing_envelope(
+        &mut connections,
+        OutgoingEnvelope::Broadcast {
+            message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
+        },
+    )
+    .await;
+
+    let message = initialized_rx
+        .recv()
+        .await
+        .expect("initialized connection should receive broadcast notification");
+    assert!(matches!(
+        message.message,
+        OutgoingMessage::AppServerNotification(ServerNotification::ThreadGoalUpdated(_))
+    ));
+    assert!(
+        uninitialized_rx.try_recv().is_err(),
+        "uninitialized connection should not receive broadcast notification"
+    );
+}
+
+#[tokio::test]
 async fn to_connection_notification_respects_opt_out_filters() {
     let connection_id = ConnectionId(7);
     let (writer_tx, mut writer_rx) = mpsc::channel(1);
