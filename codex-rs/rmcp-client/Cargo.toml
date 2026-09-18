@@ -67,6 +67,7 @@ which = { workspace = true }
 
 [dev-dependencies]
 codex-utils-cargo-bin = { workspace = true }
+plugin-service-api = { workspace = true }
 pretty_assertions = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }

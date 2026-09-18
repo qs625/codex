@@ -3353,6 +3353,7 @@ dependencies = [
  "mcp-service-api",
  "mcp-types",
  "oauth2",
+ "plugin-service-api",
  "pretty_assertions",
  "protocol",
  "reqwest",

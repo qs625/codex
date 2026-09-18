@@ -944,17 +944,8 @@ function normalizeAction(action) {
     case "type":
       return { type: "type", text: String(action.text ?? "") };
     case "key":
-      return {
-        type: "key",
-        key: String(action.key ?? ""),
-        modifiers: normalizeModifiers(action.modifiers),
-      };
     case "hotkey":
-      return {
-        type: "hotkey",
-        key: String(action.key ?? ""),
-        modifiers: normalizeModifiers(action.modifiers),
-      };
+      return normalizeKeyboardAction(action);
     case "drag":
       return {
         type: "drag",
@@ -1028,6 +1019,40 @@ function requirePoint(value) {
     throw new Error("Action requires finite x and y screen coordinates");
   }
   return { x, y };
+}
+
+function normalizeKeyboardAction(action) {
+  const parts = keyboardActionParts(action);
+  if (parts.length === 0) {
+    throw new Error(`${action.type === "hotkey" ? "Hotkey" : "Key"} action requires key`);
+  }
+  const key = parts.at(-1);
+  const parsedModifiers = parts.slice(0, -1);
+  const modifiers = normalizeModifiers([
+    ...parsedModifiers,
+    ...(Array.isArray(action.modifiers) ? action.modifiers : []),
+  ]);
+  return {
+    type: action.type,
+    key,
+    modifiers,
+  };
+}
+
+function keyboardActionParts(action) {
+  if (Array.isArray(action.keys)) {
+    return action.keys
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean);
+  }
+  const rawKey = String(action.key ?? "").trim();
+  if (!rawKey) {
+    return [];
+  }
+  return rawKey
+    .split("+")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function normalizePoint(value) {

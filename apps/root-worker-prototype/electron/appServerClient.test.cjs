@@ -87,6 +87,7 @@ test("app-server environment includes enhanced PATH and MORPHEUS_HOME", () => {
   const env = buildAppServerEnvironment(
     {
       MORPHEUS_HOME: "/tmp/morpheus-home",
+      MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH: "/tmp/overlay.sock",
       HOME: "/Users/alice",
       PATH: "/usr/bin",
     },
@@ -97,6 +98,7 @@ test("app-server environment includes enhanced PATH and MORPHEUS_HOME", () => {
   );
 
   assert.equal(env.MORPHEUS_HOME, "/tmp/morpheus-home");
+  assert.equal(env.MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH, "/tmp/overlay.sock");
   assert.ok(env.PATH.startsWith("/usr/bin:/shell/bin:"));
   assert.ok(env.PATH.includes("/opt/homebrew/bin"));
   assert.ok(env.PATH.includes("/usr/local/bin"));

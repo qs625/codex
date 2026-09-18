@@ -908,6 +908,32 @@ test("policy keeps safe keyboard shortcuts available", () => {
   assert.equal(findText.requiresConfirmation, false);
 });
 
+test("hotkey normalization accepts MCP and CLI-style shortcut shapes", () => {
+  assert.deepEqual(
+    normalizeAction({ type: "hotkey", key: "a", modifiers: ["cmd"] }),
+    { type: "hotkey", key: "a", modifiers: ["cmd"] },
+  );
+  assert.deepEqual(normalizeAction({ type: "hotkey", key: "cmd+a" }), {
+    type: "hotkey",
+    key: "a",
+    modifiers: ["cmd"],
+  });
+  assert.deepEqual(normalizeAction({ type: "hotkey", keys: ["command", "a"] }), {
+    type: "hotkey",
+    key: "a",
+    modifiers: ["cmd"],
+  });
+  assert.equal(
+    classifyComputerUseAction(normalizeAction({ type: "hotkey", key: "cmd+q" }))
+      .riskLevel,
+    "high",
+  );
+  assert.throws(
+    () => normalizeAction({ type: "hotkey", keys: [] }),
+    /requires key/,
+  );
+});
+
 test("actions stay blocked when activation cannot prove the target app", async () => {
   const nativeClient = fakeNativeClient({ activeAppName: "Finder", bundleIdentifier: "com.apple.finder" });
   const manager = createComputerUseManager({ nativeClient });

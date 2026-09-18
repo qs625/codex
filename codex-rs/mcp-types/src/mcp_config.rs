@@ -17,6 +17,9 @@ use crate::McpClientElicitationSupport;
 use crate::ToolPluginProvenance;
 
 const CODEX_CONNECTORS_TOKEN_ENV_VAR: &str = "CODEX_CONNECTORS_TOKEN";
+const COMPUTER_USE_MCP_SERVER_NAME: &str = "computer_use";
+const COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR: &str = "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE";
+const COMPUTER_USE_OVERLAY_SOCKET_ENV_VAR: &str = "MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH";
 
 /// MCP runtime settings derived from `codex_core::config::Config`.
 ///
@@ -101,9 +104,53 @@ pub fn effective_mcp_servers_from_configured(
 ) -> HashMap<String, EffectiveMcpServer> {
     let servers = configured_servers
         .into_iter()
-        .map(|(name, server)| (name, EffectiveMcpServer::configured(server)))
+        .map(|(name, server)| {
+            let server = augment_configured_mcp_server(&name, server);
+            (name, EffectiveMcpServer::configured(server))
+        })
         .collect::<HashMap<_, _>>();
     with_codex_apps_mcp(servers, auth_context, config)
+}
+
+fn augment_configured_mcp_server(name: &str, mut server: McpServerConfig) -> McpServerConfig {
+    if name == COMPUTER_USE_MCP_SERVER_NAME
+        && matches!(
+            server.experimental_environment.as_deref(),
+            None | Some("local")
+        )
+    {
+        ensure_computer_use_overlay_env_var(&mut server);
+    }
+    server
+}
+
+fn ensure_computer_use_overlay_env_var(server: &mut McpServerConfig) {
+    let McpServerTransportConfig::Stdio {
+        command,
+        args,
+        env_vars,
+        ..
+    } = &mut server.transport
+    else {
+        return;
+    };
+    if !is_packaged_computer_use_helper_command(command, args) {
+        return;
+    }
+    if env_vars
+        .iter()
+        .any(|env_var| env_var.name() == COMPUTER_USE_OVERLAY_SOCKET_ENV_VAR)
+    {
+        return;
+    }
+    env_vars.push(COMPUTER_USE_OVERLAY_SOCKET_ENV_VAR.into());
+}
+
+fn is_packaged_computer_use_helper_command(command: &str, args: &[String]) -> bool {
+    command == "sh"
+        && args.iter().any(|arg| {
+            arg.contains(COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR) && arg.contains("mcp-server")
+        })
 }
 
 pub fn tool_plugin_provenance(config: &McpConfig) -> ToolPluginProvenance {
@@ -228,6 +275,45 @@ mod tests {
             account_id: Some("acct_test".to_string()),
             chatgpt_user_id: Some("user_test".to_string()),
             is_workspace_account: false,
+        }
+    }
+
+    fn stdio_mcp_server(command: &str, args: Vec<&str>, env_vars: Vec<&str>) -> McpServerConfig {
+        McpServerConfig {
+            transport: McpServerTransportConfig::Stdio {
+                command: command.to_string(),
+                args: args.into_iter().map(str::to_string).collect(),
+                env: None,
+                env_vars: env_vars.into_iter().map(Into::into).collect(),
+                cwd: None,
+            },
+            experimental_environment: None,
+            enabled: true,
+            required: false,
+            supports_parallel_tool_calls: false,
+            disabled_reason: None,
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            default_tools_approval_mode: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth: None,
+            oauth_resource: None,
+            tools: HashMap::new(),
+        }
+    }
+
+    fn env_var_names(server: &EffectiveMcpServer) -> Vec<String> {
+        let config = server
+            .configured_config()
+            .expect("effective server should retain configured launch");
+        match &config.transport {
+            McpServerTransportConfig::Stdio { env_vars, .. } => env_vars
+                .iter()
+                .map(|env_var| env_var.name().to_string())
+                .collect(),
+            other => panic!("expected stdio transport, got {other:?}"),
         }
     }
 
@@ -453,5 +539,118 @@ mod tests {
             }
             other => panic!("expected streamable http transport, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn effective_mcp_servers_add_overlay_env_for_existing_computer_use_helper_config() {
+        let mut config = test_mcp_config(PathBuf::from("/tmp"));
+        config.configured_mcp_servers.insert(
+            COMPUTER_USE_MCP_SERVER_NAME.to_string(),
+            stdio_mcp_server(
+                "sh",
+                vec![
+                    "-c",
+                    "exec \"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\" mcp-server",
+                ],
+                vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR],
+            ),
+        );
+
+        let effective = effective_mcp_servers(&config, None);
+        let env_vars = env_var_names(
+            effective
+                .get(COMPUTER_USE_MCP_SERVER_NAME)
+                .expect("computer_use server should exist"),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![
+                COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR.to_string(),
+                COMPUTER_USE_OVERLAY_SOCKET_ENV_VAR.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn effective_mcp_servers_do_not_add_overlay_env_to_other_servers() {
+        let mut config = test_mcp_config(PathBuf::from("/tmp"));
+        config.configured_mcp_servers.insert(
+            "not_computer_use".to_string(),
+            stdio_mcp_server(
+                "sh",
+                vec![
+                    "-c",
+                    "exec \"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\" mcp-server",
+                ],
+                vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR],
+            ),
+        );
+
+        let effective = effective_mcp_servers(&config, None);
+        let env_vars = env_var_names(
+            effective
+                .get("not_computer_use")
+                .expect("configured server should exist"),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR.to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_mcp_servers_do_not_add_overlay_env_to_custom_computer_use_commands() {
+        let mut config = test_mcp_config(PathBuf::from("/tmp"));
+        config.configured_mcp_servers.insert(
+            COMPUTER_USE_MCP_SERVER_NAME.to_string(),
+            stdio_mcp_server(
+                "node",
+                vec!["custom-computer-use-server.mjs"],
+                vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR],
+            ),
+        );
+
+        let effective = effective_mcp_servers(&config, None);
+        let env_vars = env_var_names(
+            effective
+                .get(COMPUTER_USE_MCP_SERVER_NAME)
+                .expect("computer_use server should exist"),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR.to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_mcp_servers_do_not_add_overlay_env_to_remote_computer_use_servers() {
+        let mut config = test_mcp_config(PathBuf::from("/tmp"));
+        let mut server = stdio_mcp_server(
+            "sh",
+            vec![
+                "-c",
+                "exec \"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\" mcp-server",
+            ],
+            vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR],
+        );
+        server.experimental_environment = Some("remote".to_string());
+        config
+            .configured_mcp_servers
+            .insert(COMPUTER_USE_MCP_SERVER_NAME.to_string(), server);
+
+        let effective = effective_mcp_servers(&config, None);
+        let env_vars = env_var_names(
+            effective
+                .get(COMPUTER_USE_MCP_SERVER_NAME)
+                .expect("computer_use server should exist"),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR.to_string()]
+        );
     }
 }

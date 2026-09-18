@@ -463,6 +463,9 @@ function stageComputerUseHelperApp(
   const managerSource =
     plan.computerUseManagerSourcePath ??
     path.join(plan.sourceAppDir, "electron", "computerUse.cjs");
+  const overlayBridgeSource =
+    plan.computerUseOverlayBridgeSourcePath ??
+    path.join(plan.sourceAppDir, "electron", "computerUseOverlayBridge.cjs");
   const nativeBridgeSource =
     nativeSource ??
     plan.computerUseNativeScriptSourcePath ??
@@ -500,6 +503,14 @@ function stageComputerUseHelperApp(
   );
   fsOps.copyFileSync(managerSource, path.join(serverResourceDir, "computerUse.cjs"));
   fsOps.chmodSync(path.join(serverResourceDir, "computerUse.cjs"), 0o644);
+  fsOps.copyFileSync(
+    overlayBridgeSource,
+    path.join(serverResourceDir, "computerUseOverlayBridge.cjs"),
+  );
+  fsOps.chmodSync(
+    path.join(serverResourceDir, "computerUseOverlayBridge.cjs"),
+    0o644,
+  );
   fsOps.copyFileSync(
     nativeBridgeSource,
     path.join(serverResourceDir, COMPUTER_USE_NATIVE_SCRIPT_FILE),
@@ -571,7 +582,7 @@ function packagedComputerUseMcpConfigToml() {
   return `[mcp_servers.computer_use]
 command = "sh"
 args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\" mcp-server"]
-env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"]
+env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH", "MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH"]
 startup_timeout_sec = 5
 tool_timeout_sec = 30
 default_tools_approval_mode = "prompt"

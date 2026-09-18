@@ -47,6 +47,10 @@ function writeComputerUseHelperSources(workspace, sourceAppDir) {
     "module.exports = {}\n",
   );
   fs.writeFileSync(
+    path.join(electronDir, "computerUseOverlayBridge.cjs"),
+    "module.exports = {}\n",
+  );
+  fs.writeFileSync(
     path.join(electronDir, "computerUseMacNative.swift"),
     "// native bridge",
   );
@@ -73,6 +77,7 @@ export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="${COMPUTER_USE_HELPER_BUNDLE_IDEN
 export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_BUNDLE_DIR"
 export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_HELPER_APP_NAME}"
 export MORPHEUS_COMPUTER_USE_MANAGER_MODULE="$SERVER_DIR/computerUse.cjs"
+export MORPHEUS_COMPUTER_USE_OVERLAY_BRIDGE_MODULE="$SERVER_DIR/computerUseOverlayBridge.cjs"
 export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_HELPER_APP_NAME}"
 export MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE="launchservices-service-socket"
 SERVICE_TMP_DIR="\${TMPDIR:-/tmp}"
@@ -646,7 +651,7 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
     );
     assert.ok(
       config.includes(
-        'env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"]',
+        'env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH", "MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH"]',
       ),
     );
     assert.doesNotMatch(config, /computerUseMacNative\.swift/);
@@ -688,6 +693,20 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
           "Resources",
           "server",
           "computerUse.cjs",
+        ),
+        "utf8",
+      ),
+      "module.exports = {}\n",
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          target,
+          ...COMPUTER_USE_HELPER_APP_RELATIVE_PATH.split(path.sep),
+          "Contents",
+          "Resources",
+          "server",
+          "computerUseOverlayBridge.cjs",
         ),
         "utf8",
       ),

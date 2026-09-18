@@ -15,10 +15,22 @@ const require = createRequire(import.meta.url);
 const {
   createComputerUseManager,
 } = require("../apps/root-worker-prototype/electron/computerUse.cjs");
+const {
+  createComputerUseOverlayBridgeClient,
+  createComputerUseOverlayBridgeServer,
+} = require("../apps/root-worker-prototype/electron/computerUseOverlayBridge.cjs");
 
 function fakeNativeClient(options = {}) {
   let observeCount = 0;
   const actPayloads = [];
+  const targetWindow =
+    options.targetWindow === undefined
+      ? {
+          title: `Window ${observeCount}`,
+          position: { x: 10, y: 20 },
+          size: { width: 640, height: 480 },
+        }
+      : options.targetWindow;
   return {
     actPayloads,
     async observe(payload = {}) {
@@ -35,24 +47,16 @@ function fakeNativeClient(options = {}) {
           bundleIdentifier: options.bundleIdentifier ?? "com.apple.finder",
           processIdentifier: 42,
           frontmost: true,
-          window: {
-            title: `Window ${observeCount}`,
-            position: { x: 10, y: 20 },
-            size: { width: 640, height: 480 },
-          },
+          window: options.frontmostWindow ?? targetWindow,
         },
         targetApp: {
           name: options.activeAppName ?? "Finder",
           bundleIdentifier: options.bundleIdentifier ?? "com.apple.finder",
           processIdentifier: 42,
           frontmost: true,
-          window: {
-            title: `Window ${observeCount}`,
-            position: { x: 10, y: 20 },
-            size: { width: 640, height: 480 },
-          },
+          window: targetWindow,
         },
-        targetVisibility: "frontmost",
+        targetVisibility: options.targetVisibility ?? "frontmost",
         accessibilityTrusted,
         screenshot: {
           path: `/tmp/screen-${observeCount}.png`,
@@ -115,6 +119,41 @@ function managerFactoryWithNative(nativeClient) {
         planOnly: options.planOnly,
       },
     });
+}
+
+function managerFactoryWithNativeAndOverlay(nativeClient, overlayController) {
+  return async (options = {}) =>
+    createComputerUseManager({
+      nativeClient,
+      overlayController,
+      includePerception: options.includePerception,
+      perceptionLimit: options.perceptionLimit,
+      safety: {
+        operationBoundary: "computer-use-mcp-session",
+        confirmRisk: options.confirmRisk,
+        planOnly: options.planOnly,
+      },
+    });
+}
+
+function fakeOverlayController() {
+  return {
+    updates: [],
+    destroyed: 0,
+    async update(payload) {
+      this.updates.push(payload);
+      return { available: true, visible: true };
+    },
+    async destroy() {
+      this.destroyed += 1;
+      return { available: true, visible: false, destroyed: true };
+    },
+  };
+}
+
+function overlaySocketPath() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-overlay-"));
+  return path.join(root, "overlay.sock");
 }
 
 test("computer use MCP lists typed tools", () => {
@@ -191,6 +230,65 @@ test("computer use MCP side effects preserve policy audit and native evidence", 
     "computer-use-mcp-session",
   );
   assert.equal(nativeClient.actPayloads.length, 1);
+  await server.close();
+});
+
+test("computer use MCP move updates overlay through bridge and stop clears it", async () => {
+  const overlayController = fakeOverlayController();
+  const bridge = createComputerUseOverlayBridgeServer({
+    socketPath: overlaySocketPath(),
+    overlayControllerFactory: () => overlayController,
+  });
+  await bridge.start();
+  const nativeClient = fakeNativeClient();
+  const server = createComputerUseMcpServer({
+    managerFactory: managerFactoryWithNativeAndOverlay(
+      nativeClient,
+      createComputerUseOverlayBridgeClient({ socketPath: bridge.socketPath }),
+    ),
+  });
+  try {
+    await server.callTool("computer.start_session", {});
+    const result = await server.callTool("computer.act", {
+      action: { type: "move", x: 70, y: 55 },
+    });
+
+    assert.equal(result.structuredContent.status, "completed");
+    assert.equal(result.structuredContent.state.overlay.visible, true);
+    assert.deepEqual(overlayController.updates.at(-1).agentCursor, { x: 70, y: 55 });
+    assert.ok(overlayController.updates.at(-1).pathSamples.length > 0);
+    assert.deepEqual(nativeClient.actPayloads, []);
+
+    const stopped = await server.callTool("computer.stop", {});
+    assert.equal(stopped.structuredContent.state.overlay.visible, false);
+    assert.match(stopped.structuredContent.state.overlay.reason, /stopped/);
+    assert.ok(overlayController.destroyed >= 1);
+  } finally {
+    await server.close();
+    await bridge.close();
+  }
+});
+
+test("computer use MCP hides overlay for background targets with typed reason", async () => {
+  const overlayController = fakeOverlayController();
+  const nativeClient = fakeNativeClient({ targetVisibility: "background" });
+  const server = createComputerUseMcpServer({
+    managerFactory: managerFactoryWithNativeAndOverlay(
+      nativeClient,
+      overlayController,
+    ),
+  });
+
+  await server.callTool("computer.start_session", { app: "com.apple.finder" });
+  const result = await server.callTool("computer.act", {
+    action: { type: "move", x: 70, y: 55 },
+  });
+
+  assert.equal(result.structuredContent.state.overlay.visible, false);
+  assert.match(result.structuredContent.state.overlay.reason, /background target/);
+  assert.equal(overlayController.updates.length, 0);
+  assert.ok(overlayController.destroyed >= 1);
+  assert.deepEqual(nativeClient.actPayloads, []);
   await server.close();
 });
 
