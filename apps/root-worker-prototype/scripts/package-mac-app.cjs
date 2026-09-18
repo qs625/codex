@@ -137,9 +137,16 @@ function buildElectronPackagerArgs({
   ];
 }
 
-function prepareMacAppResources(plan, fsOps = fs) {
+function prepareMacAppResources(
+  plan,
+  { compileNativeHelper, fsOps = fs, runCommand = run } = {},
+) {
   fsOps.rmSync(plan.resourceStagingDir, { force: true, recursive: true });
-  stagePayloadResources(plan, plan.resourceStagingDir, fsOps);
+  stagePayloadResources(plan, plan.resourceStagingDir, {
+    compileNativeHelper,
+    fsOps,
+    runCommand,
+  });
 }
 
 function prepareSeedCapsule(
