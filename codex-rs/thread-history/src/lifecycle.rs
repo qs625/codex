@@ -5,8 +5,6 @@ use super::support::render_review_output_text;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::TurnError as V2TurnError;
 use app_server_protocol::TurnStatus;
-use app_server_protocol::context_compaction_replacement_item_from_core;
-use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
@@ -305,18 +303,6 @@ impl ThreadHistoryBuilder {
         self.pending_checkpoint_compaction = None;
         self.pending_compact_summary_echo = compact_summary_response_item(payload);
         let summary = compact_summary(payload);
-        let replacement_history = payload.replacement_history.as_ref().map(|history| {
-            let visible_len = payload
-                .visible_replacement_history_len
-                .unwrap_or(history.len())
-                .min(history.len());
-            context_compaction_replacement_items_from_response_items(
-                history[..visible_len].to_vec(),
-            )
-            .into_iter()
-            .map(context_compaction_replacement_item_from_core)
-            .collect()
-        });
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;
@@ -332,7 +318,7 @@ impl ThreadHistoryBuilder {
                 .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
             {
                 *existing_summary = summary;
-                *existing_replacement_history = replacement_history;
+                *existing_replacement_history = None;
                 return;
             }
         }
@@ -342,7 +328,7 @@ impl ThreadHistoryBuilder {
         turn.items.push(ThreadItem::ContextCompaction {
             id,
             summary,
-            replacement_history,
+            replacement_history: None,
         });
     }
 
