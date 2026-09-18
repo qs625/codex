@@ -22,6 +22,7 @@ const CLI_ACTIONS = new Set([
   "scroll",
   "findText",
   "clickText",
+  "pressText",
   "setText",
   "type",
   "key",
@@ -489,6 +490,13 @@ export function parseComputerUseCliArgs(argv) {
       case "--clickText":
         request.shorthandActions.push({
           type: "clickText",
+          text: requireValue(args, ++index, arg),
+        });
+        break;
+      case "--press-text":
+      case "--pressText":
+        request.shorthandActions.push({
+          type: "pressText",
           text: requireValue(args, ++index, arg),
         });
         break;
@@ -979,6 +987,8 @@ function parseReplLine(line) {
       return { kind: "action", action: { type: "findText", text: tokens.join(" ") } };
     case "clickText":
       return { kind: "action", action: { type: "clickText", text: tokens.join(" ") } };
+    case "pressText":
+      return { kind: "action", action: { type: "pressText", text: tokens.join(" ") } };
     case "setText":
       return {
         kind: "action",
@@ -1025,6 +1035,8 @@ function normalizeReplCommand(command) {
       return "findText";
     case "click-text":
       return "clickText";
+    case "press-text":
+      return "pressText";
     case "set-text":
       return "setText";
     default:
@@ -1456,6 +1468,7 @@ function cliPolicy(request = {}) {
       "scroll",
       "findText",
       "clickText",
+      "pressText",
       "setText",
       "key",
       "hotkey",
@@ -1477,6 +1490,7 @@ function cliLimitations() {
     "Click, doubleClick, rightClick, scroll, key, hotkey, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
     "Background targets are activated by the Computer Use session, then re-observed before any side-effect action is sent.",
     "setText is a semantic Accessibility set-value action for one unique writable target element; it does not send background keyboard events.",
+    "pressText is a semantic Accessibility press action for one unique pressable target element; it does not send background mouse or keyboard events.",
     "Screenshots include a bounded data URL by default; pass --omit-screenshot-data for metadata-only output.",
     "Target observations include bounded perception facts by default when macOS exposes real window/AX evidence; pass --no-perception to disable AX/window crop extraction.",
     "Visible agent cursor feedback is target-bound. Background targets are not drawn over unrelated foreground apps before activation.",
@@ -1529,7 +1543,7 @@ function replHelp() {
     "Computer Use REPL commands:",
     "  start [--app <bundle-or-name>] | observe | status | trace [count] | stop | exit",
     "  move x,y | click x,y | double-click x,y | right-click x,y | scroll x,y deltaX,deltaY",
-    "  find-text <text> | click-text <text> | set-text query=value",
+    "  find-text <text> | click-text <text> | press-text <text> | set-text query=value",
     "  key key|mod+key | hotkey mod+key | type <text> | drag x1,y1:x2,y2 | wait ms | pause ms",
     "  json on|off | raw on|off | help",
     "  JSON action lines are also accepted, for example: {\"type\":\"move\",\"x\":420,\"y\":360}",
@@ -1544,12 +1558,12 @@ function usage() {
     "  node scripts/morpheus-computer-use.mjs repl --app <bundle-or-name> --omit-screenshot-data",
     "",
     "Actions:",
-    "  start, observe, move, click, doubleClick, rightClick, scroll, findText, clickText, setText, key, hotkey, type, drag, wait/pause, stop",
+    "  start, observe, move, click, doubleClick, rightClick, scroll, findText, clickText, pressText, setText, key, hotkey, type, drag, wait/pause, stop",
     "",
     "Shorthand flags:",
     "  --start --observe --stop",
     "  --move x,y --click x,y --double-click x,y --right-click x,y --scroll x,y:deltaX,deltaY",
-    "  --find-text text --click-text text --set-text query=value --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
+    "  --find-text text --click-text text --press-text text --set-text query=value --type text --text text --key key|mod+key --hotkey mod+key --drag x1,y1:x2,y2 --wait ms --pause ms",
     "",
     "Example:",
     "  node scripts/morpheus-computer-use.mjs run --app com.apple.finder --json --actions '[{\"type\":\"start\"},{\"type\":\"observe\"},{\"type\":\"move\",\"x\":420,\"y\":360},{\"type\":\"stop\"}]'",

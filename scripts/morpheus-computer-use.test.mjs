@@ -123,6 +123,22 @@ function fakeNativeClient(options = {}) {
           characterCount: action.text.length,
         };
       }
+      if (action.type === "pressText") {
+        return {
+          ok: true,
+          method: "accessibility-press",
+          targetVisibility: options.targetVisibility ?? "frontmost",
+          query: action.text,
+          matchStatus: "unique",
+          matchedElement: {
+            role: "AXButton",
+            title: action.text,
+            pressable: true,
+            bounds: { x: 120, y: 130, width: 80, height: 30 },
+            center: { x: 160, y: 145 },
+          },
+        };
+      }
       if (action.type === "key" || action.type === "hotkey") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
       }
@@ -476,6 +492,8 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     "Open",
     "--click-text",
     "Save",
+    "--press-text",
+    "Send",
     "--set-text",
     "Search=hello",
     "--type",
@@ -502,6 +520,7 @@ test("computer use CLI compiles shorthand flags into a run action batch", async 
     { type: "scroll", x: 90, y: 100, deltaX: 0, deltaY: -240 },
     { type: "findText", text: "Open" },
     { type: "clickText", text: "Save" },
+    { type: "pressText", text: "Send" },
     { type: "setText", query: "Search", text: "hello" },
     { type: "type", text: "hello" },
     { type: "key", key: "s", modifiers: ["cmd"] },
@@ -613,6 +632,7 @@ test("computer use CLI runs semantic side effects and wait by default", async ()
       "scroll",
       "findText",
       "clickText",
+      "pressText",
       "setText",
       "key",
       "hotkey",
@@ -749,6 +769,51 @@ test("computer use CLI setText writes background AX target without activation", 
   const trace = result.results[1].state.trace.at(-1);
   assert.equal(trace.action.type, "setText");
   assert.equal(trace.evidence.method, "accessibility-set-value");
+  assert.equal(trace.evidence.targetVisibility, "background");
+});
+
+test("computer use CLI pressText presses background AX target without activation", async () => {
+  const nativeClient = fakeNativeClient({
+    targetVisibility: "background",
+    perception: {
+      accessibilityElements: [
+        {
+          role: "AXButton",
+          title: "Send",
+          pressable: true,
+          bounds: { x: 100, y: 100, width: 80, height: 30 },
+          center: { x: 140, y: 115 },
+        },
+      ],
+    },
+  });
+
+  const result = await runComputerUseRequest(
+    parseComputerUseCliArgs([
+      "run",
+      "--app",
+      "com.openai.codex",
+      "--overlay-hold-ms",
+      "0",
+      "--press-text",
+      "Send",
+    ]),
+    createComputerUseCliManagerFactory({
+      nativeClient,
+      overlayControllerFactory: async () => fakeOverlayController(),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results[1].status, "completed");
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), [
+    "pressText",
+    "cleanup",
+  ]);
+  assert.equal(nativeClient.actions[0].text, "Send");
+  const trace = result.results[1].state.trace.at(-1);
+  assert.equal(trace.action.type, "pressText");
+  assert.equal(trace.evidence.method, "accessibility-press");
   assert.equal(trace.evidence.targetVisibility, "background");
 });
 

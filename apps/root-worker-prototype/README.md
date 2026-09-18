@@ -152,13 +152,16 @@ node scripts/morpheus-computer-use.mjs run \
 The CLI keeps a Computer Use session inside a single `run` process and reuses
 the Electron ComputerUseManager safety gates, target preflight, trace evidence,
 and native macOS bridge. CLI supports `start`, `observe`, `move`, `click`,
-`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `setText`,
+`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `pressText`, `setText`,
 `key`, `hotkey`, `type`, `drag`, `wait`, and `stop`; `move` only updates the agent cursor/path
 evidence and does not move the macOS system cursor. `wait` pauses the same
 session for a bounded duration and records timer evidence. `clickText` resolves
 a unique visible Accessibility text candidate to ordinary screen coordinates
 before using the same target gate and native click path; ambiguous or missing
-matches fail with candidate evidence instead of guessing. `setText` is a
+matches fail with candidate evidence instead of guessing. `pressText` is a
+semantic macOS Accessibility press: it performs `AXPress` on one unique pressable
+AX element in the target app, including background targets when real AX evidence
+is available, and it never sends background mouse events. `setText` is a
 semantic macOS Accessibility write: it sets one unique writable AX value element
 in the target app, including background targets when real AX evidence is
 available, and it never sends background keyboard events. The `run --actions`

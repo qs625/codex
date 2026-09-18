@@ -107,7 +107,7 @@ const TOOL_DEFINITIONS = [
         action: {
           type: "object",
           description:
-            "Computer Use action, for example move/click/type/key/hotkey/drag/wait/clickText/setText.",
+            "Computer Use action, for example move/click/type/key/hotkey/drag/wait/clickText/pressText/setText. pressText performs a target-bound Accessibility press on one unique pressable element and may run against a background target.",
           additionalProperties: true,
         },
         sessionId: stringSchema("Session id returned by computer.start_session."),

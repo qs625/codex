@@ -98,6 +98,22 @@ function fakeNativeClient(options = {}) {
           characterCount: action.text.length,
         };
       }
+      if (action.type === "pressText") {
+        return {
+          ok: true,
+          method: "accessibility-press",
+          targetVisibility: "background",
+          query: action.text,
+          matchStatus: "unique",
+          matchedElement: {
+            role: "AXButton",
+            title: action.text,
+            pressable: true,
+            bounds: { x: 30, y: 40, width: 80, height: 30 },
+            center: { x: 70, y: 55 },
+          },
+        };
+      }
       if (action.type === "key" || action.type === "hotkey") {
         return { ok: true, key: action.key, modifiers: action.modifiers ?? [] };
       }
@@ -569,6 +585,213 @@ test("background setText writes one unique writable AX element without activatio
   );
 });
 
+test("background pressText presses one unique pressable AX element without activation", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        activeApp: {
+          name: "Finder",
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: 43,
+        },
+        targetApp: {
+          name: "ChatGPT",
+          bundleIdentifier: "com.openai.codex",
+          processIdentifier: 42,
+          window: {
+            title: "ChatGPT background",
+            position: { x: 40, y: 50 },
+            size: { width: 500, height: 400 },
+          },
+        },
+        targetVisibility: "background",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Send",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "com.openai.codex" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["pressText"]);
+  assert.equal(nativeClient.actions[0].targetApp, "com.openai.codex");
+  assert.equal(nativeClient.actions[0].text, "Send");
+  assert.equal(state.trace.at(-1).status, "completed");
+  assert.equal(state.trace.at(-1).policy.kind, "side-effect");
+  assert.equal(state.trace.at(-1).evidence.method, "accessibility-press");
+  assert.equal(state.trace.at(-1).evidence.targetVisibility, "background");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "unique");
+  assert.equal(state.trace.at(-1).evidence.matchedElement.pressable, true);
+  assert.equal(
+    state.trace.at(-1).audit.completion.actionEvidence.method,
+    "accessibility-press",
+  );
+});
+
+test("background pressText blocks ambiguous pressable matches before native action", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "ChatGPT",
+          bundleIdentifier: "com.openai.codex",
+          processIdentifier: 42,
+        },
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Send",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+            {
+              role: "AXButton",
+              title: "Send feedback",
+              pressable: true,
+              bounds: { x: 180, y: 90, width: 120, height: 30 },
+              center: { x: 240, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "com.openai.codex" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "multiple");
+  assert.match(state.trace.at(-1).error, /Multiple visible accessibility elements/);
+});
+
+test("background pressText blocks non-pressable matches before native action", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "ChatGPT",
+          bundleIdentifier: "com.openai.codex",
+          processIdentifier: 42,
+        },
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXStaticText",
+              title: "Send",
+              pressable: false,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "com.openai.codex" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "none");
+  assert.match(state.trace.at(-1).error, /No pressable accessibility element/);
+});
+
+test("background pressText blocks no-match before native action", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "ChatGPT",
+          bundleIdentifier: "com.openai.codex",
+          processIdentifier: 42,
+        },
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "New chat",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "com.openai.codex" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "none");
+  assert.match(state.trace.at(-1).error, /No visible accessibility element/);
+});
+
+test("background pressText fails when perception candidates are truncated", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "background",
+        targetApp: {
+          name: "ChatGPT",
+          bundleIdentifier: "com.openai.codex",
+          processIdentifier: 42,
+        },
+        perception: {
+          limitations: [
+            {
+              code: "accessibility-elements-truncated",
+              message: "Accessibility element output reached the configured candidate limit before traversal completed.",
+            },
+          ],
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Send",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const manager = createComputerUseManager({ nativeClient });
+  await manager.startSession({ app: "com.openai.codex" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.deepEqual(nativeClient.actions, []);
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.equal(state.trace.at(-1).evidence.matchStatus, "incomplete");
+  assert.match(state.trace.at(-1).error, /candidate limit/);
+});
+
 test("background setText blocks non-writable matches before native action", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
@@ -906,6 +1129,20 @@ test("policy keeps safe keyboard shortcuts available", () => {
   const findText = classifyComputerUseAction({ type: "findText", text: "Open" });
   assert.equal(findText.kind, "low-risk");
   assert.equal(findText.requiresConfirmation, false);
+
+  const sendPress = classifyComputerUseAction(normalizeAction({
+    type: "pressText",
+    text: "Send",
+  }));
+  assert.equal(sendPress.kind, "side-effect");
+  assert.equal(sendPress.riskLevel, "medium");
+
+  const deletePress = classifyComputerUseAction(normalizeAction({
+    type: "pressText",
+    text: "Delete",
+  }));
+  assert.equal(deletePress.kind, "side-effect-warning");
+  assert.equal(deletePress.riskLevel, "high");
 });
 
 test("hotkey normalization accepts MCP and CLI-style shortcut shapes", () => {
