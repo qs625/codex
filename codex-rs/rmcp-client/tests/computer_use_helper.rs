@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use codex_config_types::McpServerEnvVar;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
 use codex_rmcp_client::LocalStdioServerLauncher;
@@ -16,10 +17,16 @@ use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ProtocolVersion;
 use serde_json::json;
+use serial_test::serial;
 use tempfile::TempDir;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+struct PackagedHelper {
+    env: HashMap<OsString, OsString>,
+    executable: PathBuf,
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -58,13 +65,33 @@ fn init_params() -> InitializeRequestParams {
     }
 }
 
-fn packaged_helper_env(root: &TempDir) -> anyhow::Result<HashMap<OsString, OsString>> {
+fn packaged_helper(
+    root: &TempDir,
+    helper_script: &std::path::Path,
+) -> anyhow::Result<PackagedHelper> {
     let helper_bundle = root.path().join("Root Worker Computer Use.app");
     let executable_dir = helper_bundle.join("Contents").join("MacOS");
     let helper_executable = executable_dir.join("Root Worker Computer Use");
     let native_executable = executable_dir.join("morpheus-computer-use-native");
     std::fs::create_dir_all(&executable_dir)?;
-    std::fs::write(&helper_executable, "#!/bin/sh\n")?;
+    std::fs::write(
+        &helper_executable,
+        format!(
+            r#"#!/bin/sh
+set -eu
+export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="com.openai.root-worker-prototype.computer-use.dev"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="{}"
+export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="{}"
+export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="{}"
+exec node "{}"
+"#,
+            helper_bundle.display(),
+            helper_executable.display(),
+            native_executable.display(),
+            helper_script.display(),
+        ),
+    )?;
     std::fs::write(&native_executable, "native")?;
     #[cfg(unix)]
     {
@@ -90,13 +117,42 @@ fn packaged_helper_env(root: &TempDir) -> anyhow::Result<HashMap<OsString, OsStr
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"),
-        helper_executable.into_os_string(),
+        helper_executable.clone().into_os_string(),
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE"),
         native_executable.into_os_string(),
     );
-    Ok(env)
+    Ok(PackagedHelper {
+        env,
+        executable: helper_executable,
+    })
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -106,10 +162,11 @@ async fn rmcp_client_can_list_and_call_computer_use_helper() -> anyhow::Result<(
         .join("scripts")
         .join("morpheus-computer-use-mcp.mjs");
     let helper_env = tempfile::tempdir()?;
+    let helper = packaged_helper(&helper_env, &helper_script)?;
     let client = RmcpClient::new_stdio_client(
         OsString::from("node"),
         vec![helper_script.into_os_string()],
-        Some(packaged_helper_env(&helper_env)?),
+        Some(helper.env),
         &[],
         Some(repo_root.clone()),
         Arc::new(LocalStdioServerLauncher::new(repo_root)),
@@ -167,6 +224,81 @@ async fn rmcp_client_can_list_and_call_computer_use_helper() -> anyhow::Result<(
     assert_eq!(
         structured["diagnostics"]["permissionSubject"]["nativeControlSubject"],
         json!("packaged-native-helper-executable")
+    );
+
+    client.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[serial(computer_use_helper_executable_env)]
+async fn rmcp_client_can_launch_computer_use_helper_through_env_vars_allowlist()
+-> anyhow::Result<()> {
+    let repo_root = repo_root();
+    let helper_script = repo_root
+        .join("scripts")
+        .join("morpheus-computer-use-mcp.mjs");
+    let helper_env = tempfile::tempdir()?;
+    let helper = packaged_helper(&helper_env, &helper_script)?;
+    let _guard = EnvVarGuard::set(
+        "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE",
+        helper.executable.as_os_str(),
+    );
+    let client = RmcpClient::new_stdio_client(
+        OsString::from("sh"),
+        vec![
+            OsString::from("-c"),
+            OsString::from(r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE""#),
+        ],
+        /*env*/ None,
+        &[McpServerEnvVar::from(
+            "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE",
+        )],
+        Some(repo_root.clone()),
+        Arc::new(LocalStdioServerLauncher::new(repo_root)),
+    )
+    .await?;
+
+    client
+        .initialize(
+            init_params(),
+            Some(Duration::from_secs(5)),
+            Box::new(|_, _| {
+                async {
+                    Ok(ElicitationResponse {
+                        action: ElicitationAction::Accept,
+                        content: Some(json!({})),
+                        meta: None,
+                    })
+                }
+                .boxed()
+            }),
+        )
+        .await?;
+
+    assert_eq!(
+        client
+            .list_tools(/*params*/ None, Some(Duration::from_secs(5)))
+            .await?
+            .tools
+            .len(),
+        6
+    );
+
+    let result = client
+        .call_tool(
+            "computer.permissions_status".to_string(),
+            Some(json!({ "includeObservation": false })),
+            None,
+            Some(Duration::from_secs(5)),
+        )
+        .await?;
+    let structured = result
+        .structured_content
+        .expect("permissions_status should return structured content");
+    assert_eq!(
+        structured["diagnostics"]["permissionSubject"]["stablePermissionSubject"],
+        json!(true)
     );
 
     client.shutdown().await;
