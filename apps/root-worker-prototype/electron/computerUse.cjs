@@ -2025,15 +2025,7 @@ async function runNativeComputerUseService(
     payload: payload ?? {},
     expected: service.expected,
   };
-  try {
-    return await sendNativeServiceCommand(service, request, options);
-  } catch (error) {
-    if (!shouldStartNativeService(error)) {
-      throw error;
-    }
-  }
-  await launchNativeComputerUseService(service, options);
-  await waitForNativeComputerUseService(service, options);
+  await ensureNativeComputerUseService(service, options);
   return sendNativeServiceCommand(service, request, options);
 }
 
@@ -2050,6 +2042,7 @@ async function computerUseServiceDescriptor(executablePath, options = {}) {
     expected: {
       bundlePath,
       executablePath,
+      payloadElectronPath: options.payloadElectronPath ?? process.execPath,
       protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
     },
   };
@@ -2066,12 +2059,20 @@ function nativeComputerUseServiceSocketPath(options = {}) {
 async function prepareNativeServiceSocketDirectory(socketPath) {
   const directory = path.dirname(socketPath);
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-  const stat = await fs.stat(directory);
-  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+  const stat = await fs.lstat(directory);
+  if (!stat.isDirectory()) {
+    throw new Error("Computer Use service socket directory is not a directory");
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error("Computer Use service socket directory must not be a symlink");
+  }
+  const currentUid =
+    typeof process.getuid === "function" ? process.getuid() : stat.uid;
+  if (stat.uid !== currentUid) {
     throw new Error("Computer Use service socket directory is not owned by the current user");
   }
   if ((stat.mode & 0o077) !== 0) {
-    await fs.chmod(directory, 0o700);
+    throw new Error("Computer Use service socket directory must not be group/world accessible");
   }
   return directory;
 }
@@ -2092,6 +2093,52 @@ async function sendNativeServiceCommand(service, request, options = {}) {
   delete result.ok;
   delete result.id;
   return result;
+}
+
+async function ensureNativeComputerUseService(service, options = {}) {
+  try {
+    const status = await readNativeComputerUseServiceStatus(service, options);
+    if (nativeServiceIdentityMatches(service.expected, status.identity)) {
+      return status;
+    }
+    await shutdownNativeComputerUseService(service, options);
+    const mismatch = new Error("Computer Use service identity mismatch");
+    mismatch.code = "service_identity_mismatch";
+    throw mismatch;
+  } catch (error) {
+    if (!shouldStartNativeService(error)) {
+      throw error;
+    }
+  }
+  await launchNativeComputerUseService(service, options);
+  return waitForNativeComputerUseService(service, options);
+}
+
+async function readNativeComputerUseServiceStatus(service, options = {}) {
+  return sendNativeServiceCommand(
+    service,
+    {
+      protocol: NATIVE_SERVICE_PROTOCOL,
+      protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
+      id: randomUUID(),
+      command: "status",
+      payload: {},
+      expected: service.expected,
+    },
+    options,
+  );
+}
+
+function nativeServiceIdentityMatches(expected, identity) {
+  if (!identity) {
+    return false;
+  }
+  if (identity.protocolVersion !== expected.protocolVersion) {
+    return false;
+  }
+  return ["bundlePath", "executablePath", "payloadElectronPath"].every((key) =>
+    pathsEqual(identity[key], expected[key]),
+  );
 }
 
 async function writeNativeServiceRequest(socketPath, request, options = {}) {
@@ -2212,21 +2259,14 @@ async function waitForNativeComputerUseService(service, options = {}) {
   let lastError = null;
   while (Date.now() < deadline) {
     try {
-      const status = await sendNativeServiceCommand(
-        service,
-        {
-          protocol: NATIVE_SERVICE_PROTOCOL,
-          protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
-          id: randomUUID(),
-          command: "status",
-          payload: {},
-          expected: service.expected,
-        },
-        options,
-      );
-      if (status.status === "ready") {
+      const status = await readNativeComputerUseServiceStatus(service, options);
+      if (
+        status.status === "ready" &&
+        nativeServiceIdentityMatches(service.expected, status.identity)
+      ) {
         return status;
       }
+      lastError = new Error("Computer Use service identity mismatch");
     } catch (error) {
       lastError = error;
     }

@@ -210,7 +210,7 @@ func serviceIdentityMatches(_ expected: [String: Any]?) -> Bool {
     return true
   }
   let identity = serviceIdentity()
-  for key in ["bundlePath", "executablePath"] {
+  for key in ["bundlePath", "executablePath", "payloadElectronPath"] {
     if let value = expected[key] as? String,
       let actual = identity[key] as? String,
       URL(fileURLWithPath: value).standardizedFileURL.path != URL(fileURLWithPath: actual).standardizedFileURL.path
