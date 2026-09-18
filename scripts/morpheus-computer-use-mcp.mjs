@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createRequire } from "node:module";
+import fsSync from "node:fs";
 import { createInterface } from "node:readline";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,7 @@ const SERVER_INFO = {
 const PROTOCOL_VERSION = "2025-06-18";
 const DEFAULT_SESSION_ID = "default";
 const SIDE_EFFECT_TOOLS = new Set(["computer.act"]);
+const NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
 const TEXT_ACTION_TOOLS = new Map([
   ["computer.find_text", "findText"],
 ]);
@@ -476,9 +478,18 @@ function defaultPermissionDiagnostics() {
     process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH ?? null;
   const helperExecutable =
     process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE ?? null;
+  const configuredNativeHelperExecutable =
+    process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE ?? null;
   const helperBundleIdentifier =
     process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID ?? null;
   const packagedHelperBundle = Boolean(helperBundleIdentifier && helperBundlePath);
+  const resolvedNativeHelperExecutable = resolveNativeHelperExecutable({
+    helperBundlePath,
+    nativeHelperExecutable: configuredNativeHelperExecutable,
+  });
+  const packagedNativeHelperExecutable = Boolean(
+    packagedHelperBundle && resolvedNativeHelperExecutable,
+  );
   return {
     contract: "helper-as-mcp-server",
     helperMode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE ?? "repo-local-mcp-server",
@@ -495,16 +506,52 @@ function defaultPermissionDiagnostics() {
       bundleIdentifier:
         helperBundleIdentifier ?? process.env.MORPHEUS_RUNTIME_BUNDLE_ID ?? null,
       bundlePath: helperBundlePath ?? process.env.MORPHEUS_RUNTIME_BUNDLE_PATH ?? null,
-      executablePath: helperExecutable ?? process.execPath,
+      executablePath: packagedNativeHelperExecutable
+        ? resolvedNativeHelperExecutable
+        : helperExecutable ?? process.execPath,
+      helperExecutablePath: helperExecutable ?? null,
+      nativeHelperExecutablePath:
+        resolvedNativeHelperExecutable ?? configuredNativeHelperExecutable,
       packagedHelperBundle,
-      stablePermissionSubject: false,
-      nativeControlSubject: packagedHelperBundle
-        ? "delegated-swift-script-and-screencapture"
-        : "repo-local-node-process",
-      note:
-        "Authorize the process macOS presents for Screen Recording and Accessibility. The packaged helper bundle is the intended MCP server identity, but current native desktop calls are still delegated through Swift and screencapture, so the stable TCC permission subject is not yet proven.",
+      packagedNativeHelperExecutable,
+      stablePermissionSubject: packagedNativeHelperExecutable,
+      nativeControlSubject: packagedNativeHelperExecutable
+        ? "packaged-native-helper-executable"
+        : packagedHelperBundle
+          ? "delegated-swift-script-and-screencapture"
+          : "repo-local-node-process",
+      note: packagedNativeHelperExecutable
+        ? "Authorize the packaged Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by the packaged native helper executable inside this helper app bundle."
+        : "Authorize the process macOS presents for Screen Recording and Accessibility. The packaged helper bundle is the intended MCP server identity, but native desktop calls are delegated in this mode, so the stable TCC permission subject is not proven.",
     },
   };
+}
+
+function resolveNativeHelperExecutable({
+  helperBundlePath,
+  nativeHelperExecutable,
+}) {
+  if (nativeHelperExecutable && isExecutableFile(nativeHelperExecutable)) {
+    return nativeHelperExecutable;
+  }
+  if (!helperBundlePath) {
+    return null;
+  }
+  const candidate = `${helperBundlePath}/Contents/MacOS/${NATIVE_HELPER_EXECUTABLE_FILE}`;
+  return isExecutableFile(candidate) ? candidate : null;
+}
+
+function isExecutableFile(targetPath) {
+  try {
+    const stat = fsSync.statSync(targetPath);
+    if (!stat.isFile()) {
+      return false;
+    }
+    fsSync.accessSync(targetPath, fsSync.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function permissionLimitations(diagnostics) {
@@ -527,7 +574,7 @@ function permissionLimitations(diagnostics) {
     limitations.push({
       code: "native-permission-subject-not-contained",
       message:
-        "The packaged helper bundle starts the MCP server, but native desktop control still delegates to Swift and screencapture, so macOS may require authorization for the delegated runtime/toolchain process until native calls move into a signed helper executable.",
+        "The packaged helper bundle starts the MCP server, but this mode has no packaged native helper executable, so native desktop control may still delegate to Swift and screencapture and macOS may require authorization for that delegated process.",
     });
   }
   return limitations;

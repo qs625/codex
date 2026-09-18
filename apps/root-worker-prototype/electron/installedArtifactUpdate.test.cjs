@@ -11,6 +11,7 @@ const {
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
   COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
   COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
+  COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH,
   COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
   COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
   GENERATED_SOURCE_DIR_NAMES,
@@ -43,6 +44,30 @@ function writeComputerUseHelperSources(workspace, sourceAppDir) {
     path.join(electronDir, "computerUseMacNative.swift"),
     "// native bridge",
   );
+}
+
+function compileFakeNativeHelper({ fsOps = fs, sourcePath, targetPath }) {
+  assert.match(sourcePath, /computerUseMacNative\.swift$/);
+  fsOps.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fsOps.writeFileSync(targetPath, "native-helper", { mode: 0o755 });
+  fsOps.chmodSync(targetPath, 0o755);
+}
+
+function handleFakeSwiftc(command, args) {
+  if (command !== "swiftc") {
+    return false;
+  }
+  assert.ok(args.some((arg) => arg.endsWith("computerUseMacNative.swift")));
+  assert.ok(args.includes("-framework"));
+  assert.ok(args.includes("AppKit"));
+  assert.ok(args.includes("ApplicationServices"));
+  assert.ok(args.includes("ScreenCaptureKit"));
+  const outputIndex = args.indexOf("-o");
+  assert.notEqual(outputIndex, -1);
+  const targetPath = args[outputIndex + 1];
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, "native-helper", { mode: 0o755 });
+  return true;
 }
 
 test("candidate packager excludes every generated packaging directory", () => {
@@ -373,6 +398,7 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
         workspace,
       },
       target,
+      { compileNativeHelper: compileFakeNativeHelper, fsOps: fs },
     );
     assert.equal(fs.readFileSync(path.join(target, "bin", "app-server"), "utf8"), "binary");
     assert.equal(
@@ -401,15 +427,26 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
     );
     assert.match(config, /\[mcp_servers\.computer_use\]/);
     assert.match(config, /MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE/);
+    assert.doesNotMatch(config, /computerUseMacNative\.swift/);
     const helperExecutable = path.join(
       target,
       ...COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
     );
+    const nativeHelperExecutable = path.join(
+      target,
+      ...COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
+    );
     assert.ok(fs.statSync(helperExecutable).isFile());
     assert.equal(fs.statSync(helperExecutable).mode & 0o111, 0o111);
+    assert.ok(fs.statSync(nativeHelperExecutable).isFile());
+    assert.equal(fs.statSync(nativeHelperExecutable).mode & 0o111, 0o111);
+    assert.equal(fs.readFileSync(nativeHelperExecutable, "utf8"), "native-helper");
     const helperLauncher = fs.readFileSync(helperExecutable, "utf8");
     assert.match(helperLauncher, /ELECTRON_RUN_AS_NODE=1/);
     assert.match(helperLauncher, /PAYLOAD_ELECTRON=/);
+    assert.match(helperLauncher, /HELPER_BUNDLE_DIR=/);
+    assert.match(helperLauncher, /MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE/);
+    assert.match(helperLauncher, /morpheus-computer-use-native/);
     assert.doesNotMatch(helperLauncher, /exec node/);
     assert.match(
       fs.readFileSync(
@@ -505,6 +542,9 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
       loadOriginalFileSystem: () => rawFs,
       sourceCommit: "deadbeef",
       runCommand(command, args) {
+        if (handleFakeSwiftc(command, args)) {
+          return;
+        }
         if (command === "pnpm" && args.includes("@electron/packager")) {
           packagerArgs = args;
           const out = args.find((arg) => arg.startsWith("--out=")).slice(6);
@@ -666,6 +706,9 @@ test("Electron producer uses raw filesystem for regular app.asar and failure cle
           loadOriginalFileSystem: () => rawFs,
           sourceCommit: "deadbeef",
           runCommand(command, args) {
+            if (handleFakeSwiftc(command, args)) {
+              return;
+            }
             if (command === "pnpm" && args.includes("@electron/packager")) {
               const out = args.find((arg) => arg.startsWith("--out=")).slice(6);
               const payload = path.join(

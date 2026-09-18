@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ScreenCaptureKit
 
 func json(_ value: Any) {
   let data = try! JSONSerialization.data(withJSONObject: value, options: [])
@@ -898,10 +899,228 @@ func restorePasteboard(_ pasteboard: NSPasteboard, _ items: [NSPasteboardItem]) 
   return pasteboard.writeObjects(items)
 }
 
+func rectFromPayload(_ object: [String: Any]?) -> CGRect? {
+  guard let object = object else {
+    return nil
+  }
+  guard
+    let x = number(object["x"]),
+    let y = number(object["y"]),
+    let width = number(object["width"]),
+    let height = number(object["height"]),
+    width > 0,
+    height > 0
+  else {
+    return nil
+  }
+  return CGRect(x: x.rounded(), y: y.rounded(), width: width.rounded(), height: height.rounded())
+}
+
+enum NativeScreenshotError: Error {
+  case unsupported(String)
+}
+
+func roundedPixelCount(_ value: CGFloat) -> Int {
+  return max(1, Int(value.rounded()))
+}
+
+func screenScale(for rect: CGRect, on display: SCDisplay) -> CGFloat {
+  guard display.frame.width > 0, display.frame.height > 0 else {
+    return 1
+  }
+  let widthScale = CGFloat(display.width) / display.frame.width
+  let heightScale = CGFloat(display.height) / display.frame.height
+  return max(widthScale, heightScale, 1)
+}
+
+func shareableContent() throws -> SCShareableContent {
+  let semaphore = DispatchSemaphore(value: 0)
+  var resolvedContent: SCShareableContent?
+  var resolvedError: Error?
+  SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) {
+    content,
+    contentError in
+    resolvedContent = content
+    resolvedError = contentError
+    semaphore.signal()
+  }
+  semaphore.wait()
+  if let resolvedError = resolvedError {
+    throw resolvedError
+  }
+  guard let resolvedContent = resolvedContent else {
+    error("Screen Recording permission is required before observing the desktop")
+  }
+  return resolvedContent
+}
+
+func displayForRect(_ rect: CGRect?, in displays: [SCDisplay]) -> SCDisplay? {
+  guard let rect = rect else {
+    return displays.first
+  }
+  if let containing = displays.first(where: { $0.frame.intersects(rect) }) {
+    return containing
+  }
+  return displays.first
+}
+
+func captureImage(contentFilter: SCContentFilter, configuration: SCStreamConfiguration) throws -> CGImage {
+  guard #available(macOS 14.0, *) else {
+    throw NativeScreenshotError.unsupported("Native screenshots require macOS 14 or newer")
+  }
+  let semaphore = DispatchSemaphore(value: 0)
+  var resolvedImage: CGImage?
+  var resolvedError: Error?
+  SCScreenshotManager.captureImage(contentFilter: contentFilter, configuration: configuration) {
+    image,
+    captureError in
+    resolvedImage = image
+    resolvedError = captureError
+    semaphore.signal()
+  }
+  semaphore.wait()
+  if let resolvedError = resolvedError {
+    throw resolvedError
+  }
+  guard let resolvedImage = resolvedImage else {
+    error("Screen Recording permission is required before observing the desktop")
+  }
+  return resolvedImage
+}
+
+func captureDisplayImage(_ display: SCDisplay, rect: CGRect?) throws -> CGImage {
+  let configuration = SCStreamConfiguration()
+  if let rect = rect {
+    let scale = screenScale(for: rect, on: display)
+    configuration.sourceRect = rect
+    configuration.width = roundedPixelCount(rect.width * scale)
+    configuration.height = roundedPixelCount(rect.height * scale)
+  } else {
+    configuration.width = display.width
+    configuration.height = display.height
+  }
+  return try captureImage(
+    contentFilter: SCContentFilter(display: display, excludingWindows: []),
+    configuration: configuration
+  )
+}
+
+func captureDesktopImage(_ displays: [SCDisplay]) throws -> CGImage {
+  guard !displays.isEmpty else {
+    error("No display is available for screenshot")
+  }
+  if displays.count == 1 {
+    return try captureDisplayImage(displays[0], rect: nil)
+  }
+  let union = displays.reduce(CGRect.null) { partial, display in
+    partial.union(display.frame)
+  }
+  let width = roundedPixelCount(union.width)
+  let height = roundedPixelCount(union.height)
+  let colorSpace = CGColorSpaceCreateDeviceRGB()
+  guard
+    let context = CGContext(
+      data: nil,
+      width: width,
+      height: height,
+      bitsPerComponent: 8,
+      bytesPerRow: 0,
+      space: colorSpace,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+  else {
+    error("Failed to create screenshot canvas")
+  }
+  context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+  for display in displays {
+    let image = try captureDisplayImage(display, rect: nil)
+    let destination = CGRect(
+      x: display.frame.minX - union.minX,
+      y: union.maxY - display.frame.maxY,
+      width: display.frame.width,
+      height: display.frame.height
+    )
+    context.draw(image, in: destination)
+  }
+  guard let combined = context.makeImage() else {
+    error("Failed to combine display screenshots")
+  }
+  return combined
+}
+
+func captureImage(bounds: [String: Any]?) throws -> CGImage {
+  guard #available(macOS 14.0, *) else {
+    throw NativeScreenshotError.unsupported("Native screenshots require macOS 14 or newer")
+  }
+  let content = try shareableContent()
+  if let windowIdValue = number(bounds?["windowId"]) {
+    guard
+      let window = content.windows.first(where: {
+        $0.windowID == CGWindowID(windowIdValue)
+      })
+    else {
+      error("Window is no longer available for screenshot")
+    }
+    let configuration = SCStreamConfiguration()
+    configuration.width = roundedPixelCount(window.frame.width)
+    configuration.height = roundedPixelCount(window.frame.height)
+    configuration.scalesToFit = false
+    return try captureImage(
+      contentFilter: SCContentFilter(desktopIndependentWindow: window),
+      configuration: configuration
+    )
+  }
+
+  let rect = rectFromPayload(bounds)
+  if rect == nil {
+    return try captureDesktopImage(content.displays)
+  }
+  guard let display = displayForRect(rect, in: content.displays) else {
+    error("No display is available for screenshot")
+  }
+  return try captureDisplayImage(display, rect: rect)
+}
+
+func captureScreenshot(_ object: [String: Any]) {
+  guard let tmpDir = object["tmpDir"] as? String, !tmpDir.isEmpty else {
+    error("Screenshot requires tmpDir")
+  }
+  let bounds = object["bounds"] as? [String: Any]
+  let image: CGImage
+  do {
+    image = try captureImage(bounds: bounds)
+  } catch NativeScreenshotError.unsupported(let message) {
+    error(message)
+  } catch let captureError {
+    error("Screen Recording permission is required before observing the desktop: \(captureError.localizedDescription)")
+  }
+  let bitmap = NSBitmapImageRep(cgImage: image)
+  guard let data = bitmap.representation(using: .png, properties: [:]) else {
+    error("Failed to encode screenshot as PNG")
+  }
+  let file = URL(fileURLWithPath: tmpDir)
+    .appendingPathComponent("morpheus-computer-use-\(UUID().uuidString).png")
+  do {
+    try data.write(to: file, options: .atomic)
+  } catch let writeError {
+    error("Failed to write screenshot: \(writeError.localizedDescription)")
+  }
+  json([
+    "ok": true,
+    "screenshot": [
+      "path": file.path,
+      "mimeType": "image/png",
+      "byteSize": data.count,
+    ],
+  ])
+}
+
 let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "observe"
 let object = payload()
 
 switch command {
+case "screenshot":
+  captureScreenshot(object)
 case "observe":
   observe(object)
 case "activate":

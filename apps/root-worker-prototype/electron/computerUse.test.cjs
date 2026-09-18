@@ -10,6 +10,8 @@ const {
   createComputerUseManager,
   createMacNativeComputerUseClientWithAdapters,
   normalizeAction,
+  resolveMacNativeComputerUseBackend,
+  resolveMacNativeComputerUseExecutablePath,
   resolveMacNativeComputerUseScriptPath,
 } = require("./computerUse.cjs");
 
@@ -1548,6 +1550,120 @@ test("mac native script resolver falls back to source tree path", () => {
   );
 });
 
+test("mac native backend resolver prefers packaged native helper executable", () => {
+  const helperBundlePath =
+    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app";
+  const executablePath = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "morpheus-computer-use-native",
+  );
+
+  assert.equal(
+    resolveMacNativeComputerUseExecutablePath({
+      helperBundlePath,
+      isExecutable: (targetPath) => targetPath === executablePath,
+    }),
+    executablePath,
+  );
+  assert.deepEqual(
+    resolveMacNativeComputerUseBackend({
+      helperBundlePath,
+      isExecutable: (targetPath) => targetPath === executablePath,
+      sourceDirectory: "/repo/apps/root-worker-prototype/electron",
+    }),
+    {
+      mode: "packaged-native-helper-executable",
+      executablePath,
+      scriptPath: null,
+    },
+  );
+});
+
+test("mac native backend resolver falls back when env executable is missing", () => {
+  assert.deepEqual(
+    resolveMacNativeComputerUseBackend({
+      executablePath: "/missing/morpheus-computer-use-native",
+      resourcesPath: "/missing/Resources",
+      sourceDirectory: "/repo/apps/root-worker-prototype/electron",
+      isExecutable: () => false,
+      fileExists: () => false,
+    }),
+    {
+      mode: "delegated-swift-script",
+      executablePath: null,
+      scriptPath: path.join(
+        "/repo/apps/root-worker-prototype/electron",
+        "computerUseMacNative.swift",
+      ),
+    },
+  );
+});
+
+test("mac native backend resolver keeps delegated Swift fallback honest", () => {
+  assert.deepEqual(
+    resolveMacNativeComputerUseBackend({
+      resourcesPath: "/missing/Resources",
+      sourceDirectory: "/repo/apps/root-worker-prototype/electron",
+      fileExists: () => false,
+    }),
+    {
+      mode: "delegated-swift-script",
+      executablePath: null,
+      scriptPath: path.join(
+        "/repo/apps/root-worker-prototype/electron",
+        "computerUseMacNative.swift",
+      ),
+    },
+  );
+});
+
+test("mac native executable adapter uses native helper for observe and screenshots", async () => {
+  const nativeCalls = [];
+  const screenshotCalls = [];
+  const client = createMacNativeComputerUseClientWithAdapters({
+    executablePath: "/helper/Contents/MacOS/morpheus-computer-use-native",
+    tmpDir: "/tmp",
+    async runNative(targetPath, command, payload) {
+      nativeCalls.push({ targetPath, command, payload });
+      return {
+        accessibilityTrusted: true,
+        cursor: { x: 1, y: 2 },
+        frontmostApp: { name: "Finder" },
+        targetVisibility: "frontmost",
+      };
+    },
+    async screenshotCapture(root, bounds, executablePath) {
+      screenshotCalls.push({ root, bounds, executablePath });
+      return {
+        path: `/tmp/screen-${screenshotCalls.length}.png`,
+        mimeType: "image/png",
+        byteSize: 1,
+        dataUrl: "data:image/png;base64,AA==",
+      };
+    },
+    async removeFile() {},
+  });
+
+  await client.observe();
+
+  assert.deepEqual(nativeCalls, [
+    {
+      targetPath: "/helper/Contents/MacOS/morpheus-computer-use-native",
+      command: "observe",
+      payload: {},
+    },
+  ]);
+  assert.deepEqual(screenshotCalls, [
+    {
+      root: "/tmp",
+      bounds: null,
+      executablePath: "/helper/Contents/MacOS/morpheus-computer-use-native",
+    },
+  ]);
+});
+
 test("computer use exposes headless IPC without adding a right panel view", () => {
   const electronDir = __dirname;
   const preload = fs.readFileSync(path.join(electronDir, "preload.cjs"), "utf8");
@@ -1567,6 +1683,7 @@ test("computer use exposes headless IPC without adding a right panel view", () =
   assert.match(main, /destroyComputerUseManager\(window\)/);
   assert.match(main, /createComputerUseOverlayController/);
   assert.doesNotMatch(nativeBridge, /postMouse\(\.mouseMoved/);
+  assert.doesNotMatch(nativeBridge, /"dataUrl"/);
   assert.doesNotMatch(rightPanel, /Computer Use/);
   assert.doesNotMatch(rightPanel, /computerUse/i);
 });
