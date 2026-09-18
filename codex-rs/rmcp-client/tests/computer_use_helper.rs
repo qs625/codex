@@ -72,9 +72,22 @@ fn packaged_helper(
 ) -> anyhow::Result<PackagedHelper> {
     let helper_bundle = root.path().join("Root Worker Computer Use.app");
     let executable_dir = helper_bundle.join("Contents").join("MacOS");
+    let contents_dir = helper_bundle.join("Contents");
     let helper_executable = executable_dir.join("Root Worker Computer Use");
-    let native_executable = executable_dir.join("morpheus-computer-use-native");
     std::fs::create_dir_all(&executable_dir)?;
+    std::fs::write(
+        contents_dir.join("Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.openai.root-worker-prototype.computer-use.dev</string>
+  <key>CFBundleExecutable</key>
+  <string>Root Worker Computer Use</string>
+</dict>
+</plist>
+"#,
+    )?;
     std::fs::write(
         &helper_executable,
         format!(
@@ -91,15 +104,13 @@ exec node "{}"
             helper_bundle.display(),
             helper_executable.display(),
             helper_bundle.display(),
-            native_executable.display(),
+            helper_executable.display(),
             helper_script.display(),
         ),
     )?;
-    std::fs::write(&native_executable, "native")?;
     #[cfg(unix)]
     {
         std::fs::set_permissions(&helper_executable, std::fs::Permissions::from_mode(0o755))?;
-        std::fs::set_permissions(&native_executable, std::fs::Permissions::from_mode(0o755))?;
     }
 
     let mut env = HashMap::new();
@@ -128,7 +139,7 @@ exec node "{}"
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE"),
-        native_executable.into_os_string(),
+        helper_executable.clone().into_os_string(),
     );
     Ok(PackagedHelper {
         env,
