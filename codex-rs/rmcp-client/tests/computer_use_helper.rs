@@ -26,6 +26,7 @@ use std::os::unix::fs::PermissionsExt;
 struct PackagedHelper {
     env: HashMap<OsString, OsString>,
     executable: PathBuf,
+    stable_app_path: PathBuf,
 }
 
 fn repo_root() -> PathBuf {
@@ -83,11 +84,13 @@ export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
 export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="com.openai.root-worker-prototype.computer-use.dev"
 export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="{}"
 export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="{}"
+export MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH="{}"
 export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="{}"
 exec node "{}"
 "#,
             helper_bundle.display(),
             helper_executable.display(),
+            helper_bundle.display(),
             native_executable.display(),
             helper_script.display(),
         ),
@@ -113,11 +116,15 @@ exec node "{}"
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH"),
-        helper_bundle.into_os_string(),
+        helper_bundle.clone().into_os_string(),
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"),
         helper_executable.clone().into_os_string(),
+    );
+    env.insert(
+        OsString::from("MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"),
+        helper_bundle.clone().into_os_string(),
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE"),
@@ -126,6 +133,7 @@ exec node "{}"
     Ok(PackagedHelper {
         env,
         executable: helper_executable,
+        stable_app_path: helper_bundle,
     })
 }
 
@@ -223,7 +231,7 @@ async fn rmcp_client_can_list_and_call_computer_use_helper() -> anyhow::Result<(
     );
     assert_eq!(
         structured["diagnostics"]["permissionSubject"]["nativeControlSubject"],
-        json!("packaged-native-helper-executable")
+        json!("stable-packaged-native-helper-executable")
     );
 
     client.shutdown().await;
@@ -244,6 +252,10 @@ async fn rmcp_client_can_launch_computer_use_helper_through_env_vars_allowlist()
         "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE",
         helper.executable.as_os_str(),
     );
+    let _stable_guard = EnvVarGuard::set(
+        "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
+        helper.stable_app_path.as_os_str(),
+    );
     let client = RmcpClient::new_stdio_client(
         OsString::from("sh"),
         vec![
@@ -251,9 +263,10 @@ async fn rmcp_client_can_launch_computer_use_helper_through_env_vars_allowlist()
             OsString::from(r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE""#),
         ],
         /*env*/ None,
-        &[McpServerEnvVar::from(
-            "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE",
-        )],
+        &[
+            McpServerEnvVar::from("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"),
+            McpServerEnvVar::from("MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"),
+        ],
         Some(repo_root.clone()),
         Arc::new(LocalStdioServerLauncher::new(repo_root)),
     )

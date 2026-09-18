@@ -1,7 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -12,11 +12,13 @@ const {
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
   COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
   COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_APP_NAME,
   COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH,
   COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
   COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
+  materializeStableComputerUseHelperApp,
   materializeInstalledArtifactWorkerBundle,
   normalizeRuntimeCapsuleTree,
   removeInstalledArtifactTree,
@@ -24,6 +26,7 @@ const {
   resolveInstalledArtifactFileSystem,
   resolveRuntimeLauncherStateRoot,
   runInstalledArtifactWorker,
+  stageComputerUseHelperApp,
   stagePayloadResources,
   updateInstalledArtifacts,
   updateInstalledArtifactsInWorker,
@@ -53,6 +56,92 @@ function compileFakeNativeHelper({ fsOps = fs, sourcePath, targetPath }) {
   fsOps.mkdirSync(path.dirname(targetPath), { recursive: true });
   fsOps.writeFileSync(targetPath, "native-helper", { mode: 0o755 });
   fsOps.chmodSync(targetPath, 0o755);
+}
+
+function writeHelperApp(appPath, { bundleIdentifier = COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER, marker = "helper" } = {}) {
+  const contentsDir = path.join(appPath, "Contents");
+  const executable = path.join(contentsDir, "MacOS", COMPUTER_USE_HELPER_APP_NAME);
+  fs.mkdirSync(path.dirname(executable), { recursive: true });
+  fs.writeFileSync(
+    path.join(contentsDir, "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>${bundleIdentifier}</string>
+</dict>
+</plist>
+`,
+  );
+  fs.writeFileSync(executable, marker, { mode: 0o755 });
+}
+
+function readHelperExecutable(appPath) {
+  return fs.readFileSync(
+    path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+    "utf8",
+  );
+}
+
+function writeLineJson(input, message) {
+  input.write(`${JSON.stringify(message)}\n`);
+}
+
+async function waitForLineJsonResponses(child, count) {
+  const responses = [];
+  let stdoutBuffer = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer += chunk;
+    while (stdoutBuffer.includes("\n")) {
+      const newline = stdoutBuffer.indexOf("\n");
+      const line = stdoutBuffer.slice(0, newline);
+      stdoutBuffer = stdoutBuffer.slice(newline + 1);
+      if (line.trim()) {
+        responses.push(JSON.parse(line));
+      }
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const startedAt = Date.now();
+  while (responses.length < count) {
+    if (child.exitCode !== null) {
+      throw new Error(
+        `helper exited before ${count} responses; exit=${child.exitCode}; stderr=${stderr}`,
+      );
+    }
+    if (Date.now() - startedAt > 5000) {
+      throw new Error(
+        `timed out waiting for ${count} helper responses; received=${responses.length}; stderr=${stderr}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return responses;
+}
+
+async function waitForChildExit(child) {
+  if (child.exitCode !== null) {
+    return;
+  }
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("timed out waiting for helper process to exit"));
+    }, 5000);
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
 }
 
 function handleFakeSwiftc(command, args) {
@@ -517,7 +606,7 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
     );
     assert.ok(
       config.includes(
-        'env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"]',
+        'env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"]',
       ),
     );
     assert.doesNotMatch(config, /computerUseMacNative\.swift/);
@@ -572,6 +661,286 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
   }
 });
 
+test("materializeStableComputerUseHelperApp installs helper into stable path", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, { marker: "first" });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+    });
+
+    assert.deepEqual(result, {
+      status: "installed",
+      sourceAppPath: source,
+      targetAppPath: target,
+    });
+    assert.equal(readHelperExecutable(target), "first");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp updates existing product helper", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, { marker: "new" });
+    writeHelperApp(target, { marker: "old" });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+    });
+
+    assert.deepEqual(result, {
+      status: "updated",
+      sourceAppPath: source,
+      targetAppPath: target,
+    });
+    assert.equal(readHelperExecutable(target), "new");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp keeps existing helper when codesign fails", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, { marker: "new" });
+    writeHelperApp(target, { marker: "old" });
+
+    assert.throws(
+      () =>
+        materializeStableComputerUseHelperApp({
+          sourceAppPath: source,
+          targetAppPath: target,
+          fsOps: fs,
+          runCommand(command) {
+            assert.equal(command, "codesign");
+            throw new Error("codesign failed");
+          },
+        }),
+      /codesign failed/,
+    );
+
+    assert.equal(readHelperExecutable(target), "old");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp skips non-product target", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, { marker: "new" });
+    writeHelperApp(target, {
+      bundleIdentifier: "com.example.other",
+      marker: "other",
+    });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+    });
+
+    assert.equal(result.status, "skipped");
+    assert.match(result.reason, /different app bundle/);
+    assert.equal(readHelperExecutable(target), "other");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materialized stable Computer Use helper launches MCP server", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-launch-"));
+  let child = null;
+  try {
+    const repoRoot = path.resolve(__dirname, "..", "..", "..");
+    const sourceAppDir = path.join(repoRoot, "apps", "root-worker-prototype");
+    const resourceRoot = path.join(root, "resources");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    const payloadElectronPath = path.join(
+      root,
+      "runtime",
+      "Contents",
+      "MacOS",
+      APP_NAME,
+    );
+    fs.mkdirSync(path.dirname(payloadElectronPath), { recursive: true });
+    fs.writeFileSync(
+      payloadElectronPath,
+      "#!/bin/sh\nexec /usr/bin/env node \"$@\"\n",
+      { mode: 0o755 },
+    );
+    stageComputerUseHelperApp(
+      {
+        sourceAppDir,
+        workspace: repoRoot,
+      },
+      resourceRoot,
+      {
+        compileNativeHelper: compileFakeNativeHelper,
+        fsOps: fs,
+      },
+    );
+
+    const source = path.join(
+      resourceRoot,
+      ...COMPUTER_USE_HELPER_APP_RELATIVE_PATH.split(path.sep),
+    );
+    const commands = [];
+    const result = materializeStableComputerUseHelperApp({
+      fsOps: fs,
+      payloadElectronPath,
+      runCommand(command, args, options) {
+        commands.push({ args, command, options });
+      },
+      sourceAppPath: source,
+      targetAppPath: target,
+    });
+
+    assert.equal(result.status, "installed");
+    assert.ok(
+      commands.some(
+        ({ args, command }) =>
+          command === "codesign" &&
+          args.length === 5 &&
+          args.slice(0, 4).join(" ") === "--force --deep --sign -" &&
+          args[4].endsWith(".staged"),
+      ),
+    );
+    assert.match(readHelperExecutable(target), new RegExp(payloadElectronPath));
+
+    child = spawn(
+      path.join(target, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+      [],
+      {
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    writeLineJson(child.stdin, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    writeLineJson(child.stdin, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    });
+
+    const responses = await waitForLineJsonResponses(child, 2);
+    assert.equal(responses[0].result.serverInfo.name, "morpheus-computer-use");
+    assert.equal(responses[1].result.tools.length, 6);
+    child.stdin.end();
+    await waitForChildExit(child);
+  } finally {
+    if (child && child.exitCode === null) {
+      child.kill();
+    }
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("producer does not install stable helper when source commit capture fails", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "capsule-producer-failure-"));
+  try {
+    const sourceAppDir = path.join(root, "source", "apps", "root-worker-prototype");
+    const codexRsDir = path.join(root, "source", "codex-rs");
+    const appServerBinaryPath = path.join(root, "app-server");
+    const compactPath = path.join(root, "COMPACT.md");
+    const stableHelperPath = path.join(
+      root,
+      "Applications",
+      "Root Worker Computer Use.app",
+    );
+    fs.mkdirSync(sourceAppDir, { recursive: true });
+    fs.mkdirSync(codexRsDir, { recursive: true });
+    fs.writeFileSync(appServerBinaryPath, "server", { mode: 0o755 });
+    fs.writeFileSync(compactPath, "compact");
+    writeComputerUseHelperSources(path.join(root, "source"), sourceAppDir);
+    const plan = {
+      appServerBinaryPath,
+      codexRsDir,
+      commandEnv: {},
+      defaultCompactPromptSourcePath: compactPath,
+      sourceAppDir,
+      stableComputerUseHelperAppPath: stableHelperPath,
+      stateRoot: path.join(root, "state"),
+      workspace: path.join(root, "source"),
+    };
+
+    assert.throws(
+      () =>
+        updateInstalledArtifacts(plan, {
+          activationId: "activation-source-commit-failure",
+          defaultFsOps: fs,
+          isElectron: true,
+          loadOriginalFileSystem: () => fs,
+          runCommand(command, args) {
+            if (handleFakeSwiftc(command, args)) {
+              return;
+            }
+            if (command === "pnpm" && args.includes("@electron/packager")) {
+              const out = args.find((arg) => arg.startsWith("--out=")).slice(6);
+              const payload = path.join(
+                out,
+                `${APP_NAME}-darwin-arm64`,
+                `${APP_NAME}.app`,
+              );
+              const executable = path.join(
+                payload,
+                "Contents",
+                "MacOS",
+                APP_NAME,
+              );
+              fs.mkdirSync(path.dirname(executable), { recursive: true });
+              fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o755 });
+              fs.mkdirSync(path.join(payload, "Contents", "Resources"), {
+                recursive: true,
+              });
+              fs.writeFileSync(
+                path.join(payload, "Contents", "Resources", "app.asar"),
+                "asar",
+              );
+              copyFakePackagerExtraResources(args, payload);
+            }
+          },
+          spawnSync(command, args) {
+            assert.equal(command, "git");
+            assert.deepEqual(args, ["rev-parse", "HEAD"]);
+            return { status: 1, stderr: "missing commit" };
+          },
+        }),
+      /git rev-parse HEAD exited with 1: missing commit/,
+    );
+    assert.equal(fs.existsSync(stableHelperPath), false);
+    assert.equal(
+      fs.existsSync(
+        path.join(plan.stateRoot, "incoming", "activation-source-commit-failure"),
+      ),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("producer writes a complete Electron app Capsule under incoming", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "capsule-producer-"));
   try {
@@ -590,6 +959,11 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
       commandEnv: {},
       defaultCompactPromptSourcePath: compactPath,
       sourceAppDir,
+      stableComputerUseHelperAppPath: path.join(
+        root,
+        "Applications",
+        "Root Worker Computer Use.app",
+      ),
       stateRoot: path.join(root, "state"),
       workspace: path.join(root, "source"),
     };
@@ -667,6 +1041,11 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
       },
     });
     assert.equal(result.activationId, "activation-test");
+    assert.equal(result.computerUseHelper.status, "pending-selection");
+    assert.equal(
+      result.computerUseHelper.targetAppPath,
+      plan.stableComputerUseHelperAppPath,
+    );
     for (const generated of GENERATED_SOURCE_DIR_NAMES) {
       assert.ok(packagerArgs.includes(`--ignore=^/${generated}($|/)`));
     }

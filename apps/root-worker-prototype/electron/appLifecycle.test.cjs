@@ -1,4 +1,7 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -6,6 +9,35 @@ const {
   createClientRelaunchNotificationHandler,
   createInstalledArtifactUpdateLifecycleAdapter,
 } = require("./appLifecycle.cjs");
+
+const COMPUTER_USE_HELPER_APP_NAME = "Root Worker Computer Use";
+const COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER =
+  "com.openai.root-worker-prototype.computer-use.dev";
+
+function writeComputerUseHelperApp(appPath, marker = "helper") {
+  const contentsDir = path.join(appPath, "Contents");
+  const executable = path.join(contentsDir, "MacOS", COMPUTER_USE_HELPER_APP_NAME);
+  fs.mkdirSync(path.dirname(executable), { recursive: true });
+  fs.writeFileSync(
+    path.join(contentsDir, "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}</string>
+</dict>
+</plist>
+`,
+  );
+  fs.writeFileSync(executable, marker, { mode: 0o755 });
+}
+
+function readComputerUseHelperExecutable(appPath) {
+  return fs.readFileSync(
+    path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+    "utf8",
+  );
+}
 
 test("complete candidate selection exits with the capsule switch code", async () => {
   const events = [];
@@ -231,6 +263,151 @@ test("selection failure removes only the unselected incoming candidate", async (
   assert.match(result.reason, /invalid Capsule/);
   assert.deepEqual(cleaned, ["/tmp/incoming/candidate-1"]);
   assert.equal(handoffMarkers, 0);
+});
+
+test("selection failure does not replace the stable Computer Use helper", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lifecycle-stable-helper-"));
+  try {
+    const cleaned = [];
+    const stableHelperPath = path.join(
+      root,
+      "Applications",
+      "Root Worker Computer Use.app",
+    );
+    writeComputerUseHelperApp(stableHelperPath, "old");
+    const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
+      async resolvePlan() {
+        return {};
+      },
+      runtimeLauncher: {
+        supported: true,
+        async selectCandidate() {
+          throw new Error("launcher unavailable");
+        },
+      },
+      async updateArtifacts() {
+        return {
+          ok: true,
+          activationId: "candidate-1",
+          incomingRoot: path.join(root, "incoming", "candidate-1"),
+          releaseId: "release-1",
+          computerUseHelper: {
+            status: "pending-selection",
+            targetAppPath: stableHelperPath,
+          },
+          manifest: { target: { os: "darwin", arch: "arm64" } },
+        };
+      },
+      async cleanupPreparedArtifact(target) {
+        cleaned.push(target);
+      },
+    });
+
+    const result = await lifecycle.requestUpdateAndRelaunch("update");
+
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /launcher unavailable/);
+    assert.deepEqual(cleaned, [path.join(root, "incoming", "candidate-1")]);
+    assert.equal(readComputerUseHelperExecutable(stableHelperPath), "old");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("selected candidate installs stable Computer Use helper from selected artifact", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lifecycle-stable-helper-"));
+  try {
+    const events = [];
+    const commands = [];
+    const stableHelperPath = path.join(
+      root,
+      "Applications",
+      "Root Worker Computer Use.app",
+    );
+    const selectedRoot = path.join(root, "runtime-launcher", "artifacts", "digest");
+    const payloadAppPath = path.join(
+      selectedRoot,
+      "payload",
+      "Root Worker Runtime.app",
+    );
+    const selectedHelperPath = path.join(
+      payloadAppPath,
+      "Contents",
+      "Resources",
+      "computer-use-helper",
+      "Root Worker Computer Use.app",
+    );
+    fs.mkdirSync(path.join(payloadAppPath, "Contents", "MacOS"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(payloadAppPath, "Contents", "MacOS", "Root Worker Runtime"),
+      "#!/bin/sh\n",
+      { mode: 0o755 },
+    );
+    writeComputerUseHelperApp(selectedHelperPath, "new");
+    const lifecycle = createInstalledArtifactUpdateLifecycleAdapter({
+      appExit(code) {
+        events.push({ type: "exit", code });
+      },
+      async resolvePlan() {
+        return {};
+      },
+      runtimeLauncher: {
+        supported: true,
+        async selectCandidate(request) {
+          return {
+            activationId: request.activationId,
+            releaseId: `sha256:${"a".repeat(64)}`,
+            control: {
+              selected: {
+                kind: "external",
+                capsule: { root: selectedRoot },
+              },
+            },
+          };
+        },
+      },
+      async updateArtifacts() {
+        return {
+          ok: true,
+          activationId: "candidate-1",
+          incomingRoot: path.join(root, "incoming", "candidate-1"),
+          releaseId: `sha256:${"a".repeat(64)}`,
+          computerUseHelper: {
+            status: "pending-selection",
+            targetAppPath: stableHelperPath,
+          },
+          manifest: { target: { os: "darwin", arch: "arm64" } },
+        };
+      },
+      runCommand(command, args, options) {
+        commands.push({ args, command, options });
+      },
+    });
+
+    const result = await lifecycle.requestUpdateAndRelaunch("update");
+
+    assert.equal(result.ok, true);
+    assert.equal(result.computerUseHelper.status, "installed");
+    assert.ok(
+      commands.some(
+        ({ args, command }) =>
+          command === "codesign" &&
+          args.length === 5 &&
+          args.slice(0, 4).join(" ") === "--force --deep --sign -" &&
+          args[4].endsWith(".staged"),
+      ),
+    );
+    assert.deepEqual(events, [{ type: "exit", code: CAPSULE_SWITCH_EXIT_CODE }]);
+    assert.ok(
+      readComputerUseHelperExecutable(stableHelperPath).includes(
+        path.join(selectedRoot, "payload"),
+      ),
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("disabled installed update does not mark expected restart handoff", async () => {

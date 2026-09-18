@@ -1,5 +1,15 @@
 "use strict";
 
+const { spawnSync } = require("node:child_process");
+const path = require("node:path");
+const {
+  APP_NAME,
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  COMPUTER_USE_STABLE_HELPER_APP_PATH,
+  PAYLOAD_RELATIVE_PATH,
+  materializeStableComputerUseHelperApp,
+} = require("./installedArtifactUpdate.cjs");
+
 // Hand the selected Runtime Capsule back to its supervising launcher. This is
 // distinct from exit 0, which means the user intentionally closed the app.
 const CAPSULE_SWITCH_EXIT_CODE = 75;
@@ -212,6 +222,8 @@ function createInstalledArtifactUpdateLifecycleAdapter({
   resolvePlan,
   runtimeLauncher,
   updateArtifacts,
+  materializeComputerUseHelper = materializeSelectedComputerUseHelperApp,
+  runCommand = runLifecycleCommand,
   broadcastStatus,
   gracefulShutdownAppServer,
   logger = console,
@@ -236,6 +248,8 @@ function createInstalledArtifactUpdateLifecycleAdapter({
         resolvePlan,
         runtimeLauncher,
         updateArtifacts,
+        materializeComputerUseHelper,
+        runCommand,
         broadcastStatus,
         logger,
         reason,
@@ -258,6 +272,8 @@ async function resolveAndRunInstalledArtifactUpdate({
   resolvePlan,
   runtimeLauncher,
   updateArtifacts,
+  materializeComputerUseHelper,
+  runCommand,
   broadcastStatus,
   gracefulShutdownAppServer,
   logger,
@@ -301,6 +317,8 @@ async function resolveAndRunInstalledArtifactUpdate({
     plan,
     runtimeLauncher,
     updateArtifacts,
+    materializeComputerUseHelper,
+    runCommand,
     broadcastStatus,
     logger,
     reason,
@@ -316,6 +334,8 @@ async function runInstalledArtifactUpdate({
   plan,
   runtimeLauncher,
   updateArtifacts,
+  materializeComputerUseHelper,
+  runCommand,
   broadcastStatus,
   gracefulShutdownAppServer,
   logger,
@@ -343,6 +363,7 @@ async function runInstalledArtifactUpdate({
   });
   let update = null;
   let selected = null;
+  let computerUseHelper = null;
   try {
     update = await updateArtifacts(plan);
     if (!update?.ok || !update.activationId || !update.releaseId) {
@@ -366,12 +387,31 @@ async function runInstalledArtifactUpdate({
         "Runtime Capsule selection result does not match the produced candidate",
       );
     }
+    try {
+      computerUseHelper = await materializeComputerUseHelper?.({
+        plan,
+        runCommand,
+        runtimeLauncher,
+        selected,
+        update,
+      });
+    } catch (error) {
+      computerUseHelper = {
+        status: "failed",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+      logger?.warn?.(
+        "[prototype] stable Computer Use helper materialization failed",
+        JSON.stringify({ reason: computerUseHelper.reason }),
+      );
+    }
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
         phase: "selected",
         activationId: update.activationId,
         releaseId: update.releaseId,
+        ...(computerUseHelper ? { computerUseHelper } : {}),
         ...requestIdFields(requestId),
         reason,
       },
@@ -429,6 +469,7 @@ async function runInstalledArtifactUpdate({
       reloaded: false,
       updated: true,
       selected,
+      ...(computerUseHelper ? { computerUseHelper } : {}),
       relaunch,
       ...requestIdFields(requestId),
       reason,
@@ -468,6 +509,86 @@ async function cleanupUnselectedCandidate(cleanup, incomingRoot, logger) {
   }
 }
 
+async function materializeSelectedComputerUseHelperApp({
+  runCommand,
+  runtimeLauncher,
+  selected,
+  update,
+} = {}) {
+  if (update?.computerUseHelper?.status !== "pending-selection") {
+    return update?.computerUseHelper ?? null;
+  }
+  const selectedRoot = selectedRuntimeCapsuleRoot(selected, runtimeLauncher);
+  if (!selectedRoot) {
+    return {
+      status: "skipped",
+      reason: "selected Runtime Capsule root is unavailable",
+      targetAppPath:
+        update.computerUseHelper.targetAppPath ??
+        COMPUTER_USE_STABLE_HELPER_APP_PATH,
+    };
+  }
+  const payloadAppPath = path.join(
+    selectedRoot,
+    ...PAYLOAD_RELATIVE_PATH.split(path.sep),
+  );
+  return materializeStableComputerUseHelperApp({
+    payloadElectronPath: path.join(
+      payloadAppPath,
+      "Contents",
+      "MacOS",
+      APP_NAME,
+    ),
+    sourceAppPath: path.join(
+      payloadAppPath,
+      "Contents",
+      "Resources",
+      ...COMPUTER_USE_HELPER_APP_RELATIVE_PATH.split(path.sep),
+    ),
+    runCommand,
+    targetAppPath:
+      update.computerUseHelper.targetAppPath ??
+      COMPUTER_USE_STABLE_HELPER_APP_PATH,
+  });
+}
+
+function selectedRuntimeCapsuleRoot(selected, runtimeLauncher) {
+  const selectedCapsuleRoot = normalizeString(
+    selected?.control?.selected?.capsule?.root,
+  );
+  if (selectedCapsuleRoot) {
+    return selectedCapsuleRoot;
+  }
+  const digest = releaseDigest(selected?.releaseId);
+  const stateRoot = normalizeString(runtimeLauncher?.stateRoot);
+  return digest && stateRoot ? path.join(stateRoot, "artifacts", digest) : null;
+}
+
+function releaseDigest(releaseId) {
+  const value = normalizeString(releaseId);
+  const match = /^sha256:([0-9a-f]{64})$/.exec(value ?? "");
+  return match?.[1] ?? null;
+}
+
+function runLifecycleCommand(command, args, options = {}) {
+  const result = (options.spawnSync ?? spawnSync)(command, args, {
+    cwd: options.cwd,
+    encoding: "utf8",
+    env: options.env,
+    stdio: options.stdio ?? "pipe",
+  });
+  if (result?.error) {
+    throw result.error;
+  }
+  if (result?.status !== 0) {
+    const stderr = normalizeString(result?.stderr);
+    throw new Error(
+      `${command} ${args.join(" ")} exited with ${String(result?.status)}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  return result.stdout ?? "";
+}
+
 function installedUpdateFailure(
   error,
   { broadcastStatus, logger, phase, reason, requestId, update } = {},
@@ -505,6 +626,10 @@ function normalizeClientRelaunchRequestId(requestId) {
   return typeof requestId === "string" && requestId.trim()
     ? requestId.trim()
     : null;
+}
+
+function normalizeString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function requestIdFields(requestId) {
