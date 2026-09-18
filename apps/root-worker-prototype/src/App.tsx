@@ -94,7 +94,6 @@ import {
   isRootThread,
   isSubagentThread,
   markThreadCommandExecutionRunning,
-  mergeThreadLifecycleStatus,
   mergeDefaultCollapsedProjectIds,
   normalizeProjectCwd,
   normalizeThreadSnapshot,
@@ -106,6 +105,7 @@ import {
   queuePendingThreadUpdate,
   rootAgentPathFromTaskName,
   updateThreadItem,
+  updateThreadLifecycleStatusFromNotification,
   updateThreadSkills,
   updateThreadTurnLifecycle,
   updateThreadTurnNotification,
@@ -1207,14 +1207,9 @@ function App() {
     threadId: string,
     lifecycleStatus: Thread["lifecycleStatus"],
   ) {
-    updateThreadLocally(threadId, (thread) => ({
-      ...thread,
-      lifecycleStatus: mergeThreadLifecycleStatus(
-        thread.lifecycleStatus,
-        lifecycleStatus,
-        { authoritative: true },
-      ),
-    }));
+    updateThreadLocally(threadId, (thread) =>
+      updateThreadLifecycleStatusFromNotification(thread, lifecycleStatus),
+    );
   }
 
   function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
