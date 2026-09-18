@@ -417,13 +417,86 @@ test("computer use MCP permissions_status resolves native helper executable from
   }
 });
 
-test("computer use MCP stdio handles initialize, tools/list, and tools/call", async () => {
+test("computer use MCP stdio handles standard framed initialize, tools/list, and tools/call", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const server = createComputerUseMcpServer({
+    managerFactory: managerFactoryWithNative(fakeNativeClient()),
+    diagnosticsFactory: () => ({
+      contract: "helper-as-mcp-server",
+      mcpServer: { entrypoint: "/helper/server.mjs" },
+      permissionSubject: {
+        bundleIdentifier: "com.openai.root-worker.computer-use",
+        bundlePath: "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app",
+        executablePath:
+          "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app/Contents/MacOS/morpheus-computer-use-native",
+        packagedHelperBundle: true,
+        packagedNativeHelperExecutable: true,
+        stablePermissionSubject: true,
+        nativeControlSubject: "packaged-native-helper-executable",
+      },
+    }),
+  });
+  const done = runComputerUseMcpServer({ input, output, server });
+  const responses = collectFramedMessages(output);
+
+  writeFrame(input, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {},
+  });
+  writeFrame(input, {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/list",
+    params: {},
+  });
+  writeFrame(input, {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: {
+      name: "computer.permissions_status",
+      arguments: { includeObservation: false },
+    },
+  });
+
+  await waitFor(() => responses.length >= 3);
+  input.end();
+  await done;
+
+  assert.equal(responses[0].result.serverInfo.name, "morpheus-computer-use");
+  assert.equal(responses[1].result.tools.length, 6);
+  assert.equal(
+    responses[2].result.structuredContent.diagnostics.permissionSubject
+      .packagedNativeHelperExecutable,
+    true,
+  );
+  assert.equal(
+    responses[2].result.structuredContent.diagnostics.permissionSubject
+      .stablePermissionSubject,
+    true,
+  );
+  assert.equal(
+    responses[2].result.structuredContent.diagnostics.permissionSubject
+      .nativeControlSubject,
+    "packaged-native-helper-executable",
+  );
+});
+
+test("computer use MCP stdio keeps legacy line JSON debug mode", async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   const server = createComputerUseMcpServer({
     managerFactory: managerFactoryWithNative(fakeNativeClient()),
   });
-  const done = runComputerUseMcpServer({ input, output, server });
+  const done = runComputerUseMcpServer({
+    input,
+    output,
+    server,
+    transportMode: "line-json",
+  });
   const lines = [];
   output.setEncoding("utf8");
   output.on("data", (chunk) => {
@@ -454,6 +527,42 @@ test("computer use MCP stdio handles initialize, tools/list, and tools/call", as
   assert.equal(responses[1].result.tools.length, 6);
   assert.equal(responses[2].result.structuredContent.tool, "computer.observe");
 });
+
+function writeFrame(input, message) {
+  const body = JSON.stringify(message);
+  input.write(
+    `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`,
+  );
+}
+
+function collectFramedMessages(output) {
+  const messages = [];
+  let buffer = Buffer.alloc(0);
+  output.on("data", (chunk) => {
+    buffer = Buffer.concat([
+      buffer,
+      Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+    ]);
+    while (true) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        return;
+      }
+      const header = buffer.subarray(0, headerEnd).toString("ascii");
+      const lengthMatch = /^Content-Length:\s*(\d+)\s*$/im.exec(header);
+      assert.ok(lengthMatch, `missing Content-Length header: ${header}`);
+      const bodyStart = headerEnd + 4;
+      const bodyEnd = bodyStart + Number(lengthMatch[1]);
+      if (buffer.length < bodyEnd) {
+        return;
+      }
+      const body = buffer.subarray(bodyStart, bodyEnd).toString("utf8");
+      buffer = buffer.subarray(bodyEnd);
+      messages.push(JSON.parse(body));
+    }
+  });
+  return messages;
+}
 
 async function waitFor(predicate) {
   const started = Date.now();
