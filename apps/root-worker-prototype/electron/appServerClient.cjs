@@ -38,6 +38,10 @@ const PACKAGED_CONFIG_RELATIVE_PATH = path.join("default-config", "config.toml")
 const COMPUTER_USE_HELPER_APP_NAME = "Root Worker Computer Use";
 const COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER =
   "com.openai.root-worker-prototype.computer-use.dev";
+const COMPUTER_USE_STABLE_HELPER_APP_PATH = path.join(
+  "/Applications",
+  `${COMPUTER_USE_HELPER_APP_NAME}.app`,
+);
 const COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
   "computer-use-helper",
   `${COMPUTER_USE_HELPER_APP_NAME}.app`,
@@ -529,7 +533,12 @@ function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {
   env.HOME = home;
   env.MORPHEUS_HOME = baseEnv.MORPHEUS_HOME ?? resolvePrototypeMorpheusHome(env);
   const helper = findPackagedComputerUseHelper(environmentOptions);
-  if (helper) {
+  env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH =
+    helper?.stableHelperAppPath ??
+    environmentOptions.stableComputerUseHelperAppPath ??
+    baseEnv.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
+    COMPUTER_USE_STABLE_HELPER_APP_PATH;
+  if (helper?.executablePath) {
     env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
     env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helper.executablePath;
     env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID = helper.bundleIdentifier;
@@ -1016,22 +1025,74 @@ function findPackagedAppServerBinaryPath(options = {}) {
 
 function findPackagedComputerUseHelper(options = {}) {
   const existsSync = options.existsSync ?? fs.existsSync;
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
   const resourcesPath = options.resourcesPath ?? currentResourcesPath();
+  const stableHelperAppPath =
+    options.stableComputerUseHelperAppPath ??
+    process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
+    COMPUTER_USE_STABLE_HELPER_APP_PATH;
+  const stableExecutablePath = path.join(
+    stableHelperAppPath,
+    "Contents",
+    "MacOS",
+    COMPUTER_USE_HELPER_APP_NAME,
+  );
+  const stableExecutableExists = existsSync(stableExecutablePath);
+  const stableHelperValid =
+    stableExecutableExists &&
+    isComputerUseHelperBundle(stableHelperAppPath, { readFileSync });
+  if (stableHelperValid) {
+    return {
+      executablePath: stableExecutablePath,
+      bundleIdentifier: COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
+      bundlePath: stableHelperAppPath,
+      stableHelperAppPath,
+      stable: true,
+    };
+  }
+  const stableFallbackReason = stableExecutableExists
+    ? "stable Computer Use helper path contains a different app bundle"
+    : "stable Computer Use helper app is unavailable";
   if (!resourcesPath) {
-    return null;
+    return {
+      stableHelperAppPath,
+      fallbackReason: stableExecutableExists
+        ? stableFallbackReason
+        : "packaged runtime resources are unavailable",
+    };
   }
   const executablePath = path.join(
     resourcesPath,
     COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
   );
   if (!existsSync(executablePath)) {
-    return null;
+    return {
+      stableHelperAppPath,
+      fallbackReason: "release-local Computer Use helper is unavailable",
+    };
   }
   return {
     executablePath,
     bundleIdentifier: COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
     bundlePath: path.join(resourcesPath, COMPUTER_USE_HELPER_APP_RELATIVE_PATH),
+    stableHelperAppPath,
+    stable: false,
+    fallbackReason: stableFallbackReason,
   };
+}
+
+function isComputerUseHelperBundle(appPath, { readFileSync = fs.readFileSync } = {}) {
+  try {
+    const plist = readFileSync(
+      path.join(appPath, "Contents", "Info.plist"),
+      "utf8",
+    );
+    return plist.includes(
+      `<string>${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}</string>`,
+    );
+  } catch {
+    return false;
+  }
 }
 
 function resolveWorkspaceAppServerBinary(options = {}) {

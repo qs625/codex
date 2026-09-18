@@ -552,13 +552,21 @@ function defaultPermissionDiagnostics() {
     process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE ?? null;
   const helperBundleIdentifier =
     process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID ?? null;
+  const stableHelperAppPath =
+    process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
+    "/Applications/Root Worker Computer Use.app";
   const packagedHelperBundle = Boolean(helperBundleIdentifier && helperBundlePath);
+  const usesStableHelperApp =
+    packagedHelperBundle && pathsEqual(helperBundlePath, stableHelperAppPath);
   const resolvedNativeHelperExecutable = resolveNativeHelperExecutable({
     helperBundlePath,
     nativeHelperExecutable: configuredNativeHelperExecutable,
   });
   const packagedNativeHelperExecutable = Boolean(
     packagedHelperBundle && resolvedNativeHelperExecutable,
+  );
+  const stablePermissionSubject = Boolean(
+    packagedNativeHelperExecutable && usesStableHelperApp,
   );
   return {
     contract: "helper-as-mcp-server",
@@ -582,19 +590,37 @@ function defaultPermissionDiagnostics() {
       helperExecutablePath: helperExecutable ?? null,
       nativeHelperExecutablePath:
         resolvedNativeHelperExecutable ?? configuredNativeHelperExecutable,
+      stableHelperAppPath,
+      effectiveHelperAppPath: helperBundlePath,
+      usesStableHelperApp,
       packagedHelperBundle,
       packagedNativeHelperExecutable,
-      stablePermissionSubject: packagedNativeHelperExecutable,
+      stablePermissionSubject,
       nativeControlSubject: packagedNativeHelperExecutable
-        ? "packaged-native-helper-executable"
+        ? stablePermissionSubject
+          ? "stable-packaged-native-helper-executable"
+          : "release-local-packaged-native-helper-executable"
         : packagedHelperBundle
           ? "delegated-swift-script-and-screencapture"
           : "repo-local-node-process",
       note: packagedNativeHelperExecutable
-        ? "Authorize the packaged Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by the packaged native helper executable inside this helper app bundle."
+        ? stablePermissionSubject
+          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by the packaged native helper executable inside this stable helper app bundle."
+          : "This packaged Computer Use helper is release-local, so macOS authorization may not remain stable across Runtime Capsule releases. Native desktop control and screenshots are executed by the packaged native helper executable inside this helper app bundle."
         : "Authorize the process macOS presents for Screen Recording and Accessibility. The packaged helper bundle is the intended MCP server identity, but native desktop calls are delegated in this mode, so the stable TCC permission subject is not proven.",
     },
   };
+}
+
+function pathsEqual(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  return pathWithoutTrailingSlash(left) === pathWithoutTrailingSlash(right);
+}
+
+function pathWithoutTrailingSlash(value) {
+  return String(value).replace(/\/+$/, "");
 }
 
 function resolveNativeHelperExecutable({
@@ -644,7 +670,9 @@ function permissionLimitations(diagnostics) {
     limitations.push({
       code: "native-permission-subject-not-contained",
       message:
-        "The packaged helper bundle starts the MCP server, but this mode has no packaged native helper executable, so native desktop control may still delegate to Swift and screencapture and macOS may require authorization for that delegated process.",
+        subject.packagedNativeHelperExecutable
+          ? "The helper app bundle is release-local instead of the configured stable Computer Use helper app path; macOS may require authorization again after a Runtime Capsule release changes."
+          : "The packaged helper bundle starts the MCP server, but this mode has no packaged native helper executable, so native desktop control may still delegate to Swift and screencapture and macOS may require authorization for that delegated process.",
     });
   }
   return limitations;
@@ -787,6 +815,21 @@ function resolveComputerUseManagerModule() {
   );
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+function isMainEntrypoint(argv1, moduleUrl) {
+  if (!argv1) {
+    return false;
+  }
+  const modulePath = fileURLToPath(moduleUrl);
+  if (argv1 === modulePath) {
+    return true;
+  }
+  try {
+    return fsSync.realpathSync(argv1) === fsSync.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+
+if (isMainEntrypoint(process.argv[1], import.meta.url)) {
   await runComputerUseMcpServer();
 }

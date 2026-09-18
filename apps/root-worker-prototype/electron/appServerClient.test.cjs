@@ -21,6 +21,17 @@ const {
   writeTokenFile,
 } = require("./appServerClient.cjs");
 
+function computerUseHelperInfoPlist(bundleId = "com.openai.root-worker-prototype.computer-use.dev") {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>${bundleId}</string>
+</dict>
+</plist>
+`;
+}
+
 function networkInterfaces(address) {
   return {
     en0: [
@@ -75,12 +86,20 @@ test("app-server environment supports sparse desktop launch env", () => {
   assert.equal(env.CODEX_APP_SERVER_CMD, undefined);
 });
 
-test("app-server environment exposes packaged Computer Use helper identity", () => {
+test("app-server environment prefers stable Computer Use helper identity", () => {
   const resourcesPath = "/Applications/Root Worker Runtime.app/Contents/Resources";
-  const helperExecutable = path.join(
+  const releaseHelperExecutable = path.join(
     resourcesPath,
     "computer-use-helper",
     "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const stableHelperAppPath =
+    "/Applications/Root Worker Computer Use.app";
+  const stableHelperExecutable = path.join(
+    stableHelperAppPath,
     "Contents",
     "MacOS",
     "Root Worker Computer Use",
@@ -92,16 +111,58 @@ test("app-server environment exposes packaged Computer Use helper identity", () 
     },
     {
       resourcesPath,
-      existsSync: (candidate) => candidate === helperExecutable,
+      existsSync: (candidate) =>
+        candidate === stableHelperExecutable ||
+        candidate === releaseHelperExecutable,
+      readFileSync: () => computerUseHelperInfoPlist(),
+      stableComputerUseHelperAppPath: stableHelperAppPath,
     },
   );
 
   assert.equal(env.MORPHEUS_COMPUTER_USE_HELPER_MODE, "packaged-helper-app");
-  assert.equal(env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE, helperExecutable);
+  assert.equal(
+    env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+    stableHelperExecutable,
+  );
   assert.equal(
     env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
     "com.openai.root-worker-prototype.computer-use.dev",
   );
+  assert.equal(
+    env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    stableHelperAppPath,
+  );
+  assert.equal(
+    env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH,
+    stableHelperAppPath,
+  );
+});
+
+test("app-server environment falls back to release-local Computer Use helper", () => {
+  const resourcesPath = "/Applications/Root Worker Runtime.app/Contents/Resources";
+  const helperExecutable = path.join(
+    resourcesPath,
+    "computer-use-helper",
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const stableHelperAppPath =
+    "/Applications/Root Worker Computer Use.app";
+  const env = buildAppServerEnvironment(
+    {
+      HOME: "/Users/alice",
+      PATH: "/usr/bin",
+    },
+    {
+      resourcesPath,
+      existsSync: (candidate) => candidate === helperExecutable,
+      stableComputerUseHelperAppPath: stableHelperAppPath,
+    },
+  );
+
+  assert.equal(env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE, helperExecutable);
   assert.equal(
     env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
     path.join(
@@ -109,6 +170,10 @@ test("app-server environment exposes packaged Computer Use helper identity", () 
       "computer-use-helper",
       "Root Worker Computer Use.app",
     ),
+  );
+  assert.equal(
+    env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH,
+    stableHelperAppPath,
   );
 });
 
@@ -199,7 +264,7 @@ test("default app-server binary follows the selected external runtime resources"
   );
 });
 
-test("packaged Computer Use helper follows the selected runtime resources", () => {
+test("packaged Computer Use helper falls back to selected runtime resources", () => {
   const resourcesPath = "/runtime/payload/Root Worker Runtime.app/Contents/Resources";
   const executablePath = path.join(
     resourcesPath,
@@ -222,6 +287,76 @@ test("packaged Computer Use helper follows the selected runtime resources", () =
         "computer-use-helper",
         "Root Worker Computer Use.app",
       ),
+      stableHelperAppPath: "/Applications/Root Worker Computer Use.app",
+      stable: false,
+      fallbackReason: "stable Computer Use helper app is unavailable",
+    },
+  );
+});
+
+test("packaged Computer Use helper prefers stable app path", () => {
+  const resourcesPath = "/runtime/payload/Root Worker Runtime.app/Contents/Resources";
+  const stableHelperAppPath = "/tmp/Root Worker Computer Use.app";
+  const stableExecutable = path.join(
+    stableHelperAppPath,
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  assert.deepEqual(
+    findPackagedComputerUseHelper({
+      resourcesPath,
+      stableComputerUseHelperAppPath: stableHelperAppPath,
+      existsSync: (candidate) => candidate === stableExecutable,
+      readFileSync: () => computerUseHelperInfoPlist(),
+    }),
+    {
+      executablePath: stableExecutable,
+      bundleIdentifier: "com.openai.root-worker-prototype.computer-use.dev",
+      bundlePath: stableHelperAppPath,
+      stableHelperAppPath,
+      stable: true,
+    },
+  );
+});
+
+test("packaged Computer Use helper ignores non-product stable app path", () => {
+  const resourcesPath = "/runtime/payload/Root Worker Runtime.app/Contents/Resources";
+  const stableHelperAppPath = "/tmp/Root Worker Computer Use.app";
+  const stableExecutable = path.join(
+    stableHelperAppPath,
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const releaseExecutable = path.join(
+    resourcesPath,
+    "computer-use-helper",
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  assert.deepEqual(
+    findPackagedComputerUseHelper({
+      resourcesPath,
+      stableComputerUseHelperAppPath: stableHelperAppPath,
+      existsSync: (candidate) =>
+        candidate === stableExecutable || candidate === releaseExecutable,
+      readFileSync: () => computerUseHelperInfoPlist("com.example.other"),
+    }),
+    {
+      executablePath: releaseExecutable,
+      bundleIdentifier: "com.openai.root-worker-prototype.computer-use.dev",
+      bundlePath: path.join(
+        resourcesPath,
+        "computer-use-helper",
+        "Root Worker Computer Use.app",
+      ),
+      stableHelperAppPath,
+      stable: false,
+      fallbackReason:
+        "stable Computer Use helper path contains a different app bundle",
     },
   );
 });

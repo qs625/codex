@@ -32,6 +32,10 @@ const COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
 const COMPUTER_USE_HELPER_APP_NAME = "Root Worker Computer Use";
 const COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER =
   "com.openai.root-worker-prototype.computer-use.dev";
+const COMPUTER_USE_STABLE_HELPER_APP_PATH = path.join(
+  "/Applications",
+  `${COMPUTER_USE_HELPER_APP_NAME}.app`,
+);
 const COMPUTER_USE_HELPER_RESOURCE_DIR_NAME = "computer-use-helper";
 const COMPUTER_USE_HELPER_APP_RELATIVE_PATH = path.join(
   COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
@@ -289,6 +293,13 @@ function updateInstalledArtifacts(plan, options = {}) {
       os: "darwin",
       fsOps,
     });
+    const computerUseHelper = {
+      status: "pending-selection",
+      targetAppPath:
+        options.stableComputerUseHelperAppPath ??
+        plan.stableComputerUseHelperAppPath ??
+        COMPUTER_USE_STABLE_HELPER_APP_PATH,
+    };
     return {
       ok: true,
       activationId,
@@ -296,6 +307,7 @@ function updateInstalledArtifacts(plan, options = {}) {
       releaseId: manifest.releaseId,
       sourceCommit,
       manifest,
+      computerUseHelper,
     };
   } catch (error) {
     let failure = error;
@@ -495,12 +507,21 @@ function stageComputerUseHelperApp(
 }
 
 function computerUseHelperLauncherScript() {
+  return computerUseHelperLauncherScriptForPayload({
+    payloadElectronPath: `$HELPER_CONTENTS_DIR/../../../../MacOS/${APP_NAME}`,
+  });
+}
+
+function computerUseHelperLauncherScriptForPayload({ payloadElectronPath }) {
+  const payloadElectronAssignment = path.isAbsolute(payloadElectronPath)
+    ? shellSingleQuote(payloadElectronPath)
+    : `"${payloadElectronPath}"`;
   return `#!/bin/sh
 set -eu
 HELPER_CONTENTS_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 HELPER_BUNDLE_DIR="$(CDPATH= cd -- "$HELPER_CONTENTS_DIR/.." && pwd)"
 SERVER_DIR="$HELPER_CONTENTS_DIR/Resources/server"
-PAYLOAD_ELECTRON="$HELPER_CONTENTS_DIR/../../../../MacOS/${APP_NAME}"
+PAYLOAD_ELECTRON=${payloadElectronAssignment}
 export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
 export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}"
 export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_BUNDLE_DIR"
@@ -510,6 +531,10 @@ export MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT="$SERVER_DIR/${COMPUTER_USE_NATIVE_SC
 export ELECTRON_RUN_AS_NODE=1
 exec "$PAYLOAD_ELECTRON" "$SERVER_DIR/morpheus-computer-use-mcp.mjs"
 `;
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 function compileComputerUseNativeHelper({
@@ -571,11 +596,153 @@ function packagedComputerUseMcpConfigToml() {
   return `[mcp_servers.computer_use]
 command = "sh"
 args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\""]
-env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"]
+env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"]
 startup_timeout_sec = 5
 tool_timeout_sec = 30
 default_tools_approval_mode = "prompt"
 `;
+}
+
+function materializeStableComputerUseHelperApp({
+  fsOps = resolveInstalledArtifactFileSystem(),
+  payloadElectronPath,
+  runCommand,
+  sourceAppPath,
+  targetAppPath = COMPUTER_USE_STABLE_HELPER_APP_PATH,
+} = {}) {
+  if (!sourceAppPath || !targetAppPath) {
+    return {
+      status: "skipped",
+      reason: "stable Computer Use helper source or target path is unavailable",
+      sourceAppPath: sourceAppPath ?? null,
+      targetAppPath: targetAppPath ?? null,
+    };
+  }
+  if (!isComputerUseHelperBundle(sourceAppPath, fsOps)) {
+    return {
+      status: "skipped",
+      reason: "source app is not the packaged Computer Use helper",
+      sourceAppPath,
+      targetAppPath,
+    };
+  }
+  if (
+    fsOps.existsSync(targetAppPath) &&
+    !isComputerUseHelperBundle(targetAppPath, fsOps)
+  ) {
+    return {
+      status: "skipped",
+      reason: "target path already contains a different app bundle",
+      sourceAppPath,
+      targetAppPath,
+    };
+  }
+
+  const targetParent = path.dirname(targetAppPath);
+  fsOps.mkdirSync(targetParent, { recursive: true, mode: 0o755 });
+  const operation = fsOps.existsSync(targetAppPath) ? "updated" : "installed";
+  const suffix = `${process.pid}-${Date.now()}-${crypto.randomUUID()}`;
+  const stagedPath = path.join(
+    targetParent,
+    `.${path.basename(targetAppPath)}.${suffix}.staged`,
+  );
+  const backupPath = path.join(
+    targetParent,
+    `.${path.basename(targetAppPath)}.${suffix}.previous`,
+  );
+  try {
+    fsOps.rmSync(stagedPath, { force: true, recursive: true });
+    fsOps.rmSync(backupPath, { force: true, recursive: true });
+    copyDirectorySync(sourceAppPath, stagedPath, fsOps);
+    if (payloadElectronPath) {
+      const stagedLauncher = path.join(
+        stagedPath,
+        "Contents",
+        "MacOS",
+        COMPUTER_USE_HELPER_APP_NAME,
+      );
+      fsOps.writeFileSync(
+        stagedLauncher,
+        computerUseHelperLauncherScriptForPayload({ payloadElectronPath }),
+        { encoding: "utf8", mode: 0o755 },
+      );
+      fsOps.chmodSync(stagedLauncher, 0o755);
+    }
+    normalizeRuntimeCapsuleTree(stagedPath, fsOps);
+    if (runCommand) {
+      runCommand(
+        "codesign",
+        ["--force", "--deep", "--sign", "-", stagedPath],
+        { cwd: path.dirname(targetAppPath) },
+      );
+    }
+    if (fsOps.existsSync(targetAppPath)) {
+      fsOps.renameSync(targetAppPath, backupPath);
+    }
+    fsOps.renameSync(stagedPath, targetAppPath);
+    fsOps.rmSync(backupPath, { force: true, recursive: true });
+    return {
+      status: operation,
+      sourceAppPath,
+      targetAppPath,
+    };
+  } catch (error) {
+    try {
+      fsOps.rmSync(stagedPath, { force: true, recursive: true });
+      if (!fsOps.existsSync(targetAppPath) && fsOps.existsSync(backupPath)) {
+        fsOps.renameSync(backupPath, targetAppPath);
+      }
+    } catch {
+      // Preserve the primary failure; best-effort cleanup only.
+    }
+    throw error;
+  } finally {
+    try {
+      fsOps.rmSync(backupPath, { force: true, recursive: true });
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
+
+function copyDirectorySync(source, target, fsOps) {
+  if (typeof fsOps.cpSync === "function") {
+    fsOps.cpSync(source, target, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+    return;
+  }
+  fsOps.mkdirSync(target, { recursive: true, mode: 0o755 });
+  for (const child of fsOps.readdirSync(source, { withFileTypes: true })) {
+    const sourceChild = path.join(source, child.name);
+    const targetChild = path.join(target, child.name);
+    if (child.isDirectory()) {
+      copyDirectorySync(sourceChild, targetChild, fsOps);
+      continue;
+    }
+    if (child.isSymbolicLink()) {
+      fsOps.symlinkSync(fsOps.readlinkSync(sourceChild), targetChild);
+      continue;
+    }
+    fsOps.copyFileSync(sourceChild, targetChild);
+    fsOps.chmodSync(targetChild, fsOps.statSync(sourceChild).mode & 0o777);
+  }
+}
+
+function isComputerUseHelperBundle(appPath, fsOps = resolveInstalledArtifactFileSystem()) {
+  try {
+    const plist = fsOps.readFileSync(
+      path.join(appPath, "Contents", "Info.plist"),
+      "utf8",
+    );
+    return plist.includes(
+      `<string>${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}</string>`,
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeRuntimeCapsuleTree(
@@ -890,6 +1057,7 @@ module.exports = {
   COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
   COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
   COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
+  COMPUTER_USE_STABLE_HELPER_APP_PATH,
   COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
@@ -897,6 +1065,7 @@ module.exports = {
   buildRuntimeSources,
   clearExtendedAttributes,
   materializeInstalledArtifactWorkerBundle,
+  materializeStableComputerUseHelperApp,
   normalizeRuntimeCapsuleTree,
   removeInstalledArtifactTree,
   resolveCargoTargetDirectory,
