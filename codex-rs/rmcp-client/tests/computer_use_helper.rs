@@ -99,13 +99,15 @@ export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="{}"
 export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="{}"
 export MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH="{}"
 export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="{}"
-export MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE="launchservices-app-host"
+export MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE="launchservices-service-socket"
+export MORPHEUS_COMPUTER_USE_SERVICE_SOCKET_PATH="{}/service.sock"
 exec node "{}"
 "#,
             helper_bundle.display(),
             helper_executable.display(),
             helper_bundle.display(),
             helper_executable.display(),
+            root.path().display(),
             helper_script.display(),
         ),
     )?;
@@ -144,7 +146,11 @@ exec node "{}"
     );
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE"),
-        OsString::from("launchservices-app-host"),
+        OsString::from("launchservices-service-socket"),
+    );
+    env.insert(
+        OsString::from("MORPHEUS_COMPUTER_USE_SERVICE_SOCKET_PATH"),
+        root.path().join("service.sock").into_os_string(),
     );
     Ok(PackagedHelper {
         env,
@@ -247,7 +253,7 @@ async fn rmcp_client_can_list_and_call_computer_use_helper() -> anyhow::Result<(
     );
     assert_eq!(
         structured["diagnostics"]["permissionSubject"]["nativeControlSubject"],
-        json!("stable-packaged-native-helper-executable")
+        json!("stable-launchservices-service-socket")
     );
 
     client.shutdown().await;

@@ -263,7 +263,7 @@ test("computer use MCP permissions_status reports packaged helper app identity",
   process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE =
     nativeHelperExecutable;
   process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE =
-    "launchservices-app-host";
+    "launchservices-service-socket";
   process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH = helperBundlePath;
   try {
     const server = createComputerUseMcpServer({
@@ -290,7 +290,7 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject.nativeControlSubject,
-      "stable-packaged-native-helper-executable",
+      "stable-launchservices-service-socket",
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject
@@ -299,7 +299,7 @@ test("computer use MCP permissions_status reports packaged helper app identity",
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject.nativeInvocationMode,
-      "launchservices-app-host",
+      "launchservices-service-socket",
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject.executablePath,
@@ -453,6 +453,84 @@ test("computer use MCP permissions_status does not overclaim direct-exec bundle 
         (limitation) =>
           limitation.code === "native-permission-subject-not-contained" &&
           /direct exec/.test(limitation.message),
+      ),
+    );
+    await server.close();
+  } finally {
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_MODE", previous.mode);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", previous.bundleId);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", previous.bundlePath);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", previous.executable);
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE",
+      previous.nativeExecutable,
+    );
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE",
+      previous.nativeInvocationMode,
+    );
+    restoreEnv(
+      "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
+      previous.stableHelperAppPath,
+    );
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("computer use MCP permissions_status does not overclaim per-call app-host file IPC", async () => {
+  const previous = {
+    mode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE,
+    bundleId: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
+    bundlePath: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+    nativeExecutable:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE,
+    nativeInvocationMode:
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE,
+    stableHelperAppPath:
+      process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH,
+  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-helper-"));
+  const helperBundlePath = path.join(root, "Root Worker Computer Use.app");
+  const helperExecutable = path.join(
+    helperBundlePath,
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  fs.mkdirSync(path.dirname(helperExecutable), { recursive: true });
+  writeHelperInfoPlist(helperBundlePath);
+  fs.writeFileSync(helperExecutable, "native", { mode: 0o755 });
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID =
+    "com.openai.root-worker-prototype.computer-use.dev";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helperBundlePath;
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE = helperExecutable;
+  process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE =
+    "launchservices-app-host";
+  process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH = helperBundlePath;
+  try {
+    const server = createComputerUseMcpServer({
+      managerFactory: managerFactoryWithNative(fakeNativeClient()),
+    });
+    const result = await server.callTool("computer.permissions_status", {
+      includeObservation: false,
+    });
+    const subject = result.structuredContent.diagnostics.permissionSubject;
+    assert.equal(subject.usesStableHelperApp, true);
+    assert.equal(subject.nativeHelperIsBundleExecutable, true);
+    assert.equal(subject.nativeInvocationMode, "launchservices-app-host");
+    assert.equal(subject.stablePermissionSubject, false);
+    assert.equal(
+      subject.nativeControlSubject,
+      "stable-launchservices-app-host-file-ipc",
+    );
+    assert.ok(
+      result.structuredContent.limitations.some(
+        (limitation) =>
+          limitation.code === "native-permission-subject-not-contained" &&
+          /per-call LaunchServices file IPC/.test(limitation.message),
       ),
     );
     await server.close();
@@ -695,7 +773,7 @@ test("computer use MCP permissions_status resolves native helper executable from
   process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helperExecutable;
   process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH = helperBundlePath;
   process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE =
-    "launchservices-app-host";
+    "launchservices-service-socket";
   delete process.env.MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE;
   try {
     const server = createComputerUseMcpServer({
@@ -719,7 +797,7 @@ test("computer use MCP permissions_status resolves native helper executable from
     );
     assert.equal(
       result.structuredContent.diagnostics.permissionSubject.nativeControlSubject,
-      "stable-packaged-native-helper-executable",
+      "stable-launchservices-service-socket",
     );
     await server.close();
   } finally {
@@ -759,9 +837,9 @@ test("computer use MCP stdio defaults to RMCP line JSON initialize, tools/list, 
         packagedHelperBundle: true,
         packagedNativeHelperExecutable: true,
         nativeHelperIsBundleExecutable: true,
-        nativeInvocationMode: "launchservices-app-host",
+        nativeInvocationMode: "launchservices-service-socket",
         stablePermissionSubject: true,
-        nativeControlSubject: "stable-packaged-native-helper-executable",
+        nativeControlSubject: "stable-launchservices-service-socket",
       },
     }),
   });
@@ -800,7 +878,7 @@ test("computer use MCP stdio defaults to RMCP line JSON initialize, tools/list, 
   assert.equal(
     responses[2].result.structuredContent.diagnostics.permissionSubject
       .nativeControlSubject,
-    "stable-packaged-native-helper-executable",
+    "stable-launchservices-service-socket",
   );
 });
 

@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -14,6 +15,7 @@ const {
   resolveMacNativeComputerUseExecutablePath,
   resolveMacNativeComputerUseScriptPath,
   runNativeComputerUseAppHost,
+  runNativeComputerUseService,
 } = require("./computerUse.cjs");
 
 function fakeNativeClient(options = {}) {
@@ -123,6 +125,49 @@ function fakeNativeClient(options = {}) {
       actions.push({ type: "cleanup" });
     },
   };
+}
+
+async function startFakeNativeService(socketPath, handler) {
+  await fs.promises.mkdir(path.dirname(socketPath), { recursive: true });
+  await fs.promises.rm(socketPath, { force: true });
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", async (chunk) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      const request = JSON.parse(buffer.slice(0, newline));
+      try {
+        const response = await handler(request);
+        socket.end(`${JSON.stringify({ id: request.id, ...response })}\n`);
+      } catch (error) {
+        socket.end(
+          `${JSON.stringify({
+            id: request.id,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          })}\n`,
+        );
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+async function closeServer(server) {
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 function fakeOverlayController() {
@@ -1572,13 +1617,12 @@ test("mac native backend resolver prefers packaged native helper executable", ()
     resolveMacNativeComputerUseBackend({
       helperBundlePath,
       isExecutable: (targetPath) => targetPath === executablePath,
-      nativeInvocationMode: "launchservices-app-host",
       sourceDirectory: "/repo/apps/root-worker-prototype/electron",
     }),
     {
       mode: "packaged-native-helper-executable",
       executablePath,
-      invocationMode: "launchservices-app-host",
+      invocationMode: "launchservices-service-socket",
       scriptPath: null,
     },
   );
@@ -1773,6 +1817,221 @@ test("mac native app-host runner propagates native action failures", async () =>
       /blocked by test/,
     );
   } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native service runner sends commands over Unix socket", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-service-"));
+  const socketPath = path.join(root, "service.sock");
+  const executablePath = path.join(
+    root,
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const requests = [];
+  const server = await startFakeNativeService(socketPath, (request) => {
+    requests.push(request);
+    assert.equal(request.protocol, "morpheus-computer-use-service");
+    assert.equal(request.protocolVersion, 1);
+    assert.equal(request.expected.bundlePath, path.join(root, "Root Worker Computer Use.app"));
+    return {
+      ok: true,
+      accessibilityTrusted: true,
+      targetVisibility: "frontmost",
+    };
+  });
+  try {
+    const result = await runNativeComputerUseService(
+      executablePath,
+      "observe",
+      { includePerception: true },
+      { socketPath },
+    );
+
+    assert.deepEqual(result, {
+      accessibilityTrusted: true,
+      targetVisibility: "frontmost",
+    });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].command, "observe");
+    assert.deepEqual(requests[0].payload, { includePerception: true });
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native service runner launches service when socket is missing", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-service-"));
+  const socketPath = path.join(root, "service.sock");
+  const executablePath = path.join(
+    root,
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const launches = [];
+  let server = null;
+  try {
+    const result = await runNativeComputerUseService(
+      executablePath,
+      "observe",
+      {},
+      {
+        socketPath,
+        async launchService(args) {
+          launches.push(args);
+          server = await startFakeNativeService(socketPath, (request) => {
+            if (request.command === "status") {
+              return { ok: true, status: "ready" };
+            }
+            return { ok: true, accessibilityTrusted: true };
+          });
+        },
+      },
+    );
+
+    assert.deepEqual(result, { accessibilityTrusted: true });
+    assert.deepEqual(launches, [
+      {
+        bundlePath: path.join(root, "Root Worker Computer Use.app"),
+        socketPath,
+      },
+    ]);
+  } finally {
+    if (server) {
+      await closeServer(server);
+    }
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native service runner restarts stale service on identity mismatch", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-service-"));
+  const socketPath = path.join(root, "service.sock");
+  const executablePath = path.join(
+    root,
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  let staleShutdown = false;
+  let resolveStaleClosed;
+  const staleClosed = new Promise((resolve) => {
+    resolveStaleClosed = resolve;
+  });
+  let server = await startFakeNativeService(socketPath, (request) => {
+    if (request.command === "shutdown") {
+      staleShutdown = true;
+      setImmediate(() => server.close(resolveStaleClosed));
+      return { ok: true, status: "stopping" };
+    }
+    return {
+      ok: false,
+      code: "service_identity_mismatch",
+      error: "old release",
+    };
+  });
+  const launches = [];
+  try {
+    const result = await runNativeComputerUseService(
+      executablePath,
+      "click",
+      { x: 1, y: 2 },
+      {
+        socketPath,
+        async launchService(args) {
+          launches.push(args);
+          await staleClosed;
+          await fs.promises.rm(socketPath, { force: true });
+          server = await startFakeNativeService(socketPath, (request) => {
+            if (request.command === "status") {
+              return { ok: true, status: "ready" };
+            }
+            return { ok: true, clicked: true };
+          });
+        },
+      },
+    );
+
+    assert.equal(staleShutdown, true);
+    assert.equal(launches.length, 1);
+    assert.deepEqual(result, { clicked: true });
+  } finally {
+    if (server.listening) {
+      await closeServer(server);
+    }
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native service runner propagates native service errors", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-service-"));
+  const socketPath = path.join(root, "service.sock");
+  const executablePath = path.join(
+    root,
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const server = await startFakeNativeService(socketPath, () => ({
+    ok: false,
+    error: "blocked by service",
+  }));
+  try {
+    await assert.rejects(
+      () =>
+        runNativeComputerUseService(
+          executablePath,
+          "click",
+          { x: 1, y: 2 },
+          { socketPath },
+        ),
+      /blocked by service/,
+    );
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native service runner refuses existing socket in broad-permission directory", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-service-"));
+  const socketPath = path.join(root, "service.sock");
+  const executablePath = path.join(
+    root,
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  let requestCount = 0;
+  const server = await startFakeNativeService(socketPath, () => {
+    requestCount += 1;
+    return { ok: true, accessibilityTrusted: true };
+  });
+  try {
+    fs.chmodSync(root, 0o777);
+    await assert.rejects(
+      () =>
+        runNativeComputerUseService(
+          executablePath,
+          "observe",
+          {},
+          { socketPath },
+        ),
+      /must not be group\/world accessible/,
+    );
+    assert.equal(requestCount, 0);
+  } finally {
+    fs.chmodSync(root, 0o700);
+    await closeServer(server);
     fs.rmSync(root, { force: true, recursive: true });
   }
 });

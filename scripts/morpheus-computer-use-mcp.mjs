@@ -558,6 +558,8 @@ function defaultPermissionDiagnostics() {
     "/Applications/Root Worker Computer Use.app";
   const nativeInvocationMode =
     process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE ?? "direct-exec";
+  const serviceSocketPath =
+    process.env.MORPHEUS_COMPUTER_USE_SERVICE_SOCKET_PATH ?? null;
   const packagedHelperBundle = Boolean(helperBundleIdentifier && helperBundlePath);
   const usesStableHelperApp =
     packagedHelperBundle && pathsEqual(helperBundlePath, stableHelperAppPath);
@@ -574,10 +576,10 @@ function defaultPermissionDiagnostics() {
       isBundleMainExecutablePath(helperBundlePath, resolvedNativeHelperExecutable),
   );
   const stablePermissionSubject = Boolean(
-    packagedNativeHelperExecutable &&
+      packagedNativeHelperExecutable &&
       usesStableHelperApp &&
       nativeHelperIsBundleExecutable &&
-      nativeInvocationMode === "launchservices-app-host",
+      nativeInvocationMode === "launchservices-service-socket",
   );
   return {
     contract: "helper-as-mcp-server",
@@ -601,6 +603,7 @@ function defaultPermissionDiagnostics() {
       helperExecutablePath: helperExecutable ?? null,
       nativeHelperExecutablePath:
         resolvedNativeHelperExecutable ?? configuredNativeHelperExecutable,
+      serviceSocketPath,
       stableHelperAppPath,
       effectiveHelperAppPath: helperBundlePath,
       usesStableHelperApp,
@@ -611,9 +614,11 @@ function defaultPermissionDiagnostics() {
       stablePermissionSubject,
       nativeControlSubject: packagedNativeHelperExecutable
         ? stablePermissionSubject
-          ? "stable-packaged-native-helper-executable"
+          ? "stable-launchservices-service-socket"
           : usesStableHelperApp && nativeHelperIsBundleExecutable
-            ? "stable-direct-exec-native-helper-executable"
+            ? nativeInvocationMode === "launchservices-app-host"
+              ? "stable-launchservices-app-host-file-ipc"
+              : "stable-direct-exec-native-helper-executable"
           : usesStableHelperApp
             ? "stable-nested-native-helper-executable"
           : "release-local-packaged-native-helper-executable"
@@ -622,9 +627,11 @@ function defaultPermissionDiagnostics() {
           : "repo-local-node-process",
       note: packagedNativeHelperExecutable
         ? stablePermissionSubject
-          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by a LaunchServices-launched stable helper app host."
+          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by a LaunchServices-launched stable helper app service over a local Unix socket."
           : usesStableHelperApp && nativeHelperIsBundleExecutable
-            ? "The stable Computer Use helper app bundle executable is configured, but native desktop control is still invoked by direct exec instead of a LaunchServices app host, so macOS Accessibility authorization for the visible app may not apply."
+            ? nativeInvocationMode === "launchservices-app-host"
+              ? "The stable Computer Use helper app bundle executable is configured, but native desktop control is still invoked through per-call LaunchServices file IPC instead of the stable service socket."
+              : "The stable Computer Use helper app bundle executable is configured, but native desktop control is still invoked by direct exec instead of a LaunchServices app service, so macOS Accessibility authorization for the visible app may not apply."
           : usesStableHelperApp
             ? "The stable Computer Use helper app is used, but native desktop control is executed by a nested helper executable instead of the app bundle executable, so macOS Accessibility authorization for the visible app may not apply."
           : "This packaged Computer Use helper is release-local, so macOS authorization may not remain stable across Runtime Capsule releases. Native desktop control and screenshots are executed by the packaged native helper executable inside this helper app bundle."
@@ -736,7 +743,9 @@ function permissionLimitations(diagnostics) {
         subject.packagedNativeHelperExecutable
           ? subject.usesStableHelperApp
             ? subject.nativeHelperIsBundleExecutable
-              ? "The stable helper app bundle executable is configured, but native desktop control is invoked by direct exec instead of a LaunchServices app host, so macOS may not apply Accessibility authorization for the visible app."
+              ? subject.nativeInvocationMode === "launchservices-app-host"
+                ? "The stable helper app bundle executable is configured, but native desktop control uses per-call LaunchServices file IPC instead of the stable service socket."
+                : "The stable helper app bundle executable is configured, but native desktop control is invoked by direct exec instead of a LaunchServices app service, so macOS may not apply Accessibility authorization for the visible app."
               : "The stable helper app bundle is used, but native desktop control is not executed by the app bundle executable, so macOS may not apply Accessibility authorization for the visible app."
             : "The helper app bundle is release-local instead of the configured stable Computer Use helper app path; macOS may require authorization again after a Runtime Capsule release changes."
           : "The packaged helper bundle starts the MCP server, but this mode has no packaged native helper executable, so native desktop control may still delegate to Swift and screencapture and macOS may require authorization for that delegated process.",
