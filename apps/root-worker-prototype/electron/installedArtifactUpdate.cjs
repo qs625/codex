@@ -73,6 +73,7 @@ const WORKER_FILES = [
   "workspace.cjs",
 ];
 let workerBundlePath = null;
+let workerBundleSourceDirectory = null;
 
 function resolveInstalledArtifactFileSystem(options = {}) {
   if (options.fsOps != null) {
@@ -668,11 +669,42 @@ function resolveInstalledArtifactUpdatePlanInWorker(options = {}) {
 }
 
 function updateInstalledArtifactsInWorker(plan, options = {}) {
+  const workerOptions = {
+    ...(options.workerOptions ?? {}),
+  };
+  if (!workerOptions.workerSourceDirectory) {
+    const sourceWorkerDirectory = resolveSourceWorkerDirectoryForUpdate(
+      plan,
+      workerOptions,
+    );
+    if (sourceWorkerDirectory) {
+      workerOptions.workerSourceDirectory = sourceWorkerDirectory;
+    }
+  }
   return runInstalledArtifactWorker(
     "update",
     { plan },
-    options.workerOptions,
+    workerOptions,
   );
+}
+
+function resolveSourceWorkerDirectoryForUpdate(plan, options = {}) {
+  const sourceAppDir = normalizeString(plan?.sourceAppDir);
+  if (!sourceAppDir) {
+    return null;
+  }
+  const sourceDirectory = path.join(sourceAppDir, "electron");
+  const sourceFsOps = options.sourceFsOps ?? fs;
+  for (const fileName of WORKER_FILES) {
+    try {
+      if (!sourceFsOps.statSync(path.join(sourceDirectory, fileName)).isFile()) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return sourceDirectory;
 }
 
 function runInstalledArtifactWorker(operation, payload, options = {}) {
@@ -716,13 +748,16 @@ function runInstalledArtifactWorker(operation, payload, options = {}) {
 }
 
 function materializeInstalledArtifactWorkerBundle(options = {}) {
-  if (workerBundlePath) {
+  const sourceDirectory = options.workerSourceDirectory ?? __dirname;
+  if (
+    workerBundlePath &&
+    workerBundleSourceDirectory === sourceDirectory
+  ) {
     return workerBundlePath;
   }
   const sourceFsOps = options.sourceFsOps ?? fs;
   const destinationFsOps =
     options.destinationFsOps ?? resolveInstalledArtifactFileSystem(options);
-  const sourceDirectory = options.workerSourceDirectory ?? __dirname;
   const bundlePath = destinationFsOps.mkdtempSync(
     path.join(os.tmpdir(), "morpheus-artifact-worker-"),
   );
@@ -750,6 +785,7 @@ function materializeInstalledArtifactWorkerBundle(options = {}) {
     throw failure;
   }
   workerBundlePath = bundlePath;
+  workerBundleSourceDirectory = sourceDirectory;
   process.once("exit", () => {
     try {
       destinationFsOps.rmSync(bundlePath, { force: true, recursive: true });

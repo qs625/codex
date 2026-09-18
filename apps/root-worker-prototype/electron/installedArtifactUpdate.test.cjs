@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
+const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -25,6 +26,7 @@ const {
   runInstalledArtifactWorker,
   stagePayloadResources,
   updateInstalledArtifacts,
+  updateInstalledArtifactsInWorker,
 } = require("./installedArtifactUpdate.cjs");
 
 function writeComputerUseHelperSources(workspace, sourceAppDir) {
@@ -68,6 +70,26 @@ function handleFakeSwiftc(command, args) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
   fs.writeFileSync(targetPath, "native-helper", { mode: 0o755 });
   return true;
+}
+
+function copyFakePackagerExtraResources(args, payload) {
+  const resourcesDir = path.join(payload, "Contents", "Resources");
+  fs.mkdirSync(resourcesDir, { recursive: true });
+  for (const arg of args) {
+    if (!arg.startsWith("--extra-resource=")) {
+      continue;
+    }
+    const source = arg.slice("--extra-resource=".length);
+    fs.cpSync(source, path.join(resourcesDir, path.basename(source)), {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
+  }
+}
+
+function capsulePath(...segments) {
+  return segments.join("/");
 }
 
 test("candidate packager excludes every generated packaging directory", () => {
@@ -377,6 +399,68 @@ test("Electron worker bundle reads packaged sources and writes a raw loadable bu
   );
 });
 
+test("artifact update worker uses source workspace producer for update", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "capsule-worker-source-"));
+  try {
+    const packagedWorkerDir = path.join(root, "packaged", "electron");
+    const sourceAppDir = path.join(root, "source", "apps", "root-worker-prototype");
+    const sourceWorkerDir = path.join(sourceAppDir, "electron");
+    fs.mkdirSync(packagedWorkerDir, { recursive: true });
+    fs.mkdirSync(sourceWorkerDir, { recursive: true });
+    for (const fileName of [
+      "environment.cjs",
+      "installedArtifactUpdate.cjs",
+      "installedArtifactUpdateWorker.cjs",
+      "runtimeCapsule.cjs",
+      "workspace.cjs",
+    ]) {
+      const contents = fs.readFileSync(path.join(__dirname, fileName), "utf8");
+      fs.writeFileSync(path.join(packagedWorkerDir, fileName), contents);
+      fs.writeFileSync(
+        path.join(sourceWorkerDir, fileName),
+        fileName === "installedArtifactUpdate.cjs"
+          ? `${contents}\n// source workspace producer marker\n`
+          : contents,
+      );
+    }
+    materializeInstalledArtifactWorkerBundle({
+      workerSourceDirectory: packagedWorkerDir,
+    });
+
+    class FakeWorker extends EventEmitter {
+      constructor(workerPath, options) {
+        super();
+        const bundleDir = path.dirname(workerPath);
+        const producer = fs.readFileSync(
+          path.join(bundleDir, "installedArtifactUpdate.cjs"),
+          "utf8",
+        );
+        process.nextTick(() => {
+          this.emit("message", {
+            ok: true,
+            result: {
+              operation: options.workerData.operation,
+              sourceProducer: producer.includes("source workspace producer marker"),
+            },
+          });
+          this.emit("exit", 0);
+        });
+      }
+    }
+
+    const result = await updateInstalledArtifactsInWorker(
+      { sourceAppDir },
+      { workerOptions: { Worker: FakeWorker } },
+    );
+    assert.deepEqual(result, {
+      operation: "update",
+      sourceProducer: true,
+    });
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("stagePayloadResources installs app-server, defaults, native bridge, and Computer Use helper", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "capsule-resources-"));
   try {
@@ -569,6 +653,7 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
             path.join(payload, "Contents", "Resources", "app.asar"),
             "asar",
           );
+          copyFakePackagerExtraResources(args, payload);
         }
       },
     });
@@ -617,6 +702,27 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
     );
     assert.equal(appAsarEntry?.type, "file");
     assert.match(appAsarEntry?.sha256, /^[0-9a-f]{64}$/);
+    const nativeHelperCapsulePath = capsulePath(
+      "payload",
+      `${APP_NAME}.app`,
+      "Contents",
+      "Resources",
+      ...COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
+    );
+    const nativeHelperEntry = result.manifest.entries.find(
+      (entry) => entry.path === nativeHelperCapsulePath,
+    );
+    assert.equal(nativeHelperEntry?.type, "file");
+    assert.equal(nativeHelperEntry?.executable, true);
+    assert.equal(
+      fs.statSync(
+        path.join(
+          result.incomingRoot,
+          ...nativeHelperCapsulePath.split("/"),
+        ),
+      ).mode & 0o111,
+      0o111,
+    );
     assert.ok(rawAppAsarReads > 0);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
