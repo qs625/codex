@@ -282,7 +282,7 @@ export async function runComputerUseMcpServer({
   transportMode = resolveTransportMode(),
 } = {}) {
   const writeMessage =
-    transportMode === "line-json" ? writeJson : writeJsonRpcFrame;
+    isContentLengthTransportMode(transportMode) ? writeJsonRpcFrame : writeJson;
   try {
     for await (const item of readJsonRpcMessages(input, transportMode)) {
       if (item.error) {
@@ -322,18 +322,22 @@ export async function runComputerUseMcpServer({
 
 function resolveTransportMode() {
   const configured = process.env[MCP_TRANSPORT_ENV];
-  if (configured === "line-json" || configured === "ndjson") {
-    return "line-json";
+  if (isContentLengthTransportMode(configured)) {
+    return "content-length";
   }
-  return "mcp-stdio";
+  return "line-json";
+}
+
+function isContentLengthTransportMode(transportMode) {
+  return transportMode === "content-length" || transportMode === "framed";
 }
 
 async function* readJsonRpcMessages(input, transportMode) {
-  if (transportMode === "line-json") {
-    yield* readLineJsonMessages(input);
+  if (isContentLengthTransportMode(transportMode)) {
+    yield* readFramedJsonRpcMessages(input);
     return;
   }
-  yield* readFramedJsonRpcMessages(input);
+  yield* readLineJsonMessages(input);
 }
 
 async function* readLineJsonMessages(input) {
