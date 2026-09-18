@@ -170,7 +170,7 @@ const LEFT_PANEL_MAX_RATIO = 0.34;
 const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
 const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
-const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 5 * 60 * 1000;
+const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 10 * 60 * 1000;
 const SELECTED_THREAD_STORAGE_KEY = "morpheus.rootWorker.selectedThreadId";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
