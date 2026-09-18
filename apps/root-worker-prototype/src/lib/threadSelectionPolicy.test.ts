@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   decideThreadSelectionAction,
@@ -7,6 +8,19 @@ import {
   nextThreadReadRequestId,
   shouldApplyThreadReadSnapshot,
 } from "./threadSelectionPolicy";
+
+test("conversation thread idle unsubscribe is scheduled after ten minutes", () => {
+  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    appSource,
+    /const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 10 \* 60 \* 1000;/,
+  );
+  assert.match(
+    appSource,
+    /setTimeout\(\(\) => \{[\s\S]*\}, THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS\)/,
+  );
+});
 
 test("selection policy does nothing for a loaded and subscribed thread", () => {
   assert.equal(
