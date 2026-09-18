@@ -38,6 +38,7 @@ AGENTS.override.md
 
 # caches
 .cache/
+.playwright-cli/
 .turbo/
 .parcel-cache/
 .eslintcache

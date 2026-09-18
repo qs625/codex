@@ -5,17 +5,18 @@ description: "my-codex 的 UI 设计流程。适用于设计或实现新 UI、ro
 
 # UI 设计流程
 
-做 UI 任务时使用本 skill。目标是避免模型从需求直接跳到写代码，而是先建立稳定的设计锚点，把它提炼成 design brief，再让后续组件持续延展同一套视觉系统。
+做 UI 任务时使用本 skill。目标是避免模型从需求直接跳到写代码，也避免把 image_gen 当成“凭空想 UI”的入口。稳定流程是：先把产品语义和交互 contract 说清楚，再把它压成非常具体的 image_gen brief，最后从图里提炼可执行 design brief，让后续组件持续延展同一套视觉系统。
 
 ## 核心规则
 
-有意义的 UI 改动，不要从产品请求直接进入代码实现。
+有意义的 UI 改动，不要从产品请求直接进入代码实现，也不要在产品语义还薄的时候直接调用 image_gen。
 
-任何非平凡 UI 任务，都要先产出或复用一个设计锚点：
+任何非平凡 UI 任务，都要先产出一份语义 contract，再产出或复用一个设计锚点：
 
-1. 如果已有 design brief / pattern library，优先复用。
-2. 如果已有截图或已实现界面清楚定义了视觉语言，优先复用。
-3. 如果设计语言、布局密度、信息层级或视觉处理还不清楚，先用一次 `image_gen` 生成单张完整 composite mockup。
+1. 先整理产品语义：用户任务、入口、运行中状态、确认/取消/接管、错误恢复、审计证据、完成证明、与现有界面的关系、禁止误导用户的表达。
+2. 如果已有 design brief / pattern library，优先复用。
+3. 如果已有截图或已实现界面清楚定义了视觉语言，优先复用。
+4. 如果设计语言、布局密度、信息层级或视觉处理还不清楚，基于第 1 步语义 contract 用一次 `image_gen` 生成单张完整 composite mockup。
 
 不要为多个组件分别独立生成图片。这样会导致风格漂移。
 
@@ -36,7 +37,7 @@ description: "my-codex 的 UI 设计流程。适用于设计或实现新 UI、ro
 
 ## 首次设计流程
 
-### 1. 定义产品框架
+### 1. 定义产品语义 contract
 
 只记录实现真正需要的信息：
 
@@ -44,10 +45,18 @@ description: "my-codex 的 UI 设计流程。适用于设计或实现新 UI、ro
 - 核心工作流和成功标准。
 - 需要展示的数据、支持的判断、主要操作。
 - 必须覆盖的状态：空态、加载、active、选中、完成、失败、禁用；my-codex 场景还要考虑 stale/restored。
+- 入口/触发方式：用户从哪里发起、是否需要确认、如何取消/接管。
+- 运行中反馈：系统如何表达正在做什么、目标是谁、下一步是什么。
+- 审计证据：哪些事实必须可见，哪些只能摘要展示，哪些不能长期保存。
+- 错误与权限：权限不足、目标不匹配、风险动作、恢复/重试如何表达。
+- 与现有 surface 的关系：conversation、RightPanel、Browser、Terminal、Live Commands、桌面 overlay 等各自承担什么，不承担什么。
+- 禁止项：哪些 UI 形态或文案会误导用户，哪些实现路径会偷换产品语义。
+
+这一节要先写成人能判断的 brief，再进入 image_gen。image_gen 的 prompt 应该是语义 contract 的压缩和视觉化，不应替代这个判断。
 
 ### 2. 生成单张整体 mockup
 
-如果需要视觉方向，只调用一次 `image_gen`，生成完整页面或真实上下文中的完整区域。mockup 应同时包含主要布局和代表性状态。
+如果需要视觉方向，只调用一次 `image_gen`，生成完整页面或真实上下文中的完整区域。mockup 应同时包含主要布局和代表性状态。调用前必须已经有第 1 步语义 contract，并把关键语义明确写进 prompt。
 
 适合生成：
 
@@ -69,14 +78,26 @@ description: "my-codex 的 UI 设计流程。适用于设计或实现新 UI、ro
 Create a complete UI mockup for <screen/panel/workflow>.
 Audience: <target user>.
 Primary task: <task>.
+Product semantics:
+- <what the UI means and must not imply>
+- <which real system/app the action affects>
+- <what evidence/audit must be visible>
+Workflow:
+- Entry: <how user starts>
+- Active state: <what feedback is shown>
+- Control/override: <confirm/cancel/stop/takeover>
+- Completion/error: <how result or failure is proven>
 Show realistic data and these states: <states>.
 Design constraints: operational product, high scanability, restrained visual style, compact but readable density, stable layout, no marketing hero, no decorative gradient/orb background.
+Forbidden visuals or implications:
+- <do not show misleading surface/relationship>
+- <do not hide important state or safety evidence>
 Output one cohesive design language for layout, spacing, typography, color, controls, status indicators, and interaction affordances.
 ```
 
-### 3. 提炼 design brief
+### 3. 审图并提炼 design brief
 
-生成 mockup 后，不要直接照图写代码。先把图提炼成简短实现规范。
+生成 mockup 后，不要直接照图写代码。先审图：确认它是否尊重语义 contract，是否误导用户，是否把某个 surface 的职责画错，是否过度装饰或过度庞大。只有通过审图的部分才能进入实现 brief；不符合语义的细节要明确剔除或改写。
 
 必须包括：
 
@@ -88,6 +109,8 @@ Output one cohesive design language for layout, spacing, typography, color, cont
 - button、toolbar、tab、input、badge、table/list、card/panel 的样式规则。
 - 交互状态和响应式行为。
 - 明确禁止项。
+- 从 mockup 中保留的规则。
+- 从 mockup 中拒绝的规则，以及拒绝原因。
 
 这份 brief 才是实现依据。
 
@@ -178,4 +201,3 @@ owner 交付应包含：
 - UI 没有掩盖后端/runtime 事实缺失。
 - 没有夹带无关视觉重设计。
 - 如果用了多次 `image_gen`，后续生成必须明确继承第一次的设计系统。
-

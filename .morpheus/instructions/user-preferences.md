@@ -19,6 +19,11 @@
 - ThreadProvider / agent provider 设计中 external agent 和内置 agent 都应作为一等公民平等对待；遇到能力不对等时，默认补齐 provider-neutral runtime 语义，而不是通过隐藏 external 工具或降低 external 能力来表面对齐。
 - 讨论或推进多个设计方向时，应把每个设计都作为一等公民平等对待；不要默认把某个设计降级为临时、次等或只能被隐藏的路径。
 - workflow JS 脚本等待 agent 完成时应使用语义化 `await agent.wait()`；`poll_event` 是 agent 内部等待事件的 tool，`wf.pollEvent()` 只作为低层/advanced API 保留，不作为普通脚本的推荐等待入口。
+- PM 汇报任务数量和状态时必须覆盖完整队列，包括 queued、dispatched、in-progress、merged、pending_capsule_delivery、installed_effective；不要只报当前正在验收或刚触发的任务，避免遗漏用户之前已提出但暂未派发的排队任务。
+- 当已有 queued 任务解除阻塞且存在空闲、不冲突的 dev checkout 时，应主动并行派发；不要等用户追问才推进。若暂不派发，必须明确说明原因（例如 checkout 忙、依赖未 merge、文件/语义冲突或需要先验收高风险修复）。
+- 做代码质量、模块化和性能优化时不要过度保守，不要只挑很小很安全的改动；在设计意图、不变量、禁止路径和回归矩阵清楚的前提下，应主动推进更大但连贯的优化 tranche。
+- 涉及 UI、产品交互或用户可见工作流时，不要只围绕“要不要某个页面/面板/按钮”做局部实现，也不要 code-first。必须先把用户要完成的任务、入口/触发方式、运行中反馈、确认/取消/接管、错误恢复、审计证据、完成后的结果证明，以及与现有 Browser/Terminal/Conversation/RightPanel 等界面的关系说清楚；再决定 UI 形态和最小实现切片。
+- UI/交互设计要把多个产品形态作为一等方案比较，而不是默认把第一个想到的形态当主方案、把其它方向降级为 workaround。最终 brief 应说明为什么推荐方案最符合用户偏好和当前产品约束。
 
 ## Working Style
 - 优先直接修改代码或文档，不要只停留在分析。
