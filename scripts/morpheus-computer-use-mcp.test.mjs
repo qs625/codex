@@ -69,6 +69,7 @@ function fakeNativeClient(options = {}) {
             {
               role: "AXButton",
               title: "Continue",
+              pressable: true,
               bounds: { x: 20, y: 40, width: 100, height: 30 },
               center: { x: 70, y: 55 },
               confidence: 0.85,
@@ -81,6 +82,22 @@ function fakeNativeClient(options = {}) {
     },
     async act(payload) {
       actPayloads.push(payload);
+      if (payload.type === "pressText") {
+        return {
+          ok: true,
+          method: "accessibility-press",
+          targetVisibility: "frontmost",
+          query: payload.text,
+          matchStatus: "unique",
+          matchedElement: {
+            role: "AXButton",
+            title: payload.text,
+            pressable: true,
+            bounds: { x: 20, y: 40, width: 100, height: 30 },
+            center: { x: 70, y: 55 },
+          },
+        };
+      }
       return { ok: true, method: payload.type };
     },
     async activateTarget() {
@@ -172,6 +189,7 @@ test("computer use MCP lists typed tools", () => {
   const act = server.listTools().find((tool) => tool.name === "computer.act");
   assert.deepEqual(act.inputSchema.required, ["action"]);
   assert.equal(act.inputSchema.properties.action.type, "object");
+  assert.match(act.inputSchema.properties.action.description, /pressText/);
 });
 
 test("computer use MCP observe returns typed evidence without screenshot data by default", async () => {
@@ -230,6 +248,27 @@ test("computer use MCP side effects preserve policy audit and native evidence", 
     "computer-use-mcp-session",
   );
   assert.equal(nativeClient.actPayloads.length, 1);
+  await server.close();
+});
+
+test("computer use MCP action supports pressText semantic AX press evidence", async () => {
+  const nativeClient = fakeNativeClient();
+  const server = createComputerUseMcpServer({
+    managerFactory: managerFactoryWithNative(nativeClient),
+  });
+  await server.callTool("computer.start_session", {});
+  const result = await server.callTool("computer.act", {
+    action: { type: "pressText", text: "Continue" },
+  });
+
+  assert.equal(result.structuredContent.status, "completed");
+  assert.equal(result.structuredContent.policy.kind, "side-effect");
+  assert.equal(result.structuredContent.evidence.method, "accessibility-press");
+  assert.equal(result.structuredContent.evidence.matchStatus, "unique");
+  assert.equal(result.structuredContent.evidence.matchedElement.pressable, true);
+  assert.deepEqual(nativeClient.actPayloads, [
+    { type: "pressText", targetApp: "com.apple.finder", text: "Continue" },
+  ]);
   await server.close();
 });
 

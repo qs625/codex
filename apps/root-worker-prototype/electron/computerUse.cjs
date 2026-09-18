@@ -30,6 +30,8 @@ const MAC_NATIVE_HELPER_EXECUTABLE_FILE = "Root Worker Computer Use";
 const LEGACY_MAC_NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
 const DANGEROUS_TEXT_PATTERN =
   /\b(password|passcode|token|secret|delete|remove|send|submit|purchase|buy|transfer|bank|credit|sudo|rm\s+-rf)\b/i;
+const DANGEROUS_PRESS_TEXT_PATTERN =
+  /\b(delete|remove|purchase|buy|transfer|bank|credit|sudo|rm\s+-rf)\b/i;
 
 function createComputerUseManager(options = {}) {
   return new ComputerUseManager(options);
@@ -192,6 +194,24 @@ class ComputerUseManager {
           ...actionResult,
           compiledAction: { type: "click", ...match.point },
         });
+      } else if (normalized.type === "pressText") {
+        const match = findTextInObservation(
+          { ...normalized, requirePressable: true },
+          this.session.observation,
+        );
+        applyActionEvidence(traceItem, {
+          ...match,
+          targetVisibility: this.session.targetVisibility ?? "unknown",
+        });
+        if (!match.ok || match.matchStatus !== "unique") {
+          throw new Error(match.reason || `Could not uniquely match pressable text: ${normalized.text}`);
+        }
+        const actionResult = await this.nativeClient.act({
+          type: "pressText",
+          targetApp: this.session.target?.app,
+          text: normalized.text,
+        });
+        applyActionEvidence(traceItem, actionResult);
       } else if (normalized.type === "setText") {
         const match = findTextInObservation(
           { ...normalized, requireWritable: true },
@@ -738,6 +758,18 @@ function actionEvidenceSummary(traceItem) {
       characterCount: evidence.characterCount ?? null,
     };
   }
+  if (traceItem.action?.type === "pressText") {
+    return {
+      source:
+        evidence.method === "accessibility-press"
+          ? "native-bridge"
+          : "perception",
+      ok: evidence.ok === true,
+      method: evidence.method ?? null,
+      matchStatus: evidence.matchStatus ?? null,
+      targetVisibility: evidence.targetVisibility ?? null,
+    };
+  }
   return {
     source: isSideEffectAction(traceItem.action) ? "native-bridge" : "manager",
     ok: evidence.ok ?? null,
@@ -758,17 +790,15 @@ function classifyComputerUseAction(action) {
     }, "low", ["read-only"]);
   }
   const modifiers = normalizeModifiers(action.modifiers);
-  const riskyText =
-    action.type === "type"
-      ? action.text
-      : action.type === "clickText"
-        ? action.text
-        : action.type === "setText"
-          ? action.text
-        : "";
+  const riskyTextPattern =
+    action.type === "pressText" ? DANGEROUS_PRESS_TEXT_PATTERN : DANGEROUS_TEXT_PATTERN;
+  const riskyText = textIntentForRisk(action);
   if (
-    ((action.type === "type" || action.type === "clickText" || action.type === "setText") &&
-      DANGEROUS_TEXT_PATTERN.test(riskyText ?? "")) ||
+    ((action.type === "type" ||
+      action.type === "clickText" ||
+      action.type === "pressText" ||
+      action.type === "setText") &&
+      riskyTextPattern.test(riskyText ?? "")) ||
     ((action.type === "key" || action.type === "hotkey") &&
       modifiers.includes("cmd") &&
       ["delete", "q", "w"].includes(String(action.key ?? "").toLowerCase()))
@@ -784,6 +814,7 @@ function classifyComputerUseAction(action) {
     [
       "click",
       "clickText",
+      "pressText",
       "doubleClick",
       "rightClick",
       "scroll",
@@ -816,13 +847,28 @@ function withRisk(policy, riskLevel, riskCategories) {
 
 function riskyActionCategories(action) {
   const categories = ["native-side-effect", "sensitive-or-destructive"];
-  if (action.type === "type" || action.type === "clickText" || action.type === "setText") {
+  if (
+    action.type === "type" ||
+    action.type === "clickText" ||
+    action.type === "pressText" ||
+    action.type === "setText"
+  ) {
     categories.push("text-intent");
   }
   if (action.type === "key" || action.type === "hotkey") {
     categories.push("destructive-shortcut");
   }
   return categories;
+}
+
+function textIntentForRisk(action) {
+  if (action.type === "type" || action.type === "clickText" || action.type === "pressText") {
+    return action.text;
+  }
+  if (action.type === "setText") {
+    return action.text;
+  }
+  return "";
 }
 
 function applyRuntimeSafetyPolicy(policy, safety) {
@@ -882,6 +928,7 @@ function isSideEffectAction(action) {
   return [
     "click",
     "clickText",
+    "pressText",
     "doubleClick",
     "rightClick",
     "scroll",
@@ -902,7 +949,7 @@ function shouldActivateTargetBeforeAction(action, session) {
 }
 
 function isForegroundRequiredSideEffectAction(action) {
-  return isSideEffectAction(action) && action?.type !== "setText";
+  return isSideEffectAction(action) && !["setText", "pressText"].includes(action?.type);
 }
 
 function normalizeAction(action) {
@@ -932,6 +979,12 @@ function normalizeAction(action) {
       return {
         type: "clickText",
         text: requireTextQuery(action.text),
+        maxMatches: boundedMaxMatches(action.maxMatches),
+      };
+    case "pressText":
+      return {
+        type: "pressText",
+        text: requireTextQuery(action.text ?? action.query ?? action.target),
         maxMatches: boundedMaxMatches(action.maxMatches),
       };
     case "setText":
@@ -1503,6 +1556,7 @@ function normalizeAccessibilityElement(element) {
     value: boundedString(element.value, 160),
     description: boundedString(element.description, 160),
     writable: element.writable === true,
+    pressable: element.pressable === true,
     bounds,
     center,
     confidence: Number.isFinite(element.confidence) ? element.confidence : 0.8,
@@ -1580,7 +1634,12 @@ function dedupeLimitations(limitations) {
 
 function findTextInObservation(action, observation) {
   const incompleteReason = perceptionCompletenessReason(observation?.perception);
-  if ((action.type === "clickText" || action.type === "setText") && incompleteReason) {
+  if (
+    (action.type === "clickText" ||
+      action.type === "pressText" ||
+      action.type === "setText") &&
+    incompleteReason
+  ) {
     return {
       ok: false,
       method: "accessibility-text-match",
@@ -1610,6 +1669,7 @@ function findTextInObservation(action, observation) {
         value: element.value ?? null,
         description: element.description ?? null,
         writable: element.writable === true,
+        pressable: element.pressable === true,
         bounds: element.bounds,
         center: element.center,
         confidence: element.confidence ?? null,
@@ -1620,7 +1680,14 @@ function findTextInObservation(action, observation) {
   const writableCandidates = action.requireWritable
     ? allCandidates.filter((candidate) => candidate.writable === true)
     : allCandidates;
-  const consideredCandidates = action.requireWritable ? writableCandidates : allCandidates;
+  const pressableCandidates = action.requirePressable
+    ? allCandidates.filter((candidate) => candidate.pressable === true)
+    : allCandidates;
+  const consideredCandidates = action.requireWritable
+    ? writableCandidates
+    : action.requirePressable
+      ? pressableCandidates
+      : allCandidates;
   const candidates = consideredCandidates.slice(0, action.maxMatches);
   if (candidates.length === 0) {
     return {
@@ -1632,6 +1699,8 @@ function findTextInObservation(action, observation) {
       candidates: [],
       reason: action.requireWritable && allCandidates.length > 0
         ? `No writable accessibility element matched text: ${rawQuery}`
+        : action.requirePressable && allCandidates.length > 0
+          ? `No pressable accessibility element matched text: ${rawQuery}`
         : `No visible accessibility element matched text: ${rawQuery}`,
     };
   }
