@@ -22,6 +22,7 @@ const PROTOCOL_VERSION = "2025-06-18";
 const DEFAULT_SESSION_ID = "default";
 const SIDE_EFFECT_TOOLS = new Set(["computer.act"]);
 const NATIVE_HELPER_EXECUTABLE_FILE = "morpheus-computer-use-native";
+const MCP_TRANSPORT_ENV = "MORPHEUS_COMPUTER_USE_MCP_TRANSPORT";
 const TEXT_ACTION_TOOLS = new Map([
   ["computer.find_text", "findText"],
 ]);
@@ -278,37 +279,36 @@ export async function runComputerUseMcpServer({
   input = process.stdin,
   output = process.stdout,
   server = createComputerUseMcpServer(),
+  transportMode = resolveTransportMode(),
 } = {}) {
-  const lines = createInterface({ input, crlfDelay: Infinity });
+  const writeMessage =
+    transportMode === "line-json" ? writeJson : writeJsonRpcFrame;
   try {
-    for await (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch (error) {
-        writeJson(output, {
+    for await (const item of readJsonRpcMessages(input, transportMode)) {
+      if (item.error) {
+        writeMessage(output, {
           jsonrpc: "2.0",
           id: null,
-          error: serializeJsonRpcError(jsonRpcError(-32700, errorMessage(error))),
+          error: serializeJsonRpcError(
+            jsonRpcError(-32700, errorMessage(item.error)),
+          ),
         });
         continue;
       }
+      const message = item.message;
       if (!Object.hasOwn(message, "id")) {
         await server.handleJsonRpc(message);
         continue;
       }
       try {
         const result = await server.handleJsonRpc(message);
-        writeJson(output, { jsonrpc: "2.0", id: message.id, result });
+        writeMessage(output, { jsonrpc: "2.0", id: message.id, result });
       } catch (error) {
         const rpcError =
           error && typeof error === "object" && Number.isInteger(error.code)
             ? error
             : jsonRpcError(-32000, errorMessage(error));
-        writeJson(output, {
+        writeMessage(output, {
           jsonrpc: "2.0",
           id: message.id,
           error: serializeJsonRpcError(rpcError),
@@ -317,6 +317,72 @@ export async function runComputerUseMcpServer({
     }
   } finally {
     await server.close?.();
+  }
+}
+
+function resolveTransportMode() {
+  const configured = process.env[MCP_TRANSPORT_ENV];
+  if (configured === "line-json" || configured === "ndjson") {
+    return "line-json";
+  }
+  return "mcp-stdio";
+}
+
+async function* readJsonRpcMessages(input, transportMode) {
+  if (transportMode === "line-json") {
+    yield* readLineJsonMessages(input);
+    return;
+  }
+  yield* readFramedJsonRpcMessages(input);
+}
+
+async function* readLineJsonMessages(input) {
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  for await (const line of lines) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      yield { message: JSON.parse(line) };
+    } catch (error) {
+      yield { error };
+    }
+  }
+}
+
+async function* readFramedJsonRpcMessages(input) {
+  let buffer = Buffer.alloc(0);
+  for await (const chunk of input) {
+    buffer = Buffer.concat([
+      buffer,
+      Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+    ]);
+    while (true) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        break;
+      }
+      const header = buffer.subarray(0, headerEnd).toString("ascii");
+      const lengthMatch = /^Content-Length:\s*(\d+)\s*$/im.exec(header);
+      if (!lengthMatch) {
+        yield { error: new Error("Missing Content-Length header") };
+        buffer = Buffer.alloc(0);
+        break;
+      }
+      const contentLength = Number(lengthMatch[1]);
+      const bodyStart = headerEnd + 4;
+      const bodyEnd = bodyStart + contentLength;
+      if (buffer.length < bodyEnd) {
+        break;
+      }
+      const body = buffer.subarray(bodyStart, bodyEnd).toString("utf8");
+      buffer = buffer.subarray(bodyEnd);
+      try {
+        yield { message: JSON.parse(body) };
+      } catch (error) {
+        yield { error };
+      }
+    }
   }
 }
 
@@ -684,6 +750,13 @@ function enumSchema(values, description) {
 
 function writeJson(output, value) {
   output.write(`${JSON.stringify(value)}\n`);
+}
+
+function writeJsonRpcFrame(output, value) {
+  const body = JSON.stringify(value);
+  output.write(
+    `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`,
+  );
 }
 
 function jsonRpcError(code, message) {
