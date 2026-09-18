@@ -417,7 +417,7 @@ test("computer use MCP permissions_status resolves native helper executable from
   }
 });
 
-test("computer use MCP stdio handles standard framed initialize, tools/list, and tools/call", async () => {
+test("computer use MCP stdio defaults to RMCP line JSON initialize, tools/list, and tools/call", async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   const server = createComputerUseMcpServer({
@@ -438,21 +438,11 @@ test("computer use MCP stdio handles standard framed initialize, tools/list, and
     }),
   });
   const done = runComputerUseMcpServer({ input, output, server });
-  const responses = collectFramedMessages(output);
+  const lines = collectLineJsonMessages(output);
 
-  writeFrame(input, {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {},
-  });
-  writeFrame(input, {
-    jsonrpc: "2.0",
-    id: 2,
-    method: "tools/list",
-    params: {},
-  });
-  writeFrame(input, {
+  writeLineJson(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  writeLineJson(input, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+  writeLineJson(input, {
     jsonrpc: "2.0",
     id: 3,
     method: "tools/call",
@@ -462,10 +452,11 @@ test("computer use MCP stdio handles standard framed initialize, tools/list, and
     },
   });
 
-  await waitFor(() => responses.length >= 3);
+  await waitFor(() => lines.length >= 3);
   input.end();
   await done;
 
+  const responses = lines.map((line) => JSON.parse(line));
   assert.equal(responses[0].result.serverInfo.name, "morpheus-computer-use");
   assert.equal(responses[1].result.tools.length, 6);
   assert.equal(
@@ -485,7 +476,12 @@ test("computer use MCP stdio handles standard framed initialize, tools/list, and
   );
 });
 
-test("computer use MCP stdio keeps legacy line JSON debug mode", async () => {
+test("computer use MCP stdio keeps explicit content-length compatibility mode", async () => {
+  await runFramedCompatibilityMode("content-length");
+  await runFramedCompatibilityMode("framed");
+});
+
+async function runFramedCompatibilityMode(transportMode) {
   const input = new PassThrough();
   const output = new PassThrough();
   const server = createComputerUseMcpServer({
@@ -495,38 +491,50 @@ test("computer use MCP stdio keeps legacy line JSON debug mode", async () => {
     input,
     output,
     server,
-    transportMode: "line-json",
+    transportMode,
   });
+  const responses = collectFramedMessages(output);
+
+  writeFrame(input, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {},
+  });
+  writeFrame(input, {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/list",
+    params: {},
+  });
+  writeFrame(input, {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "computer.observe", arguments: {} },
+  });
+
+  await waitFor(() => responses.length >= 3);
+  input.end();
+  await done;
+
+  assert.equal(responses[0].result.serverInfo.name, "morpheus-computer-use");
+  assert.equal(responses[1].result.tools.length, 6);
+  assert.equal(responses[2].result.structuredContent.tool, "computer.observe");
+}
+
+function writeLineJson(input, message) {
+  input.write(`${JSON.stringify(message)}\n`);
+}
+
+function collectLineJsonMessages(output) {
   const lines = [];
   output.setEncoding("utf8");
   output.on("data", (chunk) => {
     lines.push(...chunk.split("\n").filter(Boolean));
   });
-
-  input.write(
-    `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`,
-  );
-  input.write(
-    `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`,
-  );
-  input.write(
-    `${JSON.stringify({
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: { name: "computer.observe", arguments: {} },
-    })}\n`,
-  );
-
-  await waitFor(() => lines.length >= 3);
-  input.end();
-  await done;
-
-  const responses = lines.map((line) => JSON.parse(line));
-  assert.equal(responses[0].result.serverInfo.name, "morpheus-computer-use");
-  assert.equal(responses[1].result.tools.length, 6);
-  assert.equal(responses[2].result.structuredContent.tool, "computer.observe");
-});
+  return lines;
+}
 
 function writeFrame(input, message) {
   const body = JSON.stringify(message);
