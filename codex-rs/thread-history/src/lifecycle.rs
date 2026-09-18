@@ -303,7 +303,6 @@ impl ThreadHistoryBuilder {
         self.pending_checkpoint_compaction = None;
         self.pending_compact_summary_echo = compact_summary_response_item(payload);
         let summary = compact_summary(payload);
-        let replacement_history = None;
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;
@@ -319,7 +318,7 @@ impl ThreadHistoryBuilder {
                 .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
             {
                 *existing_summary = summary;
-                *existing_replacement_history = replacement_history;
+                *existing_replacement_history = None;
                 return;
             }
         }
@@ -329,7 +328,7 @@ impl ThreadHistoryBuilder {
         turn.items.push(ThreadItem::ContextCompaction {
             id,
             summary,
-            replacement_history,
+            replacement_history: None,
         });
     }
 
