@@ -698,7 +698,16 @@ export function updateThreadTurnNotification(
   method: "turn/started" | "turn/completed",
   turn: Turn,
 ) {
-  if (method === "turn/completed" && canMergeTurnSnapshotItems(thread, turn)) {
+  if (method === "turn/started" && turn.items.some(isUserMessageItem)) {
+    return updateThreadTurn(thread, {
+      ...turn,
+      items: turn.items.filter(isUserMessageItem),
+    });
+  }
+  if (
+    method === "turn/completed" &&
+    canMergeTurnSnapshotItems(thread, turn)
+  ) {
     return updateThreadTurn(thread, turn);
   }
   return updateThreadTurnLifecycle(thread, turn);
@@ -1689,6 +1698,20 @@ export function mergeThreadLifecycleStatus(
     return next;
   }
   return preserveTerminalLifecycleStatus(existing, next);
+}
+
+export function updateThreadLifecycleStatusFromNotification(
+  thread: Thread,
+  lifecycleStatus: ThreadLifecycleStatus,
+): Thread {
+  return {
+    ...thread,
+    lifecycleStatus: mergeThreadLifecycleStatus(
+      thread.lifecycleStatus,
+      lifecycleStatus,
+      { authoritative: true, allowCompletedReopen: true },
+    ),
+  };
 }
 
 export function markThreadCommandExecutionRunning(thread: Thread): Thread {

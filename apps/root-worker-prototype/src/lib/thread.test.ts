@@ -47,6 +47,7 @@ import {
   treeThreadLifecycleStatusClass,
   treeThreadLifecycleStatusLabel,
   updateThreadItem,
+  updateThreadLifecycleStatusFromNotification,
   updateThreadSkills,
   updateThreadTurn,
   updateThreadTurnNotification,
@@ -1873,6 +1874,26 @@ test("authoritative active status notification does not reopen completed lifecyc
   );
 });
 
+test("status broadcast can reopen completed lifecycle for realtime running state", () => {
+  const thread = {
+    ...makeThread(),
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
+    turns: [],
+  };
+  const liveActive = {
+    type: "active" as const,
+    activeFlags: ["running" as const],
+  };
+
+  const updated = updateThreadLifecycleStatusFromNotification(thread, liveActive);
+
+  assert.deepEqual(updated.lifecycleStatus, liveActive);
+  assert.deepEqual(updated.turns, []);
+});
+
 test("status notification updates a non-selected local thread without synthesizing turns", () => {
   const existing = {
     ...makeThread(),
@@ -1881,11 +1902,9 @@ test("status notification updates a non-selected local thread without synthesizi
     turns: [],
   };
   const next = {
-    ...existing,
-    lifecycleStatus: mergeThreadLifecycleStatus(
-      existing.lifecycleStatus,
+    ...updateThreadLifecycleStatusFromNotification(
+      existing,
       { type: "waiting" as const, reason: "eventSubscription" as const },
-      { authoritative: true },
     ),
   };
 
@@ -3959,6 +3978,38 @@ test("turn started notifications keep lifecycle-only item behavior", () => {
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
     ["agent-1"],
   );
+});
+
+test("turn started notifications preserve submitted user message before later output", () => {
+  const started = updateThreadTurnNotification(
+    {
+      ...makeThread(),
+      id: "telebot-root",
+      agentPath: "/telebot",
+      turns: [],
+    },
+    "turn/started",
+    {
+      ...makeTurn("turn-telebot", [
+        makeUserMessage("user-telebot", "sync inventory"),
+      ]),
+      status: "inProgress",
+      completedAt: null,
+      durationMs: null,
+    },
+  );
+  const withLaterOutput = updateThreadItem(
+    started,
+    "turn-telebot",
+    makeAgentMessage("agent-telebot", "Working on it"),
+    { startedAtMs: 13_000 },
+  );
+
+  assert.deepEqual(
+    withLaterOutput.turns[0]?.items.map((item) => item.id),
+    ["user-telebot", "agent-telebot"],
+  );
+  assert.equal(withLaterOutput.turns[0]?.status, "inProgress");
 });
 
 test("send response turn snapshots merge compact items and update stats", () => {
