@@ -1472,6 +1472,7 @@ function cliPolicy(request = {}) {
 
 function cliLimitations() {
   return [
+    "The CLI is a developer/debug client. Model-facing Computer Use should use the configured MCP server in scripts/morpheus-computer-use-mcp.mjs.",
     "The CLI keeps session state only for the lifetime of one `run` process.",
     "Click, doubleClick, rightClick, scroll, key, hotkey, type, and drag are real desktop side effects and require a matched target plus Accessibility permission.",
     "Background targets are activated by the Computer Use session, then re-observed before any side-effect action is sent.",
