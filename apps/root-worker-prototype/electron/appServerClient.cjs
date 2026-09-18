@@ -34,6 +34,21 @@ const PACKAGED_COMPACT_PROMPT_RELATIVE_PATH = path.join(
   "compact",
   "COMPACT.md",
 );
+const PACKAGED_CONFIG_RELATIVE_PATH = path.join("default-config", "config.toml");
+const COMPUTER_USE_HELPER_APP_NAME = "Root Worker Computer Use";
+const COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER =
+  "com.openai.root-worker-prototype.computer-use.dev";
+const COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
+  "computer-use-helper",
+  `${COMPUTER_USE_HELPER_APP_NAME}.app`,
+  "Contents",
+  "MacOS",
+  COMPUTER_USE_HELPER_APP_NAME,
+);
+const COMPUTER_USE_HELPER_APP_RELATIVE_PATH = path.join(
+  "computer-use-helper",
+  `${COMPUTER_USE_HELPER_APP_NAME}.app`,
+);
 const HOME_COMPACT_PROMPT_RELATIVE_PATH = path.join("compact", "COMPACT.md");
 
 class AppServerClient extends EventEmitter {
@@ -461,8 +476,10 @@ module.exports = {
   buildDefaultAppServerCommand,
   buildMobileConnectionLaunch,
   ensureMorpheusHomeDefaults,
+  findDefaultConfigSeedPath,
   findDefaultCompactPromptSeedPath,
   findPackagedAppServerBinaryPath,
+  findPackagedComputerUseHelper,
   prepareAppServerWorkspace,
   resolveDefaultAppServerBinary,
   resolveAppServerCommand,
@@ -511,6 +528,13 @@ function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {
   );
   env.HOME = home;
   env.MORPHEUS_HOME = baseEnv.MORPHEUS_HOME ?? resolvePrototypeMorpheusHome(env);
+  const helper = findPackagedComputerUseHelper(environmentOptions);
+  if (helper) {
+    env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
+    env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE = helper.executablePath;
+    env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID = helper.bundleIdentifier;
+    env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH = helper.bundlePath;
+  }
   return env;
 }
 
@@ -768,6 +792,13 @@ function ensureMorpheusHomeDefaults(morpheusHome, options = {}) {
   const readFileSync = options.readFileSync ?? fs.readFileSync;
   const writeFileSync = options.writeFileSync ?? fs.writeFileSync;
   mkdirSync(morpheusHome, { recursive: true });
+  const configResult = ensureMorpheusConfigDefault(morpheusHome, {
+    ...options,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    writeFileSync,
+  });
 
   const compactPromptPath = path.join(
     morpheusHome,
@@ -776,6 +807,7 @@ function ensureMorpheusHomeDefaults(morpheusHome, options = {}) {
   mkdirSync(path.dirname(compactPromptPath), { recursive: true });
   if (existsSync(compactPromptPath)) {
     return {
+      ...configResult,
       compactPromptPath,
       seededCompactPrompt: false,
       compactPromptSeedPath: null,
@@ -788,6 +820,7 @@ function ensureMorpheusHomeDefaults(morpheusHome, options = {}) {
       `Default compact prompt seed was not found; ${compactPromptPath} was not created.`,
     );
     return {
+      ...configResult,
       compactPromptPath,
       seededCompactPrompt: false,
       compactPromptSeedPath: null,
@@ -797,10 +830,55 @@ function ensureMorpheusHomeDefaults(morpheusHome, options = {}) {
   const content = readFileSync(seedPath, "utf8");
   writeFileSync(compactPromptPath, content);
   return {
+    ...configResult,
     compactPromptPath,
     seededCompactPrompt: true,
     compactPromptSeedPath: seedPath,
   };
+}
+
+function ensureMorpheusConfigDefault(morpheusHome, options = {}) {
+  const mkdirSync = options.mkdirSync ?? fs.mkdirSync;
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
+  const writeFileSync = options.writeFileSync ?? fs.writeFileSync;
+  const configPath = path.join(morpheusHome, "config.toml");
+  if (existsSync(configPath)) {
+    return {
+      configPath,
+      seededConfig: false,
+      configSeedPath: null,
+    };
+  }
+  const seedPath = findDefaultConfigSeedPath(options);
+  if (!seedPath) {
+    return {
+      configPath,
+      seededConfig: false,
+      configSeedPath: null,
+    };
+  }
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  writeFileSync(configPath, readFileSync(seedPath, "utf8"));
+  return {
+    configPath,
+    seededConfig: true,
+    configSeedPath: seedPath,
+  };
+}
+
+function findDefaultConfigSeedPath(options = {}) {
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const explicitSeedPath = options.defaultConfigSeedPath;
+  if (explicitSeedPath && existsSync(explicitSeedPath)) {
+    return explicitSeedPath;
+  }
+  const resourcesPath = options.resourcesPath ?? currentResourcesPath();
+  if (!resourcesPath) {
+    return null;
+  }
+  const packagedSeedPath = path.join(resourcesPath, PACKAGED_CONFIG_RELATIVE_PATH);
+  return existsSync(packagedSeedPath) ? packagedSeedPath : null;
 }
 
 function findDefaultCompactPromptSeedPath(options = {}) {
@@ -934,6 +1012,26 @@ function findPackagedAppServerBinaryPath(options = {}) {
     }
   }
   return null;
+}
+
+function findPackagedComputerUseHelper(options = {}) {
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const resourcesPath = options.resourcesPath ?? currentResourcesPath();
+  if (!resourcesPath) {
+    return null;
+  }
+  const executablePath = path.join(
+    resourcesPath,
+    COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
+  );
+  if (!existsSync(executablePath)) {
+    return null;
+  }
+  return {
+    executablePath,
+    bundleIdentifier: COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
+    bundlePath: path.join(resourcesPath, COMPUTER_USE_HELPER_APP_RELATIVE_PATH),
+  };
 }
 
 function resolveWorkspaceAppServerBinary(options = {}) {

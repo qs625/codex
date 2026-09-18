@@ -8,6 +8,10 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   APP_NAME,
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
+  COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
+  COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
   COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
@@ -21,6 +25,25 @@ const {
   stagePayloadResources,
   updateInstalledArtifacts,
 } = require("./installedArtifactUpdate.cjs");
+
+function writeComputerUseHelperSources(workspace, sourceAppDir) {
+  const scriptsDir = path.join(workspace, "scripts");
+  const electronDir = path.join(sourceAppDir, "electron");
+  fs.mkdirSync(scriptsDir, { recursive: true });
+  fs.mkdirSync(electronDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(scriptsDir, "morpheus-computer-use-mcp.mjs"),
+    "export {}\n",
+  );
+  fs.writeFileSync(
+    path.join(electronDir, "computerUse.cjs"),
+    "module.exports = {}\n",
+  );
+  fs.writeFileSync(
+    path.join(electronDir, "computerUseMacNative.swift"),
+    "// native bridge",
+  );
+}
 
 test("candidate packager excludes every generated packaging directory", () => {
   assert.deepEqual(GENERATED_SOURCE_DIR_NAMES, [
@@ -329,21 +352,25 @@ test("Electron worker bundle reads packaged sources and writes a raw loadable bu
   );
 });
 
-test("stagePayloadResources installs app-server, compact prompt, and native bridge", () => {
+test("stagePayloadResources installs app-server, defaults, native bridge, and Computer Use helper", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "capsule-resources-"));
   try {
+    const workspace = path.join(root, "source");
+    const sourceAppDir = path.join(workspace, "apps", "root-worker-prototype");
     const appServer = path.join(root, "source-app-server");
     const compact = path.join(root, "source-compact.md");
-    const native = path.join(root, "computerUseMacNative.swift");
+    const native = path.join(sourceAppDir, "electron", "computerUseMacNative.swift");
     fs.writeFileSync(appServer, "binary", { mode: 0o755 });
     fs.writeFileSync(compact, "prompt");
-    fs.writeFileSync(native, "// native bridge");
+    writeComputerUseHelperSources(workspace, sourceAppDir);
     const target = path.join(root, "resources");
     stagePayloadResources(
       {
         appServerBinaryPath: appServer,
         computerUseNativeScriptSourcePath: native,
         defaultCompactPromptSourcePath: compact,
+        sourceAppDir,
+        workspace,
       },
       target,
     );
@@ -365,6 +392,51 @@ test("stagePayloadResources installs app-server, compact prompt, and native brid
       ),
       "// native bridge",
     );
+    const config = fs.readFileSync(
+      path.join(
+        target,
+        ...COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH.split(path.sep),
+      ),
+      "utf8",
+    );
+    assert.match(config, /\[mcp_servers\.computer_use\]/);
+    assert.match(config, /MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE/);
+    const helperExecutable = path.join(
+      target,
+      ...COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
+    );
+    assert.ok(fs.statSync(helperExecutable).isFile());
+    assert.equal(fs.statSync(helperExecutable).mode & 0o111, 0o111);
+    const helperLauncher = fs.readFileSync(helperExecutable, "utf8");
+    assert.match(helperLauncher, /ELECTRON_RUN_AS_NODE=1/);
+    assert.match(helperLauncher, /PAYLOAD_ELECTRON=/);
+    assert.doesNotMatch(helperLauncher, /exec node/);
+    assert.match(
+      fs.readFileSync(
+        path.join(
+          target,
+          ...COMPUTER_USE_HELPER_APP_RELATIVE_PATH.split(path.sep),
+          "Contents",
+          "Info.plist",
+        ),
+        "utf8",
+      ),
+      new RegExp(COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER),
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          target,
+          ...COMPUTER_USE_HELPER_APP_RELATIVE_PATH.split(path.sep),
+          "Contents",
+          "Resources",
+          "server",
+          "computerUse.cjs",
+        ),
+        "utf8",
+      ),
+      "module.exports = {}\n",
+    );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
@@ -379,13 +451,9 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
     const compactPath = path.join(root, "COMPACT.md");
     fs.mkdirSync(sourceAppDir, { recursive: true });
     fs.mkdirSync(codexRsDir, { recursive: true });
-    fs.mkdirSync(path.join(sourceAppDir, "electron"), { recursive: true });
     fs.writeFileSync(appServerBinaryPath, "server", { mode: 0o755 });
     fs.writeFileSync(compactPath, "compact");
-    fs.writeFileSync(
-      path.join(sourceAppDir, "electron", "computerUseMacNative.swift"),
-      "// native bridge",
-    );
+    writeComputerUseHelperSources(path.join(root, "source"), sourceAppDir);
     const plan = {
       appServerBinaryPath,
       codexRsDir,
@@ -476,6 +544,18 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
           "incoming",
           "activation-test",
           ".resources",
+          "computer-use-helper",
+        )}`,
+      ),
+    );
+    assert.ok(
+      packagerArgs.includes(
+        `--extra-resource=${path.join(
+          root,
+          "state",
+          "incoming",
+          "activation-test",
+          ".resources",
           "native",
         )}`,
       ),
@@ -512,13 +592,9 @@ test("Electron producer uses raw filesystem for regular app.asar and failure cle
     const compactPath = path.join(root, "COMPACT.md");
     fs.mkdirSync(sourceAppDir, { recursive: true });
     fs.mkdirSync(codexRsDir, { recursive: true });
-    fs.mkdirSync(path.join(sourceAppDir, "electron"), { recursive: true });
     fs.writeFileSync(appServerBinaryPath, "server", { mode: 0o755 });
     fs.writeFileSync(compactPath, "compact");
-    fs.writeFileSync(
-      path.join(sourceAppDir, "electron", "computerUseMacNative.swift"),
-      "// native bridge",
-    );
+    writeComputerUseHelperSources(path.join(root, "source"), sourceAppDir);
     const plan = {
       appServerBinaryPath,
       codexRsDir,

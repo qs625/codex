@@ -11,6 +11,7 @@ const {
   buildAppServerEnvironment,
   buildMobileConnectionLaunch,
   ensureMorpheusHomeDefaults,
+  findPackagedComputerUseHelper,
   prepareAppServerWorkspace,
   refreshMobileConnectionInfo,
   resolveDefaultAppServerBinary,
@@ -72,6 +73,43 @@ test("app-server environment supports sparse desktop launch env", () => {
   assert.ok(env.PATH.includes("/Users/alice/.cargo/bin"));
   assert.equal(env.APP_SERVER_CMD, undefined);
   assert.equal(env.CODEX_APP_SERVER_CMD, undefined);
+});
+
+test("app-server environment exposes packaged Computer Use helper identity", () => {
+  const resourcesPath = "/Applications/Root Worker Runtime.app/Contents/Resources";
+  const helperExecutable = path.join(
+    resourcesPath,
+    "computer-use-helper",
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  const env = buildAppServerEnvironment(
+    {
+      HOME: "/Users/alice",
+      PATH: "/usr/bin",
+    },
+    {
+      resourcesPath,
+      existsSync: (candidate) => candidate === helperExecutable,
+    },
+  );
+
+  assert.equal(env.MORPHEUS_COMPUTER_USE_HELPER_MODE, "packaged-helper-app");
+  assert.equal(env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE, helperExecutable);
+  assert.equal(
+    env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
+    "com.openai.root-worker-prototype.computer-use.dev",
+  );
+  assert.equal(
+    env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    path.join(
+      resourcesPath,
+      "computer-use-helper",
+      "Root Worker Computer Use.app",
+    ),
+  );
 });
 
 test("app-server environment supplies HOME when desktop env omits it", () => {
@@ -158,6 +196,33 @@ test("default app-server binary follows the selected external runtime resources"
       existsSync: (candidate) => candidate === packagedBinary,
     }),
     `"${packagedBinary}"`,
+  );
+});
+
+test("packaged Computer Use helper follows the selected runtime resources", () => {
+  const resourcesPath = "/runtime/payload/Root Worker Runtime.app/Contents/Resources";
+  const executablePath = path.join(
+    resourcesPath,
+    "computer-use-helper",
+    "Root Worker Computer Use.app",
+    "Contents",
+    "MacOS",
+    "Root Worker Computer Use",
+  );
+  assert.deepEqual(
+    findPackagedComputerUseHelper({
+      resourcesPath,
+      existsSync: (candidate) => candidate === executablePath,
+    }),
+    {
+      executablePath,
+      bundleIdentifier: "com.openai.root-worker-prototype.computer-use.dev",
+      bundlePath: path.join(
+        resourcesPath,
+        "computer-use-helper",
+        "Root Worker Computer Use.app",
+      ),
+    },
   );
 });
 
@@ -728,7 +793,11 @@ test("morpheus home defaults seed missing compact prompt", () => {
   });
 
   const compactPromptPath = path.join(morpheusHome, "compact/COMPACT.md");
+  const configPath = path.join(morpheusHome, "config.toml");
   assert.deepEqual(result, {
+    configPath,
+    seededConfig: false,
+    configSeedPath: null,
     compactPromptPath,
     seededCompactPrompt: true,
     compactPromptSeedPath: seedPath,
@@ -760,6 +829,7 @@ test("morpheus home defaults use packaged compact seed before source fallback", 
     resourcesPath,
     "default-config/compact/COMPACT.md",
   );
+  const packagedConfig = path.join(resourcesPath, "default-config/config.toml");
   const sourceSeed = path.join(
     dir,
     "codex-rs/thread-service/templates/compact/prompt.md",
@@ -767,17 +837,44 @@ test("morpheus home defaults use packaged compact seed before source fallback", 
   fs.mkdirSync(path.dirname(packagedSeed), { recursive: true });
   fs.mkdirSync(path.dirname(sourceSeed), { recursive: true });
   fs.writeFileSync(packagedSeed, "packaged compact prompt\n");
+  fs.writeFileSync(packagedConfig, "[mcp_servers.computer_use]\ncommand = \"sh\"\n");
   fs.writeFileSync(sourceSeed, "source compact prompt\n");
 
-  ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+  const result = ensureMorpheusHomeDefaults(path.join(dir, "home"), {
     resourcesPath,
     startDir: path.join(dir, "apps/root-worker-prototype/electron"),
   });
 
+  assert.equal(result.seededConfig, true);
+  assert.equal(result.configSeedPath, packagedConfig);
+  assert.equal(
+    fs.readFileSync(path.join(dir, "home/config.toml"), "utf8"),
+    "[mcp_servers.computer_use]\ncommand = \"sh\"\n",
+  );
   assert.equal(
     fs.readFileSync(path.join(dir, "home/compact/COMPACT.md"), "utf8"),
     "packaged compact prompt\n",
   );
+});
+
+test("morpheus home defaults do not replace an existing user config", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-config-existing-"));
+  const resourcesPath = path.join(dir, "resources");
+  const packagedConfig = path.join(resourcesPath, "default-config/config.toml");
+  const userConfig = path.join(dir, "home/config.toml");
+  fs.mkdirSync(path.dirname(packagedConfig), { recursive: true });
+  fs.mkdirSync(path.dirname(userConfig), { recursive: true });
+  fs.writeFileSync(packagedConfig, "packaged config\n");
+  fs.writeFileSync(userConfig, "user config\n");
+
+  const result = ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+    resourcesPath,
+    defaultCompactPromptSeedPath: "/missing/COMPACT.md",
+  });
+
+  assert.equal(result.seededConfig, false);
+  assert.equal(result.configSeedPath, null);
+  assert.equal(fs.readFileSync(userConfig, "utf8"), "user config\n");
 });
 
 test("morpheus home defaults follow the selected external runtime resources", () => {

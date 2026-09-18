@@ -204,6 +204,67 @@ test("computer use MCP permissions_status reports helper subject diagnostics", a
   await server.close();
 });
 
+test("computer use MCP permissions_status reports packaged helper app identity", async () => {
+  const previous = {
+    mode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE,
+    bundleId: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID,
+    bundlePath: process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+    executable: process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+  };
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE = "packaged-helper-app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID =
+    "com.openai.root-worker-prototype.computer-use.dev";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH =
+    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app";
+  process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE =
+    "/Applications/Morpheus.app/Contents/Resources/computer-use-helper/Root Worker Computer Use.app/Contents/MacOS/Root Worker Computer Use";
+  try {
+    const server = createComputerUseMcpServer({
+      managerFactory: managerFactoryWithNative(fakeNativeClient()),
+    });
+    const result = await server.callTool("computer.permissions_status", {
+      includeObservation: false,
+    });
+    assert.equal(
+      result.structuredContent.diagnostics.helperMode,
+      "packaged-helper-app",
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.bundleIdentifier,
+      "com.openai.root-worker-prototype.computer-use.dev",
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.packagedHelperBundle,
+      true,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.stablePermissionSubject,
+      false,
+    );
+    assert.equal(
+      result.structuredContent.diagnostics.permissionSubject.nativeControlSubject,
+      "delegated-swift-script-and-screencapture",
+    );
+    assert.match(
+      result.structuredContent.diagnostics.permissionSubject.executablePath,
+      /Root Worker Computer Use$/,
+    );
+    assert.ok(
+      result.structuredContent.limitations.some(
+        (limitation) =>
+          limitation.code === "native-permission-subject-not-contained" &&
+          /delegates to Swift and screencapture/.test(limitation.message),
+      ),
+    );
+    await server.close();
+  } finally {
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_MODE", previous.mode);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID", previous.bundleId);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", previous.bundlePath);
+    restoreEnv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", previous.executable);
+  }
+});
+
 test("computer use MCP stdio handles initialize, tools/list, and tools/call", async () => {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -249,5 +310,13 @@ async function waitFor(predicate) {
       throw new Error("timed out waiting for condition");
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }

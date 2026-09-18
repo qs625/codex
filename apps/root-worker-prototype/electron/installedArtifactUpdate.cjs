@@ -27,6 +27,30 @@ const COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
   COMPUTER_USE_NATIVE_SCRIPT_FILE,
 );
+const COMPUTER_USE_HELPER_APP_NAME = "Root Worker Computer Use";
+const COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER =
+  "com.openai.root-worker-prototype.computer-use.dev";
+const COMPUTER_USE_HELPER_RESOURCE_DIR_NAME = "computer-use-helper";
+const COMPUTER_USE_HELPER_APP_RELATIVE_PATH = path.join(
+  COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
+  `${COMPUTER_USE_HELPER_APP_NAME}.app`,
+);
+const COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  "Contents",
+  "MacOS",
+  COMPUTER_USE_HELPER_APP_NAME,
+);
+const COMPUTER_USE_HELPER_SERVER_RESOURCE_RELATIVE_PATH = path.join(
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  "Contents",
+  "Resources",
+  "server",
+);
+const COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH = path.join(
+  "default-config",
+  "config.toml",
+);
 const GENERATED_SOURCE_DIR_NAMES = [
   "dist-app",
   "dist-package-resources",
@@ -210,6 +234,7 @@ function updateInstalledArtifacts(plan, options = {}) {
         `--extra-resource=${path.join(resourceRoot, "bin")}`,
         `--extra-resource=${path.join(resourceRoot, "default-config")}`,
         `--extra-resource=${path.join(resourceRoot, "native")}`,
+        `--extra-resource=${path.join(resourceRoot, COMPUTER_USE_HELPER_RESOURCE_DIR_NAME)}`,
       ],
       { cwd: plan.sourceAppDir },
     );
@@ -307,6 +332,10 @@ function stagePayloadResources(
     resourceRoot,
     COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
   );
+  const defaultConfigTarget = path.join(
+    resourceRoot,
+    COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
+  );
   fsOps.mkdirSync(path.dirname(appServerTarget), {
     recursive: true,
     mode: 0o755,
@@ -319,12 +348,147 @@ function stagePayloadResources(
     recursive: true,
     mode: 0o755,
   });
+  fsOps.mkdirSync(path.dirname(defaultConfigTarget), {
+    recursive: true,
+    mode: 0o755,
+  });
   fsOps.copyFileSync(plan.appServerBinaryPath, appServerTarget);
   fsOps.chmodSync(appServerTarget, 0o755);
   fsOps.copyFileSync(plan.defaultCompactPromptSourcePath, compactTarget);
   fsOps.chmodSync(compactTarget, 0o644);
   fsOps.copyFileSync(nativeSource, nativeTarget);
   fsOps.chmodSync(nativeTarget, 0o644);
+  fsOps.writeFileSync(
+    defaultConfigTarget,
+    packagedComputerUseMcpConfigToml(),
+    { encoding: "utf8", mode: 0o644 },
+  );
+  stageComputerUseHelperApp(plan, resourceRoot, { fsOps, nativeSource });
+}
+
+function stageComputerUseHelperApp(
+  plan,
+  resourceRoot,
+  { fsOps = resolveInstalledArtifactFileSystem(), nativeSource } = {},
+) {
+  const repoRoot =
+    plan.workspace ??
+    plan.repoRoot ??
+    path.resolve(plan.sourceAppDir, "..", "..");
+  const helperAppRoot = path.join(
+    resourceRoot,
+    ...COMPUTER_USE_HELPER_APP_RELATIVE_PATH.split(path.sep),
+  );
+  const helperExecutable = path.join(
+    resourceRoot,
+    ...COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH.split(path.sep),
+  );
+  const serverResourceDir = path.join(
+    resourceRoot,
+    ...COMPUTER_USE_HELPER_SERVER_RESOURCE_RELATIVE_PATH.split(path.sep),
+  );
+  const mcpServerSource =
+    plan.computerUseMcpServerSourcePath ??
+    path.join(repoRoot, "scripts", "morpheus-computer-use-mcp.mjs");
+  const managerSource =
+    plan.computerUseManagerSourcePath ??
+    path.join(plan.sourceAppDir, "electron", "computerUse.cjs");
+  const nativeBridgeSource =
+    nativeSource ??
+    plan.computerUseNativeScriptSourcePath ??
+    path.join(plan.sourceAppDir, "electron", COMPUTER_USE_NATIVE_SCRIPT_FILE);
+
+  fsOps.mkdirSync(path.dirname(helperExecutable), {
+    recursive: true,
+    mode: 0o755,
+  });
+  fsOps.mkdirSync(serverResourceDir, { recursive: true, mode: 0o755 });
+  fsOps.writeFileSync(
+    path.join(helperAppRoot, "Contents", "Info.plist"),
+    computerUseHelperInfoPlist(),
+    { encoding: "utf8", mode: 0o644 },
+  );
+  fsOps.writeFileSync(
+    path.join(helperAppRoot, "Contents", "PkgInfo"),
+    "APPL????",
+    { encoding: "ascii", mode: 0o644 },
+  );
+  fsOps.writeFileSync(
+    helperExecutable,
+    computerUseHelperLauncherScript(),
+    { encoding: "utf8", mode: 0o755 },
+  );
+  fsOps.copyFileSync(
+    mcpServerSource,
+    path.join(serverResourceDir, "morpheus-computer-use-mcp.mjs"),
+  );
+  fsOps.chmodSync(
+    path.join(serverResourceDir, "morpheus-computer-use-mcp.mjs"),
+    0o644,
+  );
+  fsOps.copyFileSync(managerSource, path.join(serverResourceDir, "computerUse.cjs"));
+  fsOps.chmodSync(path.join(serverResourceDir, "computerUse.cjs"), 0o644);
+  fsOps.copyFileSync(
+    nativeBridgeSource,
+    path.join(serverResourceDir, COMPUTER_USE_NATIVE_SCRIPT_FILE),
+  );
+  fsOps.chmodSync(
+    path.join(serverResourceDir, COMPUTER_USE_NATIVE_SCRIPT_FILE),
+    0o644,
+  );
+}
+
+function computerUseHelperLauncherScript() {
+  return `#!/bin/sh
+set -eu
+HELPER_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SERVER_DIR="$HELPER_DIR/Resources/server"
+PAYLOAD_ELECTRON="$HELPER_DIR/../../../../MacOS/${APP_NAME}"
+export MORPHEUS_COMPUTER_USE_HELPER_MODE="packaged-helper-app"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID="${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}"
+export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_DIR"
+export MORPHEUS_COMPUTER_USE_MANAGER_MODULE="$SERVER_DIR/computerUse.cjs"
+export MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT="$SERVER_DIR/${COMPUTER_USE_NATIVE_SCRIPT_FILE}"
+export ELECTRON_RUN_AS_NODE=1
+exec "$PAYLOAD_ELECTRON" "$SERVER_DIR/morpheus-computer-use-mcp.mjs"
+`;
+}
+
+function computerUseHelperInfoPlist() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>${COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}</string>
+  <key>CFBundleDisplayName</key>
+  <string>${COMPUTER_USE_HELPER_APP_NAME}</string>
+  <key>CFBundleExecutable</key>
+  <string>${COMPUTER_USE_HELPER_APP_NAME}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Morpheus Computer Use inspects the screen only when you ask a configured local tool to observe the desktop.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Morpheus Computer Use may activate or inspect target applications at your request.</string>
+</dict>
+</plist>
+`;
+}
+
+function packagedComputerUseMcpConfigToml() {
+  return `[mcp_servers.computer_use]
+command = "sh"
+args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\""]
+startup_timeout_sec = 5
+tool_timeout_sec = 30
+default_tools_approval_mode = "prompt"
+`;
 }
 
 function normalizeRuntimeCapsuleTree(
@@ -597,6 +761,12 @@ module.exports = {
   APP_NAME,
   COMPUTER_USE_NATIVE_RESOURCE_RELATIVE_PATH,
   COMPUTER_USE_NATIVE_SCRIPT_FILE,
+  COMPUTER_USE_HELPER_APP_NAME,
+  COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
+  COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH,
+  COMPUTER_USE_HELPER_RESOURCE_DIR_NAME,
+  COMPUTER_USE_PACKAGED_MCP_CONFIG_RELATIVE_PATH,
   GENERATED_SOURCE_DIR_NAMES,
   PAYLOAD_EXECUTABLE_RELATIVE_PATH,
   PAYLOAD_RELATIVE_PATH,
@@ -611,6 +781,7 @@ module.exports = {
   resolveInstalledArtifactUpdatePlanInWorker,
   resolveRuntimeLauncherStateRoot,
   runInstalledArtifactWorker,
+  stageComputerUseHelperApp,
   stagePayloadResources,
   updateInstalledArtifacts,
   updateInstalledArtifactsInWorker,

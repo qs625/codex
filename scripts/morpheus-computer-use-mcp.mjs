@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const {
   createComputerUseManager,
-} = require("../apps/root-worker-prototype/electron/computerUse.cjs");
+} = require(resolveComputerUseManagerModule());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -422,6 +422,9 @@ async function newSession(args, managerFactory, id = sessionIdFromArgs(args)) {
 
 async function defaultManagerFactory(options = {}) {
   return createComputerUseManager({
+    ...(process.env.MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT
+      ? { scriptPath: process.env.MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT }
+      : {}),
     includePerception: options.includePerception,
     perceptionLimit: options.perceptionLimit,
     safety: {
@@ -469,6 +472,13 @@ function permissionsFromState(state) {
 }
 
 function defaultPermissionDiagnostics() {
+  const helperBundlePath =
+    process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH ?? null;
+  const helperExecutable =
+    process.env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE ?? null;
+  const helperBundleIdentifier =
+    process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID ?? null;
+  const packagedHelperBundle = Boolean(helperBundleIdentifier && helperBundlePath);
   return {
     contract: "helper-as-mcp-server",
     helperMode: process.env.MORPHEUS_COMPUTER_USE_HELPER_MODE ?? "repo-local-mcp-server",
@@ -483,16 +493,16 @@ function defaultPermissionDiagnostics() {
     },
     permissionSubject: {
       bundleIdentifier:
-        process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_ID ??
-        process.env.MORPHEUS_RUNTIME_BUNDLE_ID ??
-        null,
-      bundlePath:
-        process.env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH ??
-        process.env.MORPHEUS_RUNTIME_BUNDLE_PATH ??
-        null,
-      executablePath: process.execPath,
+        helperBundleIdentifier ?? process.env.MORPHEUS_RUNTIME_BUNDLE_ID ?? null,
+      bundlePath: helperBundlePath ?? process.env.MORPHEUS_RUNTIME_BUNDLE_PATH ?? null,
+      executablePath: helperExecutable ?? process.execPath,
+      packagedHelperBundle,
+      stablePermissionSubject: false,
+      nativeControlSubject: packagedHelperBundle
+        ? "delegated-swift-script-and-screencapture"
+        : "repo-local-node-process",
       note:
-        "Authorize the actual Computer Use helper/runtime process that invokes macOS Screen Recording and Accessibility APIs; authorizing an outer launcher bundle is not sufficient.",
+        "Authorize the process macOS presents for Screen Recording and Accessibility. The packaged helper bundle is the intended MCP server identity, but current native desktop calls are still delegated through Swift and screencapture, so the stable TCC permission subject is not yet proven.",
     },
   };
 }
@@ -510,7 +520,14 @@ function permissionLimitations(diagnostics) {
     limitations.push({
       code: "repo-local-helper-not-bundled",
       message:
-        "This first tranche runs as a repo-local MCP server process; a separately packaged helper app remains future work.",
+        "This process is running as a repo-local MCP server without a packaged Computer Use helper bundle.",
+    });
+  }
+  if (subject.packagedHelperBundle && subject.stablePermissionSubject !== true) {
+    limitations.push({
+      code: "native-permission-subject-not-contained",
+      message:
+        "The packaged helper bundle starts the MCP server, but native desktop control still delegates to Swift and screencapture, so macOS may require authorization for the delegated runtime/toolchain process until native calls move into a signed helper executable.",
     });
   }
   return limitations;
@@ -637,6 +654,13 @@ function serializeJsonRpcError(error) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function resolveComputerUseManagerModule() {
+  return (
+    process.env.MORPHEUS_COMPUTER_USE_MANAGER_MODULE ??
+    "../apps/root-worker-prototype/electron/computerUse.cjs"
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
