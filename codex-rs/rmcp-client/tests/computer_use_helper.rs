@@ -202,13 +202,10 @@ fn computer_use_config_missing_overlay_env() -> McpConfig {
                 command: "sh".to_string(),
                 args: vec![
                     "-c".to_string(),
-                    r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE" mcp-server"#.to_string(),
+                    r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE""#.to_string(),
                 ],
                 env: None,
-                env_vars: vec![
-                    "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE".into(),
-                    "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH".into(),
-                ],
+                env_vars: vec!["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE".into()],
                 cwd: None,
             },
             experimental_environment: None,
