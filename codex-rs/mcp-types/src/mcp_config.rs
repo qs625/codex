@@ -148,9 +148,9 @@ fn ensure_computer_use_overlay_env_var(server: &mut McpServerConfig) {
 
 fn is_packaged_computer_use_helper_command(command: &str, args: &[String]) -> bool {
     command == "sh"
-        && args.iter().any(|arg| {
-            arg.contains(COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR) && arg.contains("mcp-server")
-        })
+        && args
+            .iter()
+            .any(|arg| arg.contains(COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR))
 }
 
 pub fn tool_plugin_provenance(config: &McpConfig) -> ToolPluginProvenance {
@@ -552,6 +552,34 @@ mod tests {
                     "-c",
                     "exec \"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\" mcp-server",
                 ],
+                vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR],
+            ),
+        );
+
+        let effective = effective_mcp_servers(&config, None);
+        let env_vars = env_var_names(
+            effective
+                .get(COMPUTER_USE_MCP_SERVER_NAME)
+                .expect("computer_use server should exist"),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![
+                COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR.to_string(),
+                COMPUTER_USE_OVERLAY_SOCKET_ENV_VAR.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn effective_mcp_servers_add_overlay_env_for_legacy_computer_use_helper_config() {
+        let mut config = test_mcp_config(PathBuf::from("/tmp"));
+        config.configured_mcp_servers.insert(
+            COMPUTER_USE_MCP_SERVER_NAME.to_string(),
+            stdio_mcp_server(
+                "sh",
+                vec!["-c", "exec \"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\""],
                 vec![COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR],
             ),
         );
