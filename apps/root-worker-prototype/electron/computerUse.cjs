@@ -1,6 +1,7 @@
 const { execFile } = require("node:child_process");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
@@ -10,6 +11,10 @@ const execFileAsync = promisify(execFile);
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
 const NATIVE_APP_HOST_TIMEOUT_MS = 30_000;
 const NATIVE_APP_HOST_POLL_INTERVAL_MS = 50;
+const NATIVE_SERVICE_TIMEOUT_MS = 30_000;
+const NATIVE_SERVICE_RETRY_INTERVAL_MS = 50;
+const NATIVE_SERVICE_PROTOCOL = "morpheus-computer-use-service";
+const NATIVE_SERVICE_PROTOCOL_VERSION = 1;
 const MAX_TRACE_ITEMS = 80;
 const MAX_POINTER_PATH_ITEMS = 48;
 const DEFAULT_PERCEPTION_LIMIT = 40;
@@ -1668,14 +1673,18 @@ function createMacNativeComputerUseClient({ scriptPath, tmpDir } = {}) {
     executablePath: backend.executablePath,
     tmpDir,
     runNative: backend.executablePath
-      ? backend.invocationMode === "launchservices-app-host"
-        ? runNativeComputerUseAppHost
-        : runNativeComputerUseExecutable
+      ? backend.invocationMode === "launchservices-service-socket"
+        ? runNativeComputerUseService
+        : backend.invocationMode === "launchservices-app-host"
+          ? runNativeComputerUseAppHost
+          : runNativeComputerUseExecutable
       : runSwiftComputerUse,
     screenshotCapture: backend.executablePath
-      ? backend.invocationMode === "launchservices-app-host"
-        ? captureScreenshotWithNativeAppHost
-        : captureScreenshotWithNativeExecutable
+      ? backend.invocationMode === "launchservices-service-socket"
+        ? captureScreenshotWithNativeService
+        : backend.invocationMode === "launchservices-app-host"
+          ? captureScreenshotWithNativeAppHost
+          : captureScreenshotWithNativeExecutable
       : captureScreenshotWithScreencapture,
     removeFile: removeScreenshot,
   });
@@ -1693,7 +1702,7 @@ function resolveMacNativeComputerUseBackend(options = {}) {
     const nativeInvocationMode =
       options.nativeInvocationMode ??
       process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE ??
-      "direct-exec";
+      "launchservices-service-socket";
     return {
       mode: "packaged-native-helper-executable",
       executablePath,
@@ -2001,6 +2010,293 @@ async function readNativeAppHostResponse(responsePath, command) {
   );
 }
 
+async function runNativeComputerUseService(
+  executablePath,
+  command,
+  payload,
+  options = {},
+) {
+  const service = await computerUseServiceDescriptor(executablePath, options);
+  const request = {
+    protocol: NATIVE_SERVICE_PROTOCOL,
+    protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
+    id: randomUUID(),
+    command,
+    payload: payload ?? {},
+    expected: service.expected,
+  };
+  await ensureNativeComputerUseService(service, options);
+  return sendNativeServiceCommand(service, request, options);
+}
+
+async function computerUseServiceDescriptor(executablePath, options = {}) {
+  const bundlePath = helperBundlePathForExecutable(executablePath);
+  const socketPath =
+    options.socketPath ??
+    process.env.MORPHEUS_COMPUTER_USE_SERVICE_SOCKET_PATH ??
+    nativeComputerUseServiceSocketPath(options);
+  return {
+    executablePath,
+    bundlePath,
+    socketPath,
+    expected: {
+      bundlePath,
+      executablePath,
+      payloadElectronPath: options.payloadElectronPath ?? process.execPath,
+      protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
+    },
+  };
+}
+
+function nativeComputerUseServiceSocketPath(options = {}) {
+  const uid =
+    options.uid ?? (typeof process.getuid === "function" ? process.getuid() : "user");
+  const root =
+    options.root ?? path.join(os.tmpdir(), `morpheus-computer-use-service-${uid}`);
+  return path.join(root, "service.sock");
+}
+
+async function prepareNativeServiceSocketDirectory(socketPath) {
+  const directory = path.dirname(socketPath);
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const stat = await fs.lstat(directory);
+  if (!stat.isDirectory()) {
+    throw new Error("Computer Use service socket directory is not a directory");
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error("Computer Use service socket directory must not be a symlink");
+  }
+  const currentUid =
+    typeof process.getuid === "function" ? process.getuid() : stat.uid;
+  if (stat.uid !== currentUid) {
+    throw new Error("Computer Use service socket directory is not owned by the current user");
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    throw new Error("Computer Use service socket directory must not be group/world accessible");
+  }
+  return directory;
+}
+
+async function sendNativeServiceCommand(service, request, options = {}) {
+  const response = await writeNativeServiceRequest(service.socketPath, request, options);
+  if (response?.ok === false) {
+    const code = typeof response.code === "string" ? response.code : null;
+    if (code === "service_identity_mismatch") {
+      await shutdownNativeComputerUseService(service, options);
+      const mismatch = new Error(response.error || "Computer Use service identity mismatch");
+      mismatch.code = code;
+      throw mismatch;
+    }
+    throw new Error(response.error || `${request.command} failed`);
+  }
+  const result = { ...(response ?? {}) };
+  delete result.ok;
+  delete result.id;
+  return result;
+}
+
+async function ensureNativeComputerUseService(service, options = {}) {
+  try {
+    const status = await readNativeComputerUseServiceStatus(service, options);
+    if (nativeServiceIdentityMatches(service.expected, status.identity)) {
+      return status;
+    }
+    await shutdownNativeComputerUseService(service, options);
+    const mismatch = new Error("Computer Use service identity mismatch");
+    mismatch.code = "service_identity_mismatch";
+    throw mismatch;
+  } catch (error) {
+    if (!shouldStartNativeService(error)) {
+      throw error;
+    }
+  }
+  await launchNativeComputerUseService(service, options);
+  return waitForNativeComputerUseService(service, options);
+}
+
+async function readNativeComputerUseServiceStatus(service, options = {}) {
+  return sendNativeServiceCommand(
+    service,
+    {
+      protocol: NATIVE_SERVICE_PROTOCOL,
+      protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
+      id: randomUUID(),
+      command: "status",
+      payload: {},
+      expected: service.expected,
+    },
+    options,
+  );
+}
+
+function nativeServiceIdentityMatches(expected, identity) {
+  if (!identity) {
+    return false;
+  }
+  if (identity.protocolVersion !== expected.protocolVersion) {
+    return false;
+  }
+  return ["bundlePath", "executablePath", "payloadElectronPath"].every((key) =>
+    pathsEqual(identity[key], expected[key]),
+  );
+}
+
+async function writeNativeServiceRequest(socketPath, request, options = {}) {
+  await validateNativeServiceSocketPath(socketPath);
+  const timeoutMs = options.timeoutMs ?? NATIVE_SERVICE_TIMEOUT_MS;
+  const connect = options.connect ?? net.createConnection;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let buffer = "";
+    const socket = connect(socketPath);
+    const timer = setTimeout(() => {
+      finish(reject, new Error(`Timed out waiting for ${request.command} service response`));
+    }, timeoutMs);
+    function finish(callback, value) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      callback(value);
+    }
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      socket.write(`${JSON.stringify(request)}\n`);
+    });
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      const line = buffer.slice(0, newline).trim();
+      try {
+        finish(resolve, JSON.parse(line || "{}"));
+      } catch (error) {
+        finish(reject, error);
+      }
+    });
+    socket.on("error", (error) => finish(reject, error));
+    socket.on("end", () => {
+      if (!settled) {
+        finish(reject, new Error(`Computer Use service closed during ${request.command}`));
+      }
+    });
+  });
+}
+
+async function validateNativeServiceSocketPath(socketPath) {
+  const directory = path.dirname(socketPath);
+  let directoryStat;
+  try {
+    directoryStat = await fs.lstat(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  if (!directoryStat.isDirectory()) {
+    throw new Error("Computer Use service socket directory is not a directory");
+  }
+  if (directoryStat.isSymbolicLink()) {
+    throw new Error("Computer Use service socket directory must not be a symlink");
+  }
+  const currentUid =
+    typeof process.getuid === "function" ? process.getuid() : directoryStat.uid;
+  if (directoryStat.uid !== currentUid) {
+    throw new Error("Computer Use service socket directory is not owned by the current user");
+  }
+  if ((directoryStat.mode & 0o077) !== 0) {
+    throw new Error("Computer Use service socket directory must not be group/world accessible");
+  }
+  let socketStat;
+  try {
+    socketStat = await fs.lstat(socketPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  if (!socketStat.isSocket()) {
+    throw new Error("Computer Use service path exists but is not a socket");
+  }
+  if (socketStat.uid !== currentUid) {
+    throw new Error("Computer Use service socket is not owned by the current user");
+  }
+}
+
+function shouldStartNativeService(error) {
+  return (
+    error?.code === "ENOENT" ||
+    error?.code === "ECONNREFUSED" ||
+    error?.code === "service_identity_mismatch"
+  );
+}
+
+async function launchNativeComputerUseService(service, options = {}) {
+  await prepareNativeServiceSocketDirectory(service.socketPath);
+  const launchService = options.launchService ?? launchNativeServiceApp;
+  await launchService({
+    bundlePath: service.bundlePath,
+    socketPath: service.socketPath,
+  });
+}
+
+async function launchNativeServiceApp({ bundlePath, socketPath }) {
+  await execFileAsync(
+    "/usr/bin/open",
+    ["-a", bundlePath, "--args", "service", socketPath],
+    { maxBuffer: 1024 * 1024 },
+  );
+}
+
+async function waitForNativeComputerUseService(service, options = {}) {
+  const deadline = Date.now() + (options.timeoutMs ?? NATIVE_SERVICE_TIMEOUT_MS);
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const status = await readNativeComputerUseServiceStatus(service, options);
+      if (
+        status.status === "ready" &&
+        nativeServiceIdentityMatches(service.expected, status.identity)
+      ) {
+        return status;
+      }
+      lastError = new Error("Computer Use service identity mismatch");
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(options.retryIntervalMs ?? NATIVE_SERVICE_RETRY_INTERVAL_MS);
+  }
+  throw new Error(
+    lastError
+      ? `Timed out waiting for Computer Use service: ${errorMessage(lastError)}`
+      : "Timed out waiting for Computer Use service",
+  );
+}
+
+async function shutdownNativeComputerUseService(service, options = {}) {
+  try {
+    await writeNativeServiceRequest(
+      service.socketPath,
+      {
+        protocol: NATIVE_SERVICE_PROTOCOL,
+        protocolVersion: NATIVE_SERVICE_PROTOCOL_VERSION,
+        id: randomUUID(),
+        command: "shutdown",
+        payload: {},
+      },
+      { ...options, timeoutMs: Math.min(options.timeoutMs ?? 1000, 1000) },
+    );
+  } catch {
+    // A stale service from an older build may not understand shutdown.
+  }
+}
+
 async function runSwiftComputerUse(scriptPath, command, payload) {
   const encoded = Buffer.from(JSON.stringify(payload ?? {})).toString("base64");
   let stdout;
@@ -2050,6 +2346,19 @@ async function captureScreenshotWithNativeAppHost(
   executablePath,
 ) {
   const result = await runNativeComputerUseAppHost(
+    executablePath,
+    "screenshot",
+    { tmpDir, bounds },
+  );
+  return readScreenshotFile(result.screenshot?.path);
+}
+
+async function captureScreenshotWithNativeService(
+  tmpDir,
+  bounds = null,
+  executablePath,
+) {
+  const result = await runNativeComputerUseService(
     executablePath,
     "screenshot",
     { tmpDir, bounds },
@@ -2130,6 +2439,8 @@ module.exports = {
   resolveMacNativeComputerUseExecutablePath,
   resolveMacNativeComputerUseScriptPath,
   runNativeComputerUseAppHost,
+  runNativeComputerUseService,
+  nativeComputerUseServiceSocketPath,
   targetMismatch,
   shouldAllowComputerUseAction: (action) => classifyComputerUseAction(normalizeAction(action)),
 };

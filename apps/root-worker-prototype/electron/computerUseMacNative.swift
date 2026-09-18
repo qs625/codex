@@ -4,6 +4,9 @@ import Darwin
 import Foundation
 import ScreenCaptureKit
 
+let serviceProtocol = "morpheus-computer-use-service"
+let serviceProtocolVersion = 1
+
 func json(_ value: Any) {
   let data = try! JSONSerialization.data(withJSONObject: value, options: [])
   FileHandle.standardOutput.write(data)
@@ -96,7 +99,8 @@ func launchMcpServerIfAvailable() -> Bool {
   setenv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", paths.executable.path, 1)
   setenv("MORPHEUS_COMPUTER_USE_MANAGER_MODULE", paths.server.appendingPathComponent("computerUse.cjs").path, 1)
   setenv("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE", paths.executable.path, 1)
-  setenv("MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE", "launchservices-app-host", 1)
+  setenv("MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE", "launchservices-service-socket", 1)
+  setenv("MORPHEUS_COMPUTER_USE_SERVICE_SOCKET_PATH", defaultServiceSocketPath(), 1)
   setenv("MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT", paths.server.appendingPathComponent("computerUseMacNative.swift").path, 1)
   setenv("ELECTRON_RUN_AS_NODE", "1", 1)
   let args = [payload, server.path]
@@ -107,6 +111,14 @@ func launchMcpServerIfAvailable() -> Bool {
     }
   }
   error("Failed to launch Computer Use MCP server: \(String(cString: strerror(errno)))")
+}
+
+func defaultServiceSocketPath() -> String {
+  let tmp = ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory()
+  return URL(fileURLWithPath: tmp, isDirectory: true)
+    .appendingPathComponent("morpheus-computer-use-service-\(getuid())")
+    .appendingPathComponent("service.sock")
+    .path
 }
 
 func payload() -> [String: Any] {
@@ -144,6 +156,199 @@ func redirectStandardOutput(to path: String) {
   FileManager.default.createFile(atPath: path, contents: nil)
   guard freopen(path, "w", stdout) != nil else {
     error("Could not open IPC response file")
+  }
+}
+
+func writeServiceJSON(_ value: [String: Any], to fd: Int32) {
+  guard let data = try? JSONSerialization.data(withJSONObject: value, options: []) else {
+    return
+  }
+  data.withUnsafeBytes { buffer in
+    if let base = buffer.baseAddress {
+      _ = Darwin.write(fd, base, data.count)
+    }
+  }
+  "\n".data(using: .utf8)!.withUnsafeBytes { buffer in
+    if let base = buffer.baseAddress {
+      _ = Darwin.write(fd, base, 1)
+    }
+  }
+}
+
+func readServiceLine(from fd: Int32) -> String? {
+  var bytes: [UInt8] = []
+  var buffer = [UInt8](repeating: 0, count: 4096)
+  while true {
+    let count = Darwin.read(fd, &buffer, buffer.count)
+    if count <= 0 {
+      return bytes.isEmpty ? nil : String(bytes: bytes, encoding: .utf8)
+    }
+    if let newline = buffer[..<count].firstIndex(of: 10) {
+      bytes.append(contentsOf: buffer[..<newline])
+      return String(bytes: bytes, encoding: .utf8)
+    }
+    bytes.append(contentsOf: buffer[..<count])
+    if bytes.count > 1024 * 1024 {
+      return nil
+    }
+  }
+}
+
+func serviceIdentity() -> [String: Any] {
+  let paths = helperBundlePaths()
+  return [
+    "protocol": serviceProtocol,
+    "protocolVersion": serviceProtocolVersion,
+    "bundlePath": paths.bundle.path,
+    "executablePath": paths.executable.path,
+    "payloadElectronPath": payloadElectronPath(paths: paths),
+  ]
+}
+
+func serviceIdentityMatches(_ expected: [String: Any]?) -> Bool {
+  guard let expected = expected else {
+    return true
+  }
+  let identity = serviceIdentity()
+  for key in ["bundlePath", "executablePath", "payloadElectronPath"] {
+    if let value = expected[key] as? String,
+      let actual = identity[key] as? String,
+      URL(fileURLWithPath: value).standardizedFileURL.path != URL(fileURLWithPath: actual).standardizedFileURL.path
+    {
+      return false
+    }
+  }
+  if let version = expected["protocolVersion"] as? Int, version != serviceProtocolVersion {
+    return false
+  }
+  return true
+}
+
+func sockaddrForUnixPath(_ path: String) -> sockaddr_un {
+  var address = sockaddr_un()
+  address.sun_family = sa_family_t(AF_UNIX)
+  let maxLength = MemoryLayout.size(ofValue: address.sun_path)
+  path.withCString { source in
+    withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+      pointer.withMemoryRebound(to: CChar.self, capacity: maxLength) { destination in
+        strncpy(destination, source, maxLength - 1)
+        destination[maxLength - 1] = 0
+      }
+    }
+  }
+  return address
+}
+
+func redirectStandardOutputToFileDescriptor(_ fd: Int32, _ body: () -> Void) {
+  fflush(stdout)
+  let previous = dup(STDOUT_FILENO)
+  guard previous >= 0 else {
+    writeServiceJSON(["ok": false, "error": "Could not duplicate stdout"], to: fd)
+    return
+  }
+  dup2(fd, STDOUT_FILENO)
+  body()
+  fflush(stdout)
+  dup2(previous, STDOUT_FILENO)
+  close(previous)
+}
+
+func handleServiceConnection(_ fd: Int32) -> Bool {
+  defer { close(fd) }
+  guard
+    let line = readServiceLine(from: fd),
+    let data = line.data(using: .utf8),
+    let decoded = try? JSONSerialization.jsonObject(with: data),
+    let object = decoded as? [String: Any],
+    let command = object["command"] as? String
+  else {
+    writeServiceJSON(["ok": false, "error": "Invalid Computer Use service request"], to: fd)
+    return true
+  }
+  let requestId = object["id"] as? String
+  func envelope(_ body: [String: Any]) -> [String: Any] {
+    var response = body
+    if let requestId = requestId {
+      response["id"] = requestId
+    }
+    return response
+  }
+  guard object["protocol"] as? String == serviceProtocol,
+    object["protocolVersion"] as? Int == serviceProtocolVersion
+  else {
+    writeServiceJSON(envelope([
+      "ok": false,
+      "code": "service_protocol_mismatch",
+      "error": "Computer Use service protocol mismatch",
+      "identity": serviceIdentity(),
+    ]), to: fd)
+    return true
+  }
+  if !serviceIdentityMatches(object["expected"] as? [String: Any]) {
+    writeServiceJSON(envelope([
+      "ok": false,
+      "code": "service_identity_mismatch",
+      "error": "Computer Use service identity mismatch",
+      "identity": serviceIdentity(),
+    ]), to: fd)
+    return true
+  }
+  if command == "status" {
+    writeServiceJSON(envelope([
+      "ok": true,
+      "status": "ready",
+      "identity": serviceIdentity(),
+    ]), to: fd)
+    return true
+  }
+  if command == "shutdown" {
+    writeServiceJSON(envelope(["ok": true, "status": "stopping"]), to: fd)
+    return false
+  }
+  injectedPayload = (object["payload"] as? [String: Any]) ?? [:]
+  redirectStandardOutputToFileDescriptor(fd) {
+    dispatch(command, injectedPayload ?? [:])
+  }
+  injectedPayload = nil
+  return true
+}
+
+func runService(socketPath: String) -> Never {
+  let directory = URL(fileURLWithPath: socketPath).deletingLastPathComponent()
+  do {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+  } catch let directoryError {
+    error("Could not prepare Computer Use service socket directory: \(directoryError.localizedDescription)")
+  }
+  unlink(socketPath)
+  let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+  guard listener >= 0 else {
+    error("Could not create Computer Use service socket: \(String(cString: strerror(errno)))")
+  }
+  var address = sockaddrForUnixPath(socketPath)
+  let bindResult = withUnsafePointer(to: &address) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+      Darwin.bind(listener, socketAddress, socklen_t(MemoryLayout<sockaddr_un>.size))
+    }
+  }
+  guard bindResult == 0 else {
+    error("Could not bind Computer Use service socket: \(String(cString: strerror(errno)))")
+  }
+  chmod(socketPath, 0o600)
+  guard listen(listener, 16) == 0 else {
+    error("Could not listen on Computer Use service socket: \(String(cString: strerror(errno)))")
+  }
+  while true {
+    let client = accept(listener, nil, nil)
+    if client < 0 {
+      continue
+    }
+    if !handleServiceConnection(client) {
+      close(listener)
+      unlink(socketPath)
+      exit(0)
+    }
   }
 }
 
@@ -1270,6 +1475,11 @@ func dispatch(_ command: String, _ object: [String: Any]) {
 if CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "mcp-server" {
   _ = launchMcpServerIfAvailable()
   error("Computer Use MCP server resources are unavailable")
+}
+
+if CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "service" {
+  let socketPath = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : defaultServiceSocketPath()
+  runService(socketPath: socketPath)
 }
 
 if CommandLine.arguments.count > 3 && CommandLine.arguments[1] == "ipc-command" {
