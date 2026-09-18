@@ -8,6 +8,8 @@ const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
+const NATIVE_APP_HOST_TIMEOUT_MS = 30_000;
+const NATIVE_APP_HOST_POLL_INTERVAL_MS = 50;
 const MAX_TRACE_ITEMS = 80;
 const MAX_POINTER_PATH_ITEMS = 48;
 const DEFAULT_PERCEPTION_LIMIT = 40;
@@ -1661,14 +1663,19 @@ function pointInRect(point, rect) {
 function createMacNativeComputerUseClient({ scriptPath, tmpDir } = {}) {
   const backend = resolveMacNativeComputerUseBackend({ scriptPath });
   return createMacNativeComputerUseClientWithAdapters({
+    invocationMode: backend.invocationMode,
     scriptPath: backend.scriptPath,
     executablePath: backend.executablePath,
     tmpDir,
     runNative: backend.executablePath
-      ? runNativeComputerUseExecutable
+      ? backend.invocationMode === "launchservices-app-host"
+        ? runNativeComputerUseAppHost
+        : runNativeComputerUseExecutable
       : runSwiftComputerUse,
     screenshotCapture: backend.executablePath
-      ? captureScreenshotWithNativeExecutable
+      ? backend.invocationMode === "launchservices-app-host"
+        ? captureScreenshotWithNativeAppHost
+        : captureScreenshotWithNativeExecutable
       : captureScreenshotWithScreencapture,
     removeFile: removeScreenshot,
   });
@@ -1683,15 +1690,21 @@ function resolveMacNativeComputerUseBackend(options = {}) {
     ? envExecutablePath
     : resolveMacNativeComputerUseExecutablePath(options);
   if (executablePath) {
+    const nativeInvocationMode =
+      options.nativeInvocationMode ??
+      process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE ??
+      "direct-exec";
     return {
       mode: "packaged-native-helper-executable",
       executablePath,
+      invocationMode: nativeInvocationMode,
       scriptPath: null,
     };
   }
   return {
     mode: "delegated-swift-script",
     executablePath: null,
+    invocationMode: "direct-exec",
     scriptPath: options.scriptPath ?? resolveMacNativeComputerUseScriptPath(options),
   };
 }
@@ -1920,6 +1933,74 @@ async function runNativeComputerUseExecutable(executablePath, command, payload) 
   return parsed;
 }
 
+async function runNativeComputerUseAppHost(
+  executablePath,
+  command,
+  payload,
+  options = {},
+) {
+  const bundlePath = helperBundlePathForExecutable(executablePath);
+  const root =
+    options.root ?? path.join(os.tmpdir(), "morpheus-computer-use-app-host");
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const id = randomUUID();
+  const requestPath = path.join(root, `${id}.request.json`);
+  const responsePath = path.join(root, `${id}.response.json`);
+  await fs.writeFile(
+    requestPath,
+    JSON.stringify({ command, payload: payload ?? {} }),
+    { mode: 0o600 },
+  );
+  try {
+    const launchAppHost = options.launchAppHost ?? launchNativeAppHost;
+    await launchAppHost({ bundlePath, requestPath, responsePath });
+    const parsed = await readNativeAppHostResponse(responsePath, command);
+    if (!parsed.ok) {
+      throw new Error(parsed.error || `${command} failed`);
+    }
+    delete parsed.ok;
+    return parsed;
+  } finally {
+    await fs.rm(requestPath, { force: true });
+    await fs.rm(responsePath, { force: true });
+  }
+}
+
+async function launchNativeAppHost({ bundlePath, requestPath, responsePath }) {
+  await execFileAsync(
+    "/usr/bin/open",
+    ["-n", "-a", bundlePath, "--args", "ipc-command", requestPath, responsePath],
+    { maxBuffer: 1024 * 1024 },
+  );
+}
+
+function helperBundlePathForExecutable(executablePath) {
+  return path.resolve(executablePath, "..", "..", "..");
+}
+
+async function readNativeAppHostResponse(responsePath, command) {
+  const deadline = Date.now() + NATIVE_APP_HOST_TIMEOUT_MS;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const text = await fs.readFile(responsePath, "utf8");
+      if (text.trim()) {
+        return JSON.parse(text);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        lastError = error;
+      }
+    }
+    await sleep(NATIVE_APP_HOST_POLL_INTERVAL_MS);
+  }
+  throw new Error(
+    lastError
+      ? `Timed out waiting for ${command} app-host response: ${errorMessage(lastError)}`
+      : `Timed out waiting for ${command} app-host response`,
+  );
+}
+
 async function runSwiftComputerUse(scriptPath, command, payload) {
   const encoded = Buffer.from(JSON.stringify(payload ?? {})).toString("base64");
   let stdout;
@@ -1956,6 +2037,19 @@ async function captureScreenshotWithNativeExecutable(
   executablePath,
 ) {
   const result = await runNativeComputerUseExecutable(
+    executablePath,
+    "screenshot",
+    { tmpDir, bounds },
+  );
+  return readScreenshotFile(result.screenshot?.path);
+}
+
+async function captureScreenshotWithNativeAppHost(
+  tmpDir,
+  bounds = null,
+  executablePath,
+) {
+  const result = await runNativeComputerUseAppHost(
     executablePath,
     "screenshot",
     { tmpDir, bounds },
@@ -2012,6 +2106,10 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function currentResourcesPath() {
   return typeof process.resourcesPath === "string"
     ? process.resourcesPath
@@ -2031,6 +2129,7 @@ module.exports = {
   resolveMacNativeComputerUseBackend,
   resolveMacNativeComputerUseExecutablePath,
   resolveMacNativeComputerUseScriptPath,
+  runNativeComputerUseAppHost,
   targetMismatch,
   shouldAllowComputerUseAction: (action) => classifyComputerUseAction(normalizeAction(action)),
 };

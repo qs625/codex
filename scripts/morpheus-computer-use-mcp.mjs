@@ -556,6 +556,8 @@ function defaultPermissionDiagnostics() {
   const stableHelperAppPath =
     process.env.MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH ??
     "/Applications/Root Worker Computer Use.app";
+  const nativeInvocationMode =
+    process.env.MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE ?? "direct-exec";
   const packagedHelperBundle = Boolean(helperBundleIdentifier && helperBundlePath);
   const usesStableHelperApp =
     packagedHelperBundle && pathsEqual(helperBundlePath, stableHelperAppPath);
@@ -574,7 +576,8 @@ function defaultPermissionDiagnostics() {
   const stablePermissionSubject = Boolean(
     packagedNativeHelperExecutable &&
       usesStableHelperApp &&
-      nativeHelperIsBundleExecutable,
+      nativeHelperIsBundleExecutable &&
+      nativeInvocationMode === "launchservices-app-host",
   );
   return {
     contract: "helper-as-mcp-server",
@@ -604,10 +607,13 @@ function defaultPermissionDiagnostics() {
       packagedHelperBundle,
       packagedNativeHelperExecutable,
       nativeHelperIsBundleExecutable,
+      nativeInvocationMode,
       stablePermissionSubject,
       nativeControlSubject: packagedNativeHelperExecutable
         ? stablePermissionSubject
           ? "stable-packaged-native-helper-executable"
+          : usesStableHelperApp && nativeHelperIsBundleExecutable
+            ? "stable-direct-exec-native-helper-executable"
           : usesStableHelperApp
             ? "stable-nested-native-helper-executable"
           : "release-local-packaged-native-helper-executable"
@@ -616,7 +622,9 @@ function defaultPermissionDiagnostics() {
           : "repo-local-node-process",
       note: packagedNativeHelperExecutable
         ? stablePermissionSubject
-          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by the stable helper app bundle executable."
+          ? "Authorize the stable Computer Use helper shown by macOS for Screen Recording and Accessibility. Native desktop control and screenshots are executed by a LaunchServices-launched stable helper app host."
+          : usesStableHelperApp && nativeHelperIsBundleExecutable
+            ? "The stable Computer Use helper app bundle executable is configured, but native desktop control is still invoked by direct exec instead of a LaunchServices app host, so macOS Accessibility authorization for the visible app may not apply."
           : usesStableHelperApp
             ? "The stable Computer Use helper app is used, but native desktop control is executed by a nested helper executable instead of the app bundle executable, so macOS Accessibility authorization for the visible app may not apply."
           : "This packaged Computer Use helper is release-local, so macOS authorization may not remain stable across Runtime Capsule releases. Native desktop control and screenshots are executed by the packaged native helper executable inside this helper app bundle."
@@ -727,7 +735,9 @@ function permissionLimitations(diagnostics) {
       message:
         subject.packagedNativeHelperExecutable
           ? subject.usesStableHelperApp
-            ? "The stable helper app bundle is used, but native desktop control is not executed by the app bundle executable, so macOS may not apply Accessibility authorization for the visible app."
+            ? subject.nativeHelperIsBundleExecutable
+              ? "The stable helper app bundle executable is configured, but native desktop control is invoked by direct exec instead of a LaunchServices app host, so macOS may not apply Accessibility authorization for the visible app."
+              : "The stable helper app bundle is used, but native desktop control is not executed by the app bundle executable, so macOS may not apply Accessibility authorization for the visible app."
             : "The helper app bundle is release-local instead of the configured stable Computer Use helper app path; macOS may require authorization again after a Runtime Capsule release changes."
           : "The packaged helper bundle starts the MCP server, but this mode has no packaged native helper executable, so native desktop control may still delegate to Swift and screencapture and macOS may require authorization for that delegated process.",
     });

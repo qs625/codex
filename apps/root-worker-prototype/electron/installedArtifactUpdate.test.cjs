@@ -74,9 +74,10 @@ export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="$HELPER_BUNDLE_DIR"
 export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_HELPER_APP_NAME}"
 export MORPHEUS_COMPUTER_USE_MANAGER_MODULE="$SERVER_DIR/computerUse.cjs"
 export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="$HELPER_CONTENTS_DIR/MacOS/${COMPUTER_USE_HELPER_APP_NAME}"
+export MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE="launchservices-app-host"
 export MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT="$SERVER_DIR/${COMPUTER_USE_NATIVE_SCRIPT_FILE}"
 export ELECTRON_RUN_AS_NODE=1
-if [ "$#" -eq 0 ]; then
+if [ "$#" -eq 0 ] || [ "$1" = "mcp-server" ]; then
   exec "$PAYLOAD_ELECTRON" "$SERVER_DIR/morpheus-computer-use-mcp.mjs"
 fi
 printf '%s\\n' native-helper
@@ -638,7 +639,7 @@ test("stagePayloadResources installs app-server, defaults, native bridge, and Co
     assert.match(config, /\[mcp_servers\.computer_use\]/);
     assert.ok(
       config.includes(
-        'args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\""]',
+        'args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\" mcp-server"]',
       ),
     );
     assert.ok(

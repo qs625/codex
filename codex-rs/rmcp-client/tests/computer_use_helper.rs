@@ -99,6 +99,7 @@ export MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH="{}"
 export MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE="{}"
 export MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH="{}"
 export MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE="{}"
+export MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE="launchservices-app-host"
 exec node "{}"
 "#,
             helper_bundle.display(),
@@ -140,6 +141,10 @@ exec node "{}"
     env.insert(
         OsString::from("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE"),
         helper_executable.clone().into_os_string(),
+    );
+    env.insert(
+        OsString::from("MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE"),
+        OsString::from("launchservices-app-host"),
     );
     Ok(PackagedHelper {
         env,
@@ -271,7 +276,7 @@ async fn rmcp_client_can_launch_computer_use_helper_through_env_vars_allowlist()
         OsString::from("sh"),
         vec![
             OsString::from("-c"),
-            OsString::from(r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE""#),
+            OsString::from(r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE" mcp-server"#),
         ],
         /*env*/ None,
         &[

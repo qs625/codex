@@ -552,6 +552,8 @@ function computerUseHelperInfoPlist() {
   <string>${COMPUTER_USE_HELPER_APP_NAME}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>LSUIElement</key>
+  <true/>
   <key>CFBundleShortVersionString</key>
   <string>0.0.0</string>
   <key>CFBundleVersion</key>
@@ -568,7 +570,7 @@ function computerUseHelperInfoPlist() {
 function packagedComputerUseMcpConfigToml() {
   return `[mcp_servers.computer_use]
 command = "sh"
-args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\""]
+args = ["-c", "exec \\"$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE\\" mcp-server"]
 env_vars = ["MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"]
 startup_timeout_sec = 5
 tool_timeout_sec = 30

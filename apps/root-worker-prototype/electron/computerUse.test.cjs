@@ -13,6 +13,7 @@ const {
   resolveMacNativeComputerUseBackend,
   resolveMacNativeComputerUseExecutablePath,
   resolveMacNativeComputerUseScriptPath,
+  runNativeComputerUseAppHost,
 } = require("./computerUse.cjs");
 
 function fakeNativeClient(options = {}) {
@@ -1571,11 +1572,13 @@ test("mac native backend resolver prefers packaged native helper executable", ()
     resolveMacNativeComputerUseBackend({
       helperBundlePath,
       isExecutable: (targetPath) => targetPath === executablePath,
+      nativeInvocationMode: "launchservices-app-host",
       sourceDirectory: "/repo/apps/root-worker-prototype/electron",
     }),
     {
       mode: "packaged-native-helper-executable",
       executablePath,
+      invocationMode: "launchservices-app-host",
       scriptPath: null,
     },
   );
@@ -1612,6 +1615,7 @@ test("mac native backend resolver falls back when env executable is missing", ()
     {
       mode: "delegated-swift-script",
       executablePath: null,
+      invocationMode: "direct-exec",
       scriptPath: path.join(
         "/repo/apps/root-worker-prototype/electron",
         "computerUseMacNative.swift",
@@ -1631,6 +1635,7 @@ test("mac native backend resolver keeps delegated Swift fallback honest", () => 
     {
       mode: "delegated-swift-script",
       executablePath: null,
+      invocationMode: "direct-exec",
       scriptPath: path.join(
         "/repo/apps/root-worker-prototype/electron",
         "computerUseMacNative.swift",
@@ -1682,6 +1687,94 @@ test("mac native executable adapter uses native helper for observe and screensho
       executablePath: "/helper/Contents/MacOS/Root Worker Computer Use",
     },
   ]);
+});
+
+test("mac native app-host runner launches bundle with IPC request and response", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-app-host-"));
+  try {
+    const executablePath = path.join(
+      root,
+      "Root Worker Computer Use.app",
+      "Contents",
+      "MacOS",
+      "Root Worker Computer Use",
+    );
+    const launches = [];
+    const result = await runNativeComputerUseAppHost(
+      executablePath,
+      "observe",
+      { includePerception: true },
+      {
+        root,
+        async launchAppHost({ bundlePath, requestPath, responsePath }) {
+          launches.push({ bundlePath, requestPath, responsePath });
+          const request = JSON.parse(fs.readFileSync(requestPath, "utf8"));
+          assert.deepEqual(request, {
+            command: "observe",
+            payload: { includePerception: true },
+          });
+          fs.writeFileSync(
+            responsePath,
+            JSON.stringify({
+              ok: true,
+              accessibilityTrusted: true,
+              targetVisibility: "frontmost",
+            }),
+          );
+        },
+      },
+    );
+
+    assert.deepEqual(result, {
+      accessibilityTrusted: true,
+      targetVisibility: "frontmost",
+    });
+    assert.equal(launches.length, 1);
+    assert.equal(
+      launches[0].bundlePath,
+      path.join(root, "Root Worker Computer Use.app"),
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("mac native app-host runner propagates native action failures", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-app-host-"));
+  try {
+    const executablePath = path.join(
+      root,
+      "Root Worker Computer Use.app",
+      "Contents",
+      "MacOS",
+      "Root Worker Computer Use",
+    );
+    await assert.rejects(
+      () =>
+        runNativeComputerUseAppHost(
+          executablePath,
+          "click",
+          { x: 1, y: 2 },
+          {
+            root,
+            async launchAppHost({ requestPath, responsePath }) {
+              const request = JSON.parse(fs.readFileSync(requestPath, "utf8"));
+              assert.deepEqual(request, {
+                command: "click",
+                payload: { x: 1, y: 2 },
+              });
+              fs.writeFileSync(
+                responsePath,
+                JSON.stringify({ ok: false, error: "blocked by test" }),
+              );
+            },
+          },
+        ),
+      /blocked by test/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("computer use exposes headless IPC without adding a right panel view", () => {
