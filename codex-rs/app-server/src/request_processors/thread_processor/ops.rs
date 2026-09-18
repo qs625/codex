@@ -20,6 +20,34 @@ use protocol::protocol::EventMsg;
 use thread_service_api::ExternalRootThreadInputRoute;
 use thread_service_api::ThreadRuntimeStatus;
 
+pub(super) async fn send_thread_snapshot_injected_context_item_notifications(
+    outgoing: &OutgoingMessageSender,
+    thread: &Thread,
+) {
+    for turn in &thread.turns {
+        for item in &turn.items {
+            if !matches!(item, ThreadItem::InjectedContext { .. }) {
+                continue;
+            }
+            let completed_at_ms = turn
+                .completed_at
+                .or(turn.started_at)
+                .map(|seconds| seconds * 1000)
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+            outgoing
+                .send_server_notification(ServerNotification::ItemCompleted(
+                    ItemCompletedNotification {
+                        thread_id: thread.id.clone(),
+                        turn_id: turn.id.clone(),
+                        item: item.clone(),
+                        completed_at_ms,
+                    },
+                ))
+                .await;
+        }
+    }
+}
+
 pub(in crate::request_processors) fn unsupported_external_root_active_op(
     method: &str,
     provider: &str,
@@ -1115,6 +1143,15 @@ impl ThreadRequestProcessor {
                 otel.name = "app_server.thread_start.notify_started",
             ))
             .await;
+        send_thread_snapshot_injected_context_item_notifications(
+            listener_task_context.outgoing.as_ref(),
+            &thread,
+        )
+        .instrument(tracing::info_span!(
+            "app_server.thread_start.notify_injected_context_items",
+            otel.name = "app_server.thread_start.notify_injected_context_items",
+        ))
+        .await;
         created_thread.record_startup_phase(
             "thread_start_total",
             thread_start_started_at.elapsed(),
@@ -1275,7 +1312,7 @@ impl ThreadRequestProcessor {
             active_permission_profile,
             reasoning_effort: config_snapshot.reasoning_effort,
         };
-        let notif = thread_started_notification_with_turns(thread);
+        let notif = thread_started_notification_with_turns(thread.clone());
         listener_task_context
             .outgoing
             .send_response(request_id, response)
@@ -1292,6 +1329,15 @@ impl ThreadRequestProcessor {
                 otel.name = "app_server.thread_start.notify_external_started",
             ))
             .await;
+        send_thread_snapshot_injected_context_item_notifications(
+            listener_task_context.outgoing.as_ref(),
+            &thread,
+        )
+        .instrument(tracing::info_span!(
+            "app_server.thread_start.notify_external_injected_context_items",
+            otel.name = "app_server.thread_start.notify_external_injected_context_items",
+        ))
+        .await;
         Ok(())
     }
 
