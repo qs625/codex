@@ -98,6 +98,7 @@ func launchMcpServerIfAvailable() -> Bool {
   setenv("MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH", paths.bundle.path, 1)
   setenv("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE", paths.executable.path, 1)
   setenv("MORPHEUS_COMPUTER_USE_MANAGER_MODULE", paths.server.appendingPathComponent("computerUse.cjs").path, 1)
+  setenv("MORPHEUS_COMPUTER_USE_OVERLAY_BRIDGE_MODULE", paths.server.appendingPathComponent("computerUseOverlayBridge.cjs").path, 1)
   setenv("MORPHEUS_COMPUTER_USE_NATIVE_HELPER_EXECUTABLE", paths.executable.path, 1)
   setenv("MORPHEUS_COMPUTER_USE_NATIVE_INVOCATION_MODE", "launchservices-service-socket", 1)
   setenv("MORPHEUS_COMPUTER_USE_SERVICE_SOCKET_PATH", defaultServiceSocketPath(), 1)

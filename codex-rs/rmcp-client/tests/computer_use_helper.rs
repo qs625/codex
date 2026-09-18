@@ -4,12 +4,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_config_types::McpServerEnvVar;
+use codex_config_types::Constrained;
+use codex_config_types::McpServerConfig;
+use codex_config_types::McpServerTransportConfig;
+use codex_config_types::OAuthCredentialsStoreMode;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
 use codex_rmcp_client::LocalStdioServerLauncher;
 use codex_rmcp_client::RmcpClient;
 use futures::FutureExt as _;
+use mcp_types::McpClientElicitationSupport;
+use mcp_types::McpConfig;
+use mcp_types::effective_mcp_servers;
+use plugin_service_api::PluginCapabilitySummary;
+use protocol::protocol::AskForApproval;
 use rmcp::model::ClientCapabilities;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::FormElicitationCapability;
@@ -185,6 +193,58 @@ impl Drop for EnvVarGuard {
     }
 }
 
+fn computer_use_config_missing_overlay_env() -> McpConfig {
+    let mut configured_mcp_servers = HashMap::new();
+    configured_mcp_servers.insert(
+        "computer_use".to_string(),
+        McpServerConfig {
+            transport: McpServerTransportConfig::Stdio {
+                command: "sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE" mcp-server"#.to_string(),
+                ],
+                env: None,
+                env_vars: vec![
+                    "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE".into(),
+                    "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH".into(),
+                ],
+                cwd: None,
+            },
+            experimental_environment: None,
+            enabled: true,
+            required: false,
+            supports_parallel_tool_calls: false,
+            disabled_reason: None,
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            default_tools_approval_mode: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth: None,
+            oauth_resource: None,
+            tools: HashMap::new(),
+        },
+    );
+    McpConfig {
+        chatgpt_base_url: "https://chatgpt.com".to_string(),
+        apps_mcp_path_override: None,
+        codex_home: PathBuf::from("/tmp/morpheus-rmcp-test"),
+        mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode::default(),
+        mcp_oauth_callback_port: None,
+        mcp_oauth_callback_url: None,
+        skill_mcp_dependency_install_enabled: true,
+        approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
+        codex_linux_sandbox_exe: None,
+        use_legacy_landlock: false,
+        apps_enabled: false,
+        client_elicitation_support: McpClientElicitationSupport::Disabled,
+        configured_mcp_servers,
+        plugin_capability_summaries: Vec::<PluginCapabilitySummary>::new(),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn rmcp_client_can_list_and_call_computer_use_helper() -> anyhow::Result<()> {
     let repo_root = repo_root();
@@ -278,18 +338,34 @@ async fn rmcp_client_can_launch_computer_use_helper_through_env_vars_allowlist()
         "MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH",
         helper.stable_app_path.as_os_str(),
     );
+    let _overlay_guard = EnvVarGuard::set(
+        "MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH",
+        helper_env.path().join("overlay.sock").as_os_str(),
+    );
+    let effective = effective_mcp_servers(&computer_use_config_missing_overlay_env(), None);
+    let computer_use = effective
+        .get("computer_use")
+        .expect("computer_use server should be present")
+        .configured_config()
+        .expect("computer_use server should retain configured launch");
+    let McpServerTransportConfig::Stdio {
+        command,
+        args,
+        env_vars,
+        cwd,
+        ..
+    } = &computer_use.transport
+    else {
+        panic!("computer_use should use stdio transport");
+    };
     let client = RmcpClient::new_stdio_client(
-        OsString::from("sh"),
-        vec![
-            OsString::from("-c"),
-            OsString::from(r#"exec "$MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE" mcp-server"#),
-        ],
+        OsString::from(command.as_str()),
+        args.iter()
+            .map(|arg| OsString::from(arg.as_str()))
+            .collect(),
         /*env*/ None,
-        &[
-            McpServerEnvVar::from("MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE"),
-            McpServerEnvVar::from("MORPHEUS_COMPUTER_USE_STABLE_HELPER_APP_PATH"),
-        ],
-        Some(repo_root.clone()),
+        env_vars,
+        cwd.clone().or_else(|| Some(repo_root.clone())),
         Arc::new(LocalStdioServerLauncher::new(repo_root)),
     )
     .await?;
@@ -334,6 +410,10 @@ async fn rmcp_client_can_launch_computer_use_helper_through_env_vars_allowlist()
     assert_eq!(
         structured["diagnostics"]["permissionSubject"]["stablePermissionSubject"],
         json!(true)
+    );
+    assert_eq!(
+        structured["diagnostics"]["mcpServer"]["overlaySocketPath"],
+        json!(helper_env.path().join("overlay.sock"))
     );
 
     client.shutdown().await;

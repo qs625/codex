@@ -175,10 +175,41 @@ const { createComputerUseManager } = require("./computerUse.cjs");
 const {
   createComputerUseOverlayController,
 } = require("./computerUseOverlay.cjs");
+const {
+  COMPUTER_USE_OVERLAY_SOCKET_ENV,
+  createComputerUseOverlayBridgeServer,
+} = require("./computerUseOverlayBridge.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
-const appServerClient = new AppServerClient();
+const computerUseOverlayBridge = createComputerUseOverlayBridgeServer({
+  overlayControllerFactory: () =>
+    createComputerUseOverlayController({
+      BrowserWindow,
+      hostApp: app,
+      screen,
+      logger: console,
+    }),
+  beforeUpdate: () => app.whenReady(),
+  logger: console,
+});
+process.env[COMPUTER_USE_OVERLAY_SOCKET_ENV] = computerUseOverlayBridge.socketPath;
+const appServerClient = new AppServerClient({ autoStart: false });
+void computerUseOverlayBridge
+  .start()
+  .catch((error) => {
+    console.warn(
+      "[prototype] Computer Use overlay bridge failed to start",
+      error instanceof Error ? error.message : String(error),
+    );
+  })
+  .finally(() => {
+    void appServerClient.start().catch((error) => {
+      appServerClient.readyReject(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    });
+  });
 const lspManager = new LspManager();
 const runtimeLauncher = createRuntimeLauncher();
 const appRelaunch = createAppRelaunchAdapter({

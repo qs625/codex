@@ -10,6 +10,10 @@ const require = createRequire(import.meta.url);
 const {
   createComputerUseManager,
 } = require(resolveComputerUseManagerModule());
+const {
+  COMPUTER_USE_OVERLAY_SOCKET_ENV,
+  createComputerUseOverlayBridgeClient,
+} = require(resolveComputerUseOverlayBridgeModule());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -498,6 +502,9 @@ async function defaultManagerFactory(options = {}) {
     ...(process.env.MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT
       ? { scriptPath: process.env.MORPHEUS_COMPUTER_USE_NATIVE_SCRIPT }
       : {}),
+    overlayController: process.env[COMPUTER_USE_OVERLAY_SOCKET_ENV]
+      ? createComputerUseOverlayBridgeClient()
+      : null,
     includePerception: options.includePerception,
     perceptionLimit: options.perceptionLimit,
     safety: {
@@ -592,6 +599,7 @@ function defaultPermissionDiagnostics() {
       execPath: process.execPath,
       argv1: process.argv[1] ?? null,
       platform: process.platform,
+      overlaySocketPath: process.env[COMPUTER_USE_OVERLAY_SOCKET_ENV] ?? null,
     },
     permissionSubject: {
       bundleIdentifier:
@@ -888,6 +896,13 @@ function resolveComputerUseManagerModule() {
   return (
     process.env.MORPHEUS_COMPUTER_USE_MANAGER_MODULE ??
     "../apps/root-worker-prototype/electron/computerUse.cjs"
+  );
+}
+
+function resolveComputerUseOverlayBridgeModule() {
+  return (
+    process.env.MORPHEUS_COMPUTER_USE_OVERLAY_BRIDGE_MODULE ??
+    "../apps/root-worker-prototype/electron/computerUseOverlayBridge.cjs"
   );
 }
 
