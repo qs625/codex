@@ -52,6 +52,52 @@ Morpheus 的优势不是“替代 Codex”，而是在 Codex 基础上把产品�
 5. **Computer Use 权限主体更稳定**：通过独立 helper app + MCP 暴露能力，目标是让 macOS Screen Recording/Accessibility 权限附着在稳定 app 上，而不是随 Runtime Capsule 路径漂移。
 6. **IoC 架构带来的冷/热编译收益**：Morpheus 在 Codex 基础上把大量 app-server / thread / tool / MCP / memory / goal / command / plugin / model 等能力拆成窄 service crate、API crate 和 runtime trait 边界，让高层 app-server 更多依赖抽象接口和组合关系，而不是把所有实现细节压在一个大核心里。这样改动局部 service 时，Cargo 的失效范围更小；热编译更容易停在 focused crate/test/debug build，冷编译和 fat-LTO release package 则集中到 PM 集成点执行。
 
+## Rust 构建 benchmark
+
+下面是一次本机实测，用来给“冷/热编译迭代”提供可复现的量级参考。它不是完整产品能力或交付成本对比：主表只比较两边最接近的 Rust app-server debug build；Morpheus 的 Runtime Capsule、Electron packaging、安装态 restart 和 self-debug 属于额外桌面交付成本，不放进这张公平 Rust build 表。
+
+环境和版本：
+
+- 日期：2026-09-19 22:25 CST
+- 机器：Darwin 25.6.0 arm64，Apple M3 Pro，36 GiB RAM
+- Rust：`rustc 1.97.1 (8bab26f4f 2026-07-14)`，`cargo 1.97.1 (c980f4866 2026-06-30)`
+- Node / pnpm：`v26.8.2` / `10.33.0`（本次主表没有运行 JS build，只记录环境）
+- Morpheus：`9f0f257a96862401c26f8b816c6bcd2bac4a2afb`
+- OpenAI Codex reference：`78245b47af2a7aafcabe025828ceecca69db4df1`
+
+口径：
+
+- Cold：为每个仓库使用独立空 `CARGO_TARGET_DIR`，不删除仓库内 `target`，不清理 Cargo registry/git 全局缓存。
+- Warm：在同一个 `CARGO_TARGET_DIR` 中连续第二次运行同一命令，测 no-op debug build。
+- 测量工具：`/usr/bin/time -p`，single run。
+- 临时目录：`/tmp/morpheus-codex-build-benchmark.v7STH6/`。
+
+命令：
+
+```shell
+env CARGO_TARGET_DIR=/tmp/morpheus-codex-build-benchmark.v7STH6/morpheus-target \
+  cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server
+
+env CARGO_TARGET_DIR=/tmp/morpheus-codex-build-benchmark.v7STH6/openai-codex-target \
+  cargo build --manifest-path /Users/bytedance/.morpheus/reference-sources/openai-codex/codex-rs/Cargo.toml \
+    -p codex-app-server --bin codex-app-server
+```
+
+结果：
+
+| 项目 | Rust 入口 | Cold wall | Warm no-op wall | user/sys | 备注 |
+| --- | --- | ---: | ---: | --- | --- |
+| Morpheus | `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` | 232.39s | 3.89s | cold 1126.73s / 186.00s；warm 0.60s / 0.92s | 空 target；触发同类 linker `__eh_frame` warning |
+| OpenAI Codex | `cargo build --manifest-path .../openai-codex/codex-rs/Cargo.toml -p codex-app-server --bin codex-app-server` | 396.04s | 4.16s | cold 1353.35s / 205.06s；warm 0.61s / 0.92s | 空 target；本次 cold 额外下载/更新了若干 Cargo registry/git dependency；同类 linker warning |
+
+解释和 caveat：
+
+- 这次结果说明在当前本机、当前 commits、当前 Cargo registry/git cache 状态下，Morpheus app-server debug cold build 比参考 Codex app-server cold build 短；warm no-op 两边都在 4 秒左右。
+- 这个结果不能单独证明所有局部修改都更快。真正的日常收益来自 Morpheus 把很多能力拆到 service/API crate 后，owner 更常跑 focused crate/test/debug build，而不是每次跑完整 app-server 或完整桌面交付。
+- Cold 只清空 scoped target dir，没有清空全局 Cargo registry/git cache；上游 Codex 本次仍发生了依赖下载和 git dependency update，所以 cold wall 同时包含网络/registry 成本。
+- 两边 app-server package 名和依赖图不完全相同：Morpheus 是 `app-server` / `app-server`，OpenAI Codex 是 `codex-app-server` / `codex-app-server`。它们是最接近的 Rust runtime 入口，但不是字节级相同工程。
+- 两边都出现 `ld: __eh_frame section too large ... compact unwind table` linker warning；构建成功，未作为失败处理。
+
 ## 与 Claude Code Best 的差异
 
 Claude Code Best 的代码结构明显围绕 Bun/TS CLI/TUI 展开：`src/commands`、`src/components`、`src/daemon`、`src/workflow`、`packages/workflow-engine`、`packages/remote-control-server` 等都服务于增强 Claude Code 终端体验。
