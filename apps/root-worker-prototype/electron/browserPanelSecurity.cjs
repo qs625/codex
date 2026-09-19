@@ -12,14 +12,7 @@ function normalizeBrowserTarget(target) {
   try {
     parsed = new URL(candidate);
   } catch {
-    return { ok: false, reason: "Enter a valid http or https URL." };
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { ok: false, reason: "Only http and https URLs can open here." };
-  }
-  if (!parsed.hostname) {
-    return { ok: false, reason: "Enter a URL with a host." };
+    return { ok: false, reason: "Enter a valid URL." };
   }
 
   return { ok: true, url: parsed.toString() };
@@ -64,11 +57,6 @@ function browserTargetCandidate(target) {
   const schemeMatch = target.match(URL_SCHEME_PATTERN);
   if (!schemeMatch) {
     return `${defaultBrowserProtocol(target)}://${target}`;
-  }
-
-  const protocol = schemeMatch[0].toLowerCase();
-  if (protocol === "http:" || protocol === "https:") {
-    return target;
   }
 
   return isHostPortTarget(target)
