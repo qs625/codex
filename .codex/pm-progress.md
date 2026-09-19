@@ -66,17 +66,17 @@ Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8
 - id: computer-use-mcp-tool-exposure
   owner: /self/owner_dev_2
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
-  branch: idle/dev2-main-sync (owner should create task branch)
+  branch: fix/computer-use-mcp-tool-exposure
   task_type: runtime/MCP tool exposure bugfix
   depends_on: installed Computer Use helper/MCP packaging; dev-2 stale dirty formatting/import stash triaged and dropped as not useful
-  files: codex-rs/mcp-service*; codex-rs/tool-service*; codex-rs/thread-service*; apps/root-worker-prototype/electron/installedArtifactUpdate.cjs/appServerClient.cjs as needed
+  files: codex-rs/mcp-service/src/tool_exposure.rs; codex-rs/mcp-types/src/lib.rs; codex-rs/mcp-types/src/mcp_config.rs
   base_commit: eadb296a83047d44c5072c12369368d60db69e7c
-  status: dispatched
-  next_action: owner_dev_2 diagnose and fix why `[mcp_servers.computer_use]` is configured and packaged but `computer_use` MCP tools are not exposed to the current model tool surface; review with reused /self/owner_dev_2/reviewer.
-  validation: pending
-  commit: pending
+  status: merged_pending_capsule_delivery
+  next_action: include in next Runtime Capsule delivery and self-debug installed/new-turn tool surface to confirm Computer Use MCP tools are directly visible.
+  validation: owner/reviewer approved; PM design验收 passed; main `cargo test --manifest-path codex-rs/Cargo.toml -p mcp-service directly_exposes_computer_use_when_large_tool_sets_are_searchable -- --nocapture` 1/1; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass with existing warnings; `git diff --check` pass.
+  commit: owner `6d61a7e7c`; merge `b0e9744b3`
 
-Current checkout allocation: `source_workspace-dev` active on plan tool minimal status model; `source_workspace-dev-2` active on Computer Use MCP tool exposure; `source_workspace-dev-3` delivered README benchmark and needs sync when idle.
+Current checkout allocation: `source_workspace-dev` active on plan tool minimal status model; `source_workspace-dev-2` delivered Computer Use MCP exposure and needs sync when idle; `source_workspace-dev-3` is idle/synced.
 
 ## Recent Completed
 - id: readme-codex-build-benchmark
