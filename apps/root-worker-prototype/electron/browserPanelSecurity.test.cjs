@@ -9,7 +9,7 @@ const {
   normalizeBrowserTarget,
 } = require("./browserPanelSecurity.cjs");
 
-test("normalizeBrowserTarget allows http, https, and local dev targets", () => {
+test("normalizeBrowserTarget keeps explicit URLs and local dev targets", () => {
   assert.deepEqual(normalizeBrowserTarget("https://example.com/docs"), {
     ok: true,
     url: "https://example.com/docs",
@@ -22,20 +22,25 @@ test("normalizeBrowserTarget allows http, https, and local dev targets", () => {
     ok: true,
     url: "http://localhost:5173/debug",
   });
+  assert.deepEqual(normalizeBrowserTarget("file:///tmp/index.html"), {
+    ok: true,
+    url: "file:///tmp/index.html",
+  });
+  assert.deepEqual(normalizeBrowserTarget("custom-scheme:foo"), {
+    ok: true,
+    url: "custom-scheme:foo",
+  });
 });
 
-test("browserNavigationDecision rejects unsafe redirect and frame targets", () => {
-  for (const target of [
-    "file:///tmp/secret.txt",
-    "data:text/html,hello",
-    "javascript:alert(1)",
-  ]) {
+test("browserNavigationDecision allows explicit schemes", () => {
+  for (const target of ["file:///tmp/secret.txt", "data:text/html,hello", "custom-scheme:foo"]) {
     const decision = browserNavigationDecision(target);
-    assert.equal(decision.allow, false);
+    assert.equal(decision.allow, true);
+    assert.equal(decision.url, target);
   }
 });
 
-test("normalizeBrowserDebugTarget allows only about:blank as CDP bootstrap", () => {
+test("normalizeBrowserDebugTarget preserves about:blank as CDP bootstrap", () => {
   assert.deepEqual(normalizeBrowserDebugTarget("about:blank"), {
     ok: true,
     url: null,
@@ -44,10 +49,10 @@ test("normalizeBrowserDebugTarget allows only about:blank as CDP bootstrap", () 
     ok: true,
     url: "https://example.com/",
   });
-
-  for (const target of ["about:srcdoc", "file:///tmp/secret.txt", "javascript:alert(1)"]) {
-    assert.equal(normalizeBrowserDebugTarget(target).ok, false);
-  }
+  assert.deepEqual(normalizeBrowserDebugTarget("file:///tmp/secret.txt"), {
+    ok: true,
+    url: "file:///tmp/secret.txt",
+  });
 });
 
 test("browserNavigationEventTarget handles legacy and Electron 37 frame events", () => {
@@ -61,13 +66,23 @@ test("browserNavigationEventTarget handles legacy and Electron 37 frame events",
   );
 });
 
-test("browserNavigationEventDecision allows Electron 37 frame http targets", () => {
+test("browserNavigationEventDecision allows Electron 37 frame explicit targets", () => {
   assert.deepEqual(browserNavigationEventDecision({ url: "https://frame.example/" }), {
     allow: true,
     url: "https://frame.example/",
   });
-  assert.equal(
-    browserNavigationEventDecision({ url: "file:///tmp/secret.txt" }).allow,
-    false,
-  );
+  assert.deepEqual(browserNavigationEventDecision({ url: "file:///tmp/secret.txt" }), {
+    allow: true,
+    url: "file:///tmp/secret.txt",
+  });
+  assert.deepEqual(browserNavigationEventDecision({ url: "custom-scheme:foo" }), {
+    allow: true,
+    url: "custom-scheme:foo",
+  });
+});
+
+test("browser navigation rejects empty and invalid targets", () => {
+  assert.equal(browserNavigationDecision(" ").allow, false);
+  assert.equal(browserNavigationDecision("http://").allow, false);
+  assert.equal(browserNavigationEventDecision({ url: null }).allow, false);
 });

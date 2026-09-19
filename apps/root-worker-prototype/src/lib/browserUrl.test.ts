@@ -14,7 +14,7 @@ test("normalizeBrowserUrl keeps explicit http and https URLs", () => {
   });
 });
 
-test("normalizeBrowserUrl adds a safe default scheme", () => {
+test("normalizeBrowserUrl adds a default scheme to host-like targets", () => {
   assert.deepEqual(normalizeBrowserUrl("example.com"), {
     ok: true,
     url: "https://example.com/",
@@ -25,10 +25,19 @@ test("normalizeBrowserUrl adds a safe default scheme", () => {
   });
 });
 
-test("normalizeBrowserUrl rejects dangerous schemes", () => {
-  assert.equal(normalizeBrowserUrl("javascript:alert(1)").ok, false);
-  assert.equal(normalizeBrowserUrl("data:text/html,hello").ok, false);
-  assert.equal(normalizeBrowserUrl("file:///tmp/index.html").ok, false);
+test("normalizeBrowserUrl preserves explicit schemes", () => {
+  assert.deepEqual(normalizeBrowserUrl("file:///tmp/index.html"), {
+    ok: true,
+    url: "file:///tmp/index.html",
+  });
+  assert.deepEqual(normalizeBrowserUrl("custom-scheme:foo"), {
+    ok: true,
+    url: "custom-scheme:foo",
+  });
+  assert.deepEqual(normalizeBrowserUrl("data:text/html,hello"), {
+    ok: true,
+    url: "data:text/html,hello",
+  });
 });
 
 test("normalizeBrowserUrl rejects empty and invalid targets", () => {

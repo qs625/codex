@@ -8,7 +8,6 @@ export type BrowserUrlResult =
       reason: string;
     };
 
-const ALLOWED_BROWSER_PROTOCOLS = new Set(["http:", "https:"]);
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export function normalizeBrowserUrl(input: string): BrowserUrlResult {
@@ -23,15 +22,7 @@ export function normalizeBrowserUrl(input: string): BrowserUrlResult {
   try {
     parsed = new URL(candidate);
   } catch {
-    return { ok: false, reason: "Enter a valid http or https URL." };
-  }
-
-  if (!ALLOWED_BROWSER_PROTOCOLS.has(parsed.protocol)) {
-    return { ok: false, reason: "Only http and https URLs can open here." };
-  }
-
-  if (!parsed.hostname) {
-    return { ok: false, reason: "Enter a URL with a host." };
+    return { ok: false, reason: "Enter a valid URL." };
   }
 
   return { ok: true, url: parsed.toString() };
@@ -41,11 +32,6 @@ function browserTargetCandidate(target: string) {
   const schemeMatch = target.match(URL_SCHEME_PATTERN);
   if (!schemeMatch) {
     return `${defaultProtocolForBrowserTarget(target)}://${target}`;
-  }
-
-  const protocol = schemeMatch[0].toLowerCase();
-  if (protocol === "http:" || protocol === "https:") {
-    return target;
   }
 
   return isHostPortTarget(target)
