@@ -130,13 +130,7 @@ function estimateToolCellHeight(entries: ConversationEntry[]) {
   let height = DEFAULT_TOOL_ROW_HEIGHT;
   for (const entry of entries) {
     height += estimateWrappedTextHeight(entry.text, TOOL_CHARS_PER_LINE, 1);
-    if (entry.toolDetailSections?.length) {
-      for (const section of entry.toolDetailSections) {
-        height += estimateWrappedTextHeight(section.label, TOOL_CHARS_PER_LINE, 1);
-        height += estimateWrappedTextHeight(section.text, TOOL_CHARS_PER_LINE, 2);
-        height += 46;
-      }
-    } else if (entry.toolDetails) {
+    if (entry.toolDetails) {
       height += estimateWrappedTextHeight(entry.toolDetails, TOOL_CHARS_PER_LINE, 3);
       height += 24;
     }

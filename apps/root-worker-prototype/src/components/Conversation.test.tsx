@@ -153,7 +153,7 @@ test("tool row renders command summary without command output payload", () => {
   assert.doesNotMatch(markup, /tool-output-block/);
 });
 
-test("tool row renders init context details as typed sections", () => {
+test("tool row renders an init context section entry", () => {
   const markup = renderToStaticMarkup(
     <ToolRow
       entries={[
@@ -162,22 +162,12 @@ test("tool row renders init context details as typed sections", () => {
           kind: "tool",
           author: "root",
           role: "system",
-          text: "AGENTS.md • Environment",
+          text: "# AGENTS.md instructions Use Chinese.",
           timestamp: "09:41",
           attachments: [],
-          toolName: "Init Context",
+          toolName: "Init Context · AGENTS.md",
           toolStatus: "completed",
-          toolDetails: "COMBINED_FALLBACK_SENTINEL",
-          toolDetailSections: [
-            {
-              label: "AGENTS.md",
-              text: "# AGENTS.md instructions\nUse Chinese.",
-            },
-            {
-              label: "Environment",
-              text: "<cwd>/workspace</cwd>",
-            },
-          ],
+          toolDetails: "AGENTS.md\n# AGENTS.md instructions\nUse Chinese.",
           toolCategory: "context",
         },
       ]}
@@ -185,13 +175,11 @@ test("tool row renders init context details as typed sections", () => {
     />,
   );
 
-  assert.match(markup, /Init Context/);
-  assert.match(markup, /tool-detail-sections/);
-  assert.match(markup, /<h4>AGENTS\.md<\/h4>/);
+  assert.match(markup, /Init Context · AGENTS\.md/);
+  assert.match(markup, /# AGENTS\.md instructions Use Chinese\./);
+  assert.match(markup, /AGENTS\.md/);
   assert.match(markup, /# AGENTS\.md instructions/);
-  assert.match(markup, /<h4>Environment<\/h4>/);
-  assert.match(markup, /&lt;cwd&gt;\/workspace&lt;\/cwd&gt;/);
-  assert.doesNotMatch(markup, /COMBINED_FALLBACK_SENTINEL/);
+  assert.doesNotMatch(markup, /tool-detail-sections/);
 });
 
 test("conversation renders live active command anchor without active output tail", () => {

@@ -2644,10 +2644,17 @@ test("injected init context item notifications create visible conversation entri
     })),
     [
       {
-        id: "ctx-1",
+        id: "ctx-1:section:0",
         kind: "tool",
-        text: "Workspace • Instructions",
-        toolName: "Init Context",
+        text: "/tmp/project",
+        toolName: "Init Context · Workspace",
+        toolCategory: "context",
+      },
+      {
+        id: "ctx-1:section:1",
+        kind: "tool",
+        text: "全程使用中文",
+        toolName: "Init Context · Instructions",
         toolCategory: "context",
       },
     ],
@@ -2690,9 +2697,12 @@ test("injected init context notification merges with existing init snapshot", ()
   assert.equal(updated.turns[0]?.status, "completed");
   assert.deepEqual(
     entries
-      .filter((entry) => entry.toolName === "Init Context")
-      .map((entry) => entry.text),
-    ["Workspace • Instructions"],
+      .filter((entry) => entry.toolName?.startsWith("Init Context"))
+      .map((entry) => [entry.toolName, entry.text]),
+    [
+      ["Init Context · Workspace", "/tmp/project"],
+      ["Init Context · Instructions", "全程使用中文"],
+    ],
   );
 });
 
@@ -2774,9 +2784,9 @@ test("upsertThread merges start response and started notification init context s
 
   const initContextEntries = buildConversationEntries(
     threads[0] ?? null,
-  ).filter((entry) => entry.toolName === "Init Context");
+  ).filter((entry) => entry.toolName?.startsWith("Init Context"));
 
-  assert.equal(initContextEntries.length, 1);
+  assert.equal(initContextEntries.length, 2);
   assert.deepEqual(threads[0]?.turns, [startedNotificationTurn]);
 });
 
@@ -2814,9 +2824,12 @@ test("mergeThreadSnapshot drops stale duplicate init context already in thread s
   assert.deepEqual(merged.turns, [canonicalTurn]);
   assert.deepEqual(
     buildConversationEntries(merged)
-      .filter((entry) => entry.toolName === "Init Context")
-      .map((entry) => entry.text),
-    ["Workspace • Instructions"],
+      .filter((entry) => entry.toolName?.startsWith("Init Context"))
+      .map((entry) => [entry.toolName, entry.text]),
+    [
+      ["Init Context · Workspace", "/tmp/project"],
+      ["Init Context · Instructions", "全程使用中文"],
+    ],
   );
 });
 
@@ -2860,10 +2873,10 @@ test("mergeThreadSnapshot keeps one completed init context after first user turn
     },
   );
   const initContextEntries = buildConversationEntries(merged).filter(
-    (entry) => entry.toolName === "Init Context",
+    (entry) => entry.toolName?.startsWith("Init Context"),
   );
 
-  assert.equal(initContextEntries.length, 1);
+  assert.equal(initContextEntries.length, 2);
   assert.deepEqual(
     merged.turns.flatMap((turn) =>
       turn.items
@@ -4656,7 +4669,7 @@ test("mergeThreadSnapshot preserves init context when a started snapshot omits t
 
   assert.deepEqual(
     buildConversationEntries(merged).map((entry) => entry.id),
-    ["ctx-1"],
+    ["ctx-1:section:0"],
   );
 });
 

@@ -1697,8 +1697,8 @@ test("renders event command exit signals in event summaries", () => {
   );
 });
 
-test("renders injected init context as a conversation context entry", () => {
-  const entries = buildConversationEntries(
+test("renders injected init context sections as separate context entries", () => {
+  const state = buildConversationState(
     makeThread([
       {
         type: "injectedContext",
@@ -1712,6 +1712,7 @@ test("renders injected init context as a conversation context entry", () => {
       },
     ]),
   );
+  const entries = state.entries;
 
   assert.deepEqual(
     entries.map((entry) => ({
@@ -1723,23 +1724,103 @@ test("renders injected init context as a conversation context entry", () => {
       toolStatus: entry.toolStatus,
       toolCategory: entry.toolCategory,
       toolDetails: entry.toolDetails,
-      toolDetailSections: entry.toolDetailSections,
     })),
     [
       {
-        id: "ctx-1",
+        id: "ctx-1:section:0",
         kind: "tool",
         role: "system",
-        text: "Workspace • Instructions",
-        toolName: "Init Context",
+        text: "/tmp/project",
+        toolName: "Init Context · Workspace",
         toolStatus: "completed",
         toolCategory: "context",
-        toolDetails: "Workspace\n/tmp/project\n\nInstructions\n全程使用中文",
-        toolDetailSections: [
-          { label: "Workspace", text: "/tmp/project" },
-          { label: "Instructions", text: "全程使用中文" },
-        ],
+        toolDetails: "Workspace\n/tmp/project",
       },
+      {
+        id: "ctx-1:section:1",
+        kind: "tool",
+        role: "system",
+        text: "全程使用中文",
+        toolName: "Init Context · Instructions",
+        toolStatus: "completed",
+        toolCategory: "context",
+        toolDetails: "Instructions\n全程使用中文",
+      },
+    ],
+  );
+  assert.deepEqual(
+    state.cells.map((cell) => [
+      cell.id,
+      cell.kind,
+      cell.entries.map((entry) => entry.id),
+    ]),
+    [
+      ["ctx-1:section:0", "tool", ["ctx-1:section:0"]],
+      ["ctx-1:section:1", "tool", ["ctx-1:section:1"]],
+    ],
+  );
+});
+
+test("renders injected init context without sections as a fallback context entry", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "injectedContext",
+        id: "ctx-empty",
+        title: "Init Context",
+        preview: "Initial context was injected.",
+        sections: [],
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolDetails: entry.toolDetails,
+    })),
+    [
+      {
+        id: "ctx-empty",
+        kind: "tool",
+        text: "Initial context was injected.",
+        toolName: "Init Context",
+        toolDetails: "Initial context was injected.",
+      },
+    ],
+  );
+});
+
+test("renders a single injected init context section as one context entry", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "injectedContext",
+        id: "ctx-single",
+        title: "Init Context",
+        preview: "Environment",
+        sections: [{ label: "Environment", text: "<cwd>/workspace</cwd>" }],
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [
+      entry.id,
+      entry.toolName,
+      entry.text,
+      entry.toolDetails,
+    ]),
+    [
+      [
+        "ctx-single:section:0",
+        "Init Context · Environment",
+        "<cwd>/workspace</cwd>",
+        "Environment\n<cwd>/workspace</cwd>",
+      ],
     ],
   );
 });
@@ -2889,8 +2970,20 @@ test("keeps replacement init context out of compact display entries", () => {
   assert.equal(compactEntry.replacementHistoryCount, 1);
   assert.equal(compactEntry.replacementHistoryEntries?.length, 1);
   assert.deepEqual(
-    compactEntry.replacementHistoryEntries?.[0]?.toolDetailSections,
-    [{ label: "AGENTS.md", text: "Persisted project instructions" }],
+    compactEntry.replacementHistoryEntries?.map((entry) => [
+      entry.id,
+      entry.toolName,
+      entry.text,
+      entry.toolDetails,
+    ]),
+    [
+      [
+        "compact-init-only:replacement:0:section:0",
+        "Init Context · AGENTS.md",
+        "Persisted project instructions",
+        "AGENTS.md\nPersisted project instructions",
+      ],
+    ],
   );
 });
 
@@ -2939,15 +3032,24 @@ test("omits typed context compaction replacement history from display entries", 
   assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
-  assert.equal(compactEntry.replacementHistoryEntries?.length, 3);
+  assert.equal(compactEntry.replacementHistoryEntries?.length, 4);
   assert.deepEqual(
-    compactEntry.replacementHistoryEntries?.[0]?.toolDetailSections,
+    compactEntry.replacementHistoryEntries
+      ?.filter((entry) => entry.toolName?.startsWith("Init Context"))
+      .map((entry) => [entry.id, entry.toolName, entry.text, entry.toolDetails]),
     [
-      {
-        label: "AGENTS.md",
-        text: "# AGENTS.md instructions\nPersisted agent instructions",
-      },
-      { label: "Environment", text: "<cwd>/workspace</cwd>" },
+      [
+        "compact-typed:replacement:0:section:0",
+        "Init Context · AGENTS.md",
+        "# AGENTS.md instructions Persisted agent instructions",
+        "AGENTS.md\n# AGENTS.md instructions\nPersisted agent instructions",
+      ],
+      [
+        "compact-typed:replacement:0:section:1",
+        "Init Context · Environment",
+        "<cwd>/workspace</cwd>",
+        "Environment\n<cwd>/workspace</cwd>",
+      ],
     ],
   );
 });

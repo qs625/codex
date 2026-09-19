@@ -46,17 +46,15 @@ export function buildReplacementHistoryEntries(
     collectStructuredToolCallIdsWithTypedDisplay(rawResponseItems);
   return items.flatMap((item, index) => {
     if (!isResponseItem(item)) {
-      const entry = buildTypedReplacementHistoryEntry(item, {
+      const entries = buildTypedReplacementHistoryEntries(item, {
         author,
         timestamp,
         id: `${parentId}:replacement:${index}`,
       });
-      return [
-        {
-          ...entry,
-          isReplacementHistory: true,
-        },
-      ];
+      return entries.map((entry) => ({
+        ...entry,
+        isReplacementHistory: true,
+      }));
     }
     if (
       item.type === "function_call" &&
@@ -98,7 +96,7 @@ function isResponseItem(
   ].includes(String(item.type));
 }
 
-function buildTypedReplacementHistoryEntry(
+function buildTypedReplacementHistoryEntries(
   item: CompactReplacementHistoryItem,
   {
     author,
@@ -109,24 +107,18 @@ function buildTypedReplacementHistoryEntry(
     timestamp: string;
     id: string;
   },
-): ConversationEntry {
+): ConversationEntry[] {
   switch (item.type) {
     case "injectedContext":
-      return replacementContextEntry({
+      return replacementContextEntries({
         id,
         author,
         timestamp,
         text: item.preview || item.title || "Initial context was injected.",
-        detailSections: item.sections.map((section) => ({
-          label: section.label,
-          text: section.text,
-        })),
-        details: item.sections
-          .map((section) => `${section.label}\n${section.text}`)
-          .join("\n\n"),
+        sections: item.sections,
       });
     case "userMessage":
-      return {
+      return [{
         id,
         kind: "message",
         author: "You",
@@ -134,9 +126,9 @@ function buildTypedReplacementHistoryEntry(
         text: formatUserInputContent(item.content),
         timestamp,
         attachments: attachmentsFromUserInput(item.content),
-      };
+      }];
     case "agentMessage":
-      return {
+      return [{
         id,
         kind: "message",
         author,
@@ -144,9 +136,9 @@ function buildTypedReplacementHistoryEntry(
         text: item.text || "Replacement history assistant message.",
         timestamp,
         attachments: [],
-      };
+      }];
     case "conversationArtifact":
-      return {
+      return [{
         id,
         kind: "artifact",
         author,
@@ -162,7 +154,7 @@ function buildTypedReplacementHistoryEntry(
           language: item.language,
           truncated: item.truncated,
         },
-      };
+      }];
   }
 }
 
@@ -238,6 +230,7 @@ function buildReplacementHistoryEntry(
           author,
           timestamp,
           text: previewInlineText(text, 160) ?? "Initial context was injected.",
+          toolName: "Init Context",
           details: text,
         });
       }
@@ -520,19 +513,58 @@ function structuredToolCallReplacementEntry(
   });
 }
 
+function replacementContextEntries({
+  id,
+  author,
+  timestamp,
+  text,
+  sections,
+}: {
+  id: string;
+  author: string;
+  timestamp: string;
+  text: string;
+  sections: Array<{ label: string; text: string }>;
+}): ConversationEntry[] {
+  if (sections.length === 0) {
+    return [
+      replacementContextEntry({
+        id,
+        author,
+        timestamp,
+        text,
+        toolName: "Init Context",
+        details: text,
+      }),
+    ];
+  }
+  return sections.map((section, index) => {
+    const label = section.label || `Section ${index + 1}`;
+    const sectionText = stringOrFallback(section.text, "");
+    return replacementContextEntry({
+      id: `${id}:section:${index}`,
+      author,
+      timestamp,
+      text: previewInlineText(sectionText, 160) ?? "Initial context section is empty.",
+      toolName: `Init Context · ${label}`,
+      details: `${label}\n${sectionText}`,
+    });
+  });
+}
+
 function replacementContextEntry({
   id,
   author,
   timestamp,
   text,
-  detailSections,
+  toolName,
   details,
 }: {
   id: string;
   author: string;
   timestamp: string;
   text: string;
-  detailSections?: NonNullable<ConversationEntry["toolDetailSections"]>;
+  toolName: string;
   details: string;
 }): ConversationEntry {
   return {
@@ -543,10 +575,9 @@ function replacementContextEntry({
     text,
     timestamp,
     attachments: [],
-    toolName: "Init Context",
+    toolName,
     toolStatus: "completed",
     toolDetails: details,
-    toolDetailSections: detailSections,
     toolCategory: "context",
   };
 }
