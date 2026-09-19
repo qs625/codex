@@ -1,5 +1,6 @@
 import type {
   ConversationArtifactSource,
+  CompactReplacementHistoryItem,
   ConversationCell,
   ConversationEntry,
   Thread,
@@ -438,12 +439,10 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "contextCompaction") {
-    return [
-      buildContextCompactionEntry(item, {
-        author,
-        timestamp,
-      }),
-    ];
+    return buildContextCompactionEntries(item, {
+      author,
+      timestamp,
+    });
   }
 
   if (item.type === "plan") {
@@ -752,6 +751,24 @@ function artifactSourceMimeType(
   return (source.mimeType ?? fallbackMimeType).trim() || "unknown";
 }
 
+function buildContextCompactionEntries(
+  item: Extract<ThreadItem, { type: "contextCompaction" }>,
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry[] {
+  const compactEntry = buildContextCompactionEntry(item, { author, timestamp });
+  const retainedContextEntries = retainedInjectedContextEntries(item, {
+    author,
+    timestamp,
+  });
+  return [compactEntry, ...retainedContextEntries];
+}
+
 function buildContextCompactionEntry(
   item: Extract<ThreadItem, { type: "contextCompaction" }>,
   {
@@ -794,6 +811,43 @@ function buildContextCompactionEntry(
     replacementHistoryStatus,
     replacementHistoryCount,
   };
+}
+
+function retainedInjectedContextEntries(
+  item: Extract<ThreadItem, { type: "contextCompaction" }>,
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry[] {
+  if (!Array.isArray(item.replacementHistory)) {
+    return [];
+  }
+  return item.replacementHistory.flatMap((historyItem, index) => {
+    if (!isCompactReplacementInjectedContext(historyItem)) {
+      return [];
+    }
+    return buildInjectedContextEntries(
+      {
+        ...historyItem,
+        id: `${item.id}:retained:${index}:${historyItem.id}`,
+      },
+      { author, timestamp },
+    );
+  });
+}
+
+function isCompactReplacementInjectedContext(
+  item: CompactReplacementHistoryItem | unknown,
+): item is Extract<CompactReplacementHistoryItem, { type: "injectedContext" }> {
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    (item as { type?: unknown }).type === "injectedContext"
+  );
 }
 
 function formatItemTimestamp(item: ThreadItem) {
