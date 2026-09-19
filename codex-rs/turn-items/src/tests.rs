@@ -2,9 +2,9 @@ use super::AssistantMessageStreamParsers;
 use super::PlanModeStreamAction;
 use super::PlanModeStreamState;
 use super::ProposedPlanSegment;
+use super::injected_context_item_from_response_items;
 use super::last_assistant_message_from_item;
 use super::parse_turn_item;
-use super::proposed_plan_text_from_assistant_response_item;
 use super::strip_hidden_assistant_markup;
 use pretty_assertions::assert_eq;
 use protocol::AgentPath;
@@ -95,6 +95,17 @@ fn assistant_output_text(text: &str) -> ResponseItem {
         id: Some("msg-1".to_string()),
         role: "assistant".to_string(),
         content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    }
+}
+
+fn context_message(role: &str, text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: role.to_string(),
+        content: vec![ContentItem::InputText {
             text: text.to_string(),
         }],
         phase: None,
@@ -775,6 +786,120 @@ fn skips_user_instructions_and_env() {
         let turn_item = parse_turn_item(&item);
         assert!(turn_item.is_none(), "expected none, got {turn_item:?}");
     }
+}
+
+#[test]
+fn injected_context_labels_use_specific_source_categories() {
+    let items = vec![
+        context_message("developer", "# User Preferences\n- 全程中文"),
+        context_message("developer", "# Project Understanding\n- Runtime facts"),
+        context_message(
+            "developer",
+            "<skills_instructions>\n## Skills\n- openai-docs\n</skills_instructions>",
+        ),
+        context_message(
+            "developer",
+            "<apps_instructions>\n## Apps\nbody\n</apps_instructions>",
+        ),
+        context_message(
+            "developer",
+            "<workflows_instructions>\n## Workflows\nbody\n</workflows_instructions>",
+        ),
+        context_message(
+            "developer",
+            "<agents_instructions>\n## Agents\nbody\n</agents_instructions>",
+        ),
+        context_message(
+            "developer",
+            "<plugins_instructions>\n## Plugins\nbody\n</plugins_instructions>",
+        ),
+        context_message(
+            "developer",
+            "<permissions instructions>\nSandbox: workspace-write\n</permissions instructions>",
+        ),
+        context_message(
+            "developer",
+            "<external_agent_tools>\n```json\n[]\n```\n</external_agent_tools>",
+        ),
+        context_message(
+            "developer",
+            "<personality_spec>\n## Personality\nBe concise.\n</personality_spec>",
+        ),
+        context_message(
+            "developer",
+            "<collaboration_mode>\n## Collaboration Mode\nAutonomous.\n</collaboration_mode>",
+        ),
+        context_message(
+            "user",
+            "<multiagent_context>\n<current_thread_canonical_path>/self</current_thread_canonical_path>\n</multiagent_context>",
+        ),
+        context_message("developer", "Ordinary developer-only note."),
+        context_message("user", "Ordinary contextual user note."),
+    ];
+
+    let TurnItem::InjectedContext(item) =
+        injected_context_item_from_response_items(&items).expect("injected context")
+    else {
+        panic!("expected injected context item");
+    };
+
+    let labels: Vec<_> = item
+        .sections
+        .iter()
+        .map(|section| section.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            "User Preferences",
+            "Project Understanding",
+            "Skills",
+            "Apps",
+            "Workflows",
+            "Agents",
+            "Plugins",
+            "Permissions",
+            "External Tool Specs",
+            "Personality",
+            "Collaboration Mode",
+            "Multi-agent Context",
+            "Developer instructions",
+            "User context",
+        ]
+    );
+    assert_eq!(
+        item.preview,
+        "User Preferences • Project Understanding • Skills"
+    );
+}
+
+#[test]
+fn injected_context_preserves_agents_and_environment_labels() {
+    let items = vec![
+        context_message(
+            "developer",
+            "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nbody\n</INSTRUCTIONS>",
+        ),
+        context_message(
+            "user",
+            "<environment_context>\n<cwd>/repo</cwd>\n</environment_context>",
+        ),
+    ];
+
+    let TurnItem::InjectedContext(item) =
+        injected_context_item_from_response_items(&items).expect("injected context")
+    else {
+        panic!("expected injected context item");
+    };
+
+    assert_eq!(
+        item.sections
+            .iter()
+            .map(|section| section.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["AGENTS.md", "Environment"],
+    );
+    assert_eq!(item.preview, "AGENTS.md • Environment");
 }
 
 #[test]
