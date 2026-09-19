@@ -384,13 +384,17 @@ test("browser native view hides under app overlays and restores with measured bo
 
   assert.match(
     rightPanelSource,
-    /if \(nativeOverlayActive\) \{[\s\S]*\.hideBrowserView\(\)/,
+    /const shouldHideNativeView = nativeOverlayActive \|\| resizing/,
+  );
+  assert.match(
+    rightPanelSource,
+    /if \(shouldHideNativeView\) \{[\s\S]*\.hideBrowserView\(\)/,
   );
   assert.match(
     rightPanelSource,
     /else \{[\s\S]*const bounds = measureBounds\(\)[\s\S]*\.showBrowserView\(bounds\)/,
   );
-  assert.match(
+  assert.doesNotMatch(
     rightPanelSource,
     /requestAnimationFrame\(watchBounds\)/,
   );
@@ -398,6 +402,12 @@ test("browser native view hides under app overlays and restores with measured bo
     appSource,
     /browserNativeOverlayActive=\{[\s\S]*isSelfCommandOpen \|\| isSettingsOpen \|\| isCreatingChatThread/,
   );
+  assert.match(appSource, /browserPanelResizing=\{isRightPanelResizing\}/);
+  assert.match(appSource, /setIsRightPanelResizing\(panel === "right"\)/);
+  assert.match(appSource, /setIsRightPanelResizing\(false\)/);
+  assert.match(appSource, /setPointerCapture\(pointerId\)/);
+  assert.match(appSource, /releasePointerCapture\(pointerCapture\.pointerId\)/);
+  assert.match(appSource, /window\.addEventListener\("blur", finishResize\)/);
 });
 
 test("browser tab helpers preserve active tab state and readable labels", () => {
