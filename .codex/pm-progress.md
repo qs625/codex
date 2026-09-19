@@ -11,7 +11,72 @@
 Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8f38206ee83a49d4a2486e473475a1`, selected/externalCurrent/activeLaunch in runtime-launcher control state, installed by recovered restart request `call_rXgzD1RpJ3Z9aGlJCdo5zBG4` (do not repeat the same restart request). Artifact manifest metadata sourceCommit is `a4987fa8477ba23bc6a92a3e2c86fefe7960417b`. Previous Runtime Capsule is `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`. Self-debug attached to CDP `127.0.0.1:9223`: listener process is `Root Worker Runtime`, renderer URL points to `1cc50bd.../app.asar/dist/index.html`, readyState complete, Electron `37.10.3` UA confirmed, console 0 errors/warnings. DOM check showed `.tool-detail-sections` count 0, compact summary details/body count 0; `Summary available` / `View summary` text matches were from diagnostic command history, not compact marker UI.
 
 ## Active Work
-No active product implementation work. `source_workspace-dev` and `source_workspace-dev-3` are idle/synced to main `9aa666240`; `source_workspace-dev-2` remains dirty/unavailable and should not receive new tasks until cleaned or explicitly reconciled.
+- id: readme-codex-build-benchmark
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: docs/codex-build-benchmark
+  task_type: documentation/benchmark
+  depends_on: README project comparison `17bf5645c`; local reference source `/Users/bytedance/.morpheus/reference-sources/openai-codex`
+  files: README.md
+  base_commit: 9f0f257a96862401c26f8b816c6bcd2bac4a2afb
+  status: dispatched
+  next_action: owner_dev_3 run reproducible cold/warm Rust build benchmark comparing Morpheus and reference OpenAI Codex, update README with environment, commits, commands, results, and caveats; review with reused /self/owner_dev_3/reviewer.
+  validation: pending benchmark results and docs review
+  commit: pending
+
+- id: compact-retained-init-context-visible
+  owner: /self/owner_dev
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/compact-retained-init-context
+  task_type: UI/display correction
+  depends_on: compact summary inline and Init Context section-item projection
+  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts
+  base_commit: 9f0f257a96862401c26f8b816c6bcd2bac4a2afb
+  status: merged_pending_capsule_delivery
+  next_action: include in next Runtime Capsule delivery and self-debug installed UI; sync source_workspace-dev when idle.
+  validation: owner/reviewer approved; PM design验收 passed; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/conversationVirtualization.test.ts` 126/126; `git diff --check` pass.
+  commit: owner `2d5fe2e4b`; merge `2ce7ed63e`
+
+- id: init-context-specific-category-labels
+  owner: /self/owner_dev
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/init-context-specific-labels
+  task_type: UI/display typed source classification
+  depends_on: installed `split-init-context-into-items`
+  files: codex-rs/turn-items/src/lib.rs; codex-rs/turn-items/src/tests.rs
+  base_commit: eadb296a83047d44c5072c12369368d60db69e7c
+  status: merged_pending_capsule_delivery
+  next_action: include in next Runtime Capsule delivery and self-debug installed UI.
+  validation: owner/reviewer approved; PM design验收 passed; main `cargo test --manifest-path codex-rs/Cargo.toml -p codex-turn-items injected_context -- --nocapture` 2/2; root-worker focused tests 125/125; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass with linker/future-incompat warnings; `git diff --check` pass.
+  commit: owner `65cc5b03c`; merge `6c7682735`
+
+- id: compact-summary-inline-visible
+  owner: /self/owner_dev_3
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: fix/compact-summary-inline-visible
+  task_type: UI/display correction
+  depends_on: installed `compact-marker-non-expandable-ui`
+  files: apps/root-worker-prototype/src/components/Conversation.tsx; apps/root-worker-prototype/src/lib/conversationFormatting.ts; apps/root-worker-prototype/src/lib/conversationVirtualization.ts; apps/root-worker-prototype/src/styles.css; focused Conversation tests
+  base_commit: eadb296a83047d44c5072c12369368d60db69e7c
+  status: merged_pending_capsule_delivery
+  next_action: include in next Runtime Capsule delivery and self-debug installed UI.
+  validation: owner/reviewer approved; PM design验收 passed; main root-worker focused tests 125/125; app-server debug build pass with linker/future-incompat warnings; `git diff --check` pass.
+  commit: owner `8d185ac92`; merge `9f0f257a`
+
+- id: computer-use-mcp-tool-exposure
+  owner: /self/owner_dev_2
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: idle/dev2-main-sync (owner should create task branch)
+  task_type: runtime/MCP tool exposure bugfix
+  depends_on: installed Computer Use helper/MCP packaging; dev-2 stale dirty formatting/import stash triaged and dropped as not useful
+  files: codex-rs/mcp-service*; codex-rs/tool-service*; codex-rs/thread-service*; apps/root-worker-prototype/electron/installedArtifactUpdate.cjs/appServerClient.cjs as needed
+  base_commit: eadb296a83047d44c5072c12369368d60db69e7c
+  status: dispatched
+  next_action: owner_dev_2 diagnose and fix why `[mcp_servers.computer_use]` is configured and packaged but `computer_use` MCP tools are not exposed to the current model tool surface; review with reused /self/owner_dev_2/reviewer.
+  validation: pending
+  commit: pending
+
+Current checkout allocation: `source_workspace-dev` has delivered `compact-retained-init-context-visible` and needs sync when idle; `source_workspace-dev-2` active on Computer Use MCP tool exposure; `source_workspace-dev-3` active on README build benchmark.
 
 ## Recent Completed
 - id: split-init-context-into-items
