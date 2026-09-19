@@ -11,17 +11,17 @@
 Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8f38206ee83a49d4a2486e473475a1`, selected/externalCurrent/activeLaunch in runtime-launcher control state, installed by recovered restart request `call_rXgzD1RpJ3Z9aGlJCdo5zBG4` (do not repeat the same restart request). Artifact manifest metadata sourceCommit is `a4987fa8477ba23bc6a92a3e2c86fefe7960417b`. Previous Runtime Capsule is `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`. Self-debug attached to CDP `127.0.0.1:9223`: listener process is `Root Worker Runtime`, renderer URL points to `1cc50bd.../app.asar/dist/index.html`, readyState complete, Electron `37.10.3` UA confirmed, console 0 errors/warnings. DOM check showed `.tool-detail-sections` count 0, compact summary details/body count 0; `Summary available` / `View summary` text matches were from diagnostic command history, not compact marker UI.
 
 ## Active Work
-- id: readme-codex-build-benchmark
-  owner: /self/owner_dev_3
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
-  branch: docs/codex-build-benchmark
-  task_type: documentation/benchmark
-  depends_on: README project comparison `17bf5645c`; local reference source `/Users/bytedance/.morpheus/reference-sources/openai-codex`
-  files: README.md
-  base_commit: 9f0f257a96862401c26f8b816c6bcd2bac4a2afb
+- id: plan-tool-minimal-status-model
+  owner: /self/owner_dev
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/plan-tool-rich-status
+  task_type: runtime/tool schema + frontend display bugfix
+  depends_on: user feedback that plan tool cannot express PM multi-task state; simplified design decision to avoid many PM-specific statuses
+  files: codex-rs/protocol/src/plan_tool.rs; codex-rs/protocol/src/prompts/base_instructions/default.md; codex-rs/thread-service prompt mirrors if applicable; apps/root-worker-prototype/src/types.ts; apps/root-worker-prototype/src/components/RightPanel.tsx/tests; apps/root-worker-prototype/src/styles.css
+  base_commit: 00939bf8485343e31b1d320b70848b12c93dd3c7
   status: dispatched
-  next_action: owner_dev_3 run reproducible cold/warm Rust build benchmark comparing Morpheus and reference OpenAI Codex, update README with environment, commits, commands, results, and caveats; review with reused /self/owner_dev_3/reviewer.
-  validation: pending benchmark results and docs review
+  next_action: owner_dev implement four-state plan model `pending/in_progress/blocked/completed`, allow multiple `in_progress`, preserve old plan compatibility, review with reused /self/owner_dev/reviewer.
+  validation: pending
   commit: pending
 
 - id: compact-retained-init-context-visible
@@ -76,9 +76,19 @@ Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8
   validation: pending
   commit: pending
 
-Current checkout allocation: `source_workspace-dev` has delivered `compact-retained-init-context-visible` and needs sync when idle; `source_workspace-dev-2` active on Computer Use MCP tool exposure; `source_workspace-dev-3` active on README build benchmark.
+Current checkout allocation: `source_workspace-dev` active on plan tool minimal status model; `source_workspace-dev-2` active on Computer Use MCP tool exposure; `source_workspace-dev-3` delivered README benchmark and needs sync when idle.
 
 ## Recent Completed
+- id: readme-codex-build-benchmark
+  status: merged_no_capsule_required
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: docs/codex-build-benchmark
+  commit: owner `cdf5ad20b`; merge `8573d309e`
+  summary: README now includes a reproducible single-run Rust app-server debug build benchmark comparing Morpheus `app-server` at `9f0f257a...` and OpenAI Codex reference `codex-app-server` at `78245b47...`, with environment, cold/warm definitions, commands, results, and caveats. Pure documentation; no Runtime Capsule needed.
+  validation: owner benchmark and reviewer passed; PM inspected README diff and raw log `/tmp/morpheus-codex-build-benchmark.v7STH6/benchmark.log`; main `git diff --check` pass.
+
 - id: split-init-context-into-items
   status: installed_effective
   owner: /self/owner_dev_3
