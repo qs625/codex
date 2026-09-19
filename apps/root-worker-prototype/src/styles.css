@@ -3678,14 +3678,6 @@ svg {
   overflow: hidden;
 }
 
-.compact-marker-card {
-  flex: 0 1 auto;
-  border-color: rgba(75, 85, 99, 0.14);
-  border-radius: 8px;
-  background: rgba(248, 250, 252, 0.86);
-  box-shadow: none;
-}
-
 .compact-summary,
 .archive-summary {
   display: flex;
@@ -3700,7 +3692,8 @@ svg {
 .compact-marker {
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(75, 85, 99, 0.1);
 }
 
 .archive-summary {
@@ -3728,6 +3721,24 @@ svg {
 
 .compact-marker .compact-copy strong {
   font-size: 13px;
+}
+
+.compact-summary-inline {
+  min-width: 0;
+  padding: 12px 14px 14px;
+}
+
+.compact-summary-inline pre {
+  max-height: 34rem;
+  margin: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #292524;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .compact-copy span,

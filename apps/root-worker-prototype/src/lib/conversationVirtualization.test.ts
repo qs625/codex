@@ -111,7 +111,7 @@ test("estimates archived history rows separately from compact rows", () => {
   assert.ok(estimateConversationCellHeight(compactCell) > 0);
 });
 
-test("compact row height stays marker-only even when details are loaded", () => {
+test("compact row height ignores archived details but includes inline summary", () => {
   const collapsedCompactCell: ConversationCell = {
     id: "compact-collapsed",
     kind: "compact",
@@ -124,6 +124,7 @@ test("compact row height stays marker-only even when details are loaded", () => 
         text: "compacted",
         timestamp: "09:41",
         attachments: [],
+        compactSummary: "Short compact summary.",
         replacementHistoryStatus: "available",
         replacementHistoryCount: 1,
         replacementHistoryEntries: [],
@@ -149,6 +150,46 @@ test("compact row height stays marker-only even when details are loaded", () => 
     estimateConversationCellHeight(expandedCompactCell),
     estimateConversationCellHeight(collapsedCompactCell),
   );
+  assert.ok(estimateConversationCellHeight(collapsedCompactCell) > 156);
+});
+
+test("compact row height bounds large inline summaries", () => {
+  const shortCompactCell: ConversationCell = {
+    id: "compact-short",
+    kind: "compact",
+    entries: [
+      {
+        id: "compact-short",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "compacted",
+        timestamp: "09:41",
+        attachments: [],
+        compactSummary: "Short compact summary.",
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 0,
+        replacementHistoryEntries: [],
+      },
+    ],
+  };
+  const longCompactCell: ConversationCell = {
+    id: "compact-long",
+    kind: "compact",
+    entries: [
+      {
+        ...shortCompactCell.entries[0]!,
+        id: "compact-long",
+        compactSummary: `${"summary line\n".repeat(400)}UNBOUNDED_SENTINEL`,
+      },
+    ],
+  };
+
+  const shortHeight = estimateConversationCellHeight(shortCompactCell);
+  const longHeight = estimateConversationCellHeight(longCompactCell);
+
+  assert.ok(longHeight > shortHeight);
+  assert.ok(longHeight <= 760);
 });
 
 test("context section entries are estimated as separate rows", () => {
