@@ -8,21 +8,21 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Current installed Runtime Capsule is `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`, selected/externalCurrent/activeLaunch in runtime-launcher control state, installed by recovered restart request `call_74YbmRKaOr3SkSr4SJYNhgXn` (do not repeat the same restart request). Artifact manifest metadata sourceCommit is `05e9b669eab720945f9d000a2d5557b2f14d94bd`. Previous Runtime Capsule is `sha256:bb7f0bab0d56b639995f6ead7d38441c26d3f212dcb590e9fdfca40ed6a033f3`. `split-init-context-into-items` is merged into main and pending Runtime Capsule delivery from main commit `6abcc5a6fee0c6dfe9355eee07390e7c36a85830` plus this progress-record commit. Next action: build capsule-only Runtime Capsule, request a new full Runtime restart, and self-debug the installed UI.
+Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8f38206ee83a49d4a2486e473475a1`, selected/externalCurrent/activeLaunch in runtime-launcher control state, installed by recovered restart request `call_rXgzD1RpJ3Z9aGlJCdo5zBG4` (do not repeat the same restart request). Artifact manifest metadata sourceCommit is `a4987fa8477ba23bc6a92a3e2c86fefe7960417b`. Previous Runtime Capsule is `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`. Self-debug attached to CDP `127.0.0.1:9223`: listener process is `Root Worker Runtime`, renderer URL points to `1cc50bd.../app.asar/dist/index.html`, readyState complete, Electron `37.10.3` UA confirmed, console 0 errors/warnings. DOM check showed `.tool-detail-sections` count 0, compact summary details/body count 0; `Summary available` / `View summary` text matches were from diagnostic command history, not compact marker UI.
 
 ## Active Work
-No active product implementation work. `split-init-context-into-items` is merged and pending Runtime Capsule delivery. `source_workspace-dev` is idle/synced and available; `source_workspace-dev-3` has delivered branch `fix/init-context-multiple-items` at `decbd58e4` and should be synced after main delivery/progress settle; `source_workspace-dev-2` remains dirty/unavailable and should not receive new tasks until cleaned or explicitly reconciled.
+No active product implementation work. `source_workspace-dev` and `source_workspace-dev-3` are idle and should be synced to main after this progress commit; `source_workspace-dev-2` remains dirty/unavailable and should not receive new tasks until cleaned or explicitly reconciled.
 
 ## Recent Completed
 - id: split-init-context-into-items
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev_3
   reviewer: /self/owner_dev_3/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
   branch: fix/init-context-multiple-items
   commit: owner `decbd58e4`; merge `6abcc5a6`
   summary: Typed `injectedContext.sections` now project as multiple adjacent Init Context context/tool items (`ctx-id:section:N`) instead of one item with `toolDetailSections`; compact replacement history uses the same section-item projection and context entries are prevented from being re-merged by compact cell grouping.
-  validation: owner/reviewer approved; PM design验收 passed against the brief (typed projection, not CSS-only; no regex details splitting; persisted/model-visible history unchanged); main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts src/lib/thread.test.ts` 358/358. Pending capsule-only Runtime delivery and installed self-debug.
+  validation: owner/reviewer approved; PM design验收 passed against the brief (typed projection, not CSS-only; no regex details splitting; persisted/model-visible history unchanged); main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts src/lib/thread.test.ts` 358/358. Delivered via capsule-only release `sha256:1cc50bd...` from sourceCommit `a4987fa84`, restart `call_rXgzD1RpJ3Z9aGlJCdo5zBG4`; self-debug confirmed installed renderer URL points to `1cc50bd...`, `.tool-detail-sections` count 0, compact summary details/body count 0, and console 0 errors/warnings.
 
 - id: compact-marker-non-expandable-ui
   status: installed_effective
