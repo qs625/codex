@@ -47,6 +47,11 @@ const COMPUTER_USE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
   "MacOS",
   COMPUTER_USE_HELPER_APP_NAME,
 );
+const COMPUTER_USE_HELPER_EXECUTABLE_PATH_INSIDE_APP = path.join(
+  "Contents",
+  "MacOS",
+  COMPUTER_USE_HELPER_APP_NAME,
+);
 const COMPUTER_USE_NATIVE_HELPER_EXECUTABLE_RELATIVE_PATH = path.join(
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
   "Contents",
@@ -813,13 +818,361 @@ function collectComputerUseHelperEquivalenceEntries(
   }
   entries.push({
     executable: (metadata.mode & 0o111) !== 0,
-    hash: crypto
-      .createHash("sha256")
-      .update(fsOps.readFileSync(absolutePath))
-      .digest("hex"),
+    hash: computerUseHelperEquivalenceFileHash(
+      absolutePath,
+      relativePath,
+      fsOps,
+    ),
     path: normalizeManifestPath(relativePath),
     type: "file",
   });
+}
+
+function computerUseHelperEquivalenceFileHash(absolutePath, relativePath, fsOps) {
+  const content = fsOps.readFileSync(absolutePath);
+  const normalizedContent =
+    relativePath === COMPUTER_USE_HELPER_EXECUTABLE_PATH_INSIDE_APP
+      ? normalizeMachOCodeSignatureForHash(content)
+      : null;
+  return crypto
+    .createHash("sha256")
+    .update(normalizedContent ?? content)
+    .digest("hex");
+}
+
+function normalizeMachOCodeSignatureForHash(content) {
+  if (!Buffer.isBuffer(content) || content.length < 4) {
+    return null;
+  }
+  const slices = parseMachOSlices(content);
+  if (!slices) {
+    return null;
+  }
+  const ignoredRanges = [];
+  const normalized = Buffer.from(content);
+  let normalizedAnySlice = false;
+  for (const slice of slices) {
+    if (!normalizeMachOSliceCodeSignature(normalized, slice, ignoredRanges)) {
+      continue;
+    }
+    normalizedAnySlice = true;
+  }
+  if (!normalizedAnySlice) {
+    return null;
+  }
+  ignoredRanges.sort((left, right) => left.start - right.start);
+  if (slices.some((slice) => slice.fatArchIdentity)) {
+    return canonicalFatMachOContentForHash(normalized, slices, ignoredRanges);
+  }
+  return contentWithoutIgnoredRanges(normalized, ignoredRanges);
+}
+
+function canonicalFatMachOContentForHash(content, slices, ignoredRanges) {
+  const canonicalChunks = [Buffer.from("morpheus-fat-macho-v1\0")];
+  for (const slice of slices) {
+    const sliceContent = contentWithoutIgnoredRanges(
+      content.subarray(slice.offset, slice.offset + slice.size),
+      ignoredRanges
+        .filter(
+          (range) => range.start >= slice.offset && range.end <= slice.offset + slice.size,
+        )
+        .map((range) => ({
+          start: range.start - slice.offset,
+          end: range.end - slice.offset,
+        })),
+    );
+    const sliceHash = crypto.createHash("sha256").update(sliceContent).digest();
+    const sliceHeader = Buffer.alloc(8);
+    sliceHeader.writeUInt32BE(slice.fatArchIdentity.length, 0);
+    sliceHeader.writeUInt32BE(sliceContent.length, 4);
+    canonicalChunks.push(sliceHeader, slice.fatArchIdentity, sliceHash);
+  }
+  return Buffer.concat(canonicalChunks);
+}
+
+function contentWithoutIgnoredRanges(content, ignoredRanges) {
+  const hashChunks = [];
+  let cursor = 0;
+  for (const range of ignoredRanges) {
+    const start = Math.max(cursor, Math.min(range.start, content.length));
+    const end = Math.max(start, Math.min(range.end, content.length));
+    if (cursor < start) {
+      hashChunks.push(content.subarray(cursor, start));
+    }
+    cursor = end;
+  }
+  if (cursor < content.length) {
+    hashChunks.push(content.subarray(cursor));
+  }
+  return Buffer.concat(hashChunks);
+}
+
+function parseMachOSlices(content) {
+  const magic = content.readUInt32BE(0);
+  if (magic === 0xcafebabe || magic === 0xcafebabf) {
+    return parseFatMachOSlices(content, magic === 0xcafebabf);
+  }
+  const header = parseMachOHeader(content, 0, content.length);
+  return header ? [{ offset: 0, size: content.length, header }] : null;
+}
+
+function parseFatMachOSlices(content, isFat64) {
+  if (content.length < 8) {
+    return null;
+  }
+  const sliceCount = content.readUInt32BE(4);
+  const archSize = isFat64 ? 32 : 20;
+  const headerSize = 8 + sliceCount * archSize;
+  if (sliceCount === 0 || sliceCount > 128 || headerSize > content.length) {
+    return null;
+  }
+  const slices = [];
+  for (let index = 0; index < sliceCount; index += 1) {
+    const archOffset = 8 + index * archSize;
+    const sliceOffset = readMachOUnsignedBigEndian(content, archOffset + 8, isFat64);
+    const sliceSize = readMachOUnsignedBigEndian(
+      content,
+      archOffset + (isFat64 ? 16 : 12),
+      isFat64,
+    );
+    if (
+      !Number.isSafeInteger(sliceOffset) ||
+      !Number.isSafeInteger(sliceSize) ||
+      sliceOffset < headerSize ||
+      sliceSize <= 0 ||
+      sliceOffset + sliceSize > content.length
+    ) {
+      return null;
+    }
+    const header = parseMachOHeader(content, sliceOffset, sliceSize);
+    if (!header) {
+      return null;
+    }
+    slices.push({
+      fatArchIdentity: fatMachOArchIdentity(content, archOffset, isFat64),
+      offset: sliceOffset,
+      size: sliceSize,
+      header,
+    });
+  }
+  return slices;
+}
+
+function fatMachOArchIdentity(content, archOffset, isFat64) {
+  const cputype = content.subarray(archOffset, archOffset + 4);
+  const cpusubtype = content.subarray(archOffset + 4, archOffset + 8);
+  const align = content.subarray(
+    archOffset + (isFat64 ? 24 : 16),
+    archOffset + (isFat64 ? 28 : 20),
+  );
+  const reserved = isFat64
+    ? content.subarray(archOffset + 28, archOffset + 32)
+    : Buffer.alloc(0);
+  return Buffer.concat([cputype, cpusubtype, align, reserved]);
+}
+
+function readMachOUnsignedBigEndian(content, offset, is64Bit) {
+  if (!is64Bit) {
+    return content.readUInt32BE(offset);
+  }
+  const value = content.readBigUInt64BE(offset);
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : Infinity;
+}
+
+function parseMachOHeader(content, offset, size) {
+  if (offset < 0 || size < 32 || offset + size > content.length) {
+    return null;
+  }
+  const magic = content.readUInt32LE(offset);
+  const bigEndianMagic = content.readUInt32BE(offset);
+  let littleEndian = true;
+  let is64Bit = false;
+  if (magic === 0xfeedface) {
+    is64Bit = false;
+  } else if (magic === 0xfeedfacf) {
+    is64Bit = true;
+  } else if (bigEndianMagic === 0xfeedface) {
+    littleEndian = false;
+    is64Bit = false;
+  } else if (bigEndianMagic === 0xfeedfacf) {
+    littleEndian = false;
+    is64Bit = true;
+  } else {
+    return null;
+  }
+  const headerSize = is64Bit ? 32 : 28;
+  if (size < headerSize) {
+    return null;
+  }
+  const readUInt32 = littleEndian
+    ? Buffer.prototype.readUInt32LE
+    : Buffer.prototype.readUInt32BE;
+  const commandCount = readUInt32.call(content, offset + 16);
+  const commandsSize = readUInt32.call(content, offset + 20);
+  if (
+    commandCount > 2048 ||
+    commandsSize > size - headerSize ||
+    headerSize + commandsSize > size
+  ) {
+    return null;
+  }
+  return {
+    commandCount,
+    commandsOffset: offset + headerSize,
+    commandsEnd: offset + headerSize + commandsSize,
+    littleEndian,
+    offset,
+    size,
+  };
+}
+
+function normalizeMachOSliceCodeSignature(content, slice, ignoredRanges) {
+  const readUInt32 = slice.header.littleEndian
+    ? Buffer.prototype.readUInt32LE
+    : Buffer.prototype.readUInt32BE;
+  const writeUInt32 = slice.header.littleEndian
+    ? Buffer.prototype.writeUInt32LE
+    : Buffer.prototype.writeUInt32BE;
+  const linkeditSegments = [];
+  const codeSignatureRanges = [];
+  let commandOffset = slice.header.commandsOffset;
+  let normalized = false;
+  for (let index = 0; index < slice.header.commandCount; index += 1) {
+    if (commandOffset + 8 > slice.header.commandsEnd) {
+      return normalized;
+    }
+    const command = readUInt32.call(content, commandOffset);
+    const commandSize = readUInt32.call(content, commandOffset + 4);
+    if (
+      commandSize < 8 ||
+      commandOffset + commandSize > slice.header.commandsEnd
+    ) {
+      return normalized;
+    }
+    if ((command === 0x1 || command === 0x19) && commandSize >= 56) {
+      const segment = parseMachOLinkeditSegment(
+        content,
+        commandOffset,
+        command,
+        slice.header.littleEndian,
+      );
+      if (segment) {
+        linkeditSegments.push(segment);
+      }
+    } else if (command === 0x1d && commandSize >= 16) {
+      const dataOffset = readUInt32.call(content, commandOffset + 8);
+      const dataSize = readUInt32.call(content, commandOffset + 12);
+      const absoluteDataOffset = slice.offset + dataOffset;
+      if (
+        dataSize > 0 &&
+        dataOffset >= 0 &&
+        dataOffset + dataSize <= slice.size &&
+        absoluteDataOffset >= slice.offset &&
+        absoluteDataOffset + dataSize <= slice.offset + slice.size
+      ) {
+        ignoredRanges.push({
+          start: absoluteDataOffset,
+          end: absoluteDataOffset + dataSize,
+        });
+        codeSignatureRanges.push({
+          dataOffset,
+          dataSize,
+        });
+        writeUInt32.call(content, 0, commandOffset + 8);
+        writeUInt32.call(content, 0, commandOffset + 12);
+        normalized = true;
+      }
+    }
+    commandOffset += commandSize;
+  }
+  for (const segment of linkeditSegments) {
+    normalizeMachOLinkeditSegmentForCodeSignature(
+      content,
+      segment,
+      codeSignatureRanges,
+    );
+  }
+  return normalized;
+}
+
+function parseMachOLinkeditSegment(content, commandOffset, command, littleEndian) {
+  const segmentName = content
+    .subarray(commandOffset + 8, commandOffset + 24)
+    .toString("ascii")
+    .replace(/\0.*$/u, "");
+  if (segmentName !== "__LINKEDIT") {
+    return null;
+  }
+  const is64Bit = command === 0x19;
+  const readUInt32 = littleEndian
+    ? Buffer.prototype.readUInt32LE
+    : Buffer.prototype.readUInt32BE;
+  const readBigUInt64 = littleEndian
+    ? Buffer.prototype.readBigUInt64LE
+    : Buffer.prototype.readBigUInt64BE;
+  if (!is64Bit) {
+    return {
+      fileOffset: readUInt32.call(content, commandOffset + 32),
+      fileSizeOffset: commandOffset + 36,
+      fileSize: readUInt32.call(content, commandOffset + 36),
+      is64Bit,
+      littleEndian,
+      vmSizeOffset: commandOffset + 28,
+    };
+  }
+  const fileOffset = readBigUInt64.call(content, commandOffset + 40);
+  const fileSize = readBigUInt64.call(content, commandOffset + 48);
+  if (
+    fileOffset > BigInt(Number.MAX_SAFE_INTEGER) ||
+    fileSize > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    return null;
+  }
+  return {
+    fileOffset: Number(fileOffset),
+    fileSizeOffset: commandOffset + 48,
+    fileSize: Number(fileSize),
+    is64Bit,
+    littleEndian,
+    vmSizeOffset: commandOffset + 32,
+  };
+}
+
+function normalizeMachOLinkeditSegmentForCodeSignature(
+  content,
+  segment,
+  codeSignatureRanges,
+) {
+  let normalizedSize = segment.fileSize;
+  for (const range of codeSignatureRanges) {
+    if (
+      range.dataOffset >= segment.fileOffset &&
+      range.dataOffset + range.dataSize === segment.fileOffset + normalizedSize
+    ) {
+      normalizedSize = range.dataOffset - segment.fileOffset;
+    }
+  }
+  if (normalizedSize === segment.fileSize || normalizedSize < 0) {
+    return;
+  }
+  if (segment.is64Bit) {
+    const value = BigInt(normalizedSize);
+    if (segment.littleEndian) {
+      content.writeBigUInt64LE(value, segment.fileSizeOffset);
+      content.writeBigUInt64LE(value, segment.vmSizeOffset);
+    } else {
+      content.writeBigUInt64BE(value, segment.fileSizeOffset);
+      content.writeBigUInt64BE(value, segment.vmSizeOffset);
+    }
+    return;
+  }
+  if (segment.littleEndian) {
+    content.writeUInt32LE(normalizedSize, segment.fileSizeOffset);
+    content.writeUInt32LE(normalizedSize, segment.vmSizeOffset);
+  } else {
+    content.writeUInt32BE(normalizedSize, segment.fileSizeOffset);
+    content.writeUInt32BE(normalizedSize, segment.vmSizeOffset);
+  }
 }
 
 function shouldIgnoreComputerUseHelperEquivalencePath(relativePath) {

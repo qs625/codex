@@ -49,6 +49,32 @@ function writeComputerUseHelperApp(appPath, marker = "helper", bundleId) {
   fs.writeFileSync(executablePath, marker, { mode: 0o755 });
 }
 
+function fakeSignedMachO({ code = "helper-code", signature = "signature" } = {}) {
+  const codeContent = Buffer.isBuffer(code) ? code : Buffer.from(String(code));
+  const signatureContent = Buffer.isBuffer(signature)
+    ? signature
+    : Buffer.from(String(signature));
+  const headerSize = 32;
+  const commandSize = 16;
+  const signatureOffset = headerSize + commandSize + codeContent.length;
+  const content = Buffer.alloc(signatureOffset + signatureContent.length);
+  content.writeUInt32LE(0xfeedfacf, 0);
+  content.writeUInt32LE(0x01000007, 4);
+  content.writeUInt32LE(3, 8);
+  content.writeUInt32LE(2, 12);
+  content.writeUInt32LE(1, 16);
+  content.writeUInt32LE(commandSize, 20);
+  content.writeUInt32LE(0, 24);
+  content.writeUInt32LE(0, 28);
+  content.writeUInt32LE(0x1d, headerSize);
+  content.writeUInt32LE(commandSize, headerSize + 4);
+  content.writeUInt32LE(signatureOffset, headerSize + 8);
+  content.writeUInt32LE(signatureContent.length, headerSize + 12);
+  codeContent.copy(content, headerSize + commandSize);
+  signatureContent.copy(content, signatureOffset);
+  return content;
+}
+
 function writeRuntimePayload(root, marker = "release-helper") {
   const appPath = path.join(root, "Root Worker Runtime.app");
   const resourcesPath = path.join(appPath, "Contents", "Resources");
@@ -288,6 +314,70 @@ test("app-server environment keeps matching stable Computer Use helper without w
       env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
       stableHelperAppPath,
     );
+    assert.deepEqual(commands, []);
+    assert.deepEqual(warnings, []);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("app-server environment keeps matching signed stable Computer Use helper without warning", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "app-server-helper-self-heal-"));
+  try {
+    const { resourcesPath } = writeRuntimePayload(
+      root,
+      fakeSignedMachO({
+        code: "release-helper-code",
+        signature: "packaged-signature",
+      }),
+    );
+    const stableHelperAppPath = path.join(
+      root,
+      "Applications",
+      "Root Worker Computer Use.app",
+    );
+    writeComputerUseHelperApp(
+      stableHelperAppPath,
+      fakeSignedMachO({
+        code: "release-helper-code",
+        signature: "stable-ad-hoc-signature",
+      }),
+    );
+    const stableHelperExecutable = path.join(
+      stableHelperAppPath,
+      "Contents",
+      "MacOS",
+      "Root Worker Computer Use",
+    );
+    const before = fs.readFileSync(stableHelperExecutable);
+    const commands = [];
+    const warnings = [];
+
+    const env = buildAppServerEnvironment(
+      {
+        HOME: "/Users/alice",
+        PATH: "/usr/bin",
+      },
+      {
+        platform: "darwin",
+        resourcesPath,
+        runCommand(command, args) {
+          commands.push({ command, args });
+          throw new Error("codesign should not run");
+        },
+        selfHealComputerUseHelper: true,
+        stableComputerUseHelperAppPath: stableHelperAppPath,
+        warn(message) {
+          warnings.push(message);
+        },
+      },
+    );
+
+    assert.equal(
+      env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+      stableHelperExecutable,
+    );
+    assert.deepEqual(fs.readFileSync(stableHelperExecutable), before);
     assert.deepEqual(commands, []);
     assert.deepEqual(warnings, []);
   } finally {
