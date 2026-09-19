@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
-use config_service::Config;
 use codex_connectors_api::AppInfo;
 use codex_features::Feature;
+use config_service::Config;
 use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::COMPUTER_USE_MCP_SERVER_NAME;
 use mcp_types::ToolInfo as McpToolInfo;
 use tool_config::ToolsConfig;
 
@@ -45,8 +46,12 @@ pub fn build_mcp_tool_exposure(
         };
     }
 
-    let direct_tools =
-        filter_codex_apps_mcp_tools(all_mcp_tools, explicitly_enabled_connectors, config);
+    let mut direct_tools = filter_always_direct_mcp_tools(all_mcp_tools);
+    direct_tools.extend(filter_codex_apps_mcp_tools(
+        all_mcp_tools,
+        explicitly_enabled_connectors,
+        config,
+    ));
     let direct_tool_names = direct_tools
         .iter()
         .map(McpToolInfo::canonical_tool_name)
@@ -57,6 +62,14 @@ pub fn build_mcp_tool_exposure(
         direct_tools,
         deferred_tools: (!deferred_tools.is_empty()).then_some(deferred_tools),
     }
+}
+
+fn filter_always_direct_mcp_tools(mcp_tools: &[McpToolInfo]) -> Vec<McpToolInfo> {
+    mcp_tools
+        .iter()
+        .filter(|tool| tool.server_name == COMPUTER_USE_MCP_SERVER_NAME)
+        .cloned()
+        .collect()
 }
 
 fn filter_non_codex_apps_mcp_tools_only(mcp_tools: &[McpToolInfo]) -> Vec<McpToolInfo> {
@@ -95,8 +108,8 @@ fn filter_codex_apps_mcp_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config_service::ConfigBuilder;
     use codex_features::Features;
+    use config_service::ConfigBuilder;
     use mcp_types::McpTool;
     use model_service::test_support::construct_model_info_offline_for_tests;
     use pretty_assertions::assert_eq;
@@ -242,6 +255,42 @@ mod tests {
             .as_ref()
             .expect("large tool sets should be discoverable through tool_search");
         assert_eq!(tool_names(deferred_tools), tool_names(&mcp_tools));
+    }
+
+    #[tokio::test]
+    async fn directly_exposes_computer_use_when_large_tool_sets_are_searchable() {
+        let config = test_config().await;
+        let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
+        let mut mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
+        let computer_use_tool = make_mcp_tool(
+            COMPUTER_USE_MCP_SERVER_NAME,
+            "computer.permissions_status",
+            "mcp__computer_use__",
+            "computer_permissions_status",
+            /*connector_id*/ None,
+            /*connector_name*/ None,
+        );
+        mcp_tools.push(computer_use_tool.clone());
+
+        let exposure = build_mcp_tool_exposure(
+            &mcp_tools,
+            /*connectors*/ None,
+            &[],
+            &config,
+            &tools_config,
+        );
+
+        assert_eq!(
+            tool_names(&exposure.direct_tools),
+            tool_names(&[computer_use_tool])
+        );
+        let deferred_tools = exposure
+            .deferred_tools
+            .as_ref()
+            .expect("large non-computer-use tool sets should remain searchable");
+        assert!(
+            !tool_names(deferred_tools).contains("mcp__computer_use__computer_permissions_status")
+        );
     }
 
     #[tokio::test]
