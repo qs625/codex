@@ -22,26 +22,29 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   depends_on: user correction on 2026-09-19 CST: “compact summary 还是没改啊 / 现在还是折叠起来的 ui”. Previous `compact_marker_hide_summary` only removed duplicate summary inside replacement history and did not remove the expandable compact row UI.
   files: likely `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, possibly compact/search/detail helpers if needed.
   base_commit: `b612853af`
-  status: dispatched
+  status: merged_pending_capsule_delivery
   objective: Make context compaction render as a small non-expandable boundary marker in the active conversation UI, not an expandable/collapsible summary card.
   design_intent: Compact is an internal context-management boundary, not content the user should be invited to read inline. The chat timeline should remain clean after compaction while preserving durable audit facts off the default surface.
   invariants: Do not delete persisted compact facts, replacement history, archived history, search/detail extraction, or reload semantics; do not hide later user/assistant messages after the compact boundary; do not regress active command/orphan item handling around compaction.
   forbidden_paths: no CSS-only hiding that leaves keyboard/screen-reader expandable controls; no removing backend/thread history facts; no reintroducing summary body/preview under another label; no broad redesign of conversation rows.
   expected_implementation_outline: Remove or gate the compact row `<details>`/summary expansion affordance from active conversation rendering, update component tests that currently expect expandable summary markup, and keep compact row as “Context compacted” marker with bounded metadata only if non-interactive.
   minimum_regression_matrix: compact summary present + replacement history missing; replacement history available; large summary payload; archived artifacts/history; nested compact archived history; same-turn pre/post compact user messages; search/detail helpers still work if they are intentionally retained; focused component/lib tests and diff check; reviewer approval.
-  next_action: owner_dev_3 to implement with reused reviewer, then PM design验收/merge and install via next Runtime Capsule delivery.
+  owner_result: commit `c64e67639` removes compact summary/details rendering from active Conversation UI, keeps compact facts in lib/detail paths, focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114, `git diff --check` pass, reviewer approved.
+  merge_commit: `33aaff9cc`
+  pm_validation: PM inspected implementation against UI contract; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114; diff check passed before merge.
+  next_action: include in next Runtime Capsule delivery, preferably batched with `split-init-context-display`.
   blockers: none.
 
 - id: split-init-context-display
-  owner: unassigned
-  reviewer: unassigned
-  checkout: TBD, dispatch when an appropriate dev checkout is free and clean
-  branch: TBD
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: fix/split-init-context-display
   task_type: ui-data-model/conversation-init-context
   depends_on: user correction on 2026-09-19 CST: “然后拆分 init context 也没做”. Related to compact/replacement history display but broader than removing compact summary folding.
   files: likely `apps/root-worker-prototype/src/lib/conversationReplacementHistory.ts`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, `apps/root-worker-prototype/src/lib/conversation.test.ts`, possibly protocol/types only if section facts are currently insufficient.
-  base_commit: `3f64d5e1f`
-  status: queued
+  base_commit: `33aaff9cc`
+  status: dispatching
   objective: Render/present Init Context as distinct source sections instead of one monolithic “Init Context” text/details block, while preserving the single init-context event and provider-visible audit facts.
   design_intent: Init Context is a bundle of separately meaningful provider-visible inputs (AGENTS/instructions, environment, tools, runtime activity, skills, etc.). Users need to inspect these by source/section, not read a single concatenated blob.
   problem_model: Typed `injectedContext.sections` already exists, but `conversationReplacementHistory.ts` currently joins every section into one `toolDetails` string for a single `Init Context` tool entry, so the UI cannot expose section boundaries.
@@ -49,8 +52,8 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   forbidden_paths: no regex splitting rendered text after labels; no CSS-only visual splitting over a monolithic string; no backend history rewrite just for UI; no hard-coded section names as the only supported model.
   expected_implementation_outline: Preserve typed section structure through conversation projection or tool detail modeling, render Init Context details as per-section blocks/rows with labels and bounded text, and update tests so sections remain individually visible/searchable without duplicating the top-level init event.
   minimum_regression_matrix: typed injectedContext with multiple sections; empty/missing preview; long section text; reload/read snapshot path; replacement-history/compact detail path; search across labels and text; no duplicate Init Context rows; focused tests and reviewer approval.
-  next_action: dispatch after either `owner_dev_3` finishes compact marker UI or another clean non-conflicting dev checkout becomes available; currently blocked by `owner_dev` active, `owner_dev_3` active, and `owner_dev_2` dirty/unavailable.
-  blockers: no free clean dev checkout.
+  next_action: sync owner_dev_3 to current main and dispatch with full UI/data-model brief.
+  blockers: none.
 
 - id: capsule-only-runtime-delivery
   owner: /self/owner_dev
@@ -61,14 +64,17 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   depends_on: user request on 2026-09-19 CST: “每次重启如果 launcher 没修改不用编译，也不用打包 dmg，只要构建 capsule”.
   files: likely `apps/root-worker-prototype/scripts/package-mac-app.cjs`, Runtime Capsule producer/update scripts, package scripts in `apps/root-worker-prototype/package.json`, tests around installed artifact update/capsule producer.
   base_commit: `0ed98d7c8`
-  status: dispatched
+  status: merged_pending_installed_validation
   objective: Add or expose a fast delivery path that builds the Runtime Capsule payload/artifact needed by `request_runtime_restart` without rebuilding the outer Launcher or creating a DMG when Launcher/outer app inputs are unchanged.
   design_intent: Runtime Capsule is the update unit for ordinary renderer/main/preload/app-server/default-config changes. Full app packaging/DMG is only needed for installer/outer Launcher/seed distribution. PM delivery should avoid unnecessary launcher release compile and DMG packaging for every runtime restart.
   invariants: Do not weaken capsule manifest/integrity/signing; do not skip app-server/renderer/native helper builds that are part of the Runtime payload; do not break full mac app/DMG packaging; request_runtime_restart must still install a complete verified Runtime Capsule.
   forbidden_paths: no copying loose files into installed artifacts; no in-place mutation of current artifact; no unsigned/partial Capsule; no assuming Launcher unchanged by file name only without a reliable dependency/input check or explicit script target; no removing full package flow.
   expected_implementation_outline: Identify current package script boundaries, add a dedicated capsule-only build command or split existing mac packaging into payload/capsule vs outer-app/dmg phases, update PM/developer docs/scripts, and add focused tests or smoke checks proving the capsule-only path emits the same valid capsule metadata/release id structure needed by Runtime Launcher.
   minimum_regression_matrix: capsule-only command builds renderer/app-server/default-config/native/helper payload and capsule metadata; full `package:root-worker-prototype:mac` still works; request_runtime_restart can install capsule-only artifact; Launcher unchanged path skips launcher compile/DMG; Launcher-changed/full package path remains available; focused tests and diff check; reviewer approval.
-  next_action: await owner/reviewer completion, then PM design验收/merge and use the new capsule-only path for installed delivery if safe.
+  owner_result: commit `572d158d305b5a1d6a2f39aa7db90733e0168b7f` adds `package:root-worker-prototype:mac:capsule`, splits `packageMacRuntimeCapsule`, copies complete sealed Capsule into `runtime-launcher/incoming/<activationId>`, full mac package reuses capsule stage before Launcher packaging, focused script tests 9/9 and `git diff --check` pass, reviewer approved after activation id boundary fix.
+  merge_commit: `71e628861`
+  pm_validation: PM inspected against build/runtime delivery brief; main `node --test apps/root-worker-prototype/scripts/package-mac-app.test.cjs apps/root-worker-prototype/scripts/package-mac-capsule.test.cjs` 9/9; diff check passed before merge.
+  next_action: after pending UI fixes are merged, use `pnpm package:root-worker-prototype:mac:capsule` from canonical main for installed delivery and verify Launcher selection/control state/self-debug.
   blockers: none.
 
 ## Recent Completed
