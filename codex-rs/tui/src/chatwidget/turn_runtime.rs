@@ -461,7 +461,7 @@ impl ChatWidget {
             .iter()
             .filter(|item| match &item.status {
                 StepStatus::Completed => true,
-                StepStatus::Pending | StepStatus::InProgress => false,
+                StepStatus::Pending | StepStatus::InProgress | StepStatus::Blocked => false,
             })
             .count();
         self.transcript.last_plan_progress = (total > 0).then_some((completed, total));

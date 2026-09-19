@@ -155,6 +155,7 @@ impl HistoryCell for PlanUpdateCell {
             let (box_str, step_style) = match status {
                 StepStatus::Completed => ("✔ ", Style::default().crossed_out().dim()),
                 StepStatus::InProgress => ("□ ", Style::default().cyan().bold()),
+                StepStatus::Blocked => ("! ", Style::default().yellow().bold()),
                 StepStatus::Pending => ("□ ", Style::default().dim()),
             };
 

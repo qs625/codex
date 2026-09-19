@@ -802,7 +802,11 @@ export type ThreadRealtimeClosedNotification = {
   reason: string | null;
 };
 
-export type ThreadPlanStepStatus = "pending" | "inProgress" | "completed";
+export type ThreadPlanStepStatus =
+  | "pending"
+  | "inProgress"
+  | "blocked"
+  | "completed";
 
 export type ThreadPlanStep = {
   step: string;

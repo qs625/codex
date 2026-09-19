@@ -1177,6 +1177,8 @@ test("renders the current thread plan in thread analysis", () => {
     plan: [
       { step: "Filter direct child tasks", status: "completed" },
       { step: "Render current thread plan", status: "inProgress" },
+      { step: "Validate parallel owner", status: "inProgress" },
+      { step: "Wait for release approval", status: "blocked" },
       { step: "Run validation", status: "pending" },
     ],
   } satisfies ThreadPlanUpdate;
@@ -1191,8 +1193,13 @@ test("renders the current thread plan in thread analysis", () => {
   assert.match(markup, /Keep the change scoped\./);
   assert.match(markup, /Filter direct child tasks/);
   assert.match(markup, /Render current thread plan/);
+  assert.match(markup, /Validate parallel owner/);
+  assert.match(markup, /Wait for release approval/);
   assert.match(markup, /Run validation/);
   assert.match(markup, /In progress/);
+  assert.match(markup, /Blocked/);
+  assert.match(markup, /plan-status-label blocked/);
+  assert.equal(markup.match(/plan-status-label inProgress/g)?.length, 2);
   assert.doesNotMatch(markup, /Plan Work/);
   assert.doesNotMatch(markup, /Execution Queue/);
   assert.doesNotMatch(markup, /Todo List/);
@@ -1211,6 +1218,8 @@ test("keeps plan and monitor activity on compact right panel layout rules", () =
     css,
     /\.context-section-card\.current-plan-card\s*\{[\s\S]*padding: 10px 12px;/,
   );
+  assert.match(css, /\.plan-status-dot\.blocked/);
+  assert.match(css, /\.plan-status-label\.blocked/);
   assert.match(
     css,
     /\.monitor-section\s*\{[\s\S]*border-top: 1px solid rgba\(16, 24, 40, 0\.06\);[\s\S]*padding-top: 10px;/,

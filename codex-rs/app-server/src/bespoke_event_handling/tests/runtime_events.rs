@@ -1011,6 +1011,10 @@ use super::*;
                     step: "second".to_string(),
                     status: StepStatus::Completed,
                 },
+                PlanItemArg {
+                    step: "blocked".to_string(),
+                    status: StepStatus::Blocked,
+                },
             ],
         };
 
@@ -1024,11 +1028,13 @@ use super::*;
                 assert_eq!(n.thread_id, conversation_id.to_string());
                 assert_eq!(n.turn_id, "turn-123");
                 assert_eq!(n.explanation.as_deref(), Some("need plan"));
-                assert_eq!(n.plan.len(), 2);
+                assert_eq!(n.plan.len(), 3);
                 assert_eq!(n.plan[0].step, "first");
                 assert_eq!(n.plan[0].status, TurnPlanStepStatus::Pending);
                 assert_eq!(n.plan[1].step, "second");
                 assert_eq!(n.plan[1].status, TurnPlanStepStatus::Completed);
+                assert_eq!(n.plan[2].step, "blocked");
+                assert_eq!(n.plan[2].status, TurnPlanStepStatus::Blocked);
             }
             other => bail!("unexpected message: {other:?}"),
         }

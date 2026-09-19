@@ -2091,6 +2091,8 @@ function formatPlanStatus(status: ThreadPlanStep["status"]) {
       return "Done";
     case "inProgress":
       return "In progress";
+    case "blocked":
+      return "Blocked";
     case "pending":
       return "Pending";
   }

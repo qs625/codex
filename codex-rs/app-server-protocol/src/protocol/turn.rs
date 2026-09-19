@@ -397,6 +397,7 @@ pub struct TurnPlanStep {
 pub enum TurnPlanStepStatus {
     Pending,
     InProgress,
+    Blocked,
     Completed,
 }
 
@@ -414,6 +415,7 @@ impl From<CorePlanStepStatus> for TurnPlanStepStatus {
         match value {
             CorePlanStepStatus::Pending => Self::Pending,
             CorePlanStepStatus::InProgress => Self::InProgress,
+            CorePlanStepStatus::Blocked => Self::Blocked,
             CorePlanStepStatus::Completed => Self::Completed,
         }
     }
