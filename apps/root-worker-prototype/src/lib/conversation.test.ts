@@ -2933,6 +2933,54 @@ test("omits typed context compaction replacement history from display entries", 
   assert.equal(compactEntry.replacementHistoryEntries?.length, 3);
 });
 
+test("omits compaction summary from compact replacement history while keeping standalone summary item", () => {
+  const summaryText = "Standalone compact summary stays visible.";
+  const duplicateSummaryText = "Duplicate compact summary should not render.";
+  const state = buildConversationState(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "compaction",
+            summary: duplicateSummaryText,
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "recent request" }],
+          },
+        ],
+      },
+      {
+        type: "agentMessage",
+        id: "compact-summary",
+        text: summaryText,
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    state.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["compact-summary", "message"],
+    ],
+  );
+
+  const compactEntry = state.cells[0]?.entries[0];
+  assert.equal(compactEntry?.kind, "compact");
+  assert.doesNotMatch(compactEntry?.text ?? "", /Duplicate compact summary/);
+  assert.deepEqual(
+    compactEntry?.replacementHistoryEntries?.map((entry) => entry.text),
+    ["recent request"],
+  );
+  assert.equal(state.cells[1]?.entries[0]?.text, summaryText);
+});
+
 test("extracts compact history details with init context replacement cell", () => {
   const entries = buildConversationEntries(
     makeThreadWithTurns([

@@ -384,15 +384,7 @@ function buildReplacementHistoryEntry(
         details: formatRawJson(item),
       });
     case "compaction":
-      return {
-        id,
-        kind: "event",
-        author,
-        role: "system",
-        text: "Compaction summary item included in compacted model context.",
-        timestamp,
-        attachments: [],
-      };
+      return null;
     case "context_compaction":
       return {
         id,
