@@ -286,6 +286,57 @@ function finalizeMacRuntimeBundle(
   return manifest;
 }
 
+function packageMacRuntimeCapsule(
+  plan,
+  {
+    captureCommand = capture,
+    fsOps = fs,
+    runCommand = run,
+  } = {},
+) {
+  runCommand("pnpm", ["build"], { cwd: plan.sourceAppDir });
+  runCommand(
+    "cargo",
+    [
+      "build",
+      "--manifest-path",
+      plan.codexRsCargoManifestPath,
+      "-p",
+      "app-server",
+      "--bin",
+      "app-server",
+      "--release",
+    ],
+    { cwd: plan.repoRoot },
+  );
+  prepareMacAppResources(plan, { fsOps, runCommand });
+  runCommand(
+    "pnpm",
+    [
+      "dlx",
+      "@electron/packager",
+      ...buildElectronPackagerArgs({
+        cwd: plan.sourceAppDir,
+        payloadStagingDir: plan.payloadStagingDir,
+        binResourceDir: plan.binResourceDir,
+        defaultConfigResourceDir: plan.defaultConfigResourceDir,
+        nativeResourceDir: plan.nativeResourceDir,
+        computerUseHelperResourceDir: plan.computerUseHelperResourceDir,
+      }),
+    ],
+    { cwd: plan.sourceAppDir },
+  );
+  const sourceCommit = captureCommand("git", ["rev-parse", "HEAD"], {
+    cwd: plan.repoRoot,
+  }).trim();
+  const manifest = prepareSeedCapsule(plan, {
+    fsOps,
+    runCommand,
+    sourceCommit,
+  });
+  return { manifest, sourceCommit };
+}
+
 function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}) {
   if (platform !== "darwin") {
     throw new Error("macOS app packaging requires codesign and must run on macOS.");
@@ -299,32 +350,7 @@ function packageMacApp({ cwd = process.cwd(), platform = process.platform } = {}
     fs.rmSync(target, { force: true, recursive: true });
   }
   try {
-    run("pnpm", ["build"], { cwd });
-    run(
-      "cargo",
-      [
-        "build",
-        "--manifest-path",
-        plan.codexRsCargoManifestPath,
-        "-p",
-        "app-server",
-        "--bin",
-        "app-server",
-        "--release",
-      ],
-      { cwd: plan.repoRoot },
-    );
-    prepareMacAppResources(plan);
-    run("pnpm", ["dlx", "@electron/packager", ...buildElectronPackagerArgs({
-      cwd,
-      payloadStagingDir: plan.payloadStagingDir,
-      binResourceDir: plan.binResourceDir,
-      defaultConfigResourceDir: plan.defaultConfigResourceDir,
-      nativeResourceDir: plan.nativeResourceDir,
-      computerUseHelperResourceDir: plan.computerUseHelperResourceDir,
-    })], { cwd });
-    const sourceCommit = capture("git", ["rev-parse", "HEAD"], { cwd }).trim();
-    const manifest = prepareSeedCapsule(plan, { sourceCommit });
+    const { manifest } = packageMacRuntimeCapsule(plan);
     buildLauncher(plan, manifest.releaseId);
     assembleOuterApp(plan);
     finalizeMacRuntimeBundle(plan, manifest);
@@ -373,6 +399,7 @@ module.exports = {
   buildMacAppPackagePlan,
   finalizeMacRuntimeBundle,
   packageMacApp,
+  packageMacRuntimeCapsule,
   prepareMacAppResources,
   prepareSeedCapsule,
 };

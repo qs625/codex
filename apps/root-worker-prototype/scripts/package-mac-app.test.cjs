@@ -14,6 +14,7 @@ const {
   buildLauncher,
   buildMacAppPackagePlan,
   finalizeMacRuntimeBundle,
+  packageMacRuntimeCapsule,
   prepareSeedCapsule,
 } = require("./package-mac-app.cjs");
 
@@ -88,6 +89,21 @@ test("Launcher build uses the generic Cargo bin and embeds the Seed release", ()
     commands[0][2].env.RUNTIME_CAPSULE_BUNDLE_ID,
     "com.openai.root-worker-prototype.dev",
   );
+});
+
+test("full mac packaging reuses the Runtime Capsule stage before Launcher packaging", () => {
+  const source = fs.readFileSync(path.join(__dirname, "package-mac-app.cjs"), "utf8");
+  const fullPackageStart = source.indexOf("function packageMacApp");
+  const capsuleCall = source.indexOf("packageMacRuntimeCapsule(plan)", fullPackageStart);
+  const launcherCall = source.indexOf("buildLauncher(plan, manifest.releaseId)", fullPackageStart);
+  const dmgReference = source.indexOf("create-mac-dmg", fullPackageStart);
+
+  assert.notEqual(fullPackageStart, -1);
+  assert.notEqual(capsuleCall, -1);
+  assert.notEqual(launcherCall, -1);
+  assert.ok(capsuleCall < launcherCall);
+  assert.equal(dmgReference, -1);
+  assert.equal(typeof packageMacRuntimeCapsule, "function");
 });
 
 test("Seed Capsule contains the signed complete payload and outer app contains only Launcher plus Seed", () => {
