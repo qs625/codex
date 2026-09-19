@@ -1723,6 +1723,7 @@ test("renders injected init context as a conversation context entry", () => {
       toolStatus: entry.toolStatus,
       toolCategory: entry.toolCategory,
       toolDetails: entry.toolDetails,
+      toolDetailSections: entry.toolDetailSections,
     })),
     [
       {
@@ -1734,6 +1735,10 @@ test("renders injected init context as a conversation context entry", () => {
         toolStatus: "completed",
         toolCategory: "context",
         toolDetails: "Workspace\n/tmp/project\n\nInstructions\n全程使用中文",
+        toolDetailSections: [
+          { label: "Workspace", text: "/tmp/project" },
+          { label: "Instructions", text: "全程使用中文" },
+        ],
       },
     ],
   );
@@ -2883,6 +2888,10 @@ test("keeps replacement init context out of compact display entries", () => {
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 1);
   assert.equal(compactEntry.replacementHistoryEntries?.length, 1);
+  assert.deepEqual(
+    compactEntry.replacementHistoryEntries?.[0]?.toolDetailSections,
+    [{ label: "AGENTS.md", text: "Persisted project instructions" }],
+  );
 });
 
 test("omits typed context compaction replacement history from display entries", () => {
@@ -2931,6 +2940,16 @@ test("omits typed context compaction replacement history from display entries", 
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
   assert.equal(compactEntry.replacementHistoryEntries?.length, 3);
+  assert.deepEqual(
+    compactEntry.replacementHistoryEntries?.[0]?.toolDetailSections,
+    [
+      {
+        label: "AGENTS.md",
+        text: "# AGENTS.md instructions\nPersisted agent instructions",
+      },
+      { label: "Environment", text: "<cwd>/workspace</cwd>" },
+    ],
+  );
 });
 
 test("omits compaction summary from compact replacement history while keeping standalone summary item", () => {

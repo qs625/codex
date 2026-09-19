@@ -904,6 +904,10 @@ export type ConversationEntry = {
   toolName?: string;
   toolStatus?: string;
   toolDetails?: string;
+  toolDetailSections?: Array<{
+    label: string;
+    text: string;
+  }>;
   toolOutput?: {
     label: string;
     text: string;

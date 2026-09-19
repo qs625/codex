@@ -117,6 +117,10 @@ function buildTypedReplacementHistoryEntry(
         author,
         timestamp,
         text: item.preview || item.title || "Initial context was injected.",
+        detailSections: item.sections.map((section) => ({
+          label: section.label,
+          text: section.text,
+        })),
         details: item.sections
           .map((section) => `${section.label}\n${section.text}`)
           .join("\n\n"),
@@ -521,12 +525,14 @@ function replacementContextEntry({
   author,
   timestamp,
   text,
+  detailSections,
   details,
 }: {
   id: string;
   author: string;
   timestamp: string;
   text: string;
+  detailSections?: NonNullable<ConversationEntry["toolDetailSections"]>;
   details: string;
 }): ConversationEntry {
   return {
@@ -540,6 +546,7 @@ function replacementContextEntry({
     toolName: "Init Context",
     toolStatus: "completed",
     toolDetails: details,
+    toolDetailSections: detailSections,
     toolCategory: "context",
   };
 }
