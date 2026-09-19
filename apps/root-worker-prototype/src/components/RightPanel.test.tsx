@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
+import { filePreviewOpenInBrowserActionVisible } from "../lib/filePreviewBrowser";
 import {
   createTerminalStateRequestSequencer,
   isTerminalCommandFocusRequestForThread,
@@ -163,6 +164,7 @@ function renderRightPanel(
       fileTreeLoadingPath={null}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
+      onOpenPreviewInBrowser={() => {}}
       onOpenTreeFile={() => {}}
       onPreviewUpdated={() => {}}
       previewRootId="root-1"
@@ -622,6 +624,7 @@ test("renders thread goal details in thread analysis", () => {
       fileTreeLoadingPath={null}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
+      onOpenPreviewInBrowser={() => {}}
       onOpenTreeFile={() => {}}
       onSetActiveView={() => {}}
       onSetCollapsed={() => {}}
@@ -1857,6 +1860,86 @@ test("header edit controls appear only for loaded editable previews", () => {
   assert.doesNotMatch(emptyMarkup, /preview-edit-action/);
 });
 
+test("shows the Browser open action only for loaded HTML previews", () => {
+  const htmlPreview = makePreview({
+    path: "/tmp/docs/share page.html",
+    displayPath: "docs/share page.html",
+    language: "html",
+    content: "<main>Hello</main>",
+  });
+  const htmPreview = makePreview({
+    path: "/tmp/docs/share.htm",
+    displayPath: "docs/share.htm",
+    language: "plaintext",
+    content: "<main>Hello</main>",
+  });
+  const nonHtmlMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      path: "/tmp/docs/share.md",
+      displayPath: "docs/share.md",
+      language: "markdown",
+      content: "# Share",
+    }),
+  });
+  const loadingMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      path: "/tmp/docs/share.html",
+      displayPath: "docs/share.html",
+      language: "html",
+    }),
+    previewLoading: true,
+  });
+  const errorMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      path: "/tmp/docs/share.html",
+      displayPath: "docs/share.html",
+      language: "html",
+    }),
+    previewError: "Failed to load",
+  });
+  const treeMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    filePanelView: "tree",
+    preview: makePreview({
+      path: "/tmp/docs/share.html",
+      displayPath: "docs/share.html",
+      language: "html",
+    }),
+  });
+
+  assert.equal(
+    filePreviewOpenInBrowserActionVisible({
+      filePanelView: "preview",
+      preview: htmlPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    true,
+  );
+  assert.equal(
+    filePreviewOpenInBrowserActionVisible({
+      filePanelView: "preview",
+      preview: htmPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    true,
+  );
+  assert.doesNotMatch(nonHtmlMarkup, /Open preview in Browser/);
+  assert.match(nonHtmlMarkup, /aria-label="Open preview in system editor"/);
+  assert.doesNotMatch(loadingMarkup, /Open preview in Browser/);
+  assert.doesNotMatch(errorMarkup, /Open preview in Browser/);
+  assert.doesNotMatch(treeMarkup, /Open preview in Browser/);
+  assert.equal(
+    filePreviewOpenInBrowserActionVisible({
+      filePanelView: "preview",
+      preview: null,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+});
+
 test("markdown previews keep rendered readonly mode until editing or saving", () => {
   const markdownPreview = makePreview({
     path: "/tmp/README.md",
@@ -2080,6 +2163,7 @@ test("renders directory-specific cwd tree errors instead of empty state", () => 
       fileTreeLoadingPath={null}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
+      onOpenPreviewInBrowser={() => {}}
       onOpenTreeFile={() => {}}
       onSetActiveView={() => {}}
       onSetCollapsed={() => {}}
