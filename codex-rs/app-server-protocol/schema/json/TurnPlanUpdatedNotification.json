@@ -20,6 +20,7 @@
       "enum": [
         "pending",
         "inProgress",
+        "blocked",
         "completed"
       ],
       "type": "string"

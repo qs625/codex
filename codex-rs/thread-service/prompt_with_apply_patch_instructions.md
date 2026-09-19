@@ -268,11 +268,13 @@ When using the shell, you must adhere to the following guidelines:
 
 A tool named `update_plan` is available to you. You can use it to keep an up‑to‑date, step‑by‑step plan for the task.
 
-To create a new plan, call `update_plan` with a short list of 1‑sentence steps (no more than 5-7 words each) with a `status` for each step (`pending`, `in_progress`, or `completed`).
+To create a new plan, call `update_plan` with a short list of 1‑sentence steps (no more than 5-7 words each) with a `status` for each step (`pending`, `in_progress`, `blocked`, or `completed`).
 
-When steps have been completed, use `update_plan` to mark each finished step as `completed` and the next step you are working on as `in_progress`. There should always be exactly one `in_progress` step until everything is done. You can mark multiple items as complete in a single `update_plan` call.
+When steps have been completed, use `update_plan` to mark each finished step as `completed` and the next step you are working on as `in_progress`. For linear single-agent tasks, prefer one `in_progress` step at a time. For coordination or parallel work, multiple steps may be `in_progress`. Use `blocked` when work is stuck on user input, external conditions, or failed recovery. You can mark multiple items as complete in a single `update_plan` call.
 
 If all steps are complete, ensure you call `update_plan` to mark all steps as `completed`.
+
+Treat the plan as the current work board, not a history archive. Recently completed work may remain briefly as proof of delivery, but remove completed items on the next update when they have no follow-up work and no longer block the current queue.
 
 ## `apply_patch`
 

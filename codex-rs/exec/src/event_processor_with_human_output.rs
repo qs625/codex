@@ -349,6 +349,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                         app_server_protocol::TurnPlanStepStatus::InProgress => {
                             eprintln!("  {} {}", "→".style(self.cyan), step.step);
                         }
+                        app_server_protocol::TurnPlanStepStatus::Blocked => {
+                            eprintln!("  {} {}", "!".style(self.yellow), step.step);
+                        }
                         app_server_protocol::TurnPlanStepStatus::Pending => {
                             eprintln!(
                                 "  {} {}",

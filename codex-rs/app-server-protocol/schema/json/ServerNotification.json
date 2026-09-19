@@ -5297,10 +5297,16 @@
               "items": {
                 "$ref": "#/definitions/ContextCompactionReplacementItem"
               },
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "summary": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "enum": [
@@ -6130,6 +6136,7 @@
       "enum": [
         "pending",
         "inProgress",
+        "blocked",
         "completed"
       ],
       "type": "string"

@@ -104,6 +104,7 @@ impl ChatWidget {
                             status: match step.status {
                                 TurnPlanStepStatus::Pending => UpdatePlanItemStatus::Pending,
                                 TurnPlanStepStatus::InProgress => UpdatePlanItemStatus::InProgress,
+                                TurnPlanStepStatus::Blocked => UpdatePlanItemStatus::Blocked,
                                 TurnPlanStepStatus::Completed => UpdatePlanItemStatus::Completed,
                             },
                         })

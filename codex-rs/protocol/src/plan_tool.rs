@@ -9,6 +9,7 @@ use ts_rs::TS;
 pub enum StepStatus {
     Pending,
     InProgress,
+    Blocked,
     Completed,
 }
 
@@ -26,4 +27,44 @@ pub struct UpdatePlanArgs {
     #[serde(default)]
     pub explanation: Option<String>,
     pub plan: Vec<PlanItemArg>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_plan_accepts_blocked_and_multiple_in_progress_steps() {
+        let args: UpdatePlanArgs = serde_json::from_value(serde_json::json!({
+            "explanation": "Parallel work with one blocker.",
+            "plan": [
+                { "step": "Build frontend", "status": "in_progress" },
+                { "step": "Run backend validation", "status": "in_progress" },
+                { "step": "Wait for credentials", "status": "blocked" },
+                { "step": "Ship fix", "status": "pending" },
+                { "step": "Write notes", "status": "completed" }
+            ]
+        }))
+        .expect("plan args should accept blocked and multiple in_progress steps");
+
+        assert!(matches!(args.plan[0].status, StepStatus::InProgress));
+        assert!(matches!(args.plan[1].status, StepStatus::InProgress));
+        assert!(matches!(args.plan[2].status, StepStatus::Blocked));
+        assert!(matches!(args.plan[3].status, StepStatus::Pending));
+        assert!(matches!(args.plan[4].status, StepStatus::Completed));
+    }
+
+    #[test]
+    fn update_plan_keeps_legacy_three_state_compatibility() {
+        let args: UpdatePlanArgs = serde_json::from_value(serde_json::json!({
+            "plan": [
+                { "step": "Start", "status": "pending" },
+                { "step": "Work", "status": "in_progress" },
+                { "step": "Done", "status": "completed" }
+            ]
+        }))
+        .expect("legacy plan args should still deserialize");
+
+        assert_eq!(args.plan.len(), 3);
+    }
 }

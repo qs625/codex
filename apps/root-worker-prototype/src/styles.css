@@ -4354,6 +4354,10 @@ svg {
   background: #d97706;
 }
 
+.plan-status-dot.blocked {
+  background: #dc2626;
+}
+
 .plan-status-dot.pending {
   background: #a8a29e;
 }
@@ -4378,6 +4382,11 @@ svg {
 .plan-status-label.inProgress {
   background: #fff7ed;
   color: #b45309;
+}
+
+.plan-status-label.blocked {
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .plan-status-label.pending {
