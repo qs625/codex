@@ -95,15 +95,19 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 ## 六、Plan Tool 状态维护
 
-- PM 必须及时使用 `update_plan` 维护当前用户可见任务队列；当同一轮里存在多个任务、owner 并行、queued/dispatched/in-progress/merged/pending_capsule_delivery/installed_effective 等状态，或用户询问“现在有哪些任务/状态”时，必须更新 plan。
-- plan item 应覆盖完整当前队列，而不是只写正在处理的一个任务；至少包含每个活跃或待交付任务的简短名称和状态，例如 queued、dispatched、in_progress、reviewing、merged_pending_capsule_delivery、installed_effective、blocked。
+- PM 必须及时使用 `update_plan` 维护当前用户可见任务队列；当同一轮里存在多个任务、owner 并行、待交付、阻塞，或用户询问“现在有哪些任务/状态”时，必须更新 plan。
+- plan 是当前工作板，不是历史档案。已完成并安装生效、没有后续动作的任务，应从下一次 plan 更新中移除；durable 历史写入 `.codex/pm-progress.md` Recent Completed 或归档。
+- plan item 应覆盖完整当前队列，而不是只写正在处理的一个任务。状态只使用 `pending`、`in_progress`、`blocked`、`completed` 四类：
+  - `pending`：未开始、等待某条件、已 merge 但待 Runtime Capsule 交付等；
+  - `in_progress`：PM 或 owner 正在处理；允许多个并行任务同时为 `in_progress`；
+  - `blocked`：卡住，需要用户、外部条件或失败处理；
+  - `completed`：本轮刚完成/刚交付，可短暂保留用于证明完成，后续从 plan 移除。
 - 以下状态变化发生后应更新 plan：
   - 新任务入队、派发给 owner、owner 开始或完成；
   - PM 验收、要求返工、merge 回 main；
-  - 任务从 merged 转为 pending_capsule_delivery，或 Runtime Capsule 构建/restart/self-debug 后转为 installed_effective；
+  - 任务 merge 后进入待交付，或 Runtime Capsule 构建/restart/self-debug 后已安装生效；
   - 用户插入新的更高优先级任务，导致原任务暂停、排队或恢复。
 - `update_plan` 是用户可见的即时状态板；`.codex/pm-progress.md` 是 durable 状态来源。两者不互相替代：短期队列和当前轮进度用 plan，跨 turn/checkout/交付状态仍必须写 progress file。
-- 同一时间最多一个 plan step 标记为 `in_progress`；如果实际有多个 owner 并行，plan 中选 PM 当前正在协调/验收的步骤为 `in_progress`，其他并行 owner 任务标记为 `pending` 并在 step 文案里写明“owner 正在进行中”。
 
 ## 七、标准流程
 
