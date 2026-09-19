@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Current installed Runtime Capsule is `sha256:bb7f0bab0d56b639995f6ead7d38441c26d3f212dcb590e9fdfca40ed6a033f3`, sourceCommit `53717f8991d08022f6db1d14c4f1a0b3e21c1bc3`, installed by recovered restart request `call_TJBnSBkBADXsvums2TQlSK3F` (do not repeat the same restart request). Runtime control selected/externalCurrent point at `bb7f0bab...`; previous is `sha256:c1ea6473408c0a7497287f50292f55738cddfd4c517f978a95bf6759e9f62741`. Running payload/app-server processes execute from `bb7f0bab...`. Self-debug attached to CDP `127.0.0.1:9223`: renderer URL points to `bb7f0bab.../app.asar/dist/index.html`, readyState complete, Electron UA confirmed, console 0 errors/warnings. Stable Computer Use helper was not rewritten by the `bb7f0bab...` UI delivery: mtime remains `2026-09-19 18:13:05`, inode `193655211`, CDHash `92a58a08293a2db3bb4cffc0f22297b7ca09d70c`.
+Current installed Runtime Capsule is still `sha256:bb7f0bab0d56b639995f6ead7d38441c26d3f212dcb590e9fdfca40ed6a033f3`, sourceCommit `53717f8991d08022f6db1d14c4f1a0b3e21c1bc3`, installed by recovered restart request `call_TJBnSBkBADXsvums2TQlSK3F` (do not repeat the same restart request). New capsule-only delivery candidate built from canonical main `6ace3c353f8e4b63d79adc8874c74d4cf241bc86`: activationId `capsule-1789814664246-248206d78db6075b`, releaseId `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`, incomingRoot `/Users/bytedance/.morpheus/runtime-launcher/incoming/capsule-1789814664246-248206d78db6075b`. Incoming quick check confirmed `capsule.json`, payload app executable, `app.asar`, `bin/app-server`, `default-config`, `native`, and `computer-use-helper`.
 
 Current user request queued next: optimize Runtime Capsule delivery so ordinary Runtime/frontend/backend changes can build/install only the Capsule and skip recompiling Launcher and building DMG when Launcher/outer app did not change.
 
@@ -22,7 +22,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   depends_on: user correction on 2026-09-19 CST: “compact summary 还是没改啊 / 现在还是折叠起来的 ui”. Previous `compact_marker_hide_summary` only removed duplicate summary inside replacement history and did not remove the expandable compact row UI.
   files: likely `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, possibly compact/search/detail helpers if needed.
   base_commit: `b612853af`
-  status: merged_pending_capsule_delivery
+  status: merged_pending_installed_validation
   objective: Make context compaction render as a small non-expandable boundary marker in the active conversation UI, not an expandable/collapsible summary card.
   design_intent: Compact is an internal context-management boundary, not content the user should be invited to read inline. The chat timeline should remain clean after compaction while preserving durable audit facts off the default surface.
   invariants: Do not delete persisted compact facts, replacement history, archived history, search/detail extraction, or reload semantics; do not hide later user/assistant messages after the compact boundary; do not regress active command/orphan item handling around compaction.
@@ -32,7 +32,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   owner_result: commit `c64e67639` removes compact summary/details rendering from active Conversation UI, keeps compact facts in lib/detail paths, focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114, `git diff --check` pass, reviewer approved.
   merge_commit: `33aaff9cc`
   pm_validation: PM inspected implementation against UI contract; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114; diff check passed before merge.
-  next_action: include in imminent Runtime Capsule delivery with `split-init-context-display`.
+  next_action: request Runtime Capsule restart for capsule-only release `sha256:3e6269...`, then self-debug installed UI.
   blockers: none.
 
 - id: split-init-context-display
@@ -44,7 +44,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   depends_on: user correction on 2026-09-19 CST: “然后拆分 init context 也没做”. Related to compact/replacement history display but broader than removing compact summary folding.
   files: likely `apps/root-worker-prototype/src/lib/conversationReplacementHistory.ts`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, `apps/root-worker-prototype/src/lib/conversation.test.ts`, possibly protocol/types only if section facts are currently insufficient.
   base_commit: `33aaff9cc`
-  status: merged_pending_capsule_delivery
+  status: merged_pending_installed_validation
   objective: Render/present Init Context as distinct source sections instead of one monolithic “Init Context” text/details block, while preserving the single init-context event and provider-visible audit facts.
   design_intent: Init Context is a bundle of separately meaningful provider-visible inputs (AGENTS/instructions, environment, tools, runtime activity, skills, etc.). Users need to inspect these by source/section, not read a single concatenated blob.
   problem_model: Typed `injectedContext.sections` already exists, but `conversationReplacementHistory.ts` currently joins every section into one `toolDetails` string for a single `Init Context` tool entry, so the UI cannot expose section boundaries.
@@ -55,7 +55,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   owner_result: commit `ac04bd218` adds `ConversationEntry.toolDetailSections`, preserves typed Init Context section label/text/order for live and compact replacement-history paths, renders ToolRow details as section blocks, keeps `toolDetails` string for compatibility/search fallback, and fixes virtualization height double-counting. Focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121, `git diff --check` pass, reviewer approved after virtualization fix.
   merge_commit: `924c1a598`
   pm_validation: PM inspected section typed-data design; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121; diff check passed before merge.
-  next_action: include in imminent Runtime Capsule delivery with compact marker UI.
+  next_action: request Runtime Capsule restart for capsule-only release `sha256:3e6269...`, then self-debug installed UI.
   blockers: none.
 
 - id: capsule-only-runtime-delivery
@@ -77,7 +77,8 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   owner_result: commit `572d158d305b5a1d6a2f39aa7db90733e0168b7f` adds `package:root-worker-prototype:mac:capsule`, splits `packageMacRuntimeCapsule`, copies complete sealed Capsule into `runtime-launcher/incoming/<activationId>`, full mac package reuses capsule stage before Launcher packaging, focused script tests 9/9 and `git diff --check` pass, reviewer approved after activation id boundary fix.
   merge_commit: `71e628861`
   pm_validation: PM inspected against build/runtime delivery brief; main `node --test apps/root-worker-prototype/scripts/package-mac-app.test.cjs apps/root-worker-prototype/scripts/package-mac-capsule.test.cjs` 9/9; diff check passed before merge.
-  next_action: use `pnpm package:root-worker-prototype:mac:capsule` from canonical main for installed delivery and verify Launcher selection/control state/self-debug.
+  delivery_candidate: `pnpm package:root-worker-prototype:mac:capsule` produced activationId `capsule-1789814664246-248206d78db6075b`, releaseId `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`, sourceCommit `6ace3c353f8e4b63d79adc8874c74d4cf241bc86`; incoming layout quick check passed.
+  next_action: request Runtime Capsule restart and verify Launcher selection/control state/self-debug.
   blockers: none.
 
 ## Recent Completed
