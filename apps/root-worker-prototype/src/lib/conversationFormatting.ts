@@ -99,6 +99,20 @@ export type BoundedText = {
   omittedChars: number;
 };
 
+export const COMPACT_SUMMARY_PREVIEW_MAX_CHARS = 2400;
+export const COMPACT_SUMMARY_PREVIEW_MAX_LINES = 24;
+
+export function previewCompactSummaryText(value: unknown): BoundedText | null {
+  const text = stringOrNull(value);
+  if (!text) {
+    return null;
+  }
+  return previewBlockText(text, {
+    maxChars: COMPACT_SUMMARY_PREVIEW_MAX_CHARS,
+    maxLines: COMPACT_SUMMARY_PREVIEW_MAX_LINES,
+  });
+}
+
 export function previewBlockText(
   text: string,
   options: { maxChars: number; maxLines?: number },

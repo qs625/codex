@@ -2,6 +2,7 @@ import React, { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
+import { previewCompactSummaryText } from "../lib/conversationFormatting";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -1615,12 +1616,14 @@ function formatProgressDuration(totalMilliseconds: number) {
 export const CompactRow = memo(function CompactRow({
   entry,
 }: CompactRowProps) {
+  const summaryPreview = previewCompactSummaryText(entry.compactSummary);
+
   return (
     <section className="compact-row" aria-label="Context compacted">
       <div className="event-icon compact-icon">
         <ShareIcon />
       </div>
-      <div className="compact-card compact-marker-card">
+      <div className="compact-card">
         <div className="compact-summary compact-marker" role="note">
           <div className="compact-copy">
             <strong>Context compacted</strong>
@@ -1628,6 +1631,9 @@ export const CompactRow = memo(function CompactRow({
           <div className="compact-meta">
             <time>{entry.timestamp}</time>
           </div>
+        </div>
+        <div className="compact-summary-inline">
+          <pre>{summaryPreview?.text ?? "Summary unavailable"}</pre>
         </div>
       </div>
     </section>
