@@ -54,21 +54,23 @@ Morpheus 的优势不是“替代 Codex”，而是在 Codex 基础上把产品�
 
 ## Rust 构建 benchmark
 
-下面是一次本机实测，用来给“冷/热编译迭代”提供可复现的量级参考。它不是完整产品能力或交付成本对比：主表只比较两边最接近的 Rust app-server debug build；Morpheus 的 Runtime Capsule、Electron packaging、安装态 restart 和 self-debug 属于额外桌面交付成本，不放进这张公平 Rust build 表。
+下面是一次本机实测，用来给“冷/热编译迭代”提供可复现的量级参考。它不是完整产品能力或交付成本对比：冷编译比较两边最接近的 Rust app-server debug build；热编译同时记录 no-op 基线和更接近日常开发的源码改动后 app-server rebuild。Morpheus 的 Runtime Capsule、Electron packaging、安装态 restart 和 self-debug 属于额外桌面交付成本，不放进这张 Rust build 表。
 
 环境和版本：
 
-- 日期：2026-09-19 22:25 CST
+- 日期：2026-09-19 22:25-23:12 CST
 - 机器：Darwin 25.6.0 arm64，Apple M3 Pro，36 GiB RAM
 - Rust：`rustc 1.97.1 (8bab26f4f 2026-07-14)`，`cargo 1.97.1 (c980f4866 2026-06-30)`
 - Node / pnpm：`v26.8.2` / `10.33.0`（本次主表没有运行 JS build，只记录环境）
-- Morpheus：`9f0f257a96862401c26f8b816c6bcd2bac4a2afb`
+- Morpheus cold/no-op：`9f0f257a96862401c26f8b816c6bcd2bac4a2afb`
+- Morpheus hot edit：`418d78e25`，合并正常功能修改 `Merge blocked plan step support`
 - OpenAI Codex reference：`78245b47af2a7aafcabe025828ceecca69db4df1`
 
 口径：
 
 - Cold：为每个仓库使用独立空 `CARGO_TARGET_DIR`，不删除仓库内 `target`，不清理 Cargo registry/git 全局缓存。
-- Warm：在同一个 `CARGO_TARGET_DIR` 中连续第二次运行同一命令，测 no-op debug build。
+- Warm no-op：在同一个 `CARGO_TARGET_DIR` 中连续第二次运行同一命令，测没有源码失效时的 debug build 基线。
+- Hot edit / hot invalidation：Morpheus 使用主 checkout 合并一个正常功能修改后的 `app-server` debug build；OpenAI Codex reference 先 warm-up，再 touch `codex-rs/core/src/lib.rs`，随后编译 `codex-app-server`，因此包含 core 失效后的下游 crate rebuild 和最终 server 链接。Codex 的源码失效仍是 timestamp-only invalidation，不是一次真实 Codex 功能修改。
 - 测量工具：`/usr/bin/time -p`，single run。
 - 临时目录：`/tmp/morpheus-codex-build-benchmark.v7STH6/`。
 
@@ -81,18 +83,28 @@ env CARGO_TARGET_DIR=/tmp/morpheus-codex-build-benchmark.v7STH6/morpheus-target 
 env CARGO_TARGET_DIR=/tmp/morpheus-codex-build-benchmark.v7STH6/openai-codex-target \
   cargo build --manifest-path /Users/bytedance/.morpheus/reference-sources/openai-codex/codex-rs/Cargo.toml \
     -p codex-app-server --bin codex-app-server
+
+# Morpheus hot edit sample, after merging the normal feature change above.
+cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server
+
+# OpenAI Codex hot invalidation sample, after warm-up.
+touch /Users/bytedance/.morpheus/reference-sources/openai-codex/codex-rs/core/src/lib.rs
+cargo build --manifest-path /Users/bytedance/.morpheus/reference-sources/openai-codex/codex-rs/Cargo.toml \
+  -p codex-app-server --bin codex-app-server
 ```
 
 结果：
 
-| 项目 | Rust 入口 | Cold wall | Warm no-op wall | user/sys | 备注 |
-| --- | --- | ---: | ---: | --- | --- |
-| Morpheus | `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` | 232.39s | 3.89s | cold 1126.73s / 186.00s；warm 0.60s / 0.92s | 空 target；触发同类 linker `__eh_frame` warning |
-| OpenAI Codex | `cargo build --manifest-path .../openai-codex/codex-rs/Cargo.toml -p codex-app-server --bin codex-app-server` | 396.04s | 4.16s | cold 1353.35s / 205.06s；warm 0.61s / 0.92s | 空 target；本次 cold 额外下载/更新了若干 Cargo registry/git dependency；同类 linker warning |
+| 项目 | Cold app-server wall | Warm no-op wall | Hot edit wall | Hot edit user/sys | Hot edit 口径 |
+| --- | ---: | ---: | ---: | --- | --- |
+| Morpheus | 232.39s | 3.89s | 61.57s | 140.39s / 48.44s | 合并 `update_plan` 四态功能后，编译 `app-server` debug；触发 protocol/tool-service/app-server/thread-service 等 Rust crate rebuild |
+| OpenAI Codex | 396.04s | 4.16s | 229.62s | 714.18s / 78.70s | warm-up 后 touch `core/src/lib.rs`，编译 `-p codex-app-server --bin codex-app-server`；包含 core 下游和 server 链接 |
 
 解释和 caveat：
 
 - 这次结果说明在当前本机、当前 commits、当前 Cargo registry/git cache 状态下，Morpheus app-server debug cold build 比参考 Codex app-server cold build 短；warm no-op 两边都在 4 秒左右。
+- Hot edit / hot invalidation 行仍不是 apple-to-apple 的同源码修改比较：Morpheus 这里记录一个真实功能修改合并后的 app-server debug build；OpenAI Codex 记录 `codex-core` 在 warm-up 后做 timestamp invalidation，再重编 `codex-app-server`。它不能证明某个相同源码 edit 在两个仓库的失效范围完全一致，但它包含了用户真正会感受到的 server 下游编译和链接时间。
+- 作为旁注：同一次 Codex warm-up 后，如果只编译 `-p codex-core`，top crate timestamp-only incremental rebuild 是 9.12s（user 4.87s / sys 2.25s）；这个数字不包含 downstream server rebuild/link，不能作为 app-server 热编译对比。
 - 这个结果不能单独证明所有局部修改都更快。真正的日常收益来自 Morpheus 把很多能力拆到 service/API crate 后，owner 更常跑 focused crate/test/debug build，而不是每次跑完整 app-server 或完整桌面交付。
 - Cold 只清空 scoped target dir，没有清空全局 Cargo registry/git cache；上游 Codex 本次仍发生了依赖下载和 git dependency update，所以 cold wall 同时包含网络/registry 成本。
 - 两边 app-server package 名和依赖图不完全相同：Morpheus 是 `app-server` / `app-server`，OpenAI Codex 是 `codex-app-server` / `codex-app-server`。它们是最接近的 Rust runtime 入口，但不是字节级相同工程。

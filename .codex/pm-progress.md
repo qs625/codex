@@ -19,10 +19,10 @@ Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8
   depends_on: user feedback that plan tool cannot express PM multi-task state; simplified design decision to avoid many PM-specific statuses
   files: codex-rs/protocol/src/plan_tool.rs; codex-rs/protocol/src/prompts/base_instructions/default.md; codex-rs/thread-service prompt mirrors if applicable; apps/root-worker-prototype/src/types.ts; apps/root-worker-prototype/src/components/RightPanel.tsx/tests; apps/root-worker-prototype/src/styles.css
   base_commit: 00939bf8485343e31b1d320b70848b12c93dd3c7
-  status: dispatched
-  next_action: owner_dev implement four-state plan model `pending/in_progress/blocked/completed`, allow multiple `in_progress`, preserve old plan compatibility, review with reused /self/owner_dev/reviewer.
-  validation: pending
-  commit: pending
+  status: merged_pending_capsule_delivery
+  next_action: include in next Runtime Capsule delivery and installed self-debug verification of four plan statuses plus multiple in-progress plan display.
+  validation: owner/reviewer approved; `cargo fmt ...` pass with existing nightly rustfmt warning; `cargo test --manifest-path codex-rs/Cargo.toml -p protocol plan_tool -- --nocapture` 2/2; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server test_handle_turn_plan_update_emits_notification_for_v2 -- --nocapture` pass; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx` 59/59; owner `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass; PM merge build `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass in 61.57s after real feature merge; `git diff --check` pass; old exactly-one/three-state prompt constraints rg-clean. `codex-tool-service` focused lib test still has pre-existing test mock/import baseline compile issue outside this task.
+  commit: owner `687e0bcd2`; merge `418d78e25`
 
 - id: compact-retained-init-context-visible
   owner: /self/owner_dev
@@ -76,7 +76,7 @@ Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8
   validation: owner/reviewer approved; PM design验收 passed; main `cargo test --manifest-path codex-rs/Cargo.toml -p mcp-service directly_exposes_computer_use_when_large_tool_sets_are_searchable -- --nocapture` 1/1; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass with existing warnings; `git diff --check` pass.
   commit: owner `6d61a7e7c`; merge `b0e9744b3`
 
-Current checkout allocation: `source_workspace-dev` active on plan tool minimal status model; `source_workspace-dev-2` delivered Computer Use MCP exposure and needs sync when idle; `source_workspace-dev-3` is idle/synced.
+Current checkout allocation: `source_workspace-dev` delivered plan tool minimal status model and needs sync when idle; `source_workspace-dev-2` delivered Computer Use MCP exposure and needs sync when idle; `source_workspace-dev-3` is idle/synced.
 
 ## Recent Completed
 - id: readme-codex-build-benchmark
@@ -86,8 +86,8 @@ Current checkout allocation: `source_workspace-dev` active on plan tool minimal 
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
   branch: docs/codex-build-benchmark
   commit: owner `cdf5ad20b`; merge `8573d309e`
-  summary: README now includes a reproducible single-run Rust app-server debug build benchmark comparing Morpheus `app-server` at `9f0f257a...` and OpenAI Codex reference `codex-app-server` at `78245b47...`, with environment, cold/warm definitions, commands, results, and caveats. Pure documentation; no Runtime Capsule needed.
-  validation: owner benchmark and reviewer passed; PM inspected README diff and raw log `/tmp/morpheus-codex-build-benchmark.v7STH6/benchmark.log`; main `git diff --check` pass.
+  summary: README includes a reproducible single-run Rust app-server debug build benchmark comparing Morpheus `app-server` at `9f0f257a...` and OpenAI Codex reference `codex-app-server` at `78245b47...`, with environment, cold/warm definitions, commands, results, and caveats. PM later adjusted the hot-compile section per user feedback: Morpheus hot sample is the real plan-tool feature merge build `418d78e25` at 61.57s; OpenAI Codex hot sample is now `codex-rs/core/src/lib.rs` timestamp invalidation followed by `codex-app-server` build at 229.62s, so downstream server rebuild/link time is included. The earlier `codex-core`-only 9.12s measurement is documented only as a non-comparable旁注. Pure documentation; no Runtime Capsule needed.
+  validation: owner benchmark and reviewer passed; PM inspected README diff and raw log `/tmp/morpheus-codex-build-benchmark.v7STH6/benchmark.log`; PM reran hot samples: Morpheus app-server after feature merge 61.57s, Codex core invalidation -> app-server 229.62s; `git diff --check` pass.
 
 - id: split-init-context-into-items
   status: installed_effective
