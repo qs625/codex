@@ -45,6 +45,10 @@ import {
   type FilePreviewMemoryByRootId,
 } from "./lib/filePreviewMemory";
 import {
+  isHtmlFilePreview,
+  localPathToFileUrl,
+} from "./lib/filePreviewBrowser";
+import {
   readImageBlob,
   readImageFile,
   revokeComposerImage,
@@ -2934,6 +2938,14 @@ function App() {
     }
   }
 
+  function openPreviewInBrowser() {
+    if (!filePreview || !isHtmlFilePreview(filePreview)) {
+      return;
+    }
+
+    handleOpenArtifactUrl(localPathToFileUrl(filePreview.path));
+  }
+
   function updateFilePreviewAfterSave(
     preview: FilePreview,
     rootId: string | null,
@@ -3088,6 +3100,7 @@ function App() {
             void handleNavigateToSymbol(destination, sourceLocation)
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
+          onOpenPreviewInBrowser={openPreviewInBrowser}
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}
           previewRootId={selectedTreeRootId}

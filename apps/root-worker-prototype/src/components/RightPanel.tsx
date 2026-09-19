@@ -34,6 +34,7 @@ import {
   buildGitPanelViewModel,
   isGitGraphCommit,
 } from "../lib/gitPanelView";
+import { filePreviewOpenInBrowserActionVisible } from "../lib/filePreviewBrowser";
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
 import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
@@ -234,6 +235,7 @@ export function RightPanel({
   isCollapsed,
   onNavigateToSymbol,
   onOpenPreviewExternally,
+  onOpenPreviewInBrowser,
   onOpenTreeFile,
   onPreviewUpdated,
   onSetActiveView,
@@ -271,6 +273,7 @@ export function RightPanel({
   isCollapsed: boolean;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
+  onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetActiveView: (value: RightPanelView) => void;
@@ -485,6 +488,7 @@ export function RightPanel({
                 fileTreeLoadingPath={fileTreeLoadingPath}
                 onNavigateToSymbol={onNavigateToSymbol}
                 onOpenPreviewExternally={onOpenPreviewExternally}
+                onOpenPreviewInBrowser={onOpenPreviewInBrowser}
                 gitDiffPreview={gitDiffPreview.diff}
                 gitDiffPreviewError={gitDiffPreview.error}
                 gitDiffPreviewLoading={gitDiffPreview.loading}
@@ -3215,6 +3219,7 @@ function FilePreviewPanel({
   gitDiffPreviewLoading,
   onNavigateToSymbol,
   onOpenPreviewExternally,
+  onOpenPreviewInBrowser,
   onOpenTreeFile,
   onPreviewUpdated,
   onSetFilePanelView,
@@ -3235,6 +3240,7 @@ function FilePreviewPanel({
   gitDiffPreviewLoading: boolean;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
+  onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetFilePanelView: (value: FilePanelView) => void;
@@ -3267,6 +3273,12 @@ function FilePreviewPanel({
     editState.mode,
   );
   const showPreviewHeaderEditControls = filePreviewHeaderEditControlsVisible({
+    filePanelView,
+    preview: showingGitDiffPreview ? null : preview,
+    previewError: showingGitDiffPreview ? gitDiffPreviewError : previewError,
+    previewLoading: showingGitDiffPreview ? gitDiffPreviewLoading : previewLoading,
+  });
+  const showOpenPreviewInBrowserAction = filePreviewOpenInBrowserActionVisible({
     filePanelView,
     preview: showingGitDiffPreview ? null : preview,
     previewError: showingGitDiffPreview ? gitDiffPreviewError : previewError,
@@ -3462,6 +3474,17 @@ function FilePreviewPanel({
             </button>
           </div>
           {previewHeaderEditActions}
+          {showOpenPreviewInBrowserAction ? (
+            <button
+              type="button"
+              className="panel-inline-action preview-open-browser-button"
+              aria-label="Open preview in Browser"
+              title="Open in Browser"
+              onClick={onOpenPreviewInBrowser}
+            >
+              <BrowserIcon />
+            </button>
+          ) : null}
           <button
             type="button"
             className="panel-inline-action preview-open-button"
