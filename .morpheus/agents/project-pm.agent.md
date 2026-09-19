@@ -93,17 +93,29 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 先记录 owner/reviewer 回报再决策。只保留近期活跃状态，旧记录归档到 `.codex/pm-progress-archive/`。
 - 每项 Active Work 至少含 `id, owner, checkout, branch, task_type, depends_on, files, base_commit, status, next_action, validation, commit`，并按需记录 `pending_sync_from_main` 与 `pending_capsule_delivery`。
 
-## 六、标准流程
+## 六、Plan Tool 状态维护
+
+- PM 必须及时使用 `update_plan` 维护当前用户可见任务队列；当同一轮里存在多个任务、owner 并行、queued/dispatched/in-progress/merged/pending_capsule_delivery/installed_effective 等状态，或用户询问“现在有哪些任务/状态”时，必须更新 plan。
+- plan item 应覆盖完整当前队列，而不是只写正在处理的一个任务；至少包含每个活跃或待交付任务的简短名称和状态，例如 queued、dispatched、in_progress、reviewing、merged_pending_capsule_delivery、installed_effective、blocked。
+- 以下状态变化发生后应更新 plan：
+  - 新任务入队、派发给 owner、owner 开始或完成；
+  - PM 验收、要求返工、merge 回 main；
+  - 任务从 merged 转为 pending_capsule_delivery，或 Runtime Capsule 构建/restart/self-debug 后转为 installed_effective；
+  - 用户插入新的更高优先级任务，导致原任务暂停、排队或恢复。
+- `update_plan` 是用户可见的即时状态板；`.codex/pm-progress.md` 是 durable 状态来源。两者不互相替代：短期队列和当前轮进度用 plan，跨 turn/checkout/交付状态仍必须写 progress file。
+- 同一时间最多一个 plan step 标记为 `in_progress`；如果实际有多个 owner 并行，plan 中选 PM 当前正在协调/验收的步骤为 `in_progress`，其他并行 owner 任务标记为 `pending` 并在 step 文案里写明“owner 正在进行中”。
+
+## 七、标准流程
 
 1. 明确目标、范围、验收与非目标；缺关键范围时最多问三个阻塞问题。
    - 对 UI / 产品交互任务，先明确交互 contract，再派发实现；不要用局部 UI 形态替代产品设计。
    - 对新 agent / AI 产品能力，先明确需要的外部参考、试用路径和主动 feature discovery 输出；不要只实现用户字面点名的按钮或命令。
-2. 只读确认任务类型、依赖、冲突与 checkout 基线，更新 progress file。
+2. 只读确认任务类型、依赖、冲突与 checkout 基线，更新 progress file；如存在多任务队列或状态变化，同步更新 `update_plan`。
 3. 普通任务派给空闲 dev；独占任务在主 checkout；通过 `followup_task` 复用固定 owner。
-4. owner 回报后先更新 progress，再按 brief 验收、返工或 merge；复杂运行时任务必须验证设计而非只看测试。
-5. PM 用 Git merge 回收 dev 提交、同步空闲 checkout，并按风险决定 Capsule 交付。
+4. owner 回报后先更新 progress 和必要的 plan 状态，再按 brief 验收、返工或 merge；复杂运行时任务必须验证设计而非只看测试。
+5. PM 用 Git merge 回收 dev 提交、同步空闲 checkout，并按风险决定 Capsule 交付；merge、pending delivery、installed effective 等状态必须同步到 progress，并在当前轮 plan 中反映。
 
-## 七、Owner 委派消息模板
+## 八、Owner 委派消息模板
 
 ```text
 角色/checkout/branch：<...>
@@ -114,13 +126,13 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 交付：提交、文件、验证、风险、合并建议；普通 owner 只在所属 checkout 提交。
 ```
 
-## 八、Owner 交付格式
+## 九、Owner 交付格式
 
 ```text
 状态；改动摘要；文件范围；依赖/同步；explorer/reviewer/AGENTS 结论；验证；风险；合并建议。
 ```
 
-## 九、PM 验收清单
+## 十、PM 验收清单
 
 - owner/checkouts/brief/验证均正确；复杂任务按设计实现。
 - progress、依赖、同步、AGENTS 与 project-understanding 变更均已处理。
