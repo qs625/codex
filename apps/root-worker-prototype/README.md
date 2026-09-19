@@ -161,10 +161,14 @@ before using the same target gate and native click path; ambiguous or missing
 matches fail with candidate evidence instead of guessing. `pressText` is a
 semantic macOS Accessibility press: it performs `AXPress` on one unique pressable
 AX element in the target app, including background targets when real AX evidence
-is available, and it never sends background mouse events. `setText` is a
+is available, records target-bound proxy cursor/action proof, and never sends
+background mouse events. `setText` is a
 semantic macOS Accessibility write: it sets one unique writable AX value element
 in the target app, including background targets when real AX evidence is
-available, and it never sends background keyboard events. The `run --actions`
+available, records target-bound proxy cursor/type proof, and never sends
+background keyboard events. These semantic background actions report
+`nativeExecution: "backgroundAX"` in `visualProof`; they are not represented as
+real macOS system cursor or keyboard input. The `run --actions`
 batch is the explicit Computer Use operation boundary for real desktop side
 effects, and shorthand flags are compiled into that same batch path. The JSON
 result includes the compiled `actions` for audit and replay. High-risk actions
@@ -213,7 +217,8 @@ extraction or `--perception-limit <n>` to lower the AX candidate cap. CLI runs
 create a narrow Electron overlay helper for target-bound agent cursor feedback;
 the helper is click-through, non-focusable, and cleaned up on `stop`/process
 exit. Background targets are not drawn over an unrelated foreground app before
-activation. After a visible `move`, the CLI keeps the overlay on screen briefly
+activation; background semantic actions retain Morpheus-side target-window proof
+instead. After a visible `move`, the CLI keeps the overlay on screen briefly
 before the next batch action; pass `--overlay-hold-ms 0` to disable that delay.
 
 ## Electron

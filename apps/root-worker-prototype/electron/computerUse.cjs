@@ -21,6 +21,7 @@ const DEFAULT_PERCEPTION_LIMIT = 40;
 const MAX_PERCEPTION_LIMIT = 80;
 const AGENT_CURSOR_MOVE_SAMPLES = 10;
 const AGENT_CURSOR_MOVE_DURATION_MS = 180;
+const SEMANTIC_VISUAL_PROOF_DURATION_MS = 220;
 const MAX_WAIT_ACTION_MS = 10_000;
 const MAC_NATIVE_RESOURCE_RELATIVE_PATH = path.join(
   "native",
@@ -103,7 +104,7 @@ class ComputerUseManager {
     const traceItem = {
       id: randomUUID(),
       sequence: ++this.session.sequence,
-      action: normalized,
+      action: traceAction(normalized),
       policy,
       status: policy.allowed ? "running" : "blocked",
       error: policy.allowed ? null : policy.reason,
@@ -164,7 +165,7 @@ class ComputerUseManager {
     }
 
     this.session.status = "acting";
-    this.session.pendingAction = normalized;
+    this.session.pendingAction = traceAction(normalized);
     this.session.policy = policy;
     this.session.updatedAtMs = this.clock();
     try {
@@ -212,6 +213,16 @@ class ComputerUseManager {
           text: normalized.text,
         });
         applyActionEvidence(traceItem, actionResult);
+        await this.recordSemanticVisualProof({
+          action: normalized,
+          match,
+          traceItem,
+          visualAction: "press",
+          nativeExecution: "backgroundAX",
+        });
+        applyActionEvidence(traceItem, {
+          visualProof: traceItem.visualProof,
+        });
       } else if (normalized.type === "setText") {
         const match = findTextInObservation(
           { ...normalized, requireWritable: true },
@@ -232,6 +243,16 @@ class ComputerUseManager {
           text: normalized.text,
         });
         applyActionEvidence(traceItem, actionResult);
+        await this.recordSemanticVisualProof({
+          action: normalized,
+          match,
+          traceItem,
+          visualAction: "type",
+          nativeExecution: "backgroundAX",
+        });
+        applyActionEvidence(traceItem, {
+          visualProof: traceItem.visualProof,
+        });
       } else {
         if (["click", "doubleClick", "rightClick", "scroll"].includes(normalized.type)) {
           await this.moveAgentCursor(normalized, traceItem);
@@ -484,7 +505,7 @@ class ComputerUseManager {
     const pathSamples = buildAgentCursorPath(origin, destination, {
       steps: AGENT_CURSOR_MOVE_SAMPLES,
       atMs: now,
-      source: action.type,
+      source: action.visualSource ?? action.type,
     });
     this.session.agentCursor = destination;
     this.session.cursor = destination;
@@ -497,9 +518,78 @@ class ComputerUseManager {
       atMs,
     }));
     await this.updateOverlay({
-      durationMs: AGENT_CURSOR_MOVE_DURATION_MS,
+      durationMs: action.visualDurationMs ?? AGENT_CURSOR_MOVE_DURATION_MS,
       pathSamples,
     });
+  }
+
+  async recordSemanticVisualProof({
+    action,
+    match,
+    traceItem,
+    visualAction,
+    nativeExecution,
+  }) {
+    const point = normalizePoint(match.point);
+    const matchedElement = match.candidates?.[0] ?? traceItem.evidence?.matchedElement ?? null;
+    const targetVisibility = this.session.targetVisibility ?? "unknown";
+    const targetWindow = targetWindowBounds(this.session.target?.window);
+    const proof = {
+      version: "computer-use-visual-proof-v1",
+      visualization: "targetBound",
+      visualAction,
+      nativeExecution,
+      targetVisibility,
+      targetApp: compactAppIdentity(this.session.targetApp),
+      frontmostApp: compactAppIdentity(this.session.frontmostApp),
+      method:
+        targetVisibility === "frontmost"
+          ? "target-bound-overlay"
+          : "morpheus-target-window-proof",
+      proofStatus: "completed",
+      systemCursorMoved: false,
+      backgroundDesktopOverlaySuppressed: targetVisibility !== "frontmost",
+      reason:
+        targetVisibility === "frontmost"
+          ? "Target-bound proxy cursor can be drawn over the frontmost target window."
+          : "Target-bound proxy cursor proof is retained in Morpheus state instead of drawing over an unrelated foreground app.",
+      point,
+      targetWindowBounds: targetWindow,
+      matchedElement: matchedElement
+        ? normalizeAccessibilityElement(matchedElement)
+        : traceItem.evidence?.matchedElement ?? null,
+      characterCount:
+        action.type === "setText" ? String(action.text ?? "").length : undefined,
+    };
+    const compactProof = Object.fromEntries(
+      Object.entries(proof).filter(([, value]) => value !== undefined),
+    );
+    traceItem.visualProof = compactProof;
+    this.session.lastVisualProof = compactProof;
+    if (point) {
+      try {
+        await this.moveAgentCursor(
+          {
+            type: action.type,
+            visualSource: `${action.type}-visual-proof`,
+            visualDurationMs: SEMANTIC_VISUAL_PROOF_DURATION_MS,
+            ...point,
+          },
+          traceItem,
+        );
+        traceItem.visualProof = {
+          ...traceItem.visualProof,
+          pathSamples: traceItem.agentCursorPath ?? [],
+        };
+      } catch (error) {
+        traceItem.visualProof = {
+          ...traceItem.visualProof,
+          proofStatus: "failed",
+          error: errorMessage(error),
+        };
+      }
+      this.session.lastVisualProof = traceItem.visualProof;
+    }
   }
 
   async dragAgentCursor(action, traceItem) {
@@ -582,6 +672,7 @@ class ComputerUseManager {
       status: this.session.status,
       targetBounds,
       targetVisibility,
+      visualProof: this.session.lastVisualProof ?? null,
     });
     if (
       overlayResult &&
@@ -642,6 +733,7 @@ function createEmptySession(now, options) {
     pointerPath: [],
     limitations: [],
     overlay: { mode: "target-bound", visible: false, reason: null },
+    lastVisualProof: null,
     trace: [],
     pendingAction: null,
     policy: null,
@@ -756,6 +848,9 @@ function actionEvidenceSummary(traceItem) {
       matchStatus: evidence.matchStatus ?? null,
       targetVisibility: evidence.targetVisibility ?? null,
       characterCount: evidence.characterCount ?? null,
+      visualProof: evidence.visualProof
+        ? visualProofSummary(evidence.visualProof)
+        : null,
     };
   }
   if (traceItem.action?.type === "pressText") {
@@ -768,6 +863,9 @@ function actionEvidenceSummary(traceItem) {
       method: evidence.method ?? null,
       matchStatus: evidence.matchStatus ?? null,
       targetVisibility: evidence.targetVisibility ?? null,
+      visualProof: evidence.visualProof
+        ? visualProofSummary(evidence.visualProof)
+        : null,
     };
   }
   return {
@@ -779,6 +877,21 @@ function actionEvidenceSummary(traceItem) {
 
 function snapshotSession(session) {
   return JSON.parse(JSON.stringify(session));
+}
+
+function traceAction(action) {
+  if (!action || typeof action !== "object") {
+    return action;
+  }
+  if (action.type === "setText") {
+    const { text, ...rest } = action;
+    return {
+      ...rest,
+      textOmitted: true,
+      characterCount: String(text ?? "").length,
+    };
+  }
+  return { ...action };
 }
 
 function classifyComputerUseAction(action) {
@@ -986,6 +1099,7 @@ function normalizeAction(action) {
         type: "pressText",
         text: requireTextQuery(action.text ?? action.query ?? action.target),
         maxMatches: boundedMaxMatches(action.maxMatches),
+        visualization: normalizeVisualizationMode(action.visualization),
       };
     case "setText":
       return {
@@ -993,6 +1107,7 @@ function normalizeAction(action) {
         query: requireTextQuery(action.query ?? action.target ?? action.textQuery),
         text: String(action.text ?? ""),
         maxMatches: boundedMaxMatches(action.maxMatches),
+        visualization: normalizeVisualizationMode(action.visualization),
       };
     case "type":
       return { type: "type", text: String(action.text ?? "") };
@@ -1014,6 +1129,16 @@ function normalizeAction(action) {
     default:
       throw new Error(`Unsupported Computer Use action: ${String(action.type)}`);
   }
+}
+
+function normalizeVisualizationMode(value) {
+  if (value === undefined || value === null || value === "") {
+    return "targetBound";
+  }
+  if (value === "targetBound") {
+    return value;
+  }
+  throw new Error("Computer Use semantic actions support visualization: targetBound");
 }
 
 function finiteNumberOrDefault(value, defaultValue, name) {
@@ -1365,6 +1490,9 @@ function applyActionEvidence(traceItem, actionResult) {
   if (actionResult.compiledAction) {
     evidence.compiledAction = actionResult.compiledAction;
   }
+  if (actionResult.visualProof && typeof actionResult.visualProof === "object") {
+    evidence.visualProof = normalizeVisualProof(actionResult.visualProof);
+  }
   if (Object.hasOwn(actionResult, "pasteboardRestored")) {
     evidence.pasteboardRestored = actionResult.pasteboardRestored === true;
   }
@@ -1379,6 +1507,56 @@ function applyActionEvidence(traceItem, actionResult) {
   if (Object.keys(evidence).length > 0) {
     traceItem.evidence = evidence;
   }
+}
+
+function normalizeVisualProof(proof) {
+  const normalized = {
+    version: boundedString(proof.version, 80),
+    visualization: boundedString(proof.visualization, 80),
+    visualAction: boundedString(proof.visualAction, 80),
+    nativeExecution: boundedString(proof.nativeExecution, 80),
+    targetVisibility: boundedString(proof.targetVisibility, 40),
+    method: boundedString(proof.method, 80),
+    proofStatus: boundedString(proof.proofStatus, 40),
+    error: boundedString(proof.error, 240),
+    systemCursorMoved: proof.systemCursorMoved === true,
+    backgroundDesktopOverlaySuppressed:
+      proof.backgroundDesktopOverlaySuppressed === true,
+    reason: boundedString(proof.reason, 240),
+    point: normalizePoint(proof.point),
+    targetWindowBounds: normalizeRect(proof.targetWindowBounds),
+    matchedElement: normalizeAccessibilityElement(proof.matchedElement),
+    characterCount: Number.isSafeInteger(proof.characterCount)
+      ? proof.characterCount
+      : undefined,
+    pathSamples: Array.isArray(proof.pathSamples)
+      ? proof.pathSamples
+          .map((point) => ({
+            ...normalizePoint(point),
+            atMs: Number.isFinite(point?.atMs) ? point.atMs : undefined,
+            source: boundedString(point?.source, 80),
+          }))
+          .filter((point) => point.x !== undefined && point.y !== undefined)
+          .slice(0, AGENT_CURSOR_MOVE_SAMPLES)
+      : undefined,
+  };
+  return Object.fromEntries(
+    Object.entries(normalized).filter(([, value]) => value !== null && value !== undefined),
+  );
+}
+
+function visualProofSummary(proof) {
+  return {
+    visualization: proof.visualization ?? null,
+    visualAction: proof.visualAction ?? null,
+    nativeExecution: proof.nativeExecution ?? null,
+    targetVisibility: proof.targetVisibility ?? null,
+    method: proof.method ?? null,
+    proofStatus: proof.proofStatus ?? null,
+    systemCursorMoved: proof.systemCursorMoved === true,
+    backgroundDesktopOverlaySuppressed:
+      proof.backgroundDesktopOverlaySuppressed === true,
+  };
 }
 
 async function delay(ms) {

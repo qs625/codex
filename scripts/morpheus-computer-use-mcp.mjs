@@ -107,7 +107,7 @@ const TOOL_DEFINITIONS = [
         action: {
           type: "object",
           description:
-            "Computer Use action, for example move/click/type/key/hotkey/drag/wait/clickText/pressText/setText. pressText performs a target-bound Accessibility press on one unique pressable element and may run against a background target.",
+            "Computer Use action, for example move/click/type/key/hotkey/drag/wait/clickText/pressText/setText. setText and pressText default to visualization:\"targetBound\": they show proxy cursor/action proof in Morpheus while honestly reporting nativeExecution:\"backgroundAX\" for target-bound Accessibility set-value/press, including background targets without moving the macOS system cursor.",
           additionalProperties: true,
         },
         sessionId: stringSchema("Session id returned by computer.start_session."),

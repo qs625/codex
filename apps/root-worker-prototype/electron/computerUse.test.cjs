@@ -56,6 +56,9 @@ function fakeNativeClient(options = {}) {
     },
     async act(action) {
       actions.push(action);
+      if (options.failActionType === action.type) {
+        throw new Error(`Native ${action.type} failed`);
+      }
       if (
         ["click", "doubleClick", "rightClick", "drag", "scroll"].includes(
           action.type,
@@ -574,14 +577,33 @@ test("background setText writes one unique writable AX element without activatio
   assert.equal(nativeClient.actions[0].targetApp, "org.mozilla.firefox");
   assert.equal(state.trace.at(-1).status, "completed");
   assert.equal(state.trace.at(-1).policy.kind, "side-effect");
+  assert.equal(state.trace.at(-1).action.text, undefined);
+  assert.equal(state.trace.at(-1).action.textOmitted, true);
+  assert.equal(state.trace.at(-1).action.characterCount, 16);
   assert.equal(state.trace.at(-1).evidence.method, "accessibility-set-value");
   assert.equal(state.trace.at(-1).evidence.targetVisibility, "background");
   assert.equal(state.trace.at(-1).evidence.matchStatus, "unique");
   assert.equal(state.trace.at(-1).evidence.characterCount, 16);
   assert.equal(state.trace.at(-1).evidence.matchedElement.writable, true);
+  assert.equal(state.trace.at(-1).evidence.visualProof.visualization, "targetBound");
+  assert.equal(state.trace.at(-1).evidence.visualProof.visualAction, "type");
+  assert.equal(state.trace.at(-1).evidence.visualProof.nativeExecution, "backgroundAX");
+  assert.equal(state.trace.at(-1).evidence.visualProof.systemCursorMoved, false);
+  assert.equal(
+    state.trace.at(-1).evidence.visualProof.backgroundDesktopOverlaySuppressed,
+    true,
+  );
+  assert.equal(state.trace.at(-1).visualProof.method, "morpheus-target-window-proof");
+  assert.equal(state.trace.at(-1).visualProof.characterCount, 16);
+  assert.ok(state.trace.at(-1).visualProof.pathSamples.length >= 2);
+  assert.deepEqual(state.lastVisualProof, state.trace.at(-1).visualProof);
   assert.equal(
     state.trace.at(-1).audit.completion.actionEvidence.method,
     "accessibility-set-value",
+  );
+  assert.equal(
+    state.trace.at(-1).audit.completion.actionEvidence.visualProof.nativeExecution,
+    "backgroundAX",
   );
 });
 
@@ -633,9 +655,148 @@ test("background pressText presses one unique pressable AX element without activ
   assert.equal(state.trace.at(-1).evidence.targetVisibility, "background");
   assert.equal(state.trace.at(-1).evidence.matchStatus, "unique");
   assert.equal(state.trace.at(-1).evidence.matchedElement.pressable, true);
+  assert.equal(state.trace.at(-1).evidence.visualProof.visualization, "targetBound");
+  assert.equal(state.trace.at(-1).evidence.visualProof.visualAction, "press");
+  assert.equal(state.trace.at(-1).evidence.visualProof.nativeExecution, "backgroundAX");
+  assert.equal(state.trace.at(-1).evidence.visualProof.systemCursorMoved, false);
+  assert.equal(
+    state.trace.at(-1).evidence.visualProof.backgroundDesktopOverlaySuppressed,
+    true,
+  );
+  assert.equal(state.trace.at(-1).visualProof.method, "morpheus-target-window-proof");
+  assert.deepEqual(state.trace.at(-1).visualProof.point, { x: 120, y: 105 });
   assert.equal(
     state.trace.at(-1).audit.completion.actionEvidence.method,
     "accessibility-press",
+  );
+});
+
+test("failed semantic native action does not leave completed visual proof", async () => {
+  const nativeClient = fakeNativeClient({
+    failActionType: "pressText",
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Send",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.equal(state.trace.at(-1).status, "failed");
+  assert.match(state.trace.at(-1).error, /Native pressText failed/);
+  assert.equal(state.trace.at(-1).visualProof, undefined);
+  assert.equal(state.trace.at(-1).evidence.visualProof, undefined);
+  assert.equal(state.lastVisualProof, null);
+  assert.equal(
+    overlayController.updates.some(
+      (update) => update.visualProof?.visualAction === "press",
+    ),
+    false,
+  );
+});
+
+test("frontmost pressText shows target-bound proxy cursor proof without real cursor claims", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Send",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const overlayController = fakeOverlayController();
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.deepEqual(nativeClient.actions.map((action) => action.type), ["pressText"]);
+  assert.equal(state.trace.at(-1).status, "completed");
+  assert.equal(state.trace.at(-1).visualProof.method, "target-bound-overlay");
+  assert.equal(state.trace.at(-1).visualProof.proofStatus, "completed");
+  assert.equal(state.trace.at(-1).visualProof.systemCursorMoved, false);
+  assert.equal(
+    state.trace.at(-1).visualProof.backgroundDesktopOverlaySuppressed,
+    false,
+  );
+  const proofUpdate = overlayController.updates.find(
+    (update) => update.visualProof?.visualAction === "press",
+  );
+  assert.equal(proofUpdate.visualProof.nativeExecution, "backgroundAX");
+  assert.deepEqual(proofUpdate.agentCursor, { x: 120, y: 105 });
+  assert.ok(proofUpdate.pathSamples.length >= 2);
+});
+
+test("semantic native success remains completed when overlay proof update fails", async () => {
+  const nativeClient = fakeNativeClient({
+    observations: [
+      {
+        targetVisibility: "frontmost",
+        perception: {
+          accessibilityElements: [
+            {
+              role: "AXButton",
+              title: "Send",
+              pressable: true,
+              bounds: { x: 80, y: 90, width: 80, height: 30 },
+              center: { x: 120, y: 105 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const overlayController = {
+    async update(payload) {
+      if (payload.visualProof) {
+        throw new Error("overlay unavailable");
+      }
+      return { available: true, visible: true };
+    },
+    async destroy() {},
+  };
+  const manager = createComputerUseManager({ nativeClient, overlayController });
+  await manager.startSession({ app: "Firefox" });
+
+  const state = await manager.act({ type: "pressText", text: "Send" });
+
+  assert.equal(state.trace.at(-1).status, "completed");
+  assert.equal(state.trace.at(-1).evidence.method, "accessibility-press");
+  assert.equal(state.trace.at(-1).evidence.visualProof.proofStatus, "failed");
+  assert.match(state.trace.at(-1).evidence.visualProof.error, /overlay unavailable/);
+  assert.equal(state.trace.at(-1).audit.completion.status, "completed");
+  assert.equal(
+    state.trace.at(-1).audit.completion.actionEvidence.method,
+    "accessibility-press",
+  );
+  assert.equal(
+    state.trace.at(-1).audit.completion.actionEvidence.visualProof.proofStatus,
+    "failed",
   );
 });
 
