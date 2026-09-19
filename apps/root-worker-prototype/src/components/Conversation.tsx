@@ -1,7 +1,6 @@
 import React, { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { previewBlockText } from "../lib/conversationFormatting";
 import { MarkdownContent } from "../lib/markdown";
 import type {
   ApprovalDecision,
@@ -97,8 +96,6 @@ const UNSUPPORTED_ARTIFACT_MIME_TYPES = new Set([
   "text/mermaid",
 ]);
 const ARTIFACT_DISPLAY_SOURCE_MAX_CHARS = 20_000;
-const COMPACT_SUMMARY_PREVIEW_MAX_CHARS = 12_000;
-const COMPACT_SUMMARY_PREVIEW_MAX_LINES = 260;
 
 function clampScale(value: number) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
@@ -1618,14 +1615,6 @@ function formatProgressDuration(totalMilliseconds: number) {
 export const CompactRow = memo(function CompactRow({
   entry,
 }: CompactRowProps) {
-  const compactSummary = entry.compactSummary?.trim() ?? "";
-  const summaryPreview = compactSummary
-    ? previewBlockText(compactSummary, {
-        maxChars: COMPACT_SUMMARY_PREVIEW_MAX_CHARS,
-        maxLines: COMPACT_SUMMARY_PREVIEW_MAX_LINES,
-      })
-    : null;
-
   return (
     <section className="compact-row" aria-label="Context compacted">
       <div className="event-icon compact-icon">
@@ -1635,20 +1624,11 @@ export const CompactRow = memo(function CompactRow({
         <div className="compact-summary compact-marker" role="note">
           <div className="compact-copy">
             <strong>Context compacted</strong>
-            {summaryPreview ? <span>Summary available</span> : null}
           </div>
           <div className="compact-meta">
             <time>{entry.timestamp}</time>
           </div>
         </div>
-        {summaryPreview ? (
-          <details className="compact-summary-details">
-            <summary>View summary</summary>
-            <div className="compact-summary-body">
-              <MarkdownContent text={summaryPreview.text} />
-            </div>
-          </details>
-        ) : null}
       </div>
     </section>
   );

@@ -1222,7 +1222,7 @@ test("compact rows render only a compact marker in the active chat list", () => 
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
 
-test("compact rows render expandable summary without unavailable replacement diagnostics", () => {
+test("compact rows render a non-expandable marker without summary details", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1242,15 +1242,15 @@ test("compact rows render expandable summary without unavailable replacement dia
   );
 
   assert.match(markup, /Context compacted/);
-  assert.match(markup, /Summary available/);
-  assert.match(markup, /<details class="compact-summary-details">/);
-  assert.match(markup, /<summary>View summary<\/summary>/);
+  assert.doesNotMatch(markup, /Summary available/);
+  assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
+  assert.doesNotMatch(markup, /<summary>View summary<\/summary>/);
   assert.doesNotMatch(markup, /replacement history unavailable/);
-  assert.match(markup, /Preserve compact summary/);
+  assert.doesNotMatch(markup, /Preserve compact summary/);
   assert.doesNotMatch(markup, /Replacement history is unavailable/);
 });
 
-test("compact row summary preview is bounded for large compact payloads", () => {
+test("compact row does not render large compact summary payloads", () => {
   const longSummary = `${"summary line\n".repeat(400)}UNBOUNDED_COMPACT_SENTINEL`;
   const markup = renderToStaticMarkup(
     <CompactRow
@@ -1271,9 +1271,11 @@ test("compact row summary preview is bounded for large compact payloads", () => 
   );
 
   assert.match(markup, /Context compacted/);
-  assert.match(markup, /View summary/);
-  assert.match(markup, /\[truncated: [\d,]+ characters omitted\]/);
+  assert.doesNotMatch(markup, /View summary/);
+  assert.doesNotMatch(markup, /summary line/);
+  assert.doesNotMatch(markup, /\[truncated: [\d,]+ characters omitted\]/);
   assert.doesNotMatch(markup, /UNBOUNDED_COMPACT_SENTINEL/);
+  assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
 });
 
 test("compact rows do not render grouped history body when expanded", () => {
