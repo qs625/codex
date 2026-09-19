@@ -76,7 +76,7 @@ Current installed Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8
   validation: owner/reviewer approved; PM design验收 passed; main `cargo test --manifest-path codex-rs/Cargo.toml -p mcp-service directly_exposes_computer_use_when_large_tool_sets_are_searchable -- --nocapture` 1/1; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass with existing warnings; `git diff --check` pass.
   commit: owner `6d61a7e7c`; merge `b0e9744b3`
 
-Current checkout allocation: `source_workspace-dev`, `source_workspace-dev-2`, and `source_workspace-dev-3` are idle/synced to main `9c2dbef0e`.
+Current checkout allocation: `source_workspace-dev`, `source_workspace-dev-2`, and `source_workspace-dev-3` are idle and synced to the latest main baseline at the last PM synchronization.
 
 ## Recent Completed
 - id: readme-codex-build-benchmark
