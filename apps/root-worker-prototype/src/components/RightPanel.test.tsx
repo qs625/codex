@@ -47,11 +47,9 @@ const {
   GitChangeRow,
   GitCommitFileRow,
   GitDiffPreviewPanel,
-  gitDiffTargetForTreePath,
-  gitRelativeTreePath,
   normalizeBrowserPanelState,
   nextBrowserBoundsSequence,
-  resolveGitTreeFileOpen,
+  openCwdTreeFilePreview,
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
@@ -112,14 +110,6 @@ function makeThread(
       },
     ],
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve;
-  });
-  return { promise, resolve };
 }
 
 function makeWorkflowProgressItem(
@@ -1524,242 +1514,25 @@ test("git diff preview clears when normal file preview changes target", () => {
   );
 });
 
-test("git tree paths resolve to changed-file diff targets with unstaged priority", () => {
-  const stagedChange = {
-    path: "src/staged.ts",
-    originalPath: null,
-    stagedStatus: "M",
-    unstagedStatus: null,
-    staged: true,
-    unstaged: false,
-  };
-  const unstagedChange = {
-    path: "src/unstaged.ts",
-    originalPath: null,
-    stagedStatus: null,
-    unstagedStatus: "M",
-    staged: false,
-    unstaged: true,
-  };
-  const bothChange = {
-    path: "src/both.ts",
-    originalPath: null,
-    stagedStatus: "M",
-    unstagedStatus: "M",
-    staged: true,
-    unstaged: true,
-  };
-  const snapshot = {
-    available: true,
-    root: "/repo",
-    treeRoot: "/repo",
-    branch: "main",
-    selectedRef: null,
-    refs: [],
-    graph: [],
-    changes: [stagedChange, unstagedChange, bothChange],
-    error: null,
-  };
+test("cwd tree file opens stay on normal file preview routing", () => {
+  const calls: string[] = [];
 
-  assert.deepEqual(gitDiffTargetForTreePath(snapshot, "/repo/src/unstaged.ts"), {
-    change: unstagedChange,
-    mode: "unstaged",
+  openCwdTreeFilePreview({
+    clearGitDiffPreview: () => calls.push("clear-diff"),
+    openTreeFile: (path: string) => calls.push(`open:${path}`),
+    path: "/repo/src/modified.ts",
   });
-  assert.deepEqual(gitDiffTargetForTreePath(snapshot, "/repo/src/staged.ts"), {
-    change: stagedChange,
-    mode: "staged",
-  });
-  assert.deepEqual(gitDiffTargetForTreePath(snapshot, "/repo/src/both.ts"), {
-    change: bothChange,
-    mode: "unstaged",
-  });
-  assert.deepEqual(
-    gitDiffTargetForTreePath(
-      { ...snapshot, root: "/private/var/folders/repo", treeRoot: "/var/folders/repo" },
-      "/var/folders/repo/src/both.ts",
-    ),
-    {
-      change: bothChange,
-      mode: "unstaged",
-    },
-  );
-  assert.equal(gitDiffTargetForTreePath(snapshot, "/repo/src/clean.ts"), null);
-  assert.equal(gitDiffTargetForTreePath({ ...snapshot, available: false }, "/repo/src/both.ts"), null);
+
+  assert.deepEqual(calls, ["clear-diff", "open:/repo/src/modified.ts"]);
 });
 
-test("git tree path normalization keeps repo-relative status matching bounded", () => {
-  assert.equal(gitRelativeTreePath("/repo", "/repo/src/App.tsx"), "src/App.tsx");
-  assert.equal(gitRelativeTreePath("C:\\repo", "C:\\repo\\src\\App.tsx"), "src/App.tsx");
-  assert.equal(gitRelativeTreePath("/repo", "/repo-other/src/App.tsx"), null);
-  assert.equal(gitRelativeTreePath("/repo", "src/App.tsx"), "src/App.tsx");
-  assert.equal(
-    gitRelativeTreePath(
-      "/private/var/folders/repo",
-      "/var/folders/repo/src/App.tsx",
-      "/var/folders/repo",
-    ),
-    "src/App.tsx",
-  );
-});
+test("cwd tree file routing does not keep changed-file diff status lookups", () => {
+  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
 
-test("git tree cache miss resolves status before opening modified files", async () => {
-  const modifiedChange = {
-    path: "src/modified.ts",
-    originalPath: null,
-    stagedStatus: null,
-    unstagedStatus: "M",
-    staged: false,
-    unstaged: true,
-  };
-
-  const decision = await resolveGitTreeFileOpen({
-    cachedSnapshot: null,
-    cwd: "/repo",
-    treePath: "/repo/src/modified.ts",
-    scope: 1,
-    isScopeCurrent: (scope: number) => scope === 1,
-    readGitStatusSnapshot: async () => ({
-      available: true,
-      root: "/repo",
-      treeRoot: "/repo",
-      changes: [modifiedChange],
-      error: null,
-    }),
-  });
-
-  assert.deepEqual(decision, {
-    kind: "diff",
-    change: modifiedChange,
-    mode: "unstaged",
-    snapshot: {
-      available: true,
-      root: "/repo",
-      treeRoot: "/repo",
-      changes: [modifiedChange],
-      error: null,
-    },
-  });
-});
-
-test("git tree cache miss opens clean files normally after status resolves", async () => {
-  const decision = await resolveGitTreeFileOpen({
-    cachedSnapshot: null,
-    cwd: "/repo",
-    treePath: "/repo/src/clean.ts",
-    scope: 1,
-    isScopeCurrent: (scope: number) => scope === 1,
-    readGitStatusSnapshot: async () => ({
-      available: true,
-      root: "/repo",
-      treeRoot: "/repo",
-      changes: [],
-      error: null,
-    }),
-  });
-
-  assert.deepEqual(decision, {
-    kind: "file",
-    snapshot: {
-      available: true,
-      root: "/repo",
-      treeRoot: "/repo",
-      changes: [],
-      error: null,
-    },
-  });
-});
-
-test("git tree async status decisions ignore stale clicks", async () => {
-  const modifiedChange = {
-    path: "src/a.ts",
-    originalPath: null,
-    stagedStatus: null,
-    unstagedStatus: "M",
-    staged: false,
-    unstaged: true,
-  };
-  const firstStatus = deferred<{
-    available: boolean;
-    root: string | null;
-    treeRoot: string | null;
-    changes: typeof modifiedChange[];
-    error: string | null;
-  }>();
-  let currentScope = 1;
-
-  const firstDecision = resolveGitTreeFileOpen({
-    cachedSnapshot: null,
-    cwd: "/repo",
-    treePath: "/repo/src/a.ts",
-    scope: 1,
-    isScopeCurrent: (scope: number) => scope === currentScope,
-    readGitStatusSnapshot: async () => firstStatus.promise,
-  });
-
-  currentScope = 2;
-  const secondDecision = await resolveGitTreeFileOpen({
-    cachedSnapshot: null,
-    cwd: "/repo",
-    treePath: "/repo/src/b.ts",
-    scope: 2,
-    isScopeCurrent: (scope: number) => scope === currentScope,
-    readGitStatusSnapshot: async () => ({
-      available: true,
-      root: "/repo",
-      treeRoot: "/repo",
-      changes: [],
-      error: null,
-    }),
-  });
-  firstStatus.resolve({
-    available: true,
-    root: "/repo",
-    treeRoot: "/repo",
-    changes: [modifiedChange],
-    error: null,
-  });
-
-  assert.equal(secondDecision.kind, "file");
-  assert.deepEqual(await firstDecision, { kind: "stale" });
-});
-
-test("git tree async status decisions ignore external preview takeover", async () => {
-  const modifiedChange = {
-    path: "src/a.ts",
-    originalPath: null,
-    stagedStatus: null,
-    unstagedStatus: "M",
-    staged: false,
-    unstaged: true,
-  };
-  const status = deferred<{
-    available: boolean;
-    root: string | null;
-    treeRoot: string | null;
-    changes: typeof modifiedChange[];
-    error: string | null;
-  }>();
-  let currentScope = 1;
-
-  const decision = resolveGitTreeFileOpen({
-    cachedSnapshot: null,
-    cwd: "/repo",
-    treePath: "/repo/src/a.ts",
-    scope: 1,
-    isScopeCurrent: (scope: number) => scope === currentScope,
-    readGitStatusSnapshot: async () => status.promise,
-  });
-
-  currentScope = 2;
-  status.resolve({
-    available: true,
-    root: "/repo",
-    treeRoot: "/repo",
-    changes: [modifiedChange],
-    error: null,
-  });
-
-  assert.deepEqual(await decision, { kind: "stale" });
+  assert.doesNotMatch(source, /readGitStatusSnapshot/);
+  assert.doesNotMatch(source, /resolveGitTreeFileOpen/);
+  assert.doesNotMatch(source, /gitDiffTargetForTreePath/);
+  assert.doesNotMatch(source, /onGitSnapshotChange/);
 });
 
 test("builds a commit-level git graph visual model with a spine and curved branches", () => {
