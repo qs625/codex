@@ -330,16 +330,69 @@ pub fn injected_context_item_from_response_items(items: &[ResponseItem]) -> Opti
 }
 
 fn injected_context_section_label(role: &str, text: &str) -> &'static str {
-    if text.contains("# AGENTS.md instructions") {
+    if text_has_heading_prefix(text, "# AGENTS.md instructions") {
         return "AGENTS.md";
     }
-    if text.contains("<environment_context>") {
-        return "Environment";
+
+    for (marker, label) in [
+        ("<environment_context>", "Environment"),
+        ("<multiagent_context>", "Multi-agent Context"),
+        ("<runtime_activity>", "Runtime Activity"),
+        ("<permissions instructions>", "Permissions"),
+        ("<apps_instructions>", "Apps"),
+        ("<skills_instructions>", "Skills"),
+        ("<workflows_instructions>", "Workflows"),
+        ("<agents_instructions>", "Agents"),
+        ("<plugins_instructions>", "Plugins"),
+        ("<external_agent_tools>", "External Tool Specs"),
+        ("<realtime_conversation>", "Realtime"),
+        ("<personality_spec>", "Personality"),
+        ("<collaboration_mode>", "Collaboration Mode"),
+    ] {
+        if text_starts_with_marker(text, marker) {
+            return label;
+        }
     }
+
+    for (heading, label) in [
+        ("# User Preferences", "User Preferences"),
+        ("# Project Understanding", "Project Understanding"),
+        ("## Skills", "Skills"),
+        ("## Apps", "Apps"),
+        ("## Workflows", "Workflows"),
+        ("## Agents", "Agents"),
+        ("## Plugins", "Plugins"),
+        ("## Personality", "Personality"),
+        ("# Personality", "Personality"),
+        ("## Collaboration Mode", "Collaboration Mode"),
+        ("# Collaboration Mode", "Collaboration Mode"),
+    ] {
+        if text_has_heading(text, heading) {
+            return label;
+        }
+    }
+
     if role == "developer" {
-        return "Developer";
+        return "Developer instructions";
+    }
+    if role == "user" {
+        return "User context";
     }
     "Context"
+}
+
+fn text_starts_with_marker(text: &str, marker: &str) -> bool {
+    text.trim_start().starts_with(marker)
+}
+
+fn text_has_heading(text: &str, heading: &str) -> bool {
+    text.lines()
+        .any(|line| line.trim_start().trim_end() == heading)
+}
+
+fn text_has_heading_prefix(text: &str, heading_prefix: &str) -> bool {
+    text.lines()
+        .any(|line| line.trim_start().starts_with(heading_prefix))
 }
 
 pub fn started_display_event_from_model_item(
