@@ -13,6 +13,25 @@ Current installed Runtime Capsule is `sha256:bb7f0bab0d56b639995f6ead7d38441c26d
 Current user request queued next: optimize Runtime Capsule delivery so ordinary Runtime/frontend/backend changes can build/install only the Capsule and skip recompiling Launcher and building DMG when Launcher/outer app did not change.
 
 ## Active Work
+- id: compact-marker-non-expandable-ui
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: fix/compact-marker-non-expandable-ui
+  task_type: ui-bugfix/conversation
+  depends_on: user correction on 2026-09-19 CST: “compact summary 还是没改啊 / 现在还是折叠起来的 ui”. Previous `compact_marker_hide_summary` only removed duplicate summary inside replacement history and did not remove the expandable compact row UI.
+  files: likely `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, possibly compact/search/detail helpers if needed.
+  base_commit: `b612853af`
+  status: dispatched
+  objective: Make context compaction render as a small non-expandable boundary marker in the active conversation UI, not an expandable/collapsible summary card.
+  design_intent: Compact is an internal context-management boundary, not content the user should be invited to read inline. The chat timeline should remain clean after compaction while preserving durable audit facts off the default surface.
+  invariants: Do not delete persisted compact facts, replacement history, archived history, search/detail extraction, or reload semantics; do not hide later user/assistant messages after the compact boundary; do not regress active command/orphan item handling around compaction.
+  forbidden_paths: no CSS-only hiding that leaves keyboard/screen-reader expandable controls; no removing backend/thread history facts; no reintroducing summary body/preview under another label; no broad redesign of conversation rows.
+  expected_implementation_outline: Remove or gate the compact row `<details>`/summary expansion affordance from active conversation rendering, update component tests that currently expect expandable summary markup, and keep compact row as “Context compacted” marker with bounded metadata only if non-interactive.
+  minimum_regression_matrix: compact summary present + replacement history missing; replacement history available; large summary payload; archived artifacts/history; nested compact archived history; same-turn pre/post compact user messages; search/detail helpers still work if they are intentionally retained; focused component/lib tests and diff check; reviewer approval.
+  next_action: owner_dev_3 to implement with reused reviewer, then PM design验收/merge and install via next Runtime Capsule delivery.
+  blockers: none.
+
 - id: capsule-only-runtime-delivery
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
