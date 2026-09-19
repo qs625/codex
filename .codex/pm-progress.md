@@ -8,80 +8,36 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Current installed Runtime Capsule is still `sha256:bb7f0bab0d56b639995f6ead7d38441c26d3f212dcb590e9fdfca40ed6a033f3`, sourceCommit `53717f8991d08022f6db1d14c4f1a0b3e21c1bc3`, installed by recovered restart request `call_TJBnSBkBADXsvums2TQlSK3F` (do not repeat the same restart request). New capsule-only delivery candidate built from canonical main `6ace3c353f8e4b63d79adc8874c74d4cf241bc86`: activationId `capsule-1789814664246-248206d78db6075b`, releaseId `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`, incomingRoot `/Users/bytedance/.morpheus/runtime-launcher/incoming/capsule-1789814664246-248206d78db6075b`. Incoming quick check confirmed `capsule.json`, payload app executable, `app.asar`, `bin/app-server`, `default-config`, `native`, and `computer-use-helper`.
-
-Current user request queued next: optimize Runtime Capsule delivery so ordinary Runtime/frontend/backend changes can build/install only the Capsule and skip recompiling Launcher and building DMG when Launcher/outer app did not change.
+Current installed Runtime Capsule is `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`, selected/externalCurrent/activeLaunch in runtime-launcher control state, installed by recovered restart request `call_74YbmRKaOr3SkSr4SJYNhgXn` (do not repeat the same restart request). Artifact manifest metadata sourceCommit is `05e9b669eab720945f9d000a2d5557b2f14d94bd`; product changes were complete by `6ace3c353f8e4b63d79adc8874c74d4cf241bc86`, and `05e9b669...` only added progress recording after the capsule-only build. Previous Runtime Capsule is `sha256:bb7f0bab0d56b639995f6ead7d38441c26d3f212dcb590e9fdfca40ed6a033f3`. Self-debug attached to CDP `127.0.0.1:9223`: listener process is the new `Root Worker Runtime`, renderer URL points to `3e6269.../app.asar/dist/index.html`, readyState complete, Electron `37.10.3` UA confirmed, console 0 errors/warnings. DOM check showed no compact summary `<details>`/body or “Summary available”/“View summary” text.
 
 ## Active Work
-- id: compact-marker-non-expandable-ui
-  owner: /self/owner_dev_3
-  reviewer: /self/owner_dev_3/reviewer
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
-  branch: fix/compact-marker-non-expandable-ui
-  task_type: ui-bugfix/conversation
-  depends_on: user correction on 2026-09-19 CST: “compact summary 还是没改啊 / 现在还是折叠起来的 ui”. Previous `compact_marker_hide_summary` only removed duplicate summary inside replacement history and did not remove the expandable compact row UI.
-  files: likely `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, possibly compact/search/detail helpers if needed.
-  base_commit: `b612853af`
-  status: merged_pending_installed_validation
-  objective: Make context compaction render as a small non-expandable boundary marker in the active conversation UI, not an expandable/collapsible summary card.
-  design_intent: Compact is an internal context-management boundary, not content the user should be invited to read inline. The chat timeline should remain clean after compaction while preserving durable audit facts off the default surface.
-  invariants: Do not delete persisted compact facts, replacement history, archived history, search/detail extraction, or reload semantics; do not hide later user/assistant messages after the compact boundary; do not regress active command/orphan item handling around compaction.
-  forbidden_paths: no CSS-only hiding that leaves keyboard/screen-reader expandable controls; no removing backend/thread history facts; no reintroducing summary body/preview under another label; no broad redesign of conversation rows.
-  expected_implementation_outline: Remove or gate the compact row `<details>`/summary expansion affordance from active conversation rendering, update component tests that currently expect expandable summary markup, and keep compact row as “Context compacted” marker with bounded metadata only if non-interactive.
-  minimum_regression_matrix: compact summary present + replacement history missing; replacement history available; large summary payload; archived artifacts/history; nested compact archived history; same-turn pre/post compact user messages; search/detail helpers still work if they are intentionally retained; focused component/lib tests and diff check; reviewer approval.
-  owner_result: commit `c64e67639` removes compact summary/details rendering from active Conversation UI, keeps compact facts in lib/detail paths, focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114, `git diff --check` pass, reviewer approved.
-  merge_commit: `33aaff9cc`
-  pm_validation: PM inspected implementation against UI contract; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114; diff check passed before merge.
-  next_action: request Runtime Capsule restart for capsule-only release `sha256:3e6269...`, then self-debug installed UI.
-  blockers: none.
-
-- id: split-init-context-display
-  owner: /self/owner_dev_3
-  reviewer: /self/owner_dev_3/reviewer
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
-  branch: fix/split-init-context-display
-  task_type: ui-data-model/conversation-init-context
-  depends_on: user correction on 2026-09-19 CST: “然后拆分 init context 也没做”. Related to compact/replacement history display but broader than removing compact summary folding.
-  files: likely `apps/root-worker-prototype/src/lib/conversationReplacementHistory.ts`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, `apps/root-worker-prototype/src/lib/conversation.test.ts`, possibly protocol/types only if section facts are currently insufficient.
-  base_commit: `33aaff9cc`
-  status: merged_pending_installed_validation
-  objective: Render/present Init Context as distinct source sections instead of one monolithic “Init Context” text/details block, while preserving the single init-context event and provider-visible audit facts.
-  design_intent: Init Context is a bundle of separately meaningful provider-visible inputs (AGENTS/instructions, environment, tools, runtime activity, skills, etc.). Users need to inspect these by source/section, not read a single concatenated blob.
-  problem_model: Typed `injectedContext.sections` already exists, but `conversationReplacementHistory.ts` currently joins every section into one `toolDetails` string for a single `Init Context` tool entry, so the UI cannot expose section boundaries.
-  invariants: Do not duplicate Init Context turns; do not split the persisted event into fake independent user/assistant messages; do not lose section labels/text, ordering, truncation metadata, reload behavior, search/detail discoverability, or provider-visible audit fidelity.
-  forbidden_paths: no regex splitting rendered text after labels; no CSS-only visual splitting over a monolithic string; no backend history rewrite just for UI; no hard-coded section names as the only supported model.
-  expected_implementation_outline: Preserve typed section structure through conversation projection or tool detail modeling, render Init Context details as per-section blocks/rows with labels and bounded text, and update tests so sections remain individually visible/searchable without duplicating the top-level init event.
-  minimum_regression_matrix: typed injectedContext with multiple sections; empty/missing preview; long section text; reload/read snapshot path; replacement-history/compact detail path; search across labels and text; no duplicate Init Context rows; focused tests and reviewer approval.
-  owner_result: commit `ac04bd218` adds `ConversationEntry.toolDetailSections`, preserves typed Init Context section label/text/order for live and compact replacement-history paths, renders ToolRow details as section blocks, keeps `toolDetails` string for compatibility/search fallback, and fixes virtualization height double-counting. Focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121, `git diff --check` pass, reviewer approved after virtualization fix.
-  merge_commit: `924c1a598`
-  pm_validation: PM inspected section typed-data design; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121; diff check passed before merge.
-  next_action: request Runtime Capsule restart for capsule-only release `sha256:3e6269...`, then self-debug installed UI.
-  blockers: none.
-
-- id: capsule-only-runtime-delivery
-  owner: /self/owner_dev
-  reviewer: /self/owner_dev/reviewer
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev
-  branch: feature/capsule-only-runtime-delivery
-  task_type: build/runtime-delivery-optimization
-  depends_on: user request on 2026-09-19 CST: “每次重启如果 launcher 没修改不用编译，也不用打包 dmg，只要构建 capsule”.
-  files: likely `apps/root-worker-prototype/scripts/package-mac-app.cjs`, Runtime Capsule producer/update scripts, package scripts in `apps/root-worker-prototype/package.json`, tests around installed artifact update/capsule producer.
-  base_commit: `0ed98d7c8`
-  status: merged_pending_installed_validation
-  objective: Add or expose a fast delivery path that builds the Runtime Capsule payload/artifact needed by `request_runtime_restart` without rebuilding the outer Launcher or creating a DMG when Launcher/outer app inputs are unchanged.
-  design_intent: Runtime Capsule is the update unit for ordinary renderer/main/preload/app-server/default-config changes. Full app packaging/DMG is only needed for installer/outer Launcher/seed distribution. PM delivery should avoid unnecessary launcher release compile and DMG packaging for every runtime restart.
-  invariants: Do not weaken capsule manifest/integrity/signing; do not skip app-server/renderer/native helper builds that are part of the Runtime payload; do not break full mac app/DMG packaging; request_runtime_restart must still install a complete verified Runtime Capsule.
-  forbidden_paths: no copying loose files into installed artifacts; no in-place mutation of current artifact; no unsigned/partial Capsule; no assuming Launcher unchanged by file name only without a reliable dependency/input check or explicit script target; no removing full package flow.
-  expected_implementation_outline: Identify current package script boundaries, add a dedicated capsule-only build command or split existing mac packaging into payload/capsule vs outer-app/dmg phases, update PM/developer docs/scripts, and add focused tests or smoke checks proving the capsule-only path emits the same valid capsule metadata/release id structure needed by Runtime Launcher.
-  minimum_regression_matrix: capsule-only command builds renderer/app-server/default-config/native/helper payload and capsule metadata; full `package:root-worker-prototype:mac` still works; request_runtime_restart can install capsule-only artifact; Launcher unchanged path skips launcher compile/DMG; Launcher-changed/full package path remains available; focused tests and diff check; reviewer approval.
-  owner_result: commit `572d158d305b5a1d6a2f39aa7db90733e0168b7f` adds `package:root-worker-prototype:mac:capsule`, splits `packageMacRuntimeCapsule`, copies complete sealed Capsule into `runtime-launcher/incoming/<activationId>`, full mac package reuses capsule stage before Launcher packaging, focused script tests 9/9 and `git diff --check` pass, reviewer approved after activation id boundary fix.
-  merge_commit: `71e628861`
-  pm_validation: PM inspected against build/runtime delivery brief; main `node --test apps/root-worker-prototype/scripts/package-mac-app.test.cjs apps/root-worker-prototype/scripts/package-mac-capsule.test.cjs` 9/9; diff check passed before merge.
-  delivery_candidate: `pnpm package:root-worker-prototype:mac:capsule` produced activationId `capsule-1789814664246-248206d78db6075b`, releaseId `sha256:3e6269c708c358b7665c900aa8dd77166dd5c4ae257382e16053ee6d758fc76b`, sourceCommit `6ace3c353f8e4b63d79adc8874c74d4cf241bc86`; incoming layout quick check passed.
-  next_action: request Runtime Capsule restart and verify Launcher selection/control state/self-debug.
-  blockers: none.
+No active product work. `source_workspace-dev` and `source_workspace-dev-3` are idle after sync; `source_workspace-dev-2` remains dirty/unavailable and should not receive new tasks until cleaned or explicitly reconciled.
 
 ## Recent Completed
+- id: compact-marker-non-expandable-ui
+  status: installed_effective
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  commit: owner `c64e67639`; merge `33aaff9cc`
+  summary: Compact rows now render as non-expandable `Context compacted` markers; no compact summary `<details>`, summary preview/body, or “Summary available/View summary” appears in the active chat UI.
+  validation: owner/reviewer approved; PM design验收 passed; main focused UI/lib tests 114/114 and then combined Init Context tests 121/121; installed via capsule-only release `sha256:3e6269...`; self-debug DOM confirmed compact summary details/body count 0 and console 0 errors/warnings.
+
+- id: split-init-context-display
+  status: installed_effective
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  commit: owner `ac04bd218`; merge `924c1a598`
+  summary: Init Context remains one row/event but carries typed `toolDetailSections`; ToolRow details render section labels/text separately while preserving `toolDetails` as compatibility/search fallback.
+  validation: owner/reviewer approved after virtualization height double-count fix; PM design验收 passed; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121; installed via capsule-only release `sha256:3e6269...`; self-debug confirmed new renderer bundle and zero console errors/warnings.
+
+- id: capsule-only-runtime-delivery
+  status: installed_effective
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  commit: owner `572d158d305b5a1d6a2f39aa7db90733e0168b7f`; merge `71e628861`
+  summary: Added explicit `package:root-worker-prototype:mac:capsule` path that builds a complete Runtime Capsule into `runtime-launcher/incoming/<activationId>` without rebuilding the outer Launcher or DMG; full mac packaging still reuses the capsule stage.
+  validation: owner/reviewer approved; PM design验收 passed; main script tests 9/9; actual delivery used `pnpm package:root-worker-prototype:mac:capsule`, produced `sha256:3e6269...`, and recovered restart `call_74YbmRKaOr3SkSr4SJYNhgXn` selected it as externalCurrent/activeLaunch. No DMG/full outer app packaging was used for this delivery.
+
 - id: file-tree-open-normal-preview
   status: installed_effective
   owner: /self/owner_dev
@@ -109,6 +65,5 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
 
 ## Known Issues
 - 2026-09-19 Computer Use stable helper no-rewrite keeps `Contents/Resources/payload-electron-path` unchanged by design to avoid touching the stable helper bundle. After the `bb7f0bab...` delivery, MCP server diagnostics still show `execPath` from previous artifact `c1ea6473...` while the main Runtime is `bb7f0bab...`. This is currently safe because `c1ea6473...` is externalPrevious, but future artifact GC could break the stable helper MCP server if the referenced previous payload is removed. Need a follow-up design for a stable current-runtime indirection or non-TCC-breaking payload pointer update.
-- 2026-09-19 current package/delivery workflow is inefficient for Runtime-only changes: PM used full mac app packaging and DMG to produce Runtime Capsule releases `c1ea6473...` and `bb7f0bab...`. User requested a capsule-only build/install path when Launcher/outer app is unchanged; tracked as active queued work `capsule-only-runtime-delivery`.
 - 2026-09-19 `.morpheus/config.toml` remains dirty from user/runtime config changes and must not be committed accidentally.
 - Older completed entries and stale known issues are archived in [PM Progress Archive](pm-progress-archive/index.md).
