@@ -75,6 +75,15 @@ function fakeNativeClient(options = {}) {
               confidence: 0.85,
               source: "test",
             },
+            {
+              role: "AXTextField",
+              title: "Search",
+              writable: true,
+              bounds: { x: 20, y: 90, width: 240, height: 30 },
+              center: { x: 140, y: 105 },
+              confidence: 0.85,
+              source: "test",
+            },
           ],
           limitations: [],
         },
@@ -96,6 +105,23 @@ function fakeNativeClient(options = {}) {
             bounds: { x: 20, y: 40, width: 100, height: 30 },
             center: { x: 70, y: 55 },
           },
+        };
+      }
+      if (payload.type === "setText") {
+        return {
+          ok: true,
+          method: "accessibility-set-value",
+          targetVisibility: "frontmost",
+          query: payload.query,
+          matchStatus: "unique",
+          matchedElement: {
+            role: "AXTextField",
+            title: payload.query,
+            writable: true,
+            bounds: { x: 20, y: 90, width: 240, height: 30 },
+            center: { x: 140, y: 105 },
+          },
+          characterCount: payload.text.length,
         };
       }
       return { ok: true, method: payload.type };
@@ -190,6 +216,8 @@ test("computer use MCP lists typed tools", () => {
   assert.deepEqual(act.inputSchema.required, ["action"]);
   assert.equal(act.inputSchema.properties.action.type, "object");
   assert.match(act.inputSchema.properties.action.description, /pressText/);
+  assert.match(act.inputSchema.properties.action.description, /visualization:"targetBound"/);
+  assert.match(act.inputSchema.properties.action.description, /backgroundAX/);
 });
 
 test("computer use MCP observe returns typed evidence without screenshot data by default", async () => {
@@ -266,9 +294,41 @@ test("computer use MCP action supports pressText semantic AX press evidence", as
   assert.equal(result.structuredContent.evidence.method, "accessibility-press");
   assert.equal(result.structuredContent.evidence.matchStatus, "unique");
   assert.equal(result.structuredContent.evidence.matchedElement.pressable, true);
+  assert.equal(result.structuredContent.evidence.visualProof.visualization, "targetBound");
+  assert.equal(result.structuredContent.evidence.visualProof.visualAction, "press");
+  assert.equal(result.structuredContent.evidence.visualProof.nativeExecution, "backgroundAX");
+  assert.equal(result.structuredContent.evidence.visualProof.systemCursorMoved, false);
   assert.deepEqual(nativeClient.actPayloads, [
     { type: "pressText", targetApp: "com.apple.finder", text: "Continue" },
   ]);
+  await server.close();
+});
+
+test("computer use MCP redacts setText text from returned trace state", async () => {
+  const nativeClient = fakeNativeClient();
+  const server = createComputerUseMcpServer({
+    managerFactory: managerFactoryWithNative(nativeClient),
+  });
+  await server.callTool("computer.start_session", {});
+  const result = await server.callTool("computer.act", {
+    action: { type: "setText", query: "Search", text: "draft phrase" },
+  });
+
+  assert.equal(result.structuredContent.status, "completed");
+  assert.equal(result.structuredContent.evidence.method, "accessibility-set-value");
+  const trace = result.structuredContent.state.trace.at(-1);
+  assert.equal(trace.action.type, "setText");
+  assert.equal(trace.action.text, undefined);
+  assert.equal(trace.action.textOmitted, true);
+  assert.equal(trace.action.characterCount, "draft phrase".length);
+  assert.equal(trace.evidence.characterCount, "draft phrase".length);
+  assert.equal(trace.evidence.visualProof.nativeExecution, "backgroundAX");
+  assert.deepEqual(nativeClient.actPayloads.at(-1), {
+    type: "setText",
+    targetApp: "com.apple.finder",
+    query: "Search",
+    text: "draft phrase",
+  });
   await server.close();
 });
 

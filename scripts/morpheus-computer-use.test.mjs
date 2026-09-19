@@ -768,8 +768,16 @@ test("computer use CLI setText writes background AX target without activation", 
   assert.equal(nativeClient.actions[0].text, "hello background");
   const trace = result.results[1].state.trace.at(-1);
   assert.equal(trace.action.type, "setText");
+  assert.equal(trace.action.text, undefined);
+  assert.equal(trace.action.textOmitted, true);
+  assert.equal(trace.action.characterCount, "hello background".length);
   assert.equal(trace.evidence.method, "accessibility-set-value");
   assert.equal(trace.evidence.targetVisibility, "background");
+  assert.equal(trace.evidence.visualProof.visualization, "targetBound");
+  assert.equal(trace.evidence.visualProof.visualAction, "type");
+  assert.equal(trace.evidence.visualProof.nativeExecution, "backgroundAX");
+  assert.equal(trace.evidence.visualProof.systemCursorMoved, false);
+  assert.equal(trace.visualProof.method, "morpheus-target-window-proof");
 });
 
 test("computer use CLI pressText presses background AX target without activation", async () => {
@@ -815,6 +823,11 @@ test("computer use CLI pressText presses background AX target without activation
   assert.equal(trace.action.type, "pressText");
   assert.equal(trace.evidence.method, "accessibility-press");
   assert.equal(trace.evidence.targetVisibility, "background");
+  assert.equal(trace.evidence.visualProof.visualization, "targetBound");
+  assert.equal(trace.evidence.visualProof.visualAction, "press");
+  assert.equal(trace.evidence.visualProof.nativeExecution, "backgroundAX");
+  assert.equal(trace.evidence.visualProof.systemCursorMoved, false);
+  assert.equal(trace.visualProof.method, "morpheus-target-window-proof");
 });
 
 test("computer use CLI reports activation failures without native side effects", async () => {
