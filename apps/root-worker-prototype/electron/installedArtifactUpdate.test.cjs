@@ -94,7 +94,14 @@ printf '%s\\n' native-helper
   fsOps.chmodSync(targetPath, 0o755);
 }
 
-function writeHelperApp(appPath, { bundleIdentifier = COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER, marker = "helper" } = {}) {
+function writeHelperApp(
+  appPath,
+  {
+    bundleIdentifier = COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER,
+    marker = "helper",
+    serverMarker = null,
+  } = {},
+) {
   const contentsDir = path.join(appPath, "Contents");
   const executable = path.join(contentsDir, "MacOS", COMPUTER_USE_HELPER_APP_NAME);
   fs.mkdirSync(path.dirname(executable), { recursive: true });
@@ -112,6 +119,26 @@ function writeHelperApp(appPath, { bundleIdentifier = COMPUTER_USE_HELPER_BUNDLE
 `,
   );
   fs.writeFileSync(executable, marker, { mode: 0o755 });
+  if (serverMarker != null) {
+    const serverDir = path.join(contentsDir, "Resources", "server");
+    fs.mkdirSync(serverDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(serverDir, "morpheus-computer-use-mcp.mjs"),
+      `mcp ${serverMarker}\n`,
+    );
+    fs.writeFileSync(
+      path.join(serverDir, "computerUse.cjs"),
+      `manager ${serverMarker}\n`,
+    );
+    fs.writeFileSync(
+      path.join(serverDir, "computerUseOverlayBridge.cjs"),
+      `overlay ${serverMarker}\n`,
+    );
+    fs.writeFileSync(
+      path.join(serverDir, COMPUTER_USE_NATIVE_SCRIPT_FILE),
+      `native ${serverMarker}\n`,
+    );
+  }
 }
 
 function readHelperExecutable(appPath) {
@@ -761,6 +788,85 @@ test("materializeStableComputerUseHelperApp updates existing product helper", ()
       targetAppPath: target,
     });
     assert.equal(readHelperExecutable(target), "new");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp keeps matching helper unchanged", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, { marker: "same", serverMarker: "same" });
+    writeHelperApp(target, { marker: "same", serverMarker: "same" });
+    const targetPayloadPath = path.join(
+      target,
+      "Contents",
+      "Resources",
+      "payload-electron-path",
+    );
+    fs.writeFileSync(targetPayloadPath, "/old/payload\n");
+    const executablePath = path.join(
+      target,
+      "Contents",
+      "MacOS",
+      COMPUTER_USE_HELPER_APP_NAME,
+    );
+    const before = fs.statSync(executablePath);
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      payloadElectronPath: "/new/payload",
+      fsOps: fs,
+      runCommand() {
+        throw new Error("codesign should not run for unchanged helper");
+      },
+    });
+
+    assert.deepEqual(result, {
+      status: "unchanged",
+      reason: "stable Computer Use helper already matches packaged helper",
+      sourceAppPath: source,
+      targetAppPath: target,
+    });
+    assert.equal(readHelperExecutable(target), "same");
+    assert.equal(readHelperPayloadPath(target), "/old/payload\n");
+    assert.equal(fs.statSync(executablePath).ino, before.ino);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp updates when server resources differ", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, { marker: "same", serverMarker: "new" });
+    writeHelperApp(target, { marker: "same", serverMarker: "old" });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          target,
+          "Contents",
+          "Resources",
+          "server",
+          "computerUse.cjs",
+        ),
+        "utf8",
+      ),
+      "manager new\n",
+    );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }

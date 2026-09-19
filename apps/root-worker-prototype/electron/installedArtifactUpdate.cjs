@@ -64,6 +64,10 @@ const COMPUTER_USE_HELPER_PAYLOAD_PATH_INSIDE_APP = path.join(
   "Resources",
   "payload-electron-path",
 );
+const COMPUTER_USE_HELPER_CODE_SIGNATURE_DIR_INSIDE_APP = path.join(
+  "Contents",
+  "_CodeSignature",
+);
 const COMPUTER_USE_HELPER_PAYLOAD_PATH_RELATIVE_PATH = path.join(
   COMPUTER_USE_HELPER_APP_RELATIVE_PATH,
   COMPUTER_USE_HELPER_PAYLOAD_PATH_INSIDE_APP,
@@ -623,6 +627,17 @@ function materializeStableComputerUseHelperApp({
       targetAppPath,
     };
   }
+  if (
+    fsOps.existsSync(targetAppPath) &&
+    computerUseHelperAppsEquivalent(sourceAppPath, targetAppPath, fsOps)
+  ) {
+    return {
+      status: "unchanged",
+      reason: "stable Computer Use helper already matches packaged helper",
+      sourceAppPath,
+      targetAppPath,
+    };
+  }
 
   const targetParent = path.dirname(targetAppPath);
   fsOps.mkdirSync(targetParent, { recursive: true, mode: 0o755 });
@@ -730,6 +745,95 @@ function isComputerUseHelperBundle(appPath, fsOps = resolveInstalledArtifactFile
   } catch {
     return false;
   }
+}
+
+function computerUseHelperAppsEquivalent(sourceAppPath, targetAppPath, fsOps) {
+  const sourceManifest = computerUseHelperEquivalenceManifest(sourceAppPath, fsOps);
+  if (!sourceManifest) {
+    return false;
+  }
+  const targetManifest = computerUseHelperEquivalenceManifest(targetAppPath, fsOps);
+  if (!targetManifest) {
+    return false;
+  }
+  return JSON.stringify(sourceManifest) === JSON.stringify(targetManifest);
+}
+
+function computerUseHelperEquivalenceManifest(appPath, fsOps) {
+  try {
+    const entries = [];
+    collectComputerUseHelperEquivalenceEntries(appPath, "", entries, fsOps);
+    entries.sort((left, right) => left.path.localeCompare(right.path));
+    return entries;
+  } catch {
+    return null;
+  }
+}
+
+function collectComputerUseHelperEquivalenceEntries(
+  absolutePath,
+  relativePath,
+  entries,
+  fsOps,
+) {
+  if (relativePath && shouldIgnoreComputerUseHelperEquivalencePath(relativePath)) {
+    return;
+  }
+  const metadata = fsOps.lstatSync(absolutePath);
+  if (metadata.isDirectory()) {
+    if (relativePath) {
+      entries.push({
+        path: normalizeManifestPath(relativePath),
+        type: "directory",
+      });
+    }
+    for (const child of fsOps.readdirSync(absolutePath, { withFileTypes: true })) {
+      const childRelativePath = relativePath
+        ? path.join(relativePath, child.name)
+        : child.name;
+      collectComputerUseHelperEquivalenceEntries(
+        path.join(absolutePath, child.name),
+        childRelativePath,
+        entries,
+        fsOps,
+      );
+    }
+    return;
+  }
+  if (metadata.isSymbolicLink()) {
+    entries.push({
+      path: normalizeManifestPath(relativePath),
+      target: fsOps.readlinkSync(absolutePath),
+      type: "symlink",
+    });
+    return;
+  }
+  if (!metadata.isFile()) {
+    throw new Error(`Unsupported Computer Use helper bundle entry: ${absolutePath}`);
+  }
+  entries.push({
+    executable: (metadata.mode & 0o111) !== 0,
+    hash: crypto
+      .createHash("sha256")
+      .update(fsOps.readFileSync(absolutePath))
+      .digest("hex"),
+    path: normalizeManifestPath(relativePath),
+    type: "file",
+  });
+}
+
+function shouldIgnoreComputerUseHelperEquivalencePath(relativePath) {
+  return (
+    relativePath === COMPUTER_USE_HELPER_PAYLOAD_PATH_INSIDE_APP ||
+    relativePath === COMPUTER_USE_HELPER_CODE_SIGNATURE_DIR_INSIDE_APP ||
+    relativePath.startsWith(
+      `${COMPUTER_USE_HELPER_CODE_SIGNATURE_DIR_INSIDE_APP}${path.sep}`,
+    )
+  );
+}
+
+function normalizeManifestPath(relativePath) {
+  return relativePath.split(path.sep).join("/");
 }
 
 function normalizeRuntimeCapsuleTree(

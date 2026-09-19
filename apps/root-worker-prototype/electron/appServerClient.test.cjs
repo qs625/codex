@@ -241,6 +241,60 @@ test("app-server environment self-heals missing stable Computer Use helper befor
   }
 });
 
+test("app-server environment keeps matching stable Computer Use helper without warning", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "app-server-helper-self-heal-"));
+  try {
+    const { resourcesPath } = writeRuntimePayload(root);
+    const stableHelperAppPath = path.join(
+      root,
+      "Applications",
+      "Root Worker Computer Use.app",
+    );
+    writeComputerUseHelperApp(stableHelperAppPath, "release-helper");
+    const stableHelperExecutable = path.join(
+      stableHelperAppPath,
+      "Contents",
+      "MacOS",
+      "Root Worker Computer Use",
+    );
+    const commands = [];
+    const warnings = [];
+
+    const env = buildAppServerEnvironment(
+      {
+        HOME: "/Users/alice",
+        PATH: "/usr/bin",
+      },
+      {
+        platform: "darwin",
+        resourcesPath,
+        runCommand(command, args) {
+          commands.push({ command, args });
+          throw new Error("codesign should not run");
+        },
+        selfHealComputerUseHelper: true,
+        stableComputerUseHelperAppPath: stableHelperAppPath,
+        warn(message) {
+          warnings.push(message);
+        },
+      },
+    );
+
+    assert.equal(
+      env.MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE,
+      stableHelperExecutable,
+    );
+    assert.equal(
+      env.MORPHEUS_COMPUTER_USE_HELPER_BUNDLE_PATH,
+      stableHelperAppPath,
+    );
+    assert.deepEqual(commands, []);
+    assert.deepEqual(warnings, []);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("app-server environment does not self-heal over a non-product stable helper", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "app-server-helper-self-heal-"));
   try {
