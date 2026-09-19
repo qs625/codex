@@ -17,7 +17,7 @@ use crate::McpClientElicitationSupport;
 use crate::ToolPluginProvenance;
 
 const CODEX_CONNECTORS_TOKEN_ENV_VAR: &str = "CODEX_CONNECTORS_TOKEN";
-const COMPUTER_USE_MCP_SERVER_NAME: &str = "computer_use";
+pub const COMPUTER_USE_MCP_SERVER_NAME: &str = "computer_use";
 const COMPUTER_USE_HELPER_EXECUTABLE_ENV_VAR: &str = "MORPHEUS_COMPUTER_USE_HELPER_EXECUTABLE";
 const COMPUTER_USE_OVERLAY_SOCKET_ENV_VAR: &str = "MORPHEUS_COMPUTER_USE_OVERLAY_SOCKET_PATH";
 

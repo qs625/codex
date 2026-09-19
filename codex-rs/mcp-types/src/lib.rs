@@ -39,6 +39,7 @@ pub use elicitation_reviewer::ElicitationReviewRequest;
 pub use elicitation_reviewer::ElicitationReviewResult;
 pub use elicitation_reviewer::ElicitationReviewer;
 pub use elicitation_reviewer::ElicitationReviewerHandle;
+pub use mcp_config::COMPUTER_USE_MCP_SERVER_NAME;
 pub use mcp_config::McpConfig;
 pub use mcp_config::configured_mcp_servers;
 pub use mcp_config::effective_mcp_servers;
