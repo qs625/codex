@@ -44,7 +44,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   depends_on: user correction on 2026-09-19 CST: “然后拆分 init context 也没做”. Related to compact/replacement history display but broader than removing compact summary folding.
   files: likely `apps/root-worker-prototype/src/lib/conversationReplacementHistory.ts`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, `apps/root-worker-prototype/src/lib/conversation.test.ts`, possibly protocol/types only if section facts are currently insufficient.
   base_commit: `33aaff9cc`
-  status: dispatching
+  status: dispatched
   objective: Render/present Init Context as distinct source sections instead of one monolithic “Init Context” text/details block, while preserving the single init-context event and provider-visible audit facts.
   design_intent: Init Context is a bundle of separately meaningful provider-visible inputs (AGENTS/instructions, environment, tools, runtime activity, skills, etc.). Users need to inspect these by source/section, not read a single concatenated blob.
   problem_model: Typed `injectedContext.sections` already exists, but `conversationReplacementHistory.ts` currently joins every section into one `toolDetails` string for a single `Init Context` tool entry, so the UI cannot expose section boundaries.
@@ -52,7 +52,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   forbidden_paths: no regex splitting rendered text after labels; no CSS-only visual splitting over a monolithic string; no backend history rewrite just for UI; no hard-coded section names as the only supported model.
   expected_implementation_outline: Preserve typed section structure through conversation projection or tool detail modeling, render Init Context details as per-section blocks/rows with labels and bounded text, and update tests so sections remain individually visible/searchable without duplicating the top-level init event.
   minimum_regression_matrix: typed injectedContext with multiple sections; empty/missing preview; long section text; reload/read snapshot path; replacement-history/compact detail path; search across labels and text; no duplicate Init Context rows; focused tests and reviewer approval.
-  next_action: sync owner_dev_3 to current main and dispatch with full UI/data-model brief.
+  next_action: await owner_dev_3/reviewer completion, then PM design验收/merge and include in next Runtime Capsule delivery.
   blockers: none.
 
 - id: capsule-only-runtime-delivery
