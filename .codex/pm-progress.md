@@ -32,7 +32,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   owner_result: commit `c64e67639` removes compact summary/details rendering from active Conversation UI, keeps compact facts in lib/detail paths, focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114, `git diff --check` pass, reviewer approved.
   merge_commit: `33aaff9cc`
   pm_validation: PM inspected implementation against UI contract; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` 114/114; diff check passed before merge.
-  next_action: include in next Runtime Capsule delivery, preferably batched with `split-init-context-display`.
+  next_action: include in imminent Runtime Capsule delivery with `split-init-context-display`.
   blockers: none.
 
 - id: split-init-context-display
@@ -44,7 +44,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   depends_on: user correction on 2026-09-19 CST: “然后拆分 init context 也没做”. Related to compact/replacement history display but broader than removing compact summary folding.
   files: likely `apps/root-worker-prototype/src/lib/conversationReplacementHistory.ts`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, `apps/root-worker-prototype/src/lib/conversation.test.ts`, possibly protocol/types only if section facts are currently insufficient.
   base_commit: `33aaff9cc`
-  status: dispatched
+  status: merged_pending_capsule_delivery
   objective: Render/present Init Context as distinct source sections instead of one monolithic “Init Context” text/details block, while preserving the single init-context event and provider-visible audit facts.
   design_intent: Init Context is a bundle of separately meaningful provider-visible inputs (AGENTS/instructions, environment, tools, runtime activity, skills, etc.). Users need to inspect these by source/section, not read a single concatenated blob.
   problem_model: Typed `injectedContext.sections` already exists, but `conversationReplacementHistory.ts` currently joins every section into one `toolDetails` string for a single `Init Context` tool entry, so the UI cannot expose section boundaries.
@@ -52,7 +52,10 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   forbidden_paths: no regex splitting rendered text after labels; no CSS-only visual splitting over a monolithic string; no backend history rewrite just for UI; no hard-coded section names as the only supported model.
   expected_implementation_outline: Preserve typed section structure through conversation projection or tool detail modeling, render Init Context details as per-section blocks/rows with labels and bounded text, and update tests so sections remain individually visible/searchable without duplicating the top-level init event.
   minimum_regression_matrix: typed injectedContext with multiple sections; empty/missing preview; long section text; reload/read snapshot path; replacement-history/compact detail path; search across labels and text; no duplicate Init Context rows; focused tests and reviewer approval.
-  next_action: await owner_dev_3/reviewer completion, then PM design验收/merge and include in next Runtime Capsule delivery.
+  owner_result: commit `ac04bd218` adds `ConversationEntry.toolDetailSections`, preserves typed Init Context section label/text/order for live and compact replacement-history paths, renders ToolRow details as section blocks, keeps `toolDetails` string for compatibility/search fallback, and fixes virtualization height double-counting. Focused tests `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121, `git diff --check` pass, reviewer approved after virtualization fix.
+  merge_commit: `924c1a598`
+  pm_validation: PM inspected section typed-data design; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts src/lib/conversationVirtualization.test.ts` 121/121; diff check passed before merge.
+  next_action: include in imminent Runtime Capsule delivery with compact marker UI.
   blockers: none.
 
 - id: capsule-only-runtime-delivery
@@ -74,7 +77,7 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   owner_result: commit `572d158d305b5a1d6a2f39aa7db90733e0168b7f` adds `package:root-worker-prototype:mac:capsule`, splits `packageMacRuntimeCapsule`, copies complete sealed Capsule into `runtime-launcher/incoming/<activationId>`, full mac package reuses capsule stage before Launcher packaging, focused script tests 9/9 and `git diff --check` pass, reviewer approved after activation id boundary fix.
   merge_commit: `71e628861`
   pm_validation: PM inspected against build/runtime delivery brief; main `node --test apps/root-worker-prototype/scripts/package-mac-app.test.cjs apps/root-worker-prototype/scripts/package-mac-capsule.test.cjs` 9/9; diff check passed before merge.
-  next_action: after pending UI fixes are merged, use `pnpm package:root-worker-prototype:mac:capsule` from canonical main for installed delivery and verify Launcher selection/control state/self-debug.
+  next_action: use `pnpm package:root-worker-prototype:mac:capsule` from canonical main for installed delivery and verify Launcher selection/control state/self-debug.
   blockers: none.
 
 ## Recent Completed
