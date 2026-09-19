@@ -2937,9 +2937,10 @@ test("omits compact summary body when replacement history is unavailable", () =>
   assert.equal(compactEntry.replacementHistoryEntries, null);
   assert.doesNotMatch(compactEntry.text, /Current Goal/);
   assert.doesNotMatch(compactEntry.text, /Preserve compact summary/);
+  assert.equal(entries.length, 1);
 });
 
-test("keeps replacement init context out of compact display entries", () => {
+test("shows replacement init context after compact marker", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2964,6 +2965,8 @@ test("keeps replacement init context out of compact display entries", () => {
   );
 
   const compactEntry = entries[0]!;
+  const contextEntry = entries[1]!;
+  assert.equal(entries.length, 2);
   assert.equal(compactEntry.text, "Context compacted");
   assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "available");
@@ -2985,9 +2988,25 @@ test("keeps replacement init context out of compact display entries", () => {
       ],
     ],
   );
+  assert.deepEqual(
+    [
+      contextEntry.id,
+      contextEntry.kind,
+      contextEntry.toolName,
+      contextEntry.text,
+      contextEntry.toolDetails,
+    ],
+    [
+      "compact-init-only:retained:0:ctx-1:section:0",
+      "tool",
+      "Init Context · AGENTS.md",
+      "Persisted project instructions",
+      "AGENTS.md\nPersisted project instructions",
+    ],
+  );
 });
 
-test("omits typed context compaction replacement history from display entries", () => {
+test("shows only typed init context from compaction replacement history", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -3033,6 +3052,24 @@ test("omits typed context compaction replacement history from display entries", 
   assert.equal(compactEntry.replacementHistoryStatus, "available");
   assert.equal(compactEntry.replacementHistoryCount, 3);
   assert.equal(compactEntry.replacementHistoryEntries?.length, 4);
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.kind, entry.toolName ?? null, entry.text]),
+    [
+      ["compact-typed", "compact", null, "Context compacted"],
+      [
+        "compact-typed:retained:0:ctx-1:section:0",
+        "tool",
+        "Init Context · AGENTS.md",
+        "# AGENTS.md instructions Persisted agent instructions",
+      ],
+      [
+        "compact-typed:retained:0:ctx-1:section:1",
+        "tool",
+        "Init Context · Environment",
+        "<cwd>/workspace</cwd>",
+      ],
+    ],
+  );
   assert.deepEqual(
     compactEntry.replacementHistoryEntries
       ?.filter((entry) => entry.toolName?.startsWith("Init Context"))
@@ -3506,6 +3543,105 @@ test("multiple compactions keep only entries after the latest hidden compact bou
     [
       ["compact-1", "compact"],
       ["after-first-compact", "message"],
+    ],
+  );
+});
+
+test("multiple compactions show only latest retained init context", () => {
+  const state = buildConversationState(
+    makeThreadWithTurns([
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistory: [
+              {
+                type: "injectedContext",
+                id: "ctx-old",
+                title: "Init Context",
+                preview: "Old Context",
+                sections: [
+                  {
+                    label: "Old Context",
+                    text: "old retained context",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "agentMessage",
+            id: "after-first-compact",
+            text: "continued after first compact",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-2",
+            replacementHistory: [
+              {
+                type: "injectedContext",
+                id: "ctx-latest",
+                title: "Init Context",
+                preview: "Latest Context",
+                sections: [
+                  {
+                    label: "Latest Context",
+                    text: "latest retained context",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "agentMessage",
+            id: "after-second-compact",
+            text: "continued after second compact",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    state.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-2", "compact"],
+      ["compact-2:retained:0:ctx-latest:section:0", "tool"],
+      ["after-second-compact", "message"],
+    ],
+  );
+  assert.deepEqual(
+    state.entries.map((entry) => [entry.id, entry.text]),
+    [
+      ["compact-1", "Context compacted"],
+      ["compact-1:retained:0:ctx-old:section:0", "old retained context"],
+      ["after-first-compact", "continued after first compact"],
+      ["compact-2", "Context compacted"],
+      ["compact-2:retained:0:ctx-latest:section:0", "latest retained context"],
+      ["after-second-compact", "continued after second compact"],
     ],
   );
 });
