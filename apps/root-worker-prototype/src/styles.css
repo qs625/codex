@@ -3477,38 +3477,6 @@ svg {
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
-.tool-detail-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  padding-top: 14px;
-}
-
-.tool-detail-section {
-  min-width: 0;
-  max-width: 100%;
-  border: 1px solid rgba(68, 64, 60, 0.12);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.62);
-  overflow: hidden;
-}
-
-.tool-detail-section h4 {
-  margin: 0;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(68, 64, 60, 0.1);
-  color: #334155;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.tool-card-body .tool-detail-section pre {
-  padding: 10px;
-}
-
 .tool-output-block {
   min-width: 0;
   max-width: 100%;

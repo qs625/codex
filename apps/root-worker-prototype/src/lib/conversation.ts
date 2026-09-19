@@ -272,22 +272,7 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "injectedContext") {
-    return [
-      {
-        id: item.id,
-        kind: "tool" as const,
-        author,
-        role: "system" as const,
-        text: item.preview,
-        timestamp,
-        attachments: [],
-        toolName: item.title,
-        toolStatus: "completed",
-        toolDetails: formatInjectedContextDetails(item),
-        toolDetailSections: formatInjectedContextDetailSections(item),
-        toolCategory: "context",
-      },
-    ];
+    return buildInjectedContextEntries(item, { author, timestamp });
   }
 
   if (item.type === "fileChange") {
@@ -1880,21 +1865,50 @@ function lifecycleStatusFromUnknown(
   }
 }
 
-function formatInjectedContextDetails(
+function buildInjectedContextEntries(
   item: Extract<ThreadItem, { type: "injectedContext" }>,
-) {
-  return formatInjectedContextDetailSections(item)
-    .map((section) => `${section.label}\n${stringOrFallback(section.text, "")}`)
-    .join("\n\n");
-}
-
-function formatInjectedContextDetailSections(
-  item: Extract<ThreadItem, { type: "injectedContext" }>,
-): NonNullable<ConversationEntry["toolDetailSections"]> {
-  return item.sections.map((section) => ({
-    label: section.label,
-    text: stringOrFallback(section.text, ""),
-  }));
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry[] {
+  if (item.sections.length === 0) {
+    return [
+      {
+        id: item.id,
+        kind: "tool",
+        author,
+        role: "system",
+        text: item.preview || "Initial context was injected.",
+        timestamp,
+        attachments: [],
+        toolName: item.title,
+        toolStatus: "completed",
+        toolDetails: item.preview || item.title || "Initial context was injected.",
+        toolCategory: "context",
+      },
+    ];
+  }
+  return item.sections.map((section, index) => {
+    const label = section.label || `Section ${index + 1}`;
+    const text = stringOrFallback(section.text, "");
+    return {
+      id: `${item.id}:section:${index}`,
+      kind: "tool",
+      author,
+      role: "system",
+      text: previewInlineText(text, 160) ?? "Initial context section is empty.",
+      timestamp,
+      attachments: [],
+      toolName: `${item.title} · ${label}`,
+      toolStatus: "completed",
+      toolDetails: `${label}\n${text}`,
+      toolCategory: "context",
+    };
+  });
 }
 
 function basename(filePath: string) {

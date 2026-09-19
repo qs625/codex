@@ -1436,12 +1436,7 @@ function escapeHtmlAttribute(value: string) {
 }
 
 function hasToolBody(entry: ConversationEntry) {
-  return Boolean(
-    entry.toolDetailSections?.length ||
-      entry.toolDetails ||
-      entry.toolOutput ||
-      entry.pollEventProgress,
-  );
+  return Boolean(entry.toolDetails || entry.toolOutput || entry.pollEventProgress);
 }
 
 function ToolEntryBody({ entry }: { entry: ConversationEntry }) {
@@ -1450,21 +1445,7 @@ function ToolEntryBody({ entry }: { entry: ConversationEntry }) {
       {entry.pollEventProgress ? (
         <PollEventProgress progress={entry.pollEventProgress} />
       ) : null}
-      {entry.toolDetailSections?.length ? (
-        <div className="tool-detail-sections">
-          {entry.toolDetailSections.map((section, index) => (
-            <section
-              key={`${section.label}-${index}`}
-              className="tool-detail-section"
-            >
-              <h4>{section.label}</h4>
-              <pre>{section.text}</pre>
-            </section>
-          ))}
-        </div>
-      ) : entry.toolDetails ? (
-        <pre>{entry.toolDetails}</pre>
-      ) : null}
+      {entry.toolDetails ? <pre>{entry.toolDetails}</pre> : null}
       {entry.toolOutput ? (
         <details
           className={toolOutputClassName(entry.toolOutput)}

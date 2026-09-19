@@ -229,6 +229,12 @@ function shouldMergeConversationEntry(
     ) {
       return canMergeStandaloneToolNotifications(previousEntry, nextEntry);
     }
+    if (
+      previousEntry.toolCategory === "context" ||
+      nextEntry.toolCategory === "context"
+    ) {
+      return false;
+    }
     return previousEntry.toolCategory === nextEntry.toolCategory;
   }
 

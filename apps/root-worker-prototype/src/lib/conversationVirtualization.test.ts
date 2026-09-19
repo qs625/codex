@@ -151,47 +151,53 @@ test("compact row height stays marker-only even when details are loaded", () => 
   );
 });
 
-test("tool detail sections are estimated instead of fallback details", () => {
-  const sectionCell: ConversationCell = {
-    id: "ctx-sections",
+test("context section entries are estimated as separate rows", () => {
+  const firstCell: ConversationCell = {
+    id: "ctx-section-0",
     kind: "tool",
     entries: [
       {
-        id: "ctx-sections",
+        id: "ctx-section-0",
         kind: "tool",
         author: "Root",
         role: "system",
-        text: "AGENTS.md",
+        text: "Persisted project instructions",
         timestamp: "09:41",
         attachments: [],
-        toolName: "Init Context",
+        toolName: "Init Context · AGENTS.md",
         toolStatus: "completed",
-        toolDetails: "fallback\n".repeat(200),
-        toolDetailSections: [
-          {
-            label: "AGENTS.md",
-            text: "short typed section",
-          },
-        ],
+        toolDetails: "AGENTS.md\nPersisted project instructions",
         toolCategory: "context",
       },
     ],
   };
-  const fallbackOnlyCell: ConversationCell = {
-    ...sectionCell,
-    id: "ctx-fallback",
+  const secondCell: ConversationCell = {
+    id: "ctx-section-1",
+    kind: "tool",
     entries: [
       {
-        ...sectionCell.entries[0]!,
-        id: "ctx-fallback",
-        toolDetailSections: undefined,
+        id: "ctx-section-1",
+        kind: "tool",
+        author: "Root",
+        role: "system",
+        text: "<cwd>/workspace</cwd>",
+        timestamp: "09:41",
+        attachments: [],
+        toolName: "Init Context · Environment",
+        toolStatus: "completed",
+        toolDetails: "Environment\n<cwd>/workspace</cwd>",
+        toolCategory: "context",
       },
     ],
   };
+  const layout = buildConversationVirtualLayout(
+    [firstCell, secondCell],
+    new Map(),
+  );
 
-  assert.ok(
-    estimateConversationCellHeight(sectionCell) <
-      estimateConversationCellHeight(fallbackOnlyCell),
+  assert.equal(
+    layout.offsets[1],
+    estimateConversationCellHeight(firstCell) + CONVERSATION_ROW_GAP,
   );
 });
 
