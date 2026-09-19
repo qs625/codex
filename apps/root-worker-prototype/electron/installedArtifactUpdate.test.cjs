@@ -141,6 +141,87 @@ function writeHelperApp(
   }
 }
 
+function fakeSignedMachO({
+  code = "helper-code",
+  includeLinkedit = false,
+  signature = "signature",
+} = {}) {
+  const codeContent = Buffer.isBuffer(code) ? code : Buffer.from(String(code));
+  const signatureContent = Buffer.isBuffer(signature)
+    ? signature
+    : Buffer.from(String(signature));
+  const headerSize = 32;
+  const segmentCommandSize = includeLinkedit ? 72 : 0;
+  const signatureCommandSize = 16;
+  const commandsSize = segmentCommandSize + signatureCommandSize;
+  const signatureOffset = headerSize + commandsSize + codeContent.length;
+  const content = Buffer.alloc(signatureOffset + signatureContent.length);
+  content.writeUInt32LE(0xfeedfacf, 0);
+  content.writeUInt32LE(0x01000007, 4);
+  content.writeUInt32LE(3, 8);
+  content.writeUInt32LE(2, 12);
+  content.writeUInt32LE(includeLinkedit ? 2 : 1, 16);
+  content.writeUInt32LE(commandsSize, 20);
+  content.writeUInt32LE(0, 24);
+  content.writeUInt32LE(0, 28);
+  let commandOffset = headerSize;
+  if (includeLinkedit) {
+    content.writeUInt32LE(0x19, commandOffset);
+    content.writeUInt32LE(segmentCommandSize, commandOffset + 4);
+    content.write("__LINKEDIT", commandOffset + 8, "ascii");
+    content.writeBigUInt64LE(0n, commandOffset + 24);
+    content.writeBigUInt64LE(
+      BigInt(codeContent.length + signatureContent.length),
+      commandOffset + 32,
+    );
+    content.writeBigUInt64LE(BigInt(headerSize + commandsSize), commandOffset + 40);
+    content.writeBigUInt64LE(
+      BigInt(codeContent.length + signatureContent.length),
+      commandOffset + 48,
+    );
+    commandOffset += segmentCommandSize;
+  }
+  content.writeUInt32LE(0x1d, commandOffset);
+  content.writeUInt32LE(signatureCommandSize, commandOffset + 4);
+  content.writeUInt32LE(signatureOffset, commandOffset + 8);
+  content.writeUInt32LE(signatureContent.length, commandOffset + 12);
+  codeContent.copy(content, headerSize + commandsSize);
+  signatureContent.copy(content, signatureOffset);
+  return content;
+}
+
+function fakeFatSignedMachO({ isFat64 = false, slices }) {
+  const archSize = isFat64 ? 32 : 20;
+  const headerSize = 8 + slices.length * archSize;
+  const sliceBuffers = slices.map((slice) => fakeSignedMachO(slice));
+  const offsets = [];
+  let cursor = headerSize;
+  for (const sliceContent of sliceBuffers) {
+    offsets.push(cursor);
+    cursor += sliceContent.length;
+  }
+  const content = Buffer.alloc(cursor);
+  content.writeUInt32BE(isFat64 ? 0xcafebabf : 0xcafebabe, 0);
+  content.writeUInt32BE(slices.length, 4);
+  for (let index = 0; index < slices.length; index += 1) {
+    const archOffset = 8 + index * archSize;
+    content.writeUInt32BE(0x01000007 + index, archOffset);
+    content.writeUInt32BE(3, archOffset + 4);
+    if (isFat64) {
+      content.writeBigUInt64BE(BigInt(offsets[index]), archOffset + 8);
+      content.writeBigUInt64BE(BigInt(sliceBuffers[index].length), archOffset + 16);
+      content.writeUInt32BE(0, archOffset + 24);
+      content.writeUInt32BE(0, archOffset + 28);
+    } else {
+      content.writeUInt32BE(offsets[index], archOffset + 8);
+      content.writeUInt32BE(sliceBuffers[index].length, archOffset + 12);
+      content.writeUInt32BE(0, archOffset + 16);
+    }
+    sliceBuffers[index].copy(content, offsets[index]);
+  }
+  return content;
+}
+
 function readHelperExecutable(appPath) {
   return fs.readFileSync(
     path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
@@ -834,6 +915,205 @@ test("materializeStableComputerUseHelperApp keeps matching helper unchanged", ()
     assert.equal(readHelperExecutable(target), "same");
     assert.equal(readHelperPayloadPath(target), "/old/payload\n");
     assert.equal(fs.statSync(executablePath).ino, before.ino);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp ignores Mach-O code signature differences", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    const sourceExecutable = fakeSignedMachO({
+      code: "same-helper-code",
+      signature: "packaged-signature",
+    });
+    const targetExecutable = fakeSignedMachO({
+      code: "same-helper-code",
+      signature: "stable-ad-hoc-signature",
+    });
+    writeHelperApp(source, { marker: sourceExecutable, serverMarker: "same" });
+    writeHelperApp(target, { marker: targetExecutable, serverMarker: "same" });
+    const targetExecutablePath = path.join(
+      target,
+      "Contents",
+      "MacOS",
+      COMPUTER_USE_HELPER_APP_NAME,
+    );
+    const before = fs.readFileSync(targetExecutablePath);
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+      runCommand() {
+        throw new Error("codesign should not run for equivalent signed helper");
+      },
+    });
+
+    assert.equal(result.status, "unchanged");
+    assert.deepEqual(fs.readFileSync(targetExecutablePath), before);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp ignores Mach-O linkedit signature size differences", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    writeHelperApp(source, {
+      marker: fakeSignedMachO({
+        code: "same-helper-code",
+        includeLinkedit: true,
+        signature: "packaged",
+      }),
+      serverMarker: "same",
+    });
+    writeHelperApp(target, {
+      marker: fakeSignedMachO({
+        code: "same-helper-code",
+        includeLinkedit: true,
+        signature: "stable-ad-hoc-signature-with-different-size",
+      }),
+      serverMarker: "same",
+    });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+      runCommand() {
+        throw new Error("codesign should not run for equivalent signed helper");
+      },
+    });
+
+    assert.equal(result.status, "unchanged");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp ignores fat Mach-O signature offsets", () => {
+  for (const isFat64 of [false, true]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+    try {
+      const source = path.join(root, "source", "Root Worker Computer Use.app");
+      const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+      writeHelperApp(source, {
+        marker: fakeFatSignedMachO({
+          isFat64,
+          slices: [
+            { code: "slice-one-code", signature: "short" },
+            { code: "slice-two-code", signature: "packaged" },
+          ],
+        }),
+        serverMarker: "same",
+      });
+      writeHelperApp(target, {
+        marker: fakeFatSignedMachO({
+          isFat64,
+          slices: [
+            {
+              code: "slice-one-code",
+              signature: "stable-ad-hoc-signature-with-different-size",
+            },
+            { code: "slice-two-code", signature: "stable" },
+          ],
+        }),
+        serverMarker: "same",
+      });
+
+      const result = materializeStableComputerUseHelperApp({
+        sourceAppPath: source,
+        targetAppPath: target,
+        fsOps: fs,
+        runCommand() {
+          throw new Error("codesign should not run for equivalent fat helper");
+        },
+      });
+
+      assert.equal(result.status, "unchanged");
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  }
+});
+
+test("materializeStableComputerUseHelperApp updates when Mach-O code changes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    const sourceExecutable = fakeSignedMachO({
+      code: "new-helper-code",
+      signature: "packaged-signature",
+    });
+    const targetExecutable = fakeSignedMachO({
+      code: "old-helper-code",
+      signature: "stable-ad-hoc-signature",
+    });
+    writeHelperApp(source, { marker: sourceExecutable, serverMarker: "same" });
+    writeHelperApp(target, { marker: targetExecutable, serverMarker: "same" });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+    });
+
+    assert.equal(result.status, "updated");
+    assert.deepEqual(
+      fs.readFileSync(
+        path.join(target, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+      ),
+      sourceExecutable,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("materializeStableComputerUseHelperApp updates when fat Mach-O slice code changes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stable-helper-"));
+  try {
+    const source = path.join(root, "source", "Root Worker Computer Use.app");
+    const target = path.join(root, "Applications", "Root Worker Computer Use.app");
+    const sourceExecutable = fakeFatSignedMachO({
+      slices: [
+        { code: "slice-one-code", signature: "packaged-one" },
+        { code: "new-slice-two-code", signature: "packaged-two" },
+      ],
+    });
+    writeHelperApp(source, {
+      marker: sourceExecutable,
+      serverMarker: "same",
+    });
+    writeHelperApp(target, {
+      marker: fakeFatSignedMachO({
+        slices: [
+          { code: "slice-one-code", signature: "stable-one" },
+          { code: "old-slice-two-code", signature: "stable-two" },
+        ],
+      }),
+      serverMarker: "same",
+    });
+
+    const result = materializeStableComputerUseHelperApp({
+      sourceAppPath: source,
+      targetAppPath: target,
+      fsOps: fs,
+    });
+
+    assert.equal(result.status, "updated");
+    assert.deepEqual(
+      fs.readFileSync(
+        path.join(target, "Contents", "MacOS", COMPUTER_USE_HELPER_APP_NAME),
+      ),
+      sourceExecutable,
+    );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
