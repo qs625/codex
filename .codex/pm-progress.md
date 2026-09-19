@@ -32,6 +32,26 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
   next_action: owner_dev_3 to implement with reused reviewer, then PM design验收/merge and install via next Runtime Capsule delivery.
   blockers: none.
 
+- id: split-init-context-display
+  owner: unassigned
+  reviewer: unassigned
+  checkout: TBD, dispatch when an appropriate dev checkout is free and clean
+  branch: TBD
+  task_type: ui-data-model/conversation-init-context
+  depends_on: user correction on 2026-09-19 CST: “然后拆分 init context 也没做”. Related to compact/replacement history display but broader than removing compact summary folding.
+  files: likely `apps/root-worker-prototype/src/lib/conversationReplacementHistory.ts`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/Conversation.test.tsx`, `apps/root-worker-prototype/src/lib/conversation.test.ts`, possibly protocol/types only if section facts are currently insufficient.
+  base_commit: `3f64d5e1f`
+  status: queued
+  objective: Render/present Init Context as distinct source sections instead of one monolithic “Init Context” text/details block, while preserving the single init-context event and provider-visible audit facts.
+  design_intent: Init Context is a bundle of separately meaningful provider-visible inputs (AGENTS/instructions, environment, tools, runtime activity, skills, etc.). Users need to inspect these by source/section, not read a single concatenated blob.
+  problem_model: Typed `injectedContext.sections` already exists, but `conversationReplacementHistory.ts` currently joins every section into one `toolDetails` string for a single `Init Context` tool entry, so the UI cannot expose section boundaries.
+  invariants: Do not duplicate Init Context turns; do not split the persisted event into fake independent user/assistant messages; do not lose section labels/text, ordering, truncation metadata, reload behavior, search/detail discoverability, or provider-visible audit fidelity.
+  forbidden_paths: no regex splitting rendered text after labels; no CSS-only visual splitting over a monolithic string; no backend history rewrite just for UI; no hard-coded section names as the only supported model.
+  expected_implementation_outline: Preserve typed section structure through conversation projection or tool detail modeling, render Init Context details as per-section blocks/rows with labels and bounded text, and update tests so sections remain individually visible/searchable without duplicating the top-level init event.
+  minimum_regression_matrix: typed injectedContext with multiple sections; empty/missing preview; long section text; reload/read snapshot path; replacement-history/compact detail path; search across labels and text; no duplicate Init Context rows; focused tests and reviewer approval.
+  next_action: dispatch after either `owner_dev_3` finishes compact marker UI or another clean non-conflicting dev checkout becomes available; currently blocked by `owner_dev` active, `owner_dev_3` active, and `owner_dev_2` dirty/unavailable.
+  blockers: no free clean dev checkout.
+
 - id: capsule-only-runtime-delivery
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
