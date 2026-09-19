@@ -125,79 +125,33 @@ Screen Recording and Accessibility approval are still granted by macOS to the
 installed, signed app identity in System Settings; they are not replaced by
 external computer-use permissions or by the cloned source workspace.
 
-The agent-facing Computer Use entrypoint is the repository CLI, not the
-renderer/preload IPC surface:
+The agent-facing Computer Use entrypoint is the MCP server in
+`scripts/morpheus-computer-use-mcp.mjs`. The legacy repository CLI entrypoint has
+been removed so model-facing validation and installed helper behavior use the
+same supported surface.
 
-```bash
-node scripts/morpheus-computer-use.mjs run \
-  --app com.apple.finder \
-  --json \
-  --actions '[{"type":"start"},{"type":"observe"},{"type":"move","x":420,"y":360},{"type":"stop"}]'
-```
+The MCP server exposes session, observation, text lookup, action, stop, and
+permission-status tools backed by the shared Electron `ComputerUseManager`,
+native macOS helper, and overlay bridge. Actions include `move`, `click`,
+`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `pressText`,
+`setText`, `key`, `hotkey`, `type`, `drag`, `wait`, and `stop`. `move` remains
+agent-cursor evidence only and does not move the macOS system cursor. `wait`
+records bounded timer evidence. `clickText` resolves a unique visible
+Accessibility text candidate to ordinary screen coordinates before using the
+same target gate and native click path; ambiguous or missing matches fail with
+candidate evidence instead of guessing.
 
-For common action chains, the same `run` command also accepts ordered shorthand
-flags and compiles them into the same action array:
-
-```bash
-node scripts/morpheus-computer-use.mjs run \
-  --app com.apple.TextEdit \
-  --json \
-  --confirm-risk high \
-  --click 420,360 \
-  --type "hello" \
-  --hotkey cmd+s \
-  --wait 250
-```
-
-The CLI keeps a Computer Use session inside a single `run` process and reuses
-the Electron ComputerUseManager safety gates, target preflight, trace evidence,
-and native macOS bridge. CLI supports `start`, `observe`, `move`, `click`,
-`doubleClick`, `rightClick`, `scroll`, `findText`, `clickText`, `pressText`, `setText`,
-`key`, `hotkey`, `type`, `drag`, `wait`, and `stop`; `move` only updates the agent cursor/path
-evidence and does not move the macOS system cursor. `wait` pauses the same
-session for a bounded duration and records timer evidence. `clickText` resolves
-a unique visible Accessibility text candidate to ordinary screen coordinates
-before using the same target gate and native click path; ambiguous or missing
-matches fail with candidate evidence instead of guessing. `pressText` is a
-semantic macOS Accessibility press: it performs `AXPress` on one unique pressable
-AX element in the target app, including background targets when real AX evidence
-is available, records target-bound proxy cursor/action proof, and never sends
-background mouse events. `setText` is a
-semantic macOS Accessibility write: it sets one unique writable AX value element
-in the target app, including background targets when real AX evidence is
-available, records target-bound proxy cursor/type proof, and never sends
-background keyboard events. These semantic background actions report
+`pressText` is a semantic macOS Accessibility press: it performs `AXPress` on
+one unique pressable AX element in the target app, including background targets
+when real AX evidence is available, records target-bound proxy cursor/action
+proof, and never sends background mouse events. `setText` is a semantic macOS
+Accessibility write: it sets one unique writable AX value element in the target
+app, including background targets when real AX evidence is available, records
+target-bound proxy cursor/type proof, and never sends background keyboard
+events. These semantic background actions report
 `nativeExecution: "backgroundAX"` in `visualProof`; they are not represented as
-real macOS system cursor or keyboard input. The `run --actions`
-batch is the explicit Computer Use operation boundary for real desktop side
-effects, and shorthand flags are compiled into that same batch path. The JSON
-result includes the compiled `actions` for audit and replay. High-risk actions
-such as sensitive/destructive typed or `setText` text, or destructive app shortcuts are
-blocked unless the batch or REPL was started with `--confirm-risk high`. Use
-`--plan-only` to preflight a batch/session while blocking real native side
-effects before input is sent. Each traced action carries bounded typed policy
-and audit fields, including `riskLevel`, `riskCategories`,
-`requiresConfirmation`, `confirmationSatisfied`, the operation boundary,
-before/after observation sequence and target visibility, and a compact
-completion proof.
+real macOS system cursor or keyboard input.
 
-For observe-think-act workflows, use the long-lived REPL instead of splitting
-work across multiple `run` processes:
-
-```bash
-node scripts/morpheus-computer-use.mjs repl \
-  --app com.apple.TextEdit \
-  --omit-screenshot-data
-```
-
-The REPL keeps one `ComputerUseManager` session alive until `stop`, `exit`, EOF,
-SIGINT/interrupt, failed-action cleanup, or policy-block cleanup. It accepts the
-same action vocabulary as line commands such as `observe`, `move 420,360`,
-`right-click 420,360`, `scroll 420,360 0,-240`, `hotkey cmd+s`, `wait 250`,
-plus JSON action lines. Default output is bounded human-readable
-status/evidence; pass `--json` for one structured event per command, `--raw` to
-include sanitized full state, and `trace [count]` or `--trace-tail <n>` for
-bounded trace tails.
 Side effects require a matched target app, Accessibility permission must be
 available, and native backend failures are reported as failed action results
 rather than fake success. Background `observe` and `findText` may read real
@@ -205,21 +159,14 @@ target-window/AX evidence without activating the app. Ordinary keyboard and
 mouse side effects (`click`, `clickText`, `scroll`, `key`, `hotkey`, `type`,
 `drag`) still activate a background target, re-observe the desktop, and only
 send native input after the target is confirmed frontmost/matched; activation
-failure or a different foreground app is reported as a failed or blocked action. Screenshot
-evidence includes a bounded data URL by default and omits the temporary capture
-path because the CLI cleans up that file before returning; pass
-`--omit-screenshot-data` for metadata-only output. Target observes include
-bounded perception facts when macOS exposes real evidence: target window crop
-metadata/screenshot when available, and a limited Accessibility element
-candidate list with screen-coordinate bounds/centers and writable flags. Use
-`--no-perception` to disable this
-extraction or `--perception-limit <n>` to lower the AX candidate cap. CLI runs
-create a narrow Electron overlay helper for target-bound agent cursor feedback;
-the helper is click-through, non-focusable, and cleaned up on `stop`/process
-exit. Background targets are not drawn over an unrelated foreground app before
-activation; background semantic actions retain Morpheus-side target-window proof
-instead. After a visible `move`, the CLI keeps the overlay on screen briefly
-before the next batch action; pass `--overlay-hold-ms 0` to disable that delay.
+failure or a different foreground app is reported as a failed or blocked action.
+Target observes include bounded perception facts when macOS exposes real
+evidence: target window crop metadata/screenshot when available, and a limited
+Accessibility element candidate list with screen-coordinate bounds/centers and
+writable flags. The overlay bridge creates narrow target-bound agent cursor
+feedback when the target can be safely drawn; background targets are not drawn
+over an unrelated foreground app before activation, and background semantic
+actions retain Morpheus-side target-window proof instead.
 
 ## Electron
 
