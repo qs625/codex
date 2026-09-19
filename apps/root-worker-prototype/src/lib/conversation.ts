@@ -284,6 +284,7 @@ function buildConversationItemEntries(
         toolName: item.title,
         toolStatus: "completed",
         toolDetails: formatInjectedContextDetails(item),
+        toolDetailSections: formatInjectedContextDetailSections(item),
         toolCategory: "context",
       },
     ];
@@ -1882,9 +1883,18 @@ function lifecycleStatusFromUnknown(
 function formatInjectedContextDetails(
   item: Extract<ThreadItem, { type: "injectedContext" }>,
 ) {
-  return item.sections
+  return formatInjectedContextDetailSections(item)
     .map((section) => `${section.label}\n${stringOrFallback(section.text, "")}`)
     .join("\n\n");
+}
+
+function formatInjectedContextDetailSections(
+  item: Extract<ThreadItem, { type: "injectedContext" }>,
+): NonNullable<ConversationEntry["toolDetailSections"]> {
+  return item.sections.map((section) => ({
+    label: section.label,
+    text: stringOrFallback(section.text, ""),
+  }));
 }
 
 function basename(filePath: string) {

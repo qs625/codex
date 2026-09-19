@@ -153,6 +153,47 @@ test("tool row renders command summary without command output payload", () => {
   assert.doesNotMatch(markup, /tool-output-block/);
 });
 
+test("tool row renders init context details as typed sections", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "ctx-1",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: "AGENTS.md • Environment",
+          timestamp: "09:41",
+          attachments: [],
+          toolName: "Init Context",
+          toolStatus: "completed",
+          toolDetails: "COMBINED_FALLBACK_SENTINEL",
+          toolDetailSections: [
+            {
+              label: "AGENTS.md",
+              text: "# AGENTS.md instructions\nUse Chinese.",
+            },
+            {
+              label: "Environment",
+              text: "<cwd>/workspace</cwd>",
+            },
+          ],
+          toolCategory: "context",
+        },
+      ]}
+      isOpen
+    />,
+  );
+
+  assert.match(markup, /Init Context/);
+  assert.match(markup, /tool-detail-sections/);
+  assert.match(markup, /<h4>AGENTS\.md<\/h4>/);
+  assert.match(markup, /# AGENTS\.md instructions/);
+  assert.match(markup, /<h4>Environment<\/h4>/);
+  assert.match(markup, /&lt;cwd&gt;\/workspace&lt;\/cwd&gt;/);
+  assert.doesNotMatch(markup, /COMBINED_FALLBACK_SENTINEL/);
+});
+
 test("conversation renders live active command anchor without active output tail", () => {
   const thread = {
     id: "thread-1",

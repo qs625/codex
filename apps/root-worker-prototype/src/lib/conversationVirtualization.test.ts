@@ -151,6 +151,50 @@ test("compact row height stays marker-only even when details are loaded", () => 
   );
 });
 
+test("tool detail sections are estimated instead of fallback details", () => {
+  const sectionCell: ConversationCell = {
+    id: "ctx-sections",
+    kind: "tool",
+    entries: [
+      {
+        id: "ctx-sections",
+        kind: "tool",
+        author: "Root",
+        role: "system",
+        text: "AGENTS.md",
+        timestamp: "09:41",
+        attachments: [],
+        toolName: "Init Context",
+        toolStatus: "completed",
+        toolDetails: "fallback\n".repeat(200),
+        toolDetailSections: [
+          {
+            label: "AGENTS.md",
+            text: "short typed section",
+          },
+        ],
+        toolCategory: "context",
+      },
+    ],
+  };
+  const fallbackOnlyCell: ConversationCell = {
+    ...sectionCell,
+    id: "ctx-fallback",
+    entries: [
+      {
+        ...sectionCell.entries[0]!,
+        id: "ctx-fallback",
+        toolDetailSections: undefined,
+      },
+    ],
+  };
+
+  assert.ok(
+    estimateConversationCellHeight(sectionCell) <
+      estimateConversationCellHeight(fallbackOnlyCell),
+  );
+});
+
 test("finds a stable virtualized window with overscan", () => {
   const cells = Array.from({ length: 6 }, (_, index) =>
     makeMessageCell(`cell-${index}`, `row ${index}`),
