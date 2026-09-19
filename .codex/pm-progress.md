@@ -14,22 +14,22 @@ Current user request queued next: optimize Runtime Capsule delivery so ordinary 
 
 ## Active Work
 - id: capsule-only-runtime-delivery
-  owner: unassigned
-  reviewer: unassigned
-  checkout: TBD, prefer idle dev checkout after sync
-  branch: TBD
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: feature/capsule-only-runtime-delivery
   task_type: build/runtime-delivery-optimization
   depends_on: user request on 2026-09-19 CST: “每次重启如果 launcher 没修改不用编译，也不用打包 dmg，只要构建 capsule”.
   files: likely `apps/root-worker-prototype/scripts/package-mac-app.cjs`, Runtime Capsule producer/update scripts, package scripts in `apps/root-worker-prototype/package.json`, tests around installed artifact update/capsule producer.
-  base_commit: `53717f8991d08022f6db1d14c4f1a0b3e21c1bc3`
-  status: queued
+  base_commit: `0ed98d7c8`
+  status: dispatched
   objective: Add or expose a fast delivery path that builds the Runtime Capsule payload/artifact needed by `request_runtime_restart` without rebuilding the outer Launcher or creating a DMG when Launcher/outer app inputs are unchanged.
   design_intent: Runtime Capsule is the update unit for ordinary renderer/main/preload/app-server/default-config changes. Full app packaging/DMG is only needed for installer/outer Launcher/seed distribution. PM delivery should avoid unnecessary launcher release compile and DMG packaging for every runtime restart.
   invariants: Do not weaken capsule manifest/integrity/signing; do not skip app-server/renderer/native helper builds that are part of the Runtime payload; do not break full mac app/DMG packaging; request_runtime_restart must still install a complete verified Runtime Capsule.
   forbidden_paths: no copying loose files into installed artifacts; no in-place mutation of current artifact; no unsigned/partial Capsule; no assuming Launcher unchanged by file name only without a reliable dependency/input check or explicit script target; no removing full package flow.
   expected_implementation_outline: Identify current package script boundaries, add a dedicated capsule-only build command or split existing mac packaging into payload/capsule vs outer-app/dmg phases, update PM/developer docs/scripts, and add focused tests or smoke checks proving the capsule-only path emits the same valid capsule metadata/release id structure needed by Runtime Launcher.
   minimum_regression_matrix: capsule-only command builds renderer/app-server/default-config/native/helper payload and capsule metadata; full `package:root-worker-prototype:mac` still works; request_runtime_restart can install capsule-only artifact; Launcher unchanged path skips launcher compile/DMG; Launcher-changed/full package path remains available; focused tests and diff check; reviewer approval.
-  next_action: assign to an idle dev checkout with a full build-system brief after checking checkout availability and conflicts.
+  next_action: await owner/reviewer completion, then PM design验收/merge and use the new capsule-only path for installed delivery if safe.
   blockers: none.
 
 ## Recent Completed
