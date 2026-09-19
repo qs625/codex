@@ -239,6 +239,7 @@ function App() {
   const [runtimeRestartProgress, setRuntimeRestartProgress] =
     useState<RuntimeRestartProgress | null>(null);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
+  const [isRightPanelResizing, setIsRightPanelResizing] = useState(false);
   const [browserNavigationRequest, setBrowserNavigationRequest] = useState<{
     url: string;
     token: number;
@@ -314,6 +315,10 @@ function App() {
     startX: number;
     startWidth: number;
     panel: "left" | "right";
+  } | null>(null);
+  const resizePointerCaptureRef = useRef<{
+    element: HTMLDivElement;
+    pointerId: number;
   } | null>(null);
   threadsRef.current = threads;
 
@@ -685,17 +690,30 @@ function App() {
       );
     }
 
-    function handlePointerUp() {
+    function finishResize() {
       resizeStateRef.current = null;
+      const pointerCapture = resizePointerCaptureRef.current;
+      resizePointerCaptureRef.current = null;
+      if (
+        pointerCapture?.element.hasPointerCapture(pointerCapture.pointerId)
+      ) {
+        pointerCapture.element.releasePointerCapture(pointerCapture.pointerId);
+      }
+      setIsRightPanelResizing(false);
       document.body.classList.remove("is-resizing-panels");
     }
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+    window.addEventListener("blur", finishResize);
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      window.removeEventListener("blur", finishResize);
+      finishResize();
     };
   }, [viewportWidth]);
 
@@ -2967,12 +2985,23 @@ function App() {
     );
   }
 
-  function beginResize(panel: "left" | "right", clientX: number) {
+  function beginResize(
+    panel: "left" | "right",
+    clientX: number,
+    pointerTarget: HTMLDivElement,
+    pointerId: number,
+  ) {
     resizeStateRef.current = {
       panel,
       startX: clientX,
       startWidth: panel === "left" ? sidebarWidth : rightPanelWidth,
     };
+    pointerTarget.setPointerCapture(pointerId);
+    resizePointerCaptureRef.current = {
+      element: pointerTarget,
+      pointerId,
+    };
+    setIsRightPanelResizing(panel === "right");
     document.body.classList.add("is-resizing-panels");
   }
 
@@ -3024,7 +3053,14 @@ function App() {
           className="panel-resizer"
           role="separator"
           aria-label="Resize sidebar"
-          onPointerDown={(event) => beginResize("left", event.clientX)}
+          onPointerDown={(event) =>
+            beginResize(
+              "left",
+              event.clientX,
+              event.currentTarget,
+              event.pointerId,
+            )
+          }
         />
         <ConversationPanel
           availableSkills={availableSkills}
@@ -3078,7 +3114,12 @@ function App() {
             if (isRightPanelCollapsed) {
               setIsRightPanelCollapsed(false);
             }
-            beginResize("right", event.clientX);
+            beginResize(
+              "right",
+              event.clientX,
+              event.currentTarget,
+              event.pointerId,
+            );
           }}
         />
         <RightPanel
@@ -3086,6 +3127,7 @@ function App() {
           browserNativeOverlayActive={
             isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
           }
+          browserPanelResizing={isRightPanelResizing}
           browserNavigationRequest={browserNavigationRequest}
           onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
           availableSkillCount={availableSkills.length}

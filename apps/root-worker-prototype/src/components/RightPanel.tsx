@@ -228,6 +228,7 @@ function formatTokenCount(value: number | null) {
 export function RightPanel({
   activeView,
   browserNativeOverlayActive = false,
+  browserPanelResizing = false,
   browserNavigationRequest,
   onBrowserNavigationRequestHandled,
   availableSkillCount,
@@ -266,6 +267,7 @@ export function RightPanel({
 }: {
   activeView: RightPanelView;
   browserNativeOverlayActive?: boolean;
+  browserPanelResizing?: boolean;
   browserNavigationRequest?: { url: string; token: number } | null;
   onBrowserNavigationRequestHandled?: (token: number) => void;
   availableSkillCount: number;
@@ -468,6 +470,7 @@ export function RightPanel({
             ) : activeView === "browser" ? (
               <BrowserPanel
                 nativeOverlayActive={browserNativeOverlayActive}
+                resizing={browserPanelResizing}
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
               />
@@ -847,10 +850,12 @@ function formatWorkflowStageStatus(status: WorkflowStageView["status"]) {
 
 function BrowserPanel({
   nativeOverlayActive,
+  resizing,
   navigationRequest,
   onNavigationRequestHandled,
 }: {
   nativeOverlayActive: boolean;
+  resizing: boolean;
   navigationRequest: { url: string; token: number } | null;
   onNavigationRequestHandled?: (token: number) => void;
 }) {
@@ -922,8 +927,8 @@ function BrowserPanel({
     }
 
     let boundsUpdateFrame: number | null = null;
-    let boundsWatchFrame: number | null = null;
     let lastSentBounds: BrowserViewBounds | null = null;
+    const shouldHideNativeView = nativeOverlayActive || resizing;
     const measureBounds = () =>
       browserBoundsFromElement(
         viewport,
@@ -945,21 +950,14 @@ function BrowserPanel({
       }
       boundsUpdateFrame = window.requestAnimationFrame(() => {
         boundsUpdateFrame = null;
-        if (nativeOverlayActive) {
+        if (shouldHideNativeView) {
           return;
         }
         sendBounds();
       });
     };
-    const watchBounds = () => {
-      if (nativeOverlayActive) {
-        return;
-      }
-      sendBounds();
-      boundsWatchFrame = window.requestAnimationFrame(watchBounds);
-    };
 
-    if (nativeOverlayActive) {
+    if (shouldHideNativeView) {
       void browserApi
         .hideBrowserView()
         .then((nextState) => applyBrowserState(nextState))
@@ -976,7 +974,6 @@ function BrowserPanel({
     }
 
     scheduleBoundsUpdate();
-    boundsWatchFrame = window.requestAnimationFrame(watchBounds);
     const resizeObserver = new ResizeObserver(scheduleBoundsUpdate);
     resizeObserver.observe(viewport);
     window.addEventListener("resize", scheduleBoundsUpdate);
@@ -985,14 +982,11 @@ function BrowserPanel({
       if (boundsUpdateFrame !== null) {
         window.cancelAnimationFrame(boundsUpdateFrame);
       }
-      if (boundsWatchFrame !== null) {
-        window.cancelAnimationFrame(boundsWatchFrame);
-      }
       resizeObserver.disconnect();
       window.removeEventListener("resize", scheduleBoundsUpdate);
       void browserApi.hideBrowserView();
     };
-  }, [nativeOverlayActive]);
+  }, [nativeOverlayActive, resizing]);
 
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
