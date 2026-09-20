@@ -2872,7 +2872,7 @@ test("keeps ordinary child completion JSON in event-driven tools as event text",
   );
 });
 
-test("renders context compaction as a marker without replacement body", () => {
+test("renders context compaction marker and retained role context without replacement body", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2904,8 +2904,9 @@ test("renders context compaction as a marker without replacement body", () => {
     ]),
   );
 
-  assert.equal(entries.length, 1);
   const compactEntry = entries[0]!;
+  const contextEntry = entries[1]!;
+  assert.equal(entries.length, 2);
   assert.equal(compactEntry.kind, "compact");
   assert.equal(compactEntry.text, "Context compacted");
   assert.equal(compactEntry.compactSummary, null);
@@ -2914,6 +2915,22 @@ test("renders context compaction as a marker without replacement body", () => {
   assert.equal(compactEntry.replacementHistoryEntries?.length, 3);
   assert.doesNotMatch(compactEntry.text, /recent request/);
   assert.doesNotMatch(compactEntry.text, /compact final output/);
+  assert.deepEqual(
+    [
+      contextEntry.id,
+      contextEntry.kind,
+      contextEntry.toolName,
+      contextEntry.text,
+      contextEntry.toolDetails,
+    ],
+    [
+      "compact-1:retained:0:raw-developer-context",
+      "tool",
+      "Init Context · Developer",
+      "Permissions and AGENTS.md instructions",
+      "Permissions and AGENTS.md instructions",
+    ],
+  );
 });
 
 test("renders compact summary as a normal agent message", () => {
@@ -2944,6 +2961,87 @@ test("renders compact summary as a normal agent message", () => {
   assert.equal(summaryEntry.id, "compact-summary-only:summary");
   assert.equal(summaryEntry.text, "## Current Goal\n\n- Preserve compact summary");
   assert.equal(entries.length, 2);
+});
+
+test("renders replacement compaction summary as a normal agent message", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-replacement-summary",
+        replacementHistory: [
+          {
+            type: "compaction",
+            summary: "Replacement compact summary stays visible.",
+          },
+          {
+            type: "message",
+            role: "developer",
+            content: [
+              {
+                type: "input_text",
+                text: "Role instructions retained after compact",
+              },
+            ],
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "recent request" }],
+          },
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "assistant seed" }],
+          },
+        ],
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [
+      entry.id,
+      entry.kind,
+      entry.role,
+      entry.toolName ?? null,
+      entry.text,
+    ]),
+    [
+      [
+        "compact-replacement-summary",
+        "compact",
+        "system",
+        null,
+        "Context compacted",
+      ],
+      [
+        "compact-replacement-summary:summary",
+        "message",
+        "agent",
+        null,
+        "Replacement compact summary stays visible.",
+      ],
+      [
+        "compact-replacement-summary:retained:1:raw-developer-context",
+        "tool",
+        "system",
+        "Init Context · Developer",
+        "Role instructions retained after compact",
+      ],
+    ],
+  );
+
+  const compactEntry = entries[0]!;
+  assert.equal(compactEntry.kind, "compact");
+  assert.deepEqual(
+    compactEntry.replacementHistoryEntries?.map((entry) => entry.text),
+    [
+      "Role instructions retained after compact",
+      "recent request",
+      "assistant seed",
+    ],
+  );
 });
 
 test("shows replacement init context after compact marker", () => {
@@ -3097,7 +3195,7 @@ test("shows only typed init context from compaction replacement history", () => 
   );
 });
 
-test("omits compaction summary from compact replacement history while keeping standalone summary item", () => {
+test("omits compaction summary from compact replacement history while rendering it as a message item", () => {
   const summaryText = "Standalone compact summary stays visible.";
   const duplicateSummaryText = "Duplicate compact summary should not render.";
   const state = buildConversationState(
@@ -3131,7 +3229,7 @@ test("omits compaction summary from compact replacement history while keeping st
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
       ["compact-1", "compact"],
-      ["compact-summary", "message"],
+      ["compact-1:summary", "message"],
     ],
   );
 
@@ -3142,7 +3240,8 @@ test("omits compaction summary from compact replacement history while keeping st
     compactEntry?.replacementHistoryEntries?.map((entry) => entry.text),
     ["recent request"],
   );
-  assert.equal(state.cells[1]?.entries[0]?.text, summaryText);
+  assert.equal(state.cells[1]?.entries[0]?.text, duplicateSummaryText);
+  assert.equal(state.cells[1]?.entries[1]?.text, summaryText);
 });
 
 test("extracts compact history details with init context replacement cell", () => {

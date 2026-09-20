@@ -3,6 +3,7 @@ import type {
   CompactReplacementHistoryItem,
   ConversationCell,
   ConversationEntry,
+  ResponseItem,
   Thread,
   ThreadItem,
   ThreadLifecycleStatus,
@@ -831,7 +832,7 @@ function buildContextCompactionSummaryEntry(
     timestamp: string;
   },
 ): ConversationEntry | null {
-  const summary = item.summary?.trim();
+  const summary = contextCompactionSummaryText(item);
   if (!summary) {
     return null;
   }
@@ -845,6 +846,36 @@ function buildContextCompactionSummaryEntry(
     timestamp,
     attachments: [],
   };
+}
+
+function contextCompactionSummaryText(
+  item: Extract<ThreadItem, { type: "contextCompaction" }>,
+) {
+  const directSummary = item.summary?.trim();
+  if (directSummary) {
+    return directSummary;
+  }
+  if (!Array.isArray(item.replacementHistory)) {
+    return null;
+  }
+  for (const historyItem of item.replacementHistory) {
+    if (!isResponseItem(historyItem)) {
+      continue;
+    }
+    const summary = responseCompactionSummaryText(historyItem);
+    if (summary) {
+      return summary;
+    }
+  }
+  return null;
+}
+
+function responseCompactionSummaryText(item: ResponseItem) {
+  if (item.type !== "compaction" && item.type !== "context_compaction") {
+    return null;
+  }
+  const summary = stringOrNull((item as { summary?: unknown }).summary)?.trim();
+  return summary || null;
 }
 
 function retainedInjectedContextEntries(
@@ -861,16 +892,24 @@ function retainedInjectedContextEntries(
     return [];
   }
   return item.replacementHistory.flatMap((historyItem, index) => {
-    if (!isCompactReplacementInjectedContext(historyItem)) {
-      return [];
+    if (isCompactReplacementInjectedContext(historyItem)) {
+      return buildInjectedContextEntries(
+        {
+          ...historyItem,
+          id: `${item.id}:retained:${index}:${historyItem.id}`,
+        },
+        { author, timestamp },
+      );
     }
-    return buildInjectedContextEntries(
-      {
-        ...historyItem,
-        id: `${item.id}:retained:${index}:${historyItem.id}`,
-      },
-      { author, timestamp },
-    );
+    if (isResponseItem(historyItem)) {
+      const rawContextEntry = retainedRawContextEntry(historyItem, index, {
+        parentId: item.id,
+        author,
+        timestamp,
+      });
+      return rawContextEntry ? [rawContextEntry] : [];
+    }
+    return [];
   });
 }
 
@@ -882,6 +921,71 @@ function isCompactReplacementInjectedContext(
     item !== null &&
     (item as { type?: unknown }).type === "injectedContext"
   );
+}
+
+function retainedRawContextEntry(
+  item: ResponseItem,
+  index: number,
+  {
+    parentId,
+    author,
+    timestamp,
+  }: {
+    parentId: string;
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry | null {
+  if (item.type !== "message") {
+    return null;
+  }
+  const role = stringOrFallback((item as { role?: unknown }).role, "message");
+  if (role !== "developer" && role !== "system") {
+    return null;
+  }
+  const text = extractResponseContentText((item as { content?: unknown }).content);
+  const label = role === "developer" ? "Developer" : "System";
+  return {
+    id: `${parentId}:retained:${index}:raw-${role}-context`,
+    kind: "tool",
+    author,
+    role: "system",
+    text: previewInlineText(text, 160) ?? "Initial context was injected.",
+    timestamp,
+    attachments: [],
+    toolName: `Init Context · ${label}`,
+    toolStatus: "completed",
+    toolDetails: text,
+    toolCategory: "context",
+  };
+}
+
+function isResponseItem(
+  item: CompactReplacementHistoryItem | ResponseItem,
+): item is ResponseItem {
+  return ![
+    "injectedContext",
+    "userMessage",
+    "agentMessage",
+    "conversationArtifact",
+  ].includes(String(item.type));
+}
+
+function extractResponseContentText(content: unknown) {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      const record = item as Record<string, unknown>;
+      return stringOrNull(record.text) ?? stringOrNull(record.content) ?? "";
+    })
+    .filter((text) => text.trim().length > 0)
+    .join("\n")
+    .trim();
 }
 
 function formatItemTimestamp(item: ThreadItem) {
