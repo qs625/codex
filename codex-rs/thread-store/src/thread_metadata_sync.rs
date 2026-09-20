@@ -69,21 +69,19 @@ impl ThreadMetadataSync {
             updated_at: Some(created_at),
             source: Some(params.source.clone()),
             thread_source: Some(params.thread_source),
-            agent_nickname: Some(params.source.get_nickname()),
-            agent_role: Some(
-                params
-                    .metadata
-                    .root_agent_role
-                    .clone()
-                    .or_else(|| params.source.get_agent_role()),
-            ),
-            agent_path: Some(
-                params
-                    .metadata
-                    .root_agent_path
-                    .clone()
-                    .or_else(|| params.source.get_agent_path().map(Into::into)),
-            ),
+            agent_nickname: params.source.get_nickname().map(Some),
+            agent_role: params
+                .metadata
+                .root_agent_role
+                .clone()
+                .or_else(|| params.source.get_agent_role())
+                .map(Some),
+            agent_path: params
+                .metadata
+                .root_agent_path
+                .clone()
+                .or_else(|| params.source.get_agent_path().map(Into::into))
+                .map(Some),
             cwd: Some(cwd.clone()),
             cli_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             git_info: git_info.map(git_info_patch_from_observation),
@@ -217,8 +215,12 @@ impl ThreadMetadataSync {
                     update.created_at = parse_session_timestamp(meta_line.meta.timestamp.as_str());
                     update.source = Some(meta_line.meta.source.clone());
                     update.thread_source = Some(meta_line.meta.thread_source);
-                    update.agent_nickname = Some(meta_line.meta.agent_nickname.clone());
-                    update.agent_role = Some(meta_line.meta.agent_role.clone());
+                    if let Some(agent_nickname) = meta_line.meta.agent_nickname.clone() {
+                        update.agent_nickname = Some(Some(agent_nickname));
+                    }
+                    if let Some(agent_role) = meta_line.meta.agent_role.clone() {
+                        update.agent_role = Some(Some(agent_role));
+                    }
                     if let Some(agent_path) = meta_line
                         .meta
                         .agent_path
@@ -461,6 +463,33 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn create_metadata_omits_missing_agent_metadata() {
+        let thread_id = ThreadId::new();
+        let sync = ThreadMetadataSync::for_create(&CreateThreadParams {
+            thread_id,
+            forked_from_id: None,
+            source: SessionSource::Exec,
+            thread_source: None,
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: None,
+                model_provider: "test-provider".to_string(),
+                memory_mode: ThreadMemoryMode::Enabled,
+                root_agent_role: None,
+                root_agent_path: None,
+            },
+            event_persistence_mode: ThreadEventPersistenceMode::Limited,
+        })
+        .await;
+
+        let update = sync.take_pending_update().expect("pending metadata update");
+        assert_eq!(update.patch.agent_nickname, None);
+        assert_eq!(update.patch.agent_role, None);
+        assert_eq!(update.patch.agent_path, None);
+    }
+
     #[test]
     fn resume_history_keeps_derived_metadata_pending_until_applied() {
         let thread_id = ThreadId::new();
@@ -621,6 +650,25 @@ mod tests {
             update.patch.agent_path,
             Some(Some("/root/researcher".to_string()))
         );
+    }
+
+    #[test]
+    fn resume_history_omits_missing_agent_metadata() {
+        let thread_id = ThreadId::new();
+        let mut meta_line = session_meta(thread_id);
+        meta_line.meta.agent_nickname = None;
+        meta_line.meta.agent_role = None;
+        meta_line.meta.agent_path = None;
+
+        let sync = ThreadMetadataSync::for_resume(&resume_params(
+            thread_id,
+            vec![RolloutItem::SessionMeta(meta_line)],
+        ));
+
+        let update = sync.take_pending_update().expect("pending metadata update");
+        assert_eq!(update.patch.agent_nickname, None);
+        assert_eq!(update.patch.agent_role, None);
+        assert_eq!(update.patch.agent_path, None);
     }
 
     #[test]

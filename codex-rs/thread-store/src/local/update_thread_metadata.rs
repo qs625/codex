@@ -1456,6 +1456,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metadata_patch_preserves_agent_fields_unless_explicitly_patched() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let runtime = state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config, Some(runtime.clone()));
+        let uuid = Uuid::from_u128(307);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        write_session_file(home.path(), "2025-01-03T16-00-00", uuid).expect("session file");
+
+        store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    agent_nickname: Some(Some("owner".to_string())),
+                    agent_role: Some(Some("project-pm".to_string())),
+                    agent_path: Some(Some("/self".to_string())),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("set agent metadata");
+
+        store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    title: Some("Observed title".to_string()),
+                    updated_at: Some(Utc::now()),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("apply ordinary metadata refresh");
+
+        let metadata = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("read sqlite metadata")
+            .expect("sqlite metadata");
+        assert_eq!(metadata.agent_nickname.as_deref(), Some("owner"));
+        assert_eq!(metadata.agent_role.as_deref(), Some("project-pm"));
+        assert_eq!(metadata.agent_path.as_deref(), Some("/self"));
+
+        store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    agent_role: Some(Some("feature-owner".to_string())),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("update agent role");
+        let metadata = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("read sqlite metadata")
+            .expect("sqlite metadata");
+        assert_eq!(metadata.agent_role.as_deref(), Some("feature-owner"));
+        assert_eq!(metadata.agent_path.as_deref(), Some("/self"));
+
+        store
+            .update_thread_metadata(UpdateThreadMetadataParams {
+                thread_id,
+                patch: ThreadMetadataPatch {
+                    agent_role: Some(None),
+                    ..Default::default()
+                },
+                include_archived: false,
+            })
+            .await
+            .expect("clear agent role");
+        let metadata = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("read sqlite metadata")
+            .expect("sqlite metadata");
+        assert_eq!(metadata.agent_role, None);
+        assert_eq!(metadata.agent_nickname.as_deref(), Some("owner"));
+        assert_eq!(metadata.agent_path.as_deref(), Some("/self"));
+    }
+
+    #[tokio::test]
     async fn metadata_patch_applies_latest_preview_and_first_user_message() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
