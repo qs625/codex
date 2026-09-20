@@ -78,6 +78,18 @@ export function TerminalPanel({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const syncTerminalSizeRef = useRef<(() => void) | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
+  const activeTabRuntimeRef = useRef<{
+    id: string;
+    status: TerminalPanelTabState["status"];
+    canResize: boolean;
+    canWrite: boolean;
+  } | null>(null);
+  const terminalStatusMarkerRef = useRef<{
+    tabId: string;
+    generation: string;
+    status: "exited" | "lost";
+    exitCode: number | null;
+  } | null>(null);
   const terminalFocusRequestTokenRef = useRef(0);
   const pendingTerminalFocusRequestRef =
     useRef<PendingTerminalViewportFocusRequest | null>(null);
@@ -106,6 +118,14 @@ export function TerminalPanel({
     [state],
   );
   activeTabIdRef.current = activeTab?.id ?? null;
+  activeTabRuntimeRef.current = activeTab
+    ? {
+        id: activeTab.id,
+        status: activeTab.status,
+        canResize: activeTab.canResize,
+        canWrite: activeTab.canWrite,
+      }
+    : null;
   terminalFocusRequestTokenRef.current = terminalFocusRequestToken;
 
   const requestTerminalViewportFocus = useCallback((tabId: string | null = null) => {
@@ -253,6 +273,7 @@ export function TerminalPanel({
     let resizeObserver: ResizeObserver | null = null;
     let dataSubscription: { dispose: () => void } | null = null;
     let binarySubscription: { dispose: () => void } | null = null;
+    const mountedTabId = activeTab.id;
 
     void import("@xterm/xterm")
       .then(({ Terminal }) => {
@@ -304,35 +325,47 @@ export function TerminalPanel({
           const previous = lastSizeRef.current;
           lastSizeRef.current = next;
           publishPreferredTerminalSize(next);
+          const currentTab = activeTabRuntimeRef.current;
           if (
-            activeTab.canResize &&
-            isInteractive(activeTab.status) &&
+            currentTab?.id === mountedTabId &&
+            currentTab.canResize &&
+            isInteractive(currentTab.status) &&
             (previous?.rows !== next.rows || previous.cols !== next.cols)
           ) {
             void window.codexDesktop
-              .resizeTerminal({ tabId: activeTab.id, size: next })
+              .resizeTerminal({ tabId: mountedTabId, size: next })
               .catch((error) => setLocalError(toTerminalError(error)));
           }
         };
         syncTerminalSizeRef.current = sendSize;
         dataSubscription = terminal.onData((data) => {
-          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+          const currentTab = activeTabRuntimeRef.current;
+          if (
+            currentTab?.id !== mountedTabId ||
+            !currentTab.canWrite ||
+            !isInteractive(currentTab.status)
+          ) {
             return;
           }
           void window.codexDesktop
             .writeTerminal({
-              tabId: activeTab.id,
+              tabId: mountedTabId,
               deltaBase64: encodeUtf8(data),
             })
             .catch((error) => setLocalError(toTerminalError(error)));
         });
         binarySubscription = terminal.onBinary((data) => {
-          if (!activeTab.canWrite || !isInteractive(activeTab.status)) {
+          const currentTab = activeTabRuntimeRef.current;
+          if (
+            currentTab?.id !== mountedTabId ||
+            !currentTab.canWrite ||
+            !isInteractive(currentTab.status)
+          ) {
             return;
           }
           void window.codexDesktop
             .writeTerminal({
-              tabId: activeTab.id,
+              tabId: mountedTabId,
               deltaBase64: encodeBinary(data),
             })
             .catch((error) => setLocalError(toTerminalError(error)));
@@ -350,16 +383,7 @@ export function TerminalPanel({
         if (activeTab.replayBase64) {
           terminal.write(decodeBase64(activeTab.replayBase64));
         }
-        if (activeTab.status === "lost") {
-          terminal.writeln(
-            "\r\n\u001b[31m[Session disconnected from the runtime.]\u001b[0m",
-          );
-        }
-        if (activeTab.status === "exited") {
-          terminal.writeln(
-            `\r\n\u001b[90m[Process exited${activeTab.exitCode == null ? "" : ` with code ${activeTab.exitCode}`}.]\u001b[0m`,
-          );
-        }
+        writeTerminalStatusMarker(terminal, activeTab, terminalStatusMarkerRef);
         if (shouldReplayAtRecordedSize) {
           sendSize();
         }
@@ -394,6 +418,7 @@ export function TerminalPanel({
         syncTerminalSizeRef.current = null;
       }
       lastSizeRef.current = null;
+      terminalStatusMarkerRef.current = null;
     };
   }, [
     activeTab?.id,
@@ -404,11 +429,25 @@ export function TerminalPanel({
     activeTab?.replayBase64,
     activeTab?.replayTruncated,
     activeTab?.hasSequenceGap,
-    activeTab?.replayThroughSequence,
-    activeTab?.status,
     applyPendingTerminalFocus,
     publishPreferredTerminalSize,
     thread?.id,
+  ]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || !activeTab) {
+      terminalStatusMarkerRef.current = null;
+      return;
+    }
+
+    terminal.options.cursorBlink = isInteractive(activeTab.status);
+    writeTerminalStatusMarker(terminal, activeTab, terminalStatusMarkerRef);
+  }, [
+    activeTab?.exitCode,
+    activeTab?.generation,
+    activeTab?.id,
+    activeTab?.status,
   ]);
 
   useEffect(() => {
@@ -804,6 +843,52 @@ function normalizedTerminalSize(size: TerminalSize | null | undefined) {
 
 function shouldConvertTerminalEol(tab: TerminalPanelTabState) {
   return tab.readOnlyOutput === true || (!tab.canWrite && !tab.canResize);
+}
+
+function writeTerminalStatusMarker(
+  terminal: Pick<XTermTerminal, "writeln">,
+  tab: TerminalPanelTabState,
+  markerRef: {
+    current: {
+      tabId: string;
+      generation: string;
+      status: "exited" | "lost";
+      exitCode: number | null;
+    } | null;
+  },
+) {
+  if (tab.status !== "lost" && tab.status !== "exited") {
+    markerRef.current = null;
+    return;
+  }
+
+  const previous = markerRef.current;
+  if (
+    previous?.tabId === tab.id &&
+    previous.generation === tab.generation &&
+    previous.status === tab.status &&
+    previous.exitCode === tab.exitCode
+  ) {
+    return;
+  }
+
+  markerRef.current = {
+    tabId: tab.id,
+    generation: tab.generation,
+    status: tab.status,
+    exitCode: tab.exitCode,
+  };
+
+  if (tab.status === "lost") {
+    terminal.writeln(
+      "\r\n\u001b[31m[Session disconnected from the runtime.]\u001b[0m",
+    );
+    return;
+  }
+
+  terminal.writeln(
+    `\r\n\u001b[90m[Process exited${tab.exitCode == null ? "" : ` with code ${tab.exitCode}`}.]\u001b[0m`,
+  );
 }
 
 function numericCssPixels(value: string): number {
