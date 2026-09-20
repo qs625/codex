@@ -592,7 +592,9 @@ debug = "none"
 strip = "symbols"
 
 [profile.release]
-lto = "fat"
+# Thin LTO keeps cross-crate optimization while avoiding the expensive whole-program
+# link step that dominates Runtime Capsule app-server release builds.
+lto = "thin"
 split-debuginfo = "off"
 # Because we bundle some of these executables with the TypeScript CLI, we
 # remove everything to make the binary as small as possible.
