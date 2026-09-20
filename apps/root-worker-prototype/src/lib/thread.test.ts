@@ -3778,6 +3778,38 @@ test("updateThreadItem accepts timestamped compact notifications after latest co
   assert.deepEqual(updated.stats, { compactionCount: 3 });
 });
 
+test("updateThreadItem preserves live init context notifications after compact", () => {
+  const thread = updateThreadItem(
+    {
+      ...makeThread(),
+      turns: [
+        makeTurn("turn-compact", [
+          makeUserMessage("old-user", "old prompt before compact"),
+        ]),
+      ],
+    },
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+
+  const updated = updateThreadItem(
+    thread,
+    "turn-compact",
+    makeInitContextItem("init-after-compact"),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["old-user", "compact-1", "init-after-compact"],
+  );
+  assert.deepEqual(
+    buildConversationState(updated).cells.flatMap((cell) =>
+      cell.entries.map((entry) => entry.id),
+    ),
+    ["compact-1", "init-after-compact:section:0", "init-after-compact:section:1"],
+  );
+});
+
 test("updateThreadItem initializes compact stats from visible fallback", () => {
   const thread = updateThreadItem(
     {

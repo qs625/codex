@@ -768,6 +768,7 @@ export function updateThreadItem(
   const nextItem = normalizeThreadItemSnapshot(
     applyItemTimestamps(item, timestamps),
   );
+  const nextItemIsInitContext = initContextItemKey(nextItem) !== null;
   let shouldUpdateActiveCommandItems = false;
   const finalize = (updated: Thread) => {
     const reconciled = reconcileThreadCommandExecutionExitNotifications(updated);
@@ -804,6 +805,7 @@ export function updateThreadItem(
         !hasMatchingThreadItem(turn.items, nextItem) &&
         turnHasCompactItem(turn) &&
         nextItem.type !== "contextCompaction" &&
+        !nextItemIsInitContext &&
         !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
       ) {
         return turn;
@@ -855,7 +857,7 @@ export function updateThreadItem(
     );
   }
 
-  if (initContextItemKey(nextItem) !== null) {
+  if (nextItemIsInitContext) {
     const existingTurn = thread.turns.find((turn) =>
       turn.items.some((item) => isEquivalentInitContextItem(item, nextItem)),
     );
