@@ -493,6 +493,110 @@ description: Manual compact role fixture.
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_compaction_reinjects_project_role_and_instructions_into_next_turn() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    const ROLE_BODY: &str = "ROLE_MANUAL_COMPACT_NEXT_TURN_AGENT_MD_UNIQUE_INSTRUCTION";
+    const USER_PREFS: &str = "USER_PREFS_AFTER_MANUAL_COMPACT_NEXT_TURN_SENTINEL";
+    const PROJECT_UNDERSTANDING: &str =
+        "PROJECT_UNDERSTANDING_AFTER_MANUAL_COMPACT_NEXT_TURN_SENTINEL";
+
+    let server = responses::start_mock_server().await;
+    let compact_sse = responses::sse(vec![
+        responses::ev_assistant_message("m1", "ROLE_NEXT_TURN_COMPACT_SUMMARY"),
+        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200),
+    ]);
+    let next_turn_sse = responses::sse(vec![
+        responses::ev_assistant_message("m2", "ROLE_NEXT_TURN_FINAL"),
+        responses::ev_completed_with_tokens("r2", /*total_tokens*/ 120),
+    ]);
+    let responses_log =
+        responses::mount_sse_sequence(&server, vec![compact_sse, next_turn_sse]).await;
+
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::default(),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+
+    let workspace = TempDir::new()?;
+    let project_config_dir = workspace.path().join(".morpheus");
+    let agents_dir = project_config_dir.join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("manual-compact-next-turn-role.agent.md"),
+        format!(
+            r#"---
+name: manual-compact-next-turn-role
+description: Manual compact next-turn role fixture.
+---
+
+{ROLE_BODY}
+"#
+        ),
+    )?;
+    let instruction_dir = workspace.path().join("instructions");
+    std::fs::create_dir_all(&instruction_dir)?;
+    std::fs::write(
+        instruction_dir.join("user-preferences.md"),
+        format!("# User Preferences\n{USER_PREFS}"),
+    )?;
+    std::fs::write(
+        instruction_dir.join("project-understanding.md"),
+        format!("# Project Understanding\n{PROJECT_UNDERSTANDING}"),
+    )?;
+    std::fs::write(
+        project_config_dir.join("config.toml"),
+        r#"
+instruction_files = [
+  "instructions/user-preferences.md",
+  "instructions/project-understanding.md",
+]
+"#,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread_with_cwd_and_agent_type(
+        &mut mcp,
+        workspace.path(),
+        "manual-compact-next-turn-role",
+    )
+    .await?;
+    compact_thread_and_wait(&mut mcp, &thread_id, "ROLE_NEXT_TURN_COMPACT_SUMMARY").await?;
+    send_turn_start(&mut mcp, &thread_id, "after manual compact").await?;
+    wait_for_response_request_count(&responses_log, 2).await?;
+
+    let response_requests = responses_log.requests();
+    assert_eq!(response_requests.len(), 2);
+    let next_turn_request = response_requests
+        .last()
+        .expect("expected next normal model request after manual compaction");
+    assert!(
+        next_turn_request.body_contains_text(ROLE_BODY),
+        "next user turn request after manual compact should include agent role body, got {:?}",
+        next_turn_request.body_json()
+    );
+    assert!(
+        next_turn_request.body_contains_text(USER_PREFS),
+        "next user turn request after manual compact should include user preferences, got {:?}",
+        next_turn_request.body_json()
+    );
+    assert!(
+        next_turn_request.body_contains_text(PROJECT_UNDERSTANDING),
+        "next user turn request after manual compact should include project understanding, got {:?}",
+        next_turn_request.body_json()
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn thread_compact_start_rejects_invalid_thread_id() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -697,7 +801,13 @@ async fn compact_thread_and_wait_for_completed(
 }
 
 async fn send_turn_and_wait(mcp: &mut McpProcess, thread_id: &str, text: &str) -> Result<String> {
-    let turn_id = mcp
+    let turn_id = send_turn_start(mcp, thread_id, text).await?;
+    wait_for_turn_completed(mcp, &turn_id).await?;
+    Ok(turn_id)
+}
+
+async fn send_turn_start(mcp: &mut McpProcess, thread_id: &str, text: &str) -> Result<String> {
+    let turn_request_id = mcp
         .send_turn_start_request(TurnStartParams {
             thread_id: thread_id.to_string(),
             input: vec![V2UserInput::Text {
@@ -709,12 +819,31 @@ async fn send_turn_and_wait(mcp: &mut McpProcess, thread_id: &str, text: &str) -
         .await?;
     let turn_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_request_id)),
     )
     .await??;
     let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
-    wait_for_turn_completed(mcp, &turn.id).await?;
     Ok(turn.id)
+}
+
+async fn wait_for_response_request_count(
+    responses_log: &responses::ResponseMock,
+    expected_count: usize,
+) -> Result<()> {
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let actual_count = responses_log.requests().len();
+            if actual_count == expected_count {
+                return Ok(());
+            }
+            if actual_count > expected_count {
+                anyhow::bail!("expected {expected_count} Responses requests, got {actual_count}");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
 }
 
 async fn wait_for_turn_completed(mcp: &mut McpProcess, turn_id: &str) -> Result<()> {

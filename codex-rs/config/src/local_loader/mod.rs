@@ -35,8 +35,8 @@ use codex_config_state::merge_toml_values;
 use codex_config_toml::config_toml::ConfigToml;
 pub use codex_config_toml::resolve_relative_paths_in_config_toml;
 use codex_config_types::CONFIG_TOML_FILE;
-use codex_config_types::PROJECT_CONFIG_DIR_NAME;
 use codex_config_types::ConfigLayerSource;
+use codex_config_types::PROJECT_CONFIG_DIR_NAME;
 use codex_file_system::ExecutorFileSystem;
 use codex_file_system::LOCAL_FS;
 use codex_git_info::resolve_root_git_project_for_trust;
@@ -929,6 +929,44 @@ fn sanitize_project_config(config: &mut TomlValue) -> Vec<String> {
     ignored_keys
 }
 
+fn resolve_project_instruction_files_against_root(
+    mut resolved_config: TomlValue,
+    project_config: &TomlValue,
+    project_root: &Path,
+) -> TomlValue {
+    let Some(raw_instruction_files) = project_config
+        .get("instruction_files")
+        .and_then(TomlValue::as_array)
+    else {
+        return resolved_config;
+    };
+    let Some(resolved_table) = resolved_config.as_table_mut() else {
+        return resolved_config;
+    };
+
+    let resolved_instruction_files = raw_instruction_files
+        .iter()
+        .map(|value| {
+            value.as_str().map_or_else(
+                || value.clone(),
+                |path| {
+                    TomlValue::String(
+                        AbsolutePathBuf::resolve_path_against_base(path, project_root)
+                            .as_path()
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                },
+            )
+        })
+        .collect();
+    resolved_table.insert(
+        "instruction_files".to_string(),
+        TomlValue::Array(resolved_instruction_files),
+    );
+    resolved_config
+}
+
 fn project_ignored_config_keys_warning(
     dot_codex_folder: &AbsolutePathBuf,
     ignored_keys: &[String],
@@ -1131,8 +1169,23 @@ async fn load_project_layers(
                     )?;
                 }
                 let ignored_project_config_keys = sanitize_project_config(&mut config);
+                let project_root = dot_codex_abs.parent().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "Project config directory has no parent: {}",
+                            dot_codex_abs.display()
+                        ),
+                    )
+                })?;
+                let project_config = config.clone();
                 let config =
                     resolve_relative_paths_in_config_toml(config, dot_codex_abs.as_path())?;
+                let config = resolve_project_instruction_files_against_root(
+                    config,
+                    &project_config,
+                    project_root.as_path(),
+                );
                 let config = merge_root_checkout_project_hooks(
                     fs,
                     config,
@@ -1337,6 +1390,47 @@ foo = "xyzzy"
         );
         expected_toml_value.insert("foo".to_string(), TomlValue::String("xyzzy".to_string()));
         assert_eq!(normalized_toml_value, TomlValue::Table(expected_toml_value));
+        Ok(())
+    }
+
+    #[test]
+    fn project_instruction_files_are_resolved_against_project_root() -> anyhow::Result<()> {
+        let tmp = tempdir()?;
+        let project_root = tmp.path();
+        let dot_morpheus = project_root.join(PROJECT_CONFIG_DIR_NAME);
+        let raw_project_config = TomlValue::Table(toml::toml! {
+            instruction_files = ["instructions/user.md"]
+            model_instructions_file = "role.md"
+        });
+        let dot_morpheus_resolved =
+            resolve_relative_paths_in_config_toml(raw_project_config.clone(), &dot_morpheus)?;
+
+        let project_resolved = resolve_project_instruction_files_against_root(
+            dot_morpheus_resolved,
+            &raw_project_config,
+            project_root,
+        );
+
+        assert_eq!(
+            project_resolved
+                .get("instruction_files")
+                .and_then(TomlValue::as_array)
+                .and_then(|files| files.first())
+                .and_then(TomlValue::as_str),
+            Some(
+                project_root
+                    .join("instructions")
+                    .join("user.md")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert_eq!(
+            project_resolved
+                .get("model_instructions_file")
+                .and_then(TomlValue::as_str),
+            Some(dot_morpheus.join("role.md").to_string_lossy().as_ref())
+        );
         Ok(())
     }
 
