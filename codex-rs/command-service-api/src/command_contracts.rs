@@ -10,6 +10,7 @@ use serde::Deserialize;
 use tool_config::ToolUserShellType;
 
 use crate::CommandNotificationFilter;
+use crate::resolve_output_notification_interval_ms;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ExecCommandApprovalMode {
@@ -41,6 +42,11 @@ pub struct ExecCommandArgs {
     pub initial_wait_ms: Option<u64>,
     #[serde(default)]
     pub notify_on: CommandNotifyOnArg,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_output_notification_interval_ms"
+    )]
+    pub output_notification_interval_ms: Option<u64>,
     #[serde(default)]
     pub max_output_tokens: Option<usize>,
     #[serde(default)]
@@ -89,6 +95,7 @@ pub struct ExecCommandRunRequest {
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
     pub notify_on: CommandNotificationFilter,
+    pub output_notification_interval: Duration,
     pub approval_mode: ExecCommandApprovalMode,
     pub exec_approval_requirement: ExecApprovalRequirement,
 }
@@ -111,4 +118,72 @@ fn default_exec_yield_time_ms() -> u64 {
 
 fn default_tty() -> bool {
     false
+}
+
+fn deserialize_output_notification_interval_ms<'de, D>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let interval_ms = Option::<u64>::deserialize(deserializer)?;
+    resolve_output_notification_interval_ms(interval_ms)
+        .map(|_| interval_ms)
+        .map_err(serde::de::Error::custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS;
+    use crate::MAX_OUTPUT_NOTIFICATION_INTERVAL_MS;
+    use crate::MIN_OUTPUT_NOTIFICATION_INTERVAL_MS;
+
+    #[test]
+    fn exec_command_args_accepts_valid_output_notification_interval() {
+        let args: ExecCommandArgs = serde_json::from_str(
+            r#"{"cmd":"printf ok","notify_on":"output","output_notification_interval_ms":1000}"#,
+        )
+        .expect("valid interval should parse");
+
+        assert_eq!(args.output_notification_interval_ms, Some(1000));
+        assert_eq!(
+            resolve_output_notification_interval_ms(args.output_notification_interval_ms)
+                .expect("valid interval should resolve"),
+            1000
+        );
+    }
+
+    #[test]
+    fn exec_command_args_defaults_output_notification_interval() {
+        let args: ExecCommandArgs =
+            serde_json::from_str(r#"{"cmd":"printf ok"}"#).expect("args should parse");
+
+        assert_eq!(args.output_notification_interval_ms, None);
+        assert_eq!(
+            resolve_output_notification_interval_ms(args.output_notification_interval_ms)
+                .expect("default interval should resolve"),
+            DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS
+        );
+    }
+
+    #[test]
+    fn exec_command_args_rejects_invalid_output_notification_interval() {
+        for interval_ms in [
+            0,
+            MIN_OUTPUT_NOTIFICATION_INTERVAL_MS - 1,
+            MAX_OUTPUT_NOTIFICATION_INTERVAL_MS + 1,
+        ] {
+            let error = serde_json::from_str::<ExecCommandArgs>(&format!(
+                r#"{{"cmd":"printf ok","output_notification_interval_ms":{interval_ms}}}"#
+            ))
+            .expect_err("invalid interval should fail to parse")
+            .to_string();
+
+            assert!(
+                error.contains("output_notification_interval_ms must be between"),
+                "unexpected error: {error}"
+            );
+        }
+    }
 }

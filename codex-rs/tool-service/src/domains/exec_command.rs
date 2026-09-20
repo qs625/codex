@@ -21,6 +21,7 @@ use command_service_api::ExecCommandTerminalSize;
 use command_service_api::UnifiedExecError;
 use command_service_api::generate_chunk_id;
 use command_service_api::resolve_max_tokens;
+use command_service_api::resolve_output_notification_interval_ms;
 use permissions_service_api::ExecPolicyApprovalRequest;
 use permissions_service_api::PermissionsServiceApi;
 use protocol::openai_models::ConfigShellToolType;
@@ -182,6 +183,7 @@ async fn dispatch_exec_command(
         yield_time_ms,
         initial_wait_ms,
         notify_on,
+        output_notification_interval_ms,
         max_output_tokens,
         sandbox_permissions,
         additional_permissions,
@@ -189,6 +191,8 @@ async fn dispatch_exec_command(
         prefix_rule,
         ..
     } = args;
+    let output_notification_interval =
+        output_notification_interval_from_args(output_notification_interval_ms)?;
     let max_output_tokens =
         effective_max_output_tokens(max_output_tokens, turn_capability.truncation_policy());
 
@@ -353,6 +357,7 @@ async fn dispatch_exec_command(
         justification,
         prefix_rule,
         notify_on: notify_on.into(),
+        output_notification_interval,
         approval_mode: match approval_outcome {
             ExecCommandApprovalOutcome::ContinueInRuntime => {
                 ExecCommandApprovalMode::ContinueInRuntime
@@ -455,6 +460,14 @@ fn effective_max_output_tokens(
     truncation_policy: codex_utils_output_truncation::TruncationPolicy,
 ) -> usize {
     resolve_max_tokens(max_output_tokens).min(truncation_policy.token_budget())
+}
+
+fn output_notification_interval_from_args(
+    interval_ms: Option<u64>,
+) -> Result<std::time::Duration, FunctionCallError> {
+    resolve_output_notification_interval_ms(interval_ms)
+        .map(std::time::Duration::from_millis)
+        .map_err(FunctionCallError::RespondToModel)
 }
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
@@ -743,5 +756,19 @@ mod tests {
             None,
         );
         assert_eq!(terminal_size_for_exec_command(true, None), None);
+    }
+
+    #[test]
+    fn output_notification_interval_from_args_defaults_and_accepts_custom_values() {
+        assert_eq!(
+            output_notification_interval_from_args(None).expect("default should resolve"),
+            std::time::Duration::from_millis(
+                command_service_api::DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS
+            )
+        );
+        assert_eq!(
+            output_notification_interval_from_args(Some(2_000)).expect("custom should resolve"),
+            std::time::Duration::from_millis(2_000)
+        );
     }
 }

@@ -8,6 +8,9 @@ pub const MAX_YIELD_TIME_MS: u64 = 30_000;
 pub const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;
 pub const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
 pub const DEFAULT_COMMAND_OUTPUT_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
+pub const DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS: u64 = 500;
+pub const MIN_OUTPUT_NOTIFICATION_INTERVAL_MS: u64 = 100;
+pub const MAX_OUTPUT_NOTIFICATION_INTERVAL_MS: u64 = 60_000;
 pub const WAIT_BACKOFF_MULTIPLIER: u32 = 2;
 
 #[derive(Debug)]
@@ -95,6 +98,18 @@ pub fn clamp_yield_time(yield_time_ms: u64) -> u64 {
 
 pub fn resolve_max_tokens(max_tokens: Option<usize>) -> usize {
     max_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+}
+
+pub fn resolve_output_notification_interval_ms(interval_ms: Option<u64>) -> Result<u64, String> {
+    let interval_ms = interval_ms.unwrap_or(DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS);
+    if !(MIN_OUTPUT_NOTIFICATION_INTERVAL_MS..=MAX_OUTPUT_NOTIFICATION_INTERVAL_MS)
+        .contains(&interval_ms)
+    {
+        return Err(format!(
+            "output_notification_interval_ms must be between {MIN_OUTPUT_NOTIFICATION_INTERVAL_MS} and {MAX_OUTPUT_NOTIFICATION_INTERVAL_MS} milliseconds"
+        ));
+    }
+    Ok(interval_ms)
 }
 
 pub fn generate_chunk_id() -> String {

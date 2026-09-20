@@ -75,9 +75,9 @@ pub(crate) use exec_server_env::exec_env_policy_from_shell_policy;
 pub(crate) use exec_server_env::exec_server_spawn_params;
 pub(crate) use output::bound_command_notification_output;
 pub(crate) use output::collect_output_until_deadline;
+pub(crate) use output::decode_utf8_incremental;
 pub(crate) use output::resolve_aggregated_output;
 pub(crate) use output::split_valid_utf8_prefix;
-pub(crate) use output::decode_utf8_incremental;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
@@ -136,6 +136,7 @@ pub(crate) struct ExecCommandRequest {
     #[allow(dead_code)]
     pub prefix_rule: Option<Vec<String>>,
     pub notify_on: CommandNotificationFilter,
+    pub output_notification_interval: std::time::Duration,
     pub approval_mode: ExecCommandApprovalMode,
     pub exec_approval_requirement: ExecApprovalRequirement,
 }
@@ -164,6 +165,7 @@ impl ExecCommandRequest {
             justification: request.justification,
             prefix_rule: request.prefix_rule,
             notify_on: request.notify_on,
+            output_notification_interval: request.output_notification_interval,
             approval_mode: match request.approval_mode {
                 command_service_api::ExecCommandApprovalMode::ContinueInRuntime => {
                     ExecCommandApprovalMode::ContinueInRuntime
@@ -300,13 +302,12 @@ impl ProcessEntry {
             latest_output_bytes,
             replay_truncated,
             replay_through_sequence,
-            terminal_size: self
-                .process
-                .terminal_size()
-                .map(|size| command_service_api::ExecCommandTerminalSize {
+            terminal_size: self.process.terminal_size().map(|size| {
+                command_service_api::ExecCommandTerminalSize {
                     rows: size.rows,
                     cols: size.cols,
-                }),
+                }
+            }),
             can_resize: self.process.supports_resize(),
         }
     }

@@ -20,7 +20,10 @@ pub use command_types::CommandWaitStatus;
 pub use command_types::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 pub use command_types::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 pub use command_types::DEFAULT_MAX_OUTPUT_TOKENS;
+pub use command_types::DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS;
+pub use command_types::MAX_OUTPUT_NOTIFICATION_INTERVAL_MS;
 pub use command_types::MAX_YIELD_TIME_MS;
+pub use command_types::MIN_OUTPUT_NOTIFICATION_INTERVAL_MS;
 pub use command_types::MIN_YIELD_TIME_MS;
 pub use command_types::WaitBackoffState;
 pub use command_types::WriteStdinOutput;
@@ -28,6 +31,7 @@ pub use command_types::WriteStdinRequest;
 pub use command_types::clamp_yield_time;
 pub use command_types::generate_chunk_id;
 pub use command_types::resolve_max_tokens;
+pub use command_types::resolve_output_notification_interval_ms;
 pub use permissions_service_api::ExecApprovalRequirement;
 pub use process_exec_contracts::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
 pub use process_exec_contracts::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
@@ -107,7 +111,6 @@ pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
         &'a self,
         request: WriteStdinRequest<'a>,
     ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>>;
-
 }
 
 /// Per-session command runtime state owned by command-service.

@@ -58,6 +58,12 @@ pub fn create_exec_command_tool_with_environment_id(
             )),
         ),
         (
+            "output_notification_interval_ms".to_string(),
+            JsonSchema::number(Some(
+                "Optional interval in milliseconds for model-side output notifications when notify_on is \"output\". Defaults to 500ms; must be between 100 and 60000. Live stdout deltas remain immediate.".to_string(),
+            )),
+        ),
+        (
             "yield_time_ms".to_string(),
             JsonSchema::number(Some(
                 "Compatibility alias for initial_wait_ms.".to_string(),

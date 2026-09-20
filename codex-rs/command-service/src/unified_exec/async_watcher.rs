@@ -41,7 +41,9 @@ use protocol::protocol::ExecCommandStatus;
 use protocol::protocol::ExecOutputStream;
 
 pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
-pub(crate) const OUTPUT_NOTIFICATION_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(test)]
+pub(crate) const DEFAULT_OUTPUT_NOTIFICATION_FLUSH_INTERVAL: Duration =
+    Duration::from_millis(command_service_api::DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS);
 pub(crate) const MAX_OUTPUT_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 /// Spawn a background task that continuously reads from the PTY, appends to the
@@ -53,6 +55,7 @@ pub(crate) fn start_streaming_output(
     transcript: Arc<Mutex<HeadTailBuffer>>,
     exit_notification_output: Arc<Mutex<HeadTailBuffer>>,
     notify_on: CommandNotificationFilter,
+    output_notification_interval: Duration,
     notification_state: Arc<CommandNotificationState>,
 ) {
     let receiver = process.output_receiver();
@@ -140,6 +143,7 @@ pub(crate) fn start_streaming_output(
                         &notification_state,
                         &mut output_notification_aggregator,
                         &mut output_notification_flush_sleep,
+                        output_notification_interval,
                         output.sequence,
                         output.bytes,
                     ).await;
@@ -381,6 +385,7 @@ async fn process_chunk(
     notification_state: &Arc<CommandNotificationState>,
     output_notification_aggregator: &mut OutputNotificationAggregator,
     output_notification_flush_sleep: &mut Option<Pin<Box<Sleep>>>,
+    output_notification_interval: Duration,
     sequence: u64,
     chunk: Vec<u8>,
 ) {
@@ -436,11 +441,15 @@ async fn process_chunk(
             .await;
             *output_notification_flush_sleep = None;
         } else if output_notification_flush_sleep.is_none() {
-            output_notification_flush_sleep.replace(Box::pin(tokio::time::sleep(
-                OUTPUT_NOTIFICATION_FLUSH_INTERVAL,
-            )));
+            output_notification_flush_sleep.replace(new_output_notification_flush_sleep(
+                output_notification_interval,
+            ));
         }
     }
+}
+
+fn new_output_notification_flush_sleep(interval: Duration) -> Pin<Box<Sleep>> {
+    Box::pin(tokio::time::sleep(interval))
 }
 
 #[derive(Default)]

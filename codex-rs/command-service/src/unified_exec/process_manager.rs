@@ -908,6 +908,7 @@ impl UnifiedExecProcessManager {
             Arc::clone(&transcript),
             Arc::clone(&exit_notification_output),
             request.notify_on,
+            request.output_notification_interval,
             Arc::clone(&notification_state),
         );
         let start = Instant::now();

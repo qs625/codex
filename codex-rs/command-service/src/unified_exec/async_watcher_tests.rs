@@ -1,12 +1,14 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 
 use super::CommandNotificationFilter;
-use super::decode_utf8_incremental;
+use super::DEFAULT_OUTPUT_NOTIFICATION_FLUSH_INTERVAL;
 use super::HeadTailBuffer;
 use super::MAX_OUTPUT_NOTIFICATION_BYTES;
 use super::OutputNotificationAggregator;
+use super::decode_utf8_incremental;
 use protocol::models::CommandExecutionNotificationKind;
 use protocol::models::ResponseItem;
 
@@ -63,6 +65,14 @@ fn output_notification_aggregator_combines_fast_chunks() {
     assert!(
         aggregator.take_item("call-1").is_none(),
         "flush should clear pending output"
+    );
+}
+
+#[test]
+fn output_notification_flush_interval_default_matches_api_contract() {
+    assert_eq!(
+        DEFAULT_OUTPUT_NOTIFICATION_FLUSH_INTERVAL,
+        Duration::from_millis(command_service_api::DEFAULT_OUTPUT_NOTIFICATION_INTERVAL_MS)
     );
 }
 
