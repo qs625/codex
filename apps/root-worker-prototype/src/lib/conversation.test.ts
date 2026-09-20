@@ -3742,11 +3742,95 @@ test("multiple compactions show only latest retained init context", () => {
     state.entries.map((entry) => [entry.id, entry.text]),
     [
       ["compact-1", "Context compacted"],
-      ["compact-1:retained:0:ctx-old:section:0", "old retained context"],
       ["after-first-compact", "continued after first compact"],
       ["compact-2", "Context compacted"],
       ["compact-2:retained:0:ctx-latest:section:0", "latest retained context"],
       ["after-second-compact", "continued after second compact"],
+    ],
+  );
+});
+
+test("adding a later compaction rebuilds older compact entries without retained context", () => {
+  const firstTurn: Thread["turns"][number] = {
+    id: "turn-1",
+    items: [
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [
+          {
+            type: "injectedContext",
+            id: "ctx-old",
+            title: "Init Context",
+            preview: "Old Context",
+            sections: [
+              {
+                label: "Old Context",
+                text: "old retained context",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 1,
+    durationMs: 0,
+  };
+  const previous = buildConversationState(makeThreadWithTurns([firstTurn]));
+  assert.deepEqual(
+    previous.entries.map((entry) => [entry.id, entry.text]),
+    [
+      ["compact-1", "Context compacted"],
+      ["compact-1:retained:0:ctx-old:section:0", "old retained context"],
+    ],
+  );
+
+  const next = buildConversationState(
+    makeThreadWithTurns([
+      firstTurn,
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-2",
+            replacementHistory: [
+              {
+                type: "injectedContext",
+                id: "ctx-latest",
+                title: "Init Context",
+                preview: "Latest Context",
+                sections: [
+                  {
+                    label: "Latest Context",
+                    text: "latest retained context",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+    previous,
+  );
+
+  assert.deepEqual(
+    next.entries.map((entry) => [entry.id, entry.text]),
+    [
+      ["compact-1", "Context compacted"],
+      ["compact-2", "Context compacted"],
+      ["compact-2:retained:0:ctx-latest:section:0", "latest retained context"],
     ],
   );
 });

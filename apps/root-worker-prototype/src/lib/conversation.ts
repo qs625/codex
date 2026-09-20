@@ -109,6 +109,7 @@ export function buildConversationState(
   let flatItemIndex = 0;
   let flatItemSequence = 0;
   let latestCompactOrderKeyMs: number | null = null;
+  const latestCompactItemId = latestContextCompactionItemId(thread);
 
   for (const turn of thread.turns) {
     const turnTimestampSeconds = turn.completedAt ?? turn.startedAt;
@@ -128,6 +129,7 @@ export function buildConversationState(
         ? previous.flatItems[flatItemIndex]
         : undefined;
       const rebuiltEntries =
+        displayItem.type !== "contextCompaction" &&
         previousFlatItem &&
         previousFlatItem.id === displayItem.id &&
         previousFlatItem.item === displayItem &&
@@ -137,6 +139,9 @@ export function buildConversationState(
               author,
               timestamp,
               commandLookup,
+              showCompactionDetails:
+                displayItem.type !== "contextCompaction" ||
+                displayItem.id === latestCompactItemId,
             }).map((entry) => ({
               ...entry,
               turnId: turn.id,
@@ -220,6 +225,40 @@ function liveCommandDisplayItem(
   };
 }
 
+function latestContextCompactionItemId(thread: Thread) {
+  let latest:
+    | {
+        id: string;
+        orderKeyMs: number;
+        sequence: number;
+      }
+    | null = null;
+  let sequence = 0;
+
+  for (const turn of thread.turns) {
+    const turnTimestampSeconds = turn.completedAt ?? turn.startedAt;
+    const turnOrderKeyMs = timestampMsFromSeconds(
+      turnTimestampSeconds ?? thread.updatedAt,
+    );
+
+    for (const item of turn.items) {
+      if (item.type === "contextCompaction") {
+        const orderKeyMs = itemOrderKeyMs(item) ?? turnOrderKeyMs ?? sequence;
+        if (
+          latest === null ||
+          orderKeyMs > latest.orderKeyMs ||
+          (orderKeyMs === latest.orderKeyMs && sequence > latest.sequence)
+        ) {
+          latest = { id: item.id, orderKeyMs, sequence };
+        }
+      }
+      sequence += 1;
+    }
+  }
+
+  return latest?.id ?? null;
+}
+
 function compareConversationFlatItems(
   left: ConversationFlatItemState,
   right: ConversationFlatItemState,
@@ -238,10 +277,12 @@ function buildConversationItemEntries(
     author,
     timestamp,
     commandLookup,
+    showCompactionDetails = true,
   }: {
     author: string;
     timestamp: string;
     commandLookup: Map<string, string>;
+    showCompactionDetails?: boolean;
   },
 ): ConversationEntry[] {
   if (item.type === "userMessage") {
@@ -443,6 +484,7 @@ function buildConversationItemEntries(
     return buildContextCompactionEntries(item, {
       author,
       timestamp,
+      showDetails: showCompactionDetails,
     });
   }
 
@@ -757,12 +799,17 @@ function buildContextCompactionEntries(
   {
     author,
     timestamp,
+    showDetails = true,
   }: {
     author: string;
     timestamp: string;
+    showDetails?: boolean;
   },
 ): ConversationEntry[] {
   const compactEntry = buildContextCompactionEntry(item, { author, timestamp });
+  if (!showDetails) {
+    return [compactEntry];
+  }
   const summaryEntry = buildContextCompactionSummaryEntry(item, {
     author,
     timestamp,

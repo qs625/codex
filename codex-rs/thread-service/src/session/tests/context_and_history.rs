@@ -244,6 +244,76 @@ async fn process_compacted_history_reinjects_agent_file_instructions_into_initia
 }
 
 #[tokio::test]
+async fn fresh_compact_initial_context_uses_loaded_root_agent_role_metadata() {
+    let agent_file_instructions =
+        "Loaded root role body: keep current agent role visible after compact.";
+    let role_dir = tempfile::tempdir().expect("agent role tempdir");
+    let role_path = role_dir.path().join("loaded-root-role.agent.md");
+    std::fs::write(
+        &role_path,
+        format!(
+            "---\nname: loaded-root-role\ndescription: Loaded root role.\n---\n{agent_file_instructions}\n"
+        ),
+    )
+    .expect("write loaded root agent role file");
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.agent_roles.insert(
+                "loaded-root-role".to_string(),
+                crate::config::AgentRoleConfig {
+                    description: Some("Loaded root role.".to_string()),
+                    source_path: Some(role_path.clone()),
+                    ..Default::default()
+                },
+            );
+        },
+    )
+    .await;
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.root_agent_metadata =
+            Some(codex_agent_runtime::AgentMetadata {
+                agent_id: Some(session.conversation_id),
+                agent_path: Some("/root".parse().expect("agent path")),
+                agent_role: Some("loaded-root-role".to_string()),
+                ..Default::default()
+            });
+    }
+
+    let snapshot = session
+        .build_fresh_compact_initial_context(turn_context.as_ref())
+        .await
+        .expect("fresh compact initial context");
+    let TurnItem::InjectedContext(injected_context) =
+        codex_turn_items::injected_context_item_from_response_items(&snapshot.response_items)
+            .expect("expected injected context item")
+    else {
+        panic!("expected injected context display item");
+    };
+
+    assert!(
+        injected_context
+            .sections
+            .iter()
+            .any(|section| section.label == "Agent Role"
+                && section.text.contains("# Agent Role: loaded-root-role")
+                && section.text.contains(agent_file_instructions)),
+        "expected compact initial context to use loaded root agent role metadata, got {injected_context:?}"
+    );
+    assert!(
+        snapshot
+            .reference_context_item
+            .developer_instructions
+            .as_deref()
+            .is_some_and(|text| text.contains(agent_file_instructions)),
+        "expected reference context to retain loaded root role instructions, got {:?}",
+        snapshot.reference_context_item.developer_instructions
+    );
+}
+
+#[tokio::test]
 async fn fresh_compact_initial_context_uses_one_refreshed_instruction_snapshot() {
     let instruction_dir = tempfile::tempdir().expect("instruction tempdir");
     let instruction_path = instruction_dir.path().join("project-instructions.md");

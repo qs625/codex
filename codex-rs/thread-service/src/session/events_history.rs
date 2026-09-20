@@ -232,12 +232,22 @@ impl Session {
         turn_context: &TurnContext,
         session_source: &SessionSource,
     ) -> Option<AgentRoleDeveloperInstructions> {
-        let role_name = self
+        let role_name = if let Some(role_name) = self
             .services
             .agent_control
             .get_agent_metadata(self.conversation_id)
             .and_then(|metadata| metadata.agent_role)
-            .or_else(|| session_source.get_agent_role())?;
+            .or_else(|| session_source.get_agent_role())
+        {
+            role_name
+        } else {
+            let state = self.state.lock().await;
+            state
+                .session_configuration
+                .root_agent_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.agent_role.clone())?
+        };
         let role =
             codex_agent_roles::resolve_role_config(&turn_context.config.agent_roles, &role_name)?;
         let role_file = role
