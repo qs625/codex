@@ -45,7 +45,7 @@ test("TerminalPanel publishes fitted size as thread preferred terminal size", ()
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const fitIndex = source.indexOf("const next = { rows: terminal.rows, cols: terminal.cols };");
   const preferredIndex = source.indexOf("publishPreferredTerminalSize(next);");
-  const resizeIndex = source.indexOf(".resizeTerminal({ tabId: activeTab.id, size: next })");
+  const resizeIndex = source.indexOf(".resizeTerminal({ tabId: mountedTabId, size: next })");
   const dedupeIndex = source.indexOf("previousPreferred?.threadId !== threadId");
 
   assert.notEqual(fitIndex, -1);
@@ -125,7 +125,89 @@ test("TerminalPanel rebuilds xterm when a focused command receives replay output
   assert.match(dependencies, /activeTab\?\.replayBase64/);
   assert.match(dependencies, /activeTab\?\.replayTruncated/);
   assert.match(dependencies, /activeTab\?\.hasSequenceGap/);
-  assert.match(dependencies, /activeTab\?\.replayThroughSequence/);
+});
+
+test("TerminalPanel does not rebuild xterm for streaming output deltas", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");
+  const dependencyEnd = source.indexOf("  ]);", dependencyStart);
+  const dependencies = source.slice(dependencyStart, dependencyEnd);
+  const directDeltaWriteIndex = source.indexOf(
+    "terminalRef.current?.write(decodeBase64(event.deltaBase64));",
+  );
+
+  assert.notEqual(directDeltaWriteIndex, -1);
+  assert.doesNotMatch(dependencies, /activeTab\?\.replayThroughSequence/);
+  assert.doesNotMatch(dependencies, /activeTab\?\.status/);
+});
+
+test("TerminalPanel input and resize handlers read the latest active tab runtime", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const runtimeRefIndex = source.indexOf("const activeTabRuntimeRef = useRef");
+  const runtimeUpdateIndex = source.indexOf("activeTabRuntimeRef.current = activeTab");
+  const sendSizeIndex = source.indexOf("sendSize = () => {");
+  const resizeCurrentTabIndex = source.indexOf(
+    "const currentTab = activeTabRuntimeRef.current;",
+    sendSizeIndex,
+  );
+  const resizeGuardIndex = source.indexOf(
+    "currentTab?.id === mountedTabId",
+    resizeCurrentTabIndex,
+  );
+  const dataIndex = source.indexOf("dataSubscription = terminal.onData");
+  const dataCurrentTabIndex = source.indexOf(
+    "const currentTab = activeTabRuntimeRef.current;",
+    dataIndex,
+  );
+  const dataGuardIndex = source.indexOf(
+    "currentTab?.id !== mountedTabId",
+    dataCurrentTabIndex,
+  );
+  const binaryIndex = source.indexOf("binarySubscription = terminal.onBinary");
+  const binaryCurrentTabIndex = source.indexOf(
+    "const currentTab = activeTabRuntimeRef.current;",
+    binaryIndex,
+  );
+  const binaryGuardIndex = source.indexOf(
+    "currentTab?.id !== mountedTabId",
+    binaryCurrentTabIndex,
+  );
+
+  assert.notEqual(runtimeRefIndex, -1);
+  assert.notEqual(runtimeUpdateIndex, -1);
+  assert.notEqual(resizeCurrentTabIndex, -1);
+  assert.notEqual(resizeGuardIndex, -1);
+  assert.notEqual(dataCurrentTabIndex, -1);
+  assert.notEqual(dataGuardIndex, -1);
+  assert.notEqual(binaryCurrentTabIndex, -1);
+  assert.notEqual(binaryGuardIndex, -1);
+});
+
+test("TerminalPanel writes terminal exit markers without remounting xterm", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const helperIndex = source.indexOf("function writeTerminalStatusMarker");
+  const mountMarkerIndex = source.indexOf(
+    "writeTerminalStatusMarker(terminal, activeTab, terminalStatusMarkerRef);",
+  );
+  const statusEffectIndex = source.indexOf(
+    "terminal.options.cursorBlink = isInteractive(activeTab.status);",
+  );
+  const lostMarkerIndex = source.indexOf(
+    "[Session disconnected from the runtime.]",
+    helperIndex,
+  );
+  const exitMarkerIndex = source.indexOf("[Process exited", helperIndex);
+  const cleanupMarkerIndex = source.indexOf(
+    "terminalStatusMarkerRef.current = null;",
+    source.indexOf("return () => {", mountMarkerIndex),
+  );
+
+  assert.notEqual(helperIndex, -1);
+  assert.notEqual(mountMarkerIndex, -1);
+  assert.notEqual(statusEffectIndex, -1);
+  assert.notEqual(lostMarkerIndex, -1);
+  assert.notEqual(exitMarkerIndex, -1);
+  assert.notEqual(cleanupMarkerIndex, -1);
 });
 
 test("TerminalPanel publishes preferred size while idle with no active tab", () => {
