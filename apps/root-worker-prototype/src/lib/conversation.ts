@@ -762,11 +762,19 @@ function buildContextCompactionEntries(
   },
 ): ConversationEntry[] {
   const compactEntry = buildContextCompactionEntry(item, { author, timestamp });
+  const summaryEntry = buildContextCompactionSummaryEntry(item, {
+    author,
+    timestamp,
+  });
   const retainedContextEntries = retainedInjectedContextEntries(item, {
     author,
     timestamp,
   });
-  return [compactEntry, ...retainedContextEntries];
+  return [
+    compactEntry,
+    ...(summaryEntry ? [summaryEntry] : []),
+    ...retainedContextEntries,
+  ];
 }
 
 function buildContextCompactionEntry(
@@ -806,10 +814,36 @@ function buildContextCompactionEntry(
     text: "Context compacted",
     timestamp,
     attachments: [],
-    compactSummary: item.summary ?? null,
+    compactSummary: null,
     replacementHistoryEntries,
     replacementHistoryStatus,
     replacementHistoryCount,
+  };
+}
+
+function buildContextCompactionSummaryEntry(
+  item: Extract<ThreadItem, { type: "contextCompaction" }>,
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry | null {
+  const summary = item.summary?.trim();
+  if (!summary) {
+    return null;
+  }
+
+  return {
+    id: `${item.id}:summary`,
+    kind: "message",
+    author,
+    role: "agent",
+    text: summary,
+    timestamp,
+    attachments: [],
   };
 }
 

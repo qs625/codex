@@ -2916,7 +2916,7 @@ test("renders context compaction as a marker without replacement body", () => {
   assert.doesNotMatch(compactEntry.text, /compact final output/);
 });
 
-test("omits compact summary body when replacement history is unavailable", () => {
+test("renders compact summary as a normal agent message", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2931,13 +2931,19 @@ test("omits compact summary body when replacement history is unavailable", () =>
   const compactEntry = entries[0]!;
   assert.equal(compactEntry.kind, "compact");
   assert.equal(compactEntry.text, "Context compacted");
-  assert.equal(compactEntry.compactSummary, "## Current Goal\n\n- Preserve compact summary");
+  assert.equal(compactEntry.compactSummary, null);
   assert.equal(compactEntry.replacementHistoryStatus, "missing");
   assert.equal(compactEntry.replacementHistoryCount, null);
   assert.equal(compactEntry.replacementHistoryEntries, null);
   assert.doesNotMatch(compactEntry.text, /Current Goal/);
   assert.doesNotMatch(compactEntry.text, /Preserve compact summary/);
-  assert.equal(entries.length, 1);
+
+  const summaryEntry = entries[1]!;
+  assert.equal(summaryEntry.kind, "message");
+  assert.equal(summaryEntry.role, "agent");
+  assert.equal(summaryEntry.id, "compact-summary-only:summary");
+  assert.equal(summaryEntry.text, "## Current Goal\n\n- Preserve compact summary");
+  assert.equal(entries.length, 2);
 });
 
 test("shows replacement init context after compact marker", () => {

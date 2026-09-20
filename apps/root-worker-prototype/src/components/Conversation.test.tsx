@@ -1206,7 +1206,7 @@ test("conversation measurements mark rows measured even when height matches the 
   );
 });
 
-test("compact rows render an inline summary without grouped history body", () => {
+test("compact rows render only the marker without grouped history body", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1243,7 +1243,7 @@ test("compact rows render an inline summary without grouped history body", () =>
   );
 
   assert.match(markup, /Context compacted/);
-  assert.match(markup, /Compacted summary remains visible in the chat/);
+  assert.doesNotMatch(markup, /Compacted summary remains visible in the chat/);
   assert.match(markup, /09:43/);
   assert.doesNotMatch(markup, /button/);
   assert.doesNotMatch(markup, /2 replacement items/);
@@ -1253,7 +1253,7 @@ test("compact rows render an inline summary without grouped history body", () =>
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
 
-test("compact rows render a non-expandable inline summary", () => {
+test("compact rows do not render compact summary text inline", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1273,7 +1273,7 @@ test("compact rows render a non-expandable inline summary", () => {
   );
 
   assert.match(markup, /Context compacted/);
-  assert.match(markup, /Preserve compact summary/);
+  assert.doesNotMatch(markup, /Preserve compact summary/);
   assert.doesNotMatch(markup, /Summary available/);
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
   assert.doesNotMatch(markup, /<summary>View summary<\/summary>/);
@@ -1281,7 +1281,7 @@ test("compact rows render a non-expandable inline summary", () => {
   assert.doesNotMatch(markup, /Replacement history is unavailable/);
 });
 
-test("compact rows render a bounded fallback when summary is missing", () => {
+test("compact rows omit fallback text when summary is missing", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1301,12 +1301,12 @@ test("compact rows render a bounded fallback when summary is missing", () => {
   );
 
   assert.match(markup, /Context compacted/);
-  assert.match(markup, /Summary unavailable/);
+  assert.doesNotMatch(markup, /Summary unavailable/);
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
   assert.doesNotMatch(markup, /View summary/);
 });
 
-test("compact row renders bounded large compact summary previews", () => {
+test("compact row does not render large compact summary previews", () => {
   const longSummary = `${"summary line\n".repeat(400)}UNBOUNDED_COMPACT_SENTINEL`;
   const markup = renderToStaticMarkup(
     <CompactRow
@@ -1328,8 +1328,8 @@ test("compact row renders bounded large compact summary previews", () => {
 
   assert.match(markup, /Context compacted/);
   assert.doesNotMatch(markup, /View summary/);
-  assert.match(markup, /summary line/);
-  assert.match(markup, /\[truncated: [\d,]+ characters omitted\]/);
+  assert.doesNotMatch(markup, /summary line/);
+  assert.doesNotMatch(markup, /\[truncated: [\d,]+ characters omitted\]/);
   assert.doesNotMatch(markup, /UNBOUNDED_COMPACT_SENTINEL/);
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
 });

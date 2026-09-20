@@ -1,5 +1,4 @@
 import type { ConversationCell, ConversationEntry } from "../types";
-import { previewCompactSummaryText } from "./conversationFormatting";
 
 export const CONVERSATION_ROW_GAP = 18;
 export const CONVERSATION_OVERSCAN_PX = 640;
@@ -9,7 +8,6 @@ const DEFAULT_EVENT_ROW_HEIGHT = 72;
 const DEFAULT_TOOL_ROW_HEIGHT = 112;
 const DEFAULT_ARTIFACT_ROW_HEIGHT = 420;
 const DEFAULT_COMPACT_ROW_HEIGHT = 156;
-const MAX_COMPACT_ROW_HEIGHT = 760;
 const DEFAULT_ARCHIVE_ROW_HEIGHT = 112;
 const TEXT_LINE_HEIGHT = 22;
 const TEXT_CHARS_PER_LINE = 72;
@@ -146,14 +144,8 @@ function estimateToolCellHeight(entries: ConversationEntry[]) {
   return height;
 }
 
-function estimateCompactCellHeight(entry: ConversationEntry | undefined) {
-  const preview = previewCompactSummaryText(entry?.compactSummary);
-  const summaryText = preview?.text ?? "Summary unavailable";
-  return Math.min(
-    MAX_COMPACT_ROW_HEIGHT,
-    DEFAULT_COMPACT_ROW_HEIGHT +
-      estimateWrappedTextHeight(summaryText, TOOL_CHARS_PER_LINE, 2),
-  );
+function estimateCompactCellHeight(_entry: ConversationEntry | undefined) {
+  return DEFAULT_COMPACT_ROW_HEIGHT;
 }
 
 function estimateNestedCellsHeight(cells: ConversationCell[]) {
