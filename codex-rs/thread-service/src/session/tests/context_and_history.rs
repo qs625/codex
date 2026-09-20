@@ -139,9 +139,10 @@ async fn record_context_updates_emits_injected_context_with_agent_file_instructi
         injected_context
             .sections
             .iter()
-            .any(|section| section.label == "Developer"
+            .any(|section| section.label == "Agent Role"
+                && section.text.contains("# Agent Role: project-pm")
                 && section.text.contains(agent_file_instructions)),
-        "expected injected context to include agent file instructions, got {injected_context:?}"
+        "expected injected context to expose agent file instructions as a visible Agent Role section, got {injected_context:?}"
     );
 
     let reference_context_item = session
@@ -235,6 +236,10 @@ async fn process_compacted_history_reinjects_agent_file_instructions_into_initia
     assert!(
         refreshed_text.contains(agent_file_instructions),
         "expected compacted history to preserve agent file instructions, got {refreshed_text:?}"
+    );
+    assert!(
+        refreshed_text.contains("# Agent Role: compact-role"),
+        "expected compacted history to preserve agent role context heading, got {refreshed_text:?}"
     );
 }
 

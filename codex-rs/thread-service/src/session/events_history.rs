@@ -7,6 +7,12 @@ pub(crate) struct FreshCompactInitialContext {
     pub(crate) reference_context_item: TurnContextItem,
 }
 
+#[derive(Clone, Debug)]
+struct AgentRoleDeveloperInstructions {
+    role_name: String,
+    instructions: String,
+}
+
 fn developer_instructions_contains_section(
     developer_instructions: Option<&str>,
     section: &str,
@@ -35,6 +41,14 @@ fn append_developer_instructions_section(
             *developer_instructions = Some(section.to_string());
         }
     }
+}
+
+fn format_agent_role_init_context_section(role: &AgentRoleDeveloperInstructions) -> String {
+    format!(
+        "# Agent Role: {}\n\n{}",
+        role.role_name.trim(),
+        role.instructions.trim()
+    )
 }
 
 impl Session {
@@ -217,7 +231,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         session_source: &SessionSource,
-    ) -> Option<String> {
+    ) -> Option<AgentRoleDeveloperInstructions> {
         let role_name = self
             .services
             .agent_control
@@ -255,7 +269,10 @@ impl Session {
             .and_then(toml::Value::as_str)
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(ToOwned::to_owned)
+            .map(|instructions| AgentRoleDeveloperInstructions {
+                role_name,
+                instructions: instructions.to_string(),
+            })
     }
 
     pub(crate) async fn reference_context_item_for_turn(
@@ -276,12 +293,12 @@ impl Session {
             .await
             && !developer_instructions_contains_section(
                 item.developer_instructions.as_deref(),
-                &agent_role_instructions,
+                &agent_role_instructions.instructions,
             )
         {
             append_developer_instructions_section(
                 &mut item.developer_instructions,
-                agent_role_instructions,
+                agent_role_instructions.instructions,
             );
         }
         item
@@ -1658,7 +1675,7 @@ impl Session {
         turn_context: &TurnContext,
         external_agent_tool_specs: &[tool_service_api::ToolSpec],
         user_instructions_override: Option<&Option<String>>,
-        agent_role_instructions_override: Option<&Option<String>>,
+        agent_role_instructions_override: Option<&Option<AgentRoleDeveloperInstructions>>,
     ) -> Vec<ResponseItem> {
         let mut developer_sections = Vec::<String>::with_capacity(8);
         let mut contextual_user_sections = Vec::<String>::with_capacity(2);
@@ -1712,14 +1729,6 @@ impl Session {
             );
         }
         let separate_guardian_developer_message = is_guardian_reviewer_source(&session_source);
-        // Keep the guardian policy prompt out of the aggregated developer bundle so it
-        // stays isolated as its own top-level developer message for guardian subagents.
-        if !separate_guardian_developer_message
-            && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
-            && !developer_instructions.is_empty()
-        {
-            developer_sections.push(developer_instructions.to_string());
-        }
         let agent_role_instructions = match agent_role_instructions_override {
             Some(instructions) => instructions.clone(),
             None => {
@@ -1727,14 +1736,34 @@ impl Session {
                     .await
             }
         };
+        // Keep the guardian policy prompt out of the aggregated developer bundle so it
+        // stays isolated as its own top-level developer message for guardian subagents.
         if !separate_guardian_developer_message
-            && let Some(agent_role_instructions) = agent_role_instructions
+            && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
+            && !developer_instructions.is_empty()
+        {
+            let developer_instructions_trimmed = developer_instructions.trim();
+            let is_exact_agent_role_instructions = agent_role_instructions
+                .as_ref()
+                .is_some_and(|role| developer_instructions_trimmed == role.instructions.trim());
+            if is_exact_agent_role_instructions {
+                if let Some(role) = agent_role_instructions.as_ref() {
+                    separate_developer_sections.push(format_agent_role_init_context_section(role));
+                }
+            } else {
+                developer_sections.push(developer_instructions.to_string());
+            }
+        }
+        if !separate_guardian_developer_message
+            && let Some(agent_role_instructions) = agent_role_instructions.as_ref()
             && !developer_instructions_contains_section(
                 turn_context.developer_instructions.as_deref(),
-                &agent_role_instructions,
+                &agent_role_instructions.instructions,
             )
         {
-            developer_sections.push(agent_role_instructions);
+            separate_developer_sections.push(format_agent_role_init_context_section(
+                agent_role_instructions,
+            ));
         }
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
@@ -2026,12 +2055,12 @@ impl Session {
         if let Some(agent_role_instructions) = agent_role_instructions
             && !developer_instructions_contains_section(
                 reference_context_item.developer_instructions.as_deref(),
-                &agent_role_instructions,
+                &agent_role_instructions.instructions,
             )
         {
             append_developer_instructions_section(
                 &mut reference_context_item.developer_instructions,
-                agent_role_instructions,
+                agent_role_instructions.instructions,
             );
         }
         Ok(FreshCompactInitialContext {

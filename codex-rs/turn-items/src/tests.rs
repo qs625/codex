@@ -830,6 +830,10 @@ fn injected_context_labels_use_specific_source_categories() {
             "<collaboration_mode>\n## Collaboration Mode\nAutonomous.\n</collaboration_mode>",
         ),
         context_message(
+            "developer",
+            "# Agent Role: feature-owner\n\nOwn implementation end to end.",
+        ),
+        context_message(
             "user",
             "<multiagent_context>\n<current_thread_canonical_path>/self</current_thread_canonical_path>\n</multiagent_context>",
         ),
@@ -862,6 +866,7 @@ fn injected_context_labels_use_specific_source_categories() {
             "External Tool Specs",
             "Personality",
             "Collaboration Mode",
+            "Agent Role",
             "Multi-agent Context",
             "Developer instructions",
             "User context",

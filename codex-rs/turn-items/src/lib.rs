@@ -333,6 +333,9 @@ fn injected_context_section_label(role: &str, text: &str) -> &'static str {
     if text_has_heading_prefix(text, "# AGENTS.md instructions") {
         return "AGENTS.md";
     }
+    if text_has_heading_prefix(text, "# Agent Role:") {
+        return "Agent Role";
+    }
 
     for (marker, label) in [
         ("<environment_context>", "Environment"),

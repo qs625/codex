@@ -20,6 +20,7 @@ const CONTEXTUAL_USER_MARKERS: &[(&str, &str)] = &[
 ];
 
 const CONTEXTUAL_DEVELOPER_PREFIXES: &[&str] = &[
+    "# Agent Role:",
     "<permissions instructions>",
     "<model_switch>",
     COLLABORATION_MODE_OPEN_TAG,
@@ -204,6 +205,13 @@ mod tests {
     fn detects_contextual_developer_prefixes() {
         let message = [ContentItem::InputText {
             text: " \n<permissions instructions>body</permissions instructions>".to_string(),
+        }];
+
+        assert!(is_contextual_dev_message_content(&message));
+        assert!(!has_non_contextual_dev_message_content(&message));
+
+        let message = [ContentItem::InputText {
+            text: " \n# Agent Role: feature-owner\n\nOwn this feature.".to_string(),
         }];
 
         assert!(is_contextual_dev_message_content(&message));
