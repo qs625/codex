@@ -32,6 +32,7 @@ export function buildActiveCommandConversationTail({
   sequenceStart,
   commandLookup,
   historyItemIds,
+  includeItem,
   previous,
   buildItemEntries,
 }: {
@@ -42,6 +43,7 @@ export function buildActiveCommandConversationTail({
   sequenceStart: number;
   commandLookup: Map<string, string>;
   historyItemIds: ReadonlySet<string>;
+  includeItem?: (item: ThreadItem) => boolean;
   previous: { flatItems: ConversationFlatItemState[] } | null | undefined;
   buildItemEntries: BuildConversationItemEntries;
 }) {
@@ -52,7 +54,8 @@ export function buildActiveCommandConversationTail({
   for (const item of selectRunningActiveCommandItems(thread)) {
     if (
       historyItemIds.has(item.id) ||
-      isLegacyOrphanCommandOutputPlaceholder(item)
+      isLegacyOrphanCommandOutputPlaceholder(item) ||
+      includeItem?.(item) === false
     ) {
       continue;
     }
