@@ -410,6 +410,14 @@ test("browser native view hides under app overlays and restores with measured bo
     rightPanelSource,
     /const sendBounds = \(\) => \{[\s\S]*\.setBrowserViewBounds\(bounds\)/,
   );
+  assert.match(
+    rightPanelSource,
+    /const showNativeBrowserView = async \(browserApi: BrowserPanelApi\) => \{[\s\S]*browserBoundsFromElement\([\s\S]*\.showBrowserView\(bounds\)/,
+  );
+  assert.match(
+    rightPanelSource,
+    /await showNativeBrowserView\(browserApi\);[\s\S]*await browserApi\.navigateBrowserView\(normalized\.url\);/,
+  );
   const showBranch = rightPanelSource.slice(
     rightPanelSource.indexOf("} else {", rightPanelSource.indexOf("if (shouldHideNativeView)")),
     rightPanelSource.indexOf("scheduleBoundsUpdate();"),
