@@ -1053,8 +1053,6 @@ struct SpawnExternalAgentArgs {
 #[serde(deny_unknown_fields)]
 struct FollowupTaskArgs {
     target: String,
-    message: Option<String>,
-    #[serde(default)]
     content: Vec<InterAgentContentPart>,
 }
 
@@ -1103,10 +1101,15 @@ fn followup_task_from_arguments(
     arguments: &str,
 ) -> Result<(String, ThreadFollowupTaskInput), FunctionCallError> {
     let args: FollowupTaskArgs = parse_arguments(arguments)?;
+    if args.content.is_empty() {
+        return Err(FunctionCallError::RespondToModel(
+            "followup_task requires non-empty structured content".to_string(),
+        ));
+    }
     Ok((
         args.target,
         ThreadFollowupTaskInput {
-            message: args.message.unwrap_or_default(),
+            message: String::new(),
             content_parts: args.content,
         },
     ))
@@ -1384,5 +1387,68 @@ mod tests {
             output,
             "agent depth limit reached: cannot spawn depth 2; configured agents.max_depth is 1"
         );
+    }
+
+    #[test]
+    fn followup_task_arguments_use_structured_text_content() {
+        let (target, input) = followup_task_from_arguments(
+            r#"{"target":"reviewer","content":[{"type":"text","text":"please review"}]}"#,
+        )
+        .expect("structured text content should parse");
+
+        assert_eq!(target, "reviewer");
+        assert_eq!(input.message, "");
+        assert_eq!(
+            input.content_parts,
+            vec![InterAgentContentPart::Text {
+                text: "please review".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn followup_task_arguments_accept_image_ref_content() {
+        let (_target, input) = followup_task_from_arguments(
+            r#"{"target":"reviewer","content":[{"type":"image_ref","attachment_id":"image-1"}]}"#,
+        )
+        .expect("image_ref content should parse");
+
+        assert_eq!(
+            input.content_parts,
+            vec![InterAgentContentPart::ImageRef {
+                attachment_id: "image-1".to_string(),
+                image_url: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn followup_task_arguments_reject_legacy_message_field() {
+        let err = followup_task_from_arguments(
+            r#"{"target":"reviewer","message":"please review","content":[{"type":"text","text":"short"}]}"#,
+        )
+        .expect_err("legacy message field should be rejected");
+
+        let FunctionCallError::RespondToModel(message) = err else {
+            panic!("expected model-visible parse error");
+        };
+        assert!(message.contains("unknown field `message`"));
+    }
+
+    #[test]
+    fn followup_task_arguments_reject_missing_or_empty_content() {
+        let missing = followup_task_from_arguments(r#"{"target":"reviewer"}"#)
+            .expect_err("missing content should be rejected");
+        let FunctionCallError::RespondToModel(message) = missing else {
+            panic!("expected model-visible parse error");
+        };
+        assert!(message.contains("missing field `content`"));
+
+        let empty = followup_task_from_arguments(r#"{"target":"reviewer","content":[]}"#)
+            .expect_err("empty content should be rejected");
+        let FunctionCallError::RespondToModel(message) = empty else {
+            panic!("expected model-visible content error");
+        };
+        assert!(message.contains("requires non-empty structured content"));
     }
 }

@@ -67,7 +67,10 @@ use toml::Value as TomlValue;
 
 #[test]
 fn external_followup_message_content_rejects_image_ref_placeholder_in_message() {
-    let err = external_followup_message_content("please inspect [image: image-1]".to_string(), &[])
+    let parts = vec![InterAgentContentPart::Text {
+        text: "please inspect [image: image-1]".to_string(),
+    }];
+    let err = external_followup_message_content(&parts)
         .expect_err("external text image placeholder should fail");
 
     assert!(matches!(err, FunctionCallError::RespondToModel(message)
@@ -79,24 +82,46 @@ fn external_followup_message_content_rejects_image_attachment_tag_in_text_part()
     let parts = vec![InterAgentContentPart::Text {
         text: "look at <image attachment_id=\"image-1\">".to_string(),
     }];
-    let err = external_followup_message_content(String::new(), &parts)
-        .expect_err("external text image tag should fail");
+    let err =
+        external_followup_message_content(&parts).expect_err("external text image tag should fail");
 
     assert!(matches!(err, FunctionCallError::RespondToModel(message)
             if message.contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")));
 }
 
 #[test]
-fn external_followup_message_content_keeps_structured_image_ref_unsupported_error() {
+fn external_followup_message_content_includes_structured_image_ref_preview() {
     let parts = vec![InterAgentContentPart::ImageRef {
         attachment_id: "image-1".to_string(),
         image_url: None,
     }];
-    let err = external_followup_message_content(String::new(), &parts)
-        .expect_err("external structured image_ref should remain unsupported");
+    let preview = external_followup_message_content(&parts)
+        .expect("external structured image_ref should be previewed");
+
+    assert_eq!(preview, "[image:image-1]");
+}
+
+#[test]
+fn external_followup_message_content_rejects_empty_content() {
+    let err =
+        external_followup_message_content(&[]).expect_err("empty structured content should fail");
 
     assert!(matches!(err, FunctionCallError::RespondToModel(message)
-            if message.contains("not supported from external agents")));
+            if message.contains("requires non-empty structured content")));
+}
+
+#[test]
+fn external_followup_task_args_reject_legacy_message_field() {
+    let err: FunctionCallError =
+        parse_external_arguments::<ExternalFollowupTaskArgs>(&serde_json::json!({
+            "target": "worker",
+            "message": "legacy text",
+            "content": [{"type": "text", "text": "structured text"}],
+        }))
+        .expect_err("legacy message field should be rejected");
+
+    assert!(matches!(err, FunctionCallError::RespondToModel(message)
+            if message.contains("unknown field `message`")));
 }
 
 async fn test_config_with_cli_overrides(
@@ -266,8 +291,7 @@ async fn resume_agent_from_rollout_boxed(
     thread_id: ThreadId,
     session_source: SessionSource,
 ) -> CodexResult<ThreadId> {
-    Box::pin(control.resume_agent_from_rollout(config, thread_id, session_source))
-        .await
+    Box::pin(control.resume_agent_from_rollout(config, thread_id, session_source)).await
 }
 
 fn run_large_resume_test<F, Fut>(factory: F)
@@ -1007,7 +1031,7 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: serde_json::json!({
                     "target": "worker",
-                    "message": "scoped hello"
+                    "content": [{"type": "text", "text": "scoped hello"}]
                 }),
             },
         )
@@ -1173,7 +1197,7 @@ async fn external_followup_and_list_use_global_absolute_agent_paths() {
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: serde_json::json!({
                     "target": "/project_b/worker",
-                    "message": "global hello"
+                    "content": [{"type": "text", "text": "global hello"}]
                 }),
             },
         )
@@ -1716,7 +1740,7 @@ async fn root_external_tools_spawn_child_and_reject_invalid_targets() {
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: serde_json::json!({
                     "target": "/root",
-                    "message": "again"
+                    "content": [{"type": "text", "text": "again"}]
                 }),
             },
         )
@@ -1809,7 +1833,7 @@ async fn named_root_external_tools_keep_root_sender_semantics() {
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: serde_json::json!({
                     "target": "/foo_project",
-                    "message": "again"
+                    "content": [{"type": "text", "text": "again"}]
                 }),
             },
         )
@@ -3690,7 +3714,10 @@ async fn external_tool_call_followup_to_native_uses_agent_bus() {
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: serde_json::json!({
                     "target": "/root/native",
-                    "message": "please review"
+                    "content": [
+                        {"type": "text", "text": "please review"},
+                        {"type": "image_ref", "attachment_id": "image-1"}
+                    ]
                 }),
             },
         )
@@ -3705,7 +3732,8 @@ async fn external_tool_call_followup_to_native_uses_agent_bus() {
                 Op::InterAgentCommunication { communication }
                     if communication.author == external_agent_path
                         && communication.recipient == native_agent_path
-                        && communication.content == "please review"
+                        && communication.content == "please review\n[image:image-1]"
+                        && communication.content_parts.is_empty()
                         && communication.trigger_turn
             )
     }));
@@ -5448,7 +5476,7 @@ async fn external_tool_followup_and_close_reject_persisted_completed_external_as
             ExternalToolName::FollowupExternalTask,
             serde_json::json!({
                 "target": external_agent_path.to_string(),
-                "message": "should not deliver"
+                "content": [{"type": "text", "text": "should not deliver"}]
             }),
         ),
         (
@@ -5707,7 +5735,7 @@ async fn external_tool_followup_rejects_restore_disabled_external_after_restart(
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: serde_json::json!({
                     "target": external_agent_path.to_string(),
-                    "message": "should not reconnect"
+                    "content": [{"type": "text", "text": "should not reconnect"}]
                 }),
             },
         )
@@ -5940,14 +5968,10 @@ async fn spawn_agent_errors_when_manager_dropped() {
 async fn resume_agent_errors_when_manager_dropped() {
     let control = AgentControl::default();
     let (_home, config) = test_config().await;
-    let err = resume_agent_from_rollout_boxed(
-        &control,
-        config,
-        ThreadId::new(),
-        SessionSource::Exec,
-    )
-    .await
-    .expect_err("resume_agent should fail without a manager");
+    let err =
+        resume_agent_from_rollout_boxed(&control, config, ThreadId::new(), SessionSource::Exec)
+            .await
+            .expect_err("resume_agent should fail without a manager");
     assert_eq!(
         err.to_string(),
         "unsupported operation: thread manager dropped"

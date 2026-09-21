@@ -2064,6 +2064,36 @@ test("builds chat-native presentation for outgoing inter-agent collaboration", (
   assert.match(entries[1]?.toolDetails ?? "", /Tool\nfollowup_task/);
 });
 
+test("shows structured follow-up text and image refs in outgoing inter-agent items", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "send-1",
+        tool: "sendInput",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/worker"],
+        prompt: "please compare this\n[image:image-1]",
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      },
+    ]),
+  );
+
+  assert.equal(
+    entries[0]?.interAgent?.body,
+    "please compare this\n[image:image-1]",
+  );
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /Prompt\nplease compare this\n\[image:image-1\]/,
+  );
+});
+
 test("shows legacy sendMessage collab messages as follow-up messages", () => {
   const entries = buildConversationEntries(
     makeThread([

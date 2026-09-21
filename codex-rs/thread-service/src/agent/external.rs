@@ -700,7 +700,7 @@ Use only this external-agent JSON protocol to collaborate with other agents. Do 
 
 Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
-- followup_external_task: arguments {{ "target": string, "message"?: string, "content"?: [{{ "type": "text", "text": string }} | {{ "type": "image_ref", "attachment_id": string }}] }}. Use message for legacy text-only followups or content for structured followups. Use this to send work, corrections, extra context, status requests, or decisions to another agent. If a parent or another existing agent asks you to report status, progress, interim findings, blockers, or decision needs to them, emit a followup_external_task JSON tool call targeting that agent; do not answer only in this external session. A normal final answer completes this external session and does not deliver a typed inter-agent update to the requested target. Examples: report progress to your parent; send a blocker to the PM; ask a reviewer to re-review; pass new requirements to a worker. Image references are currently supported only from native Morpheus agents; external agents receive a typed error instead of a silent downgrade.
+- followup_external_task: arguments {{ "target": string, "content": [{{ "type": "text", "text": string }} | {{ "type": "image_ref", "attachment_id": string }}] }}. Use text parts for text and image_ref parts for images; image_ref requires an attachment_id visible in this thread. Use this to send work, corrections, extra context, status requests, or decisions to another agent. If a parent or another existing agent asks you to report status, progress, interim findings, blockers, or decision needs to them, emit a followup_external_task JSON tool call targeting that agent; do not answer only in this external session. A normal final answer completes this external session and does not deliver a typed inter-agent update to the requested target. Examples: report progress to your parent; send a blocker to the PM; ask a reviewer to re-review; pass new requirements to a worker.
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - read_external_agent: arguments {{ "target": string }}. Use after list_external_agents to inspect last task and result details for one agent.
 - poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint and typed event payload when available.
@@ -2675,7 +2675,7 @@ mod tests {
     fn parses_claude_wrapped_external_tool_call() {
         let events = parse_external_stream(
             SpawnAgentProvider::ClaudeCli,
-            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"type\\\":\\\"external_tool_call\\\",\\\"id\\\":\\\"call_1\\\",\\\"tool\\\":\\\"followup_external_task\\\",\\\"arguments\\\":{\\\"target\\\":\\\"/root/native\\\",\\\"message\\\":\\\"hi\\\"}}\"}]}}",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"type\\\":\\\"external_tool_call\\\",\\\"id\\\":\\\"call_1\\\",\\\"tool\\\":\\\"followup_external_task\\\",\\\"arguments\\\":{\\\"target\\\":\\\"/root/native\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"hi\\\"}]}}\"}]}}",
         );
         assert_eq!(
             events,
@@ -2684,7 +2684,10 @@ mod tests {
                 tool: ExternalToolName::FollowupExternalTask,
                 arguments: json!({
                     "target": "/root/native",
-                    "message": "hi",
+                    "content": [{
+                        "type": "text",
+                        "text": "hi",
+                    }],
                 }),
             })]
         );
@@ -2727,6 +2730,9 @@ mod tests {
         );
         assert!(context.contains("do not answer only in this external session"));
         assert!(context.contains("typed inter-agent update to the requested target"));
+        assert!(context.contains("\"content\":"));
+        assert!(!context.contains("\"message\"?: string"));
+        assert!(!context.contains("legacy text-only followups"));
         assert!(context.contains("report progress to your parent"));
         assert!(context.contains("send a blocker to the PM"));
         assert!(context.contains("ask a reviewer to re-review"));

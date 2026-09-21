@@ -502,15 +502,14 @@ fn spawn_agent_tool_hides_service_tier_with_spawn_metadata() {
     assert!(!properties.contains_key("service_tier"));
 }
 
-#[test]
-fn followup_task_tool_accepts_legacy_message_or_structured_content() {
+fn assert_followup_tool_uses_structured_content_only(tool: ToolSpec, tool_name: &str) {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,
         output_schema,
         ..
-    }) = create_followup_task_tool()
+    }) = tool
     else {
-        panic!("followup_task should be a function tool");
+        panic!("{tool_name} should be a function tool");
     };
     assert_eq!(
         parameters.schema_type,
@@ -519,18 +518,9 @@ fn followup_task_tool_accepts_legacy_message_or_structured_content() {
     let properties = parameters
         .properties
         .as_ref()
-        .expect("followup_task should use object params");
+        .unwrap_or_else(|| panic!("{tool_name} should use object params"));
     assert!(properties.contains_key("target"));
-    assert!(properties.contains_key("message"));
-    let message_description = properties
-        .get("message")
-        .and_then(|schema| schema.description.as_deref())
-        .expect("message should describe image_ref misuse");
-    assert!(message_description.contains("[image:image-1]"));
-    assert!(
-        message_description
-            .contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")
-    );
+    assert!(!properties.contains_key("message"));
     let content = properties
         .get("content")
         .expect("structured content schema");
@@ -554,9 +544,18 @@ fn followup_task_tool_accepts_legacy_message_or_structured_content() {
     assert!(!properties.contains_key("items"));
     assert_eq!(
         parameters.required.as_ref(),
-        Some(&vec!["target".to_string()])
+        Some(&vec!["target".to_string(), "content".to_string()])
     );
     assert_eq!(output_schema, None);
+}
+
+#[test]
+fn followup_tools_use_structured_content_only() {
+    assert_followup_tool_uses_structured_content_only(create_followup_task_tool(), "followup_task");
+    assert_followup_tool_uses_structured_content_only(
+        create_followup_external_task_tool(),
+        "followup_external_task",
+    );
 }
 
 #[test]

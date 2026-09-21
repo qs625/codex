@@ -111,10 +111,8 @@ pub fn create_spawn_external_agent_tool() -> ToolSpec {
 }
 
 pub fn create_followup_external_task_tool() -> ToolSpec {
-    let properties = followup_task_properties(
-        "External or native agent id/canonical task name to message.",
-        "Message text to send through the shared agent bus.",
-    );
+    let properties =
+        followup_task_properties("External or native agent id/canonical task name to receive follow-up.");
 
     ToolSpec::Function(ResponsesApiTool {
         name: "followup_external_task".to_string(),
@@ -125,27 +123,18 @@ pub fn create_followup_external_task_tool() -> ToolSpec {
         defer_loading: None,
         parameters: JsonSchema::object(
             properties,
-            Some(vec!["target".to_string()]),
+            Some(vec!["target".to_string(), "content".to_string()]),
             Some(false.into()),
         ),
         output_schema: None,
     })
 }
 
-fn followup_task_properties(
-    target_description: &str,
-    message_description: &str,
-) -> BTreeMap<String, JsonSchema> {
+fn followup_task_properties(target_description: &str) -> BTreeMap<String, JsonSchema> {
     BTreeMap::from([
         (
             "target".to_string(),
             JsonSchema::string(Some(target_description.to_string())),
-        ),
-        (
-            "message".to_string(),
-            JsonSchema::string(Some(format!(
-                "{message_description} Do not write image placeholders such as `[image:image-1]` or `<image attachment_id=image-1>` here; image references must use `content: [{{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}}]`."
-            ))),
         ),
         (
             "content".to_string(),
@@ -175,7 +164,7 @@ fn followup_task_properties(
                     Some(false.into()),
                 ),
                 Some(
-                    "Structured followup content. Use text parts and image_ref parts; image_ref requires an attachment_id that is visible in the parent thread. Do not put image placeholders inside text parts; use a separate image_ref part instead."
+                    "Structured followup content. Use text parts for text and image_ref parts for images; image_ref requires an attachment_id that is visible in the parent thread. Do not put image placeholders inside text parts."
                         .to_string(),
                 ),
             ),
@@ -223,8 +212,7 @@ pub fn create_close_external_agent_tool() -> ToolSpec {
 
 pub fn create_followup_task_tool() -> ToolSpec {
     let properties = followup_task_properties(
-        "Agent id or canonical task name to message (from spawn_agent).",
-        "Message text to send to the target agent.",
+        "Agent id or canonical task name to receive follow-up (from spawn_agent).",
     );
 
     ToolSpec::Function(ResponsesApiTool {
@@ -236,7 +224,7 @@ pub fn create_followup_task_tool() -> ToolSpec {
         defer_loading: None,
         parameters: JsonSchema::object(
             properties,
-            Some(vec!["target".to_string()]),
+            Some(vec!["target".to_string(), "content".to_string()]),
             Some(false.into()),
         ),
         output_schema: None,

@@ -214,8 +214,6 @@ struct ExternalSpawnAgentArgs {
 #[serde(deny_unknown_fields)]
 struct ExternalFollowupTaskArgs {
     target: String,
-    message: Option<String>,
-    #[serde(default)]
     content: Vec<InterAgentContentPart>,
 }
 
@@ -260,19 +258,8 @@ where
 }
 
 fn external_followup_message_content(
-    message: String,
     content_parts: &[InterAgentContentPart],
 ) -> Result<String, FunctionCallError> {
-    validate_no_text_image_ref_misuse(&message)?;
-    if content_parts.is_empty() {
-        if message.trim().is_empty() {
-            return Err(FunctionCallError::RespondToModel(
-                "Empty message can't be sent to an agent".to_string(),
-            ));
-        }
-        return Ok(message);
-    }
-
     let mut preview_parts = Vec::new();
     for part in content_parts {
         match part {
@@ -293,16 +280,14 @@ fn external_followup_message_content(
                         "image_ref content requires a non-empty attachment_id".to_string(),
                     ));
                 }
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "image_ref `{attachment_id}` is not supported from external agents"
-                )));
+                preview_parts.push(format!("[image:{attachment_id}]"));
             }
         }
     }
 
     if preview_parts.is_empty() {
         return Err(FunctionCallError::RespondToModel(
-            "Empty content can't be sent to an agent".to_string(),
+            "followup_external_task requires non-empty structured content".to_string(),
         ));
     }
     Ok(preview_parts.join("\n"))
@@ -2434,10 +2419,7 @@ impl AgentControl {
             }
             ExternalToolName::FollowupExternalTask => {
                 let args: ExternalFollowupTaskArgs = parse_external_arguments(&call.arguments)?;
-                let prompt = external_followup_message_content(
-                    args.message.unwrap_or_default(),
-                    &args.content,
-                )?;
+                let prompt = external_followup_message_content(&args.content)?;
                 let receiver_thread_id = self
                     .resolve_external_live_target(&sender, &args.target, "follow up to")
                     .await?;
@@ -2467,7 +2449,6 @@ impl AgentControl {
                     prompt,
                     InterAgentOperation::FollowupTask,
                 )
-                .with_content_parts(args.content)
                 .with_thread_ids(sender.thread_id, receiver_thread_id)
                 .with_trigger_turn(true);
                 self.send_inter_agent_communication(receiver_thread_id, communication)
