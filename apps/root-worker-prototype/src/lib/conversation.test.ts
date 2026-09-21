@@ -1284,6 +1284,125 @@ test("places older active command snapshots by command start time instead of at 
   );
 });
 
+test("preserves durable item order when active tail projection is inserted", () => {
+  const thread = {
+    ...makeThreadWithTurns([
+      {
+        id: "turn-restored",
+        items: [
+          {
+            type: "agentMessage",
+            id: "agent-before-poll",
+            text: "返工 diff 已经准备好。",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "builtinToolCall",
+            id: "poll-event",
+            tool: "poll_event",
+            arguments: {},
+            status: "completed",
+            output: {
+              source_hint: "inter_agent",
+              item_count: 1,
+            },
+            startedAtMs: 302_000,
+            completedAtMs: 302_000,
+          },
+          {
+            type: "agentMessage",
+            id: "agent-after-poll",
+            text: "event delivery 修复完成。",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "commandExecution",
+            id: "merge-command",
+            command: "git merge fix/poll-event-delivery",
+            cwd: "/tmp/project",
+            processId: "process-merge",
+            source: "agent",
+            status: "completed",
+            initialWaitMs: 1000,
+            notifyOn: "exit",
+            commandActions: [
+              { type: "unknown", command: "git merge fix/poll-event-delivery" },
+            ],
+            aggregatedOutput: "Already up to date.\n",
+            exitCode: 0,
+            durationMs: 1000,
+            startedAtMs: 341_000,
+            completedAtMs: 341_000,
+          },
+          {
+            type: "agentMessage",
+            id: "agent-after-merge",
+            text: "两条新修复都已进主线。",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 341,
+        completedAt: 341,
+        durationMs: 0,
+      },
+    ]),
+    updatedAt: 360,
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "validation-command",
+        command: "pnpm build",
+        cwd: "/tmp/project",
+        processId: "process-validation",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm build" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+        startedAtMs: 400_000,
+      },
+    ],
+  } satisfies Thread;
+
+  const state = buildConversationState(thread);
+
+  assert.deepEqual(
+    state.entries.map((entry) => [entry.id, entry.turnId, entry.timestamp]),
+    [
+      ["agent-before-poll", "turn-restored", formatClockTime(341)],
+      ["poll-event", "turn-restored", formatClockTime(302)],
+      ["agent-after-poll", "turn-restored", formatClockTime(341)],
+      ["merge-command", "turn-restored", formatClockTime(341)],
+      ["agent-after-merge", "turn-restored", formatClockTime(341)],
+      [
+        "validation-command",
+        "active-command:validation-command",
+        formatClockTime(400),
+      ],
+    ],
+  );
+  assert.deepEqual(
+    state.cells.map((cell) => cell.entries.map((entry) => entry.id)),
+    [
+      ["agent-before-poll"],
+      ["poll-event"],
+      ["agent-after-poll"],
+      ["merge-command"],
+      ["agent-after-merge"],
+      ["validation-command"],
+    ],
+  );
+});
+
 test("omits pre-compact orphan active command after the compact marker", () => {
   const thread = {
     ...makeThreadWithTurns([
