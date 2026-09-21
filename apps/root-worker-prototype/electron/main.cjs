@@ -41,6 +41,7 @@ const {
   waitForBrowserPanelNavigationResult,
 } = require("./browserPanelNavigationState.cjs");
 const {
+  browserPanelBoundsAreVisible,
   normalizeBrowserBoundsUpdate,
 } = require("./browserPanelBounds.cjs");
 const {
@@ -806,6 +807,7 @@ ipcMain.handle("codex:browser:reload", async (event) => {
     const navigationSequence = ++tab.navigationSequence;
     tab.pendingDeferredFailure = null;
     tab.pendingNavigationSequence = navigationSequence;
+    tab.pendingNavigationRequiresVisiblePanel = true;
     tab.pendingNavigationTarget = tab.view.webContents.getURL() || null;
     scheduleBrowserPanelPendingNavigationTimeout(panel, tab, navigationSequence);
     tab.state.error = null;
@@ -1651,10 +1653,8 @@ async function createBrowserPanelDebugTarget(target) {
   const tab = createBrowserPanelTab(panel, { activate: true });
   try {
     if (targetRequest.url) {
-      void loadBrowserPanelTabUrl(panel, tab, targetRequest.url).catch((error) => {
-        tab.state.loading = false;
-        tab.state.error = error instanceof Error ? error.message : String(error);
-        sendBrowserPanelState(panel);
+      await loadBrowserPanelTabUrl(panel, tab, targetRequest.url, {
+        requireVisiblePanel: false,
       });
     } else {
       await loadBrowserPanelTabAboutBlankBootstrap(panel, tab);
@@ -1709,9 +1709,27 @@ async function waitForBrowserPanelDevToolsTarget(webContents) {
 
 async function waitForBrowserPanelVisibleNavigationTarget(panel, tab) {
   if (!panel.visible) {
-    return;
+    throw new Error("Browser page is not visible in the panel");
+  }
+  if (!browserPanelBoundsAreVisible(panel.bounds)) {
+    throw new Error("Browser page has no visible panel bounds");
   }
   ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
+  if (!remoteDebuggingConfig.enabled) {
+    return;
+  }
+  await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
+}
+
+async function waitForBrowserPanelNavigationTarget(
+  panel,
+  tab,
+  { requireVisiblePanel = true } = {},
+) {
+  if (requireVisiblePanel) {
+    await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
+    return;
+  }
   if (!remoteDebuggingConfig.enabled) {
     return;
   }
@@ -1860,6 +1878,7 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
     finishedNavigationSequence: 0,
     finishedUrl: null,
     pendingNavigationSequence: null,
+    pendingNavigationRequiresVisiblePanel: true,
     pendingNavigationTarget: null,
     pendingNavigationTimeout: null,
     pendingDeferredFailure: null,
@@ -1879,7 +1898,12 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
   return tab;
 }
 
-async function loadBrowserPanelTabUrl(panel, tab, target) {
+async function loadBrowserPanelTabUrl(
+  panel,
+  tab,
+  target,
+  { requireVisiblePanel = true } = {},
+) {
   const normalized = normalizeBrowserTarget(target);
   if (!normalized.ok) {
     tab.state.error = normalized.reason;
@@ -1891,11 +1915,14 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = navigationSequence;
+  tab.pendingNavigationRequiresVisiblePanel = requireVisiblePanel;
   tab.pendingNavigationTarget = normalized.url;
   tab.state.error = null;
   tab.state.loading = true;
   stopBrowserPanelWebContentsLoad(tab);
-  ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
+  if (requireVisiblePanel) {
+    ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
+  }
   sendBrowserPanelState(panel);
   const observedNavigation = observeBrowserPanelTargetNavigation(tab, navigationSequence);
   try {
@@ -1908,7 +1935,9 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
     observedNavigation.dispose();
     await waitForBrowserPanelLoadStop(tab.view.webContents);
     if (tab.navigationSequence === navigationSequence) {
-      await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
+      await waitForBrowserPanelNavigationTarget(panel, tab, {
+        requireVisiblePanel,
+      });
       completeBrowserPanelNavigation(panel, tab, navigationSequence);
     }
   } catch (error) {
@@ -1921,7 +1950,9 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
     if (browserPanelTabHasFinishedTarget(tab, normalized.url, navigationSequence)) {
       if (tab.navigationSequence === navigationSequence) {
         try {
-          await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
+          await waitForBrowserPanelNavigationTarget(panel, tab, {
+            requireVisiblePanel,
+          });
           completeBrowserPanelNavigation(panel, tab, navigationSequence);
         } catch (visibilityError) {
           failBrowserPanelNavigation(panel, tab, {
@@ -1971,6 +2002,7 @@ function bindBrowserPanelTab(panel, tab) {
       if (!isEmptyBrowserPanelUrl(currentUrl)) {
         const navigationSequence = ++tab.navigationSequence;
         tab.pendingNavigationSequence = navigationSequence;
+        tab.pendingNavigationRequiresVisiblePanel = true;
         tab.pendingNavigationTarget = currentUrl || null;
         scheduleBrowserPanelPendingNavigationTimeout(panel, tab, navigationSequence);
       }
@@ -1995,7 +2027,7 @@ function bindBrowserPanelTab(panel, tab) {
         targetUrl: tab.pendingNavigationTarget,
       })
     ) {
-      void completeBrowserPanelNavigationWhenVisible(
+      void completeBrowserPanelNavigationWhenTargetReady(
         panel,
         tab,
         tab.pendingNavigationSequence,
@@ -2007,7 +2039,7 @@ function bindBrowserPanelTab(panel, tab) {
   });
   tab.view.webContents.on("did-finish-load", () => {
     if (tab.pendingNavigationSequence !== null) {
-      void completeBrowserPanelNavigationWhenVisible(
+      void completeBrowserPanelNavigationWhenTargetReady(
         panel,
         tab,
         tab.pendingNavigationSequence,
@@ -2204,6 +2236,7 @@ function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
+  tab.pendingNavigationRequiresVisiblePanel = true;
   tab.pendingNavigationTarget = null;
   updateBrowserPanelLocationState(tab);
   tab.finishedNavigationSequence = navigationSequence ?? tab.navigationSequence;
@@ -2213,13 +2246,15 @@ function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {
   sendBrowserPanelState(panel);
 }
 
-async function completeBrowserPanelNavigationWhenVisible(
+async function completeBrowserPanelNavigationWhenTargetReady(
   panel,
   tab,
   navigationSequence,
 ) {
   try {
-    await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
+    await waitForBrowserPanelNavigationTarget(panel, tab, {
+      requireVisiblePanel: tab.pendingNavigationRequiresVisiblePanel !== false,
+    });
   } catch (error) {
     if (tab.pendingNavigationSequence === navigationSequence) {
       failBrowserPanelNavigation(panel, tab, {
@@ -2238,6 +2273,7 @@ function failBrowserPanelNavigation(panel, tab, failure) {
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
+  tab.pendingNavigationRequiresVisiblePanel = true;
   tab.pendingNavigationTarget = null;
   tab.state.url = failure.validatedUrl || tab.state.url;
   tab.state.loading = false;
@@ -2252,6 +2288,7 @@ function stopBrowserPanelNavigation(tab) {
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
+  tab.pendingNavigationRequiresVisiblePanel = true;
   tab.pendingNavigationTarget = null;
   stopBrowserPanelWebContentsLoad(tab);
   updateBrowserPanelLocationState(tab);
@@ -2336,7 +2373,7 @@ function deferBrowserPanelFailure(panel, tab, failure) {
         deferredFailure.navigationSequence,
       )
     ) {
-      void completeBrowserPanelNavigationWhenVisible(
+      void completeBrowserPanelNavigationWhenTargetReady(
         panel,
         tab,
         deferredFailure.navigationSequence,
@@ -2507,7 +2544,10 @@ function ensureBrowserPanelTabAttachedForNavigation(
   { raise = false } = {},
 ) {
   if (!panel.visible) {
-    return;
+    throw new Error("Browser page is not visible in the panel");
+  }
+  if (!browserPanelBoundsAreVisible(panel.bounds)) {
+    throw new Error("Browser page has no visible panel bounds");
   }
   const activeTab = activeBrowserPanelTab(panel);
   if (activeTab?.id !== tab.id) {

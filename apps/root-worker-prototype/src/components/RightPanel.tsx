@@ -886,6 +886,18 @@ function BrowserPanel({
     }
     passiveBoundsCorrectionRef.current?.();
   };
+  const showNativeBrowserView = async (browserApi: BrowserPanelApi) => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const bounds = browserBoundsFromElement(
+      viewport,
+      nextBrowserBoundsSequence(boundsSequenceRef),
+    );
+    const nextState = await browserApi.showBrowserView(bounds);
+    applyBrowserState(nextState);
+  };
 
   useEffect(() => {
     const browserApi = currentBrowserPanelApi();
@@ -915,10 +927,12 @@ function BrowserPanel({
     }
     setAddress(normalized.url);
     setLocalError(null);
-    void browserApi
-      .navigateBrowserView(normalized.url)
-      .then(applyBrowserState)
-      .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
+    void (async () => {
+      await showNativeBrowserView(browserApi);
+      setAddress(normalized.url);
+      const nextState = await browserApi.navigateBrowserView(normalized.url);
+      applyBrowserState(nextState);
+    })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   }, [navigationRequest, onNavigationRequestHandled]);
 
   useEffect(() => {
@@ -1005,10 +1019,12 @@ function BrowserPanel({
       return;
     }
     setLocalError(null);
-    void browserApi
-      .navigateBrowserView(normalized.url)
-      .then(applyBrowserState)
-      .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
+    void (async () => {
+      await showNativeBrowserView(browserApi);
+      setAddress(normalized.url);
+      const nextState = await browserApi.navigateBrowserView(normalized.url);
+      applyBrowserState(nextState);
+    })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   };
 
   const runCommand = (

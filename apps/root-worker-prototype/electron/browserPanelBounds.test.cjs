@@ -1,7 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { normalizeBrowserBoundsUpdate } = require("./browserPanelBounds.cjs");
+const {
+  browserPanelBoundsAreVisible,
+  normalizeBrowserBoundsUpdate,
+} = require("./browserPanelBounds.cjs");
 
 test("normalizeBrowserBoundsUpdate rounds and clamps bounds", () => {
   assert.deepEqual(
@@ -68,4 +71,11 @@ test("normalizeBrowserBoundsUpdate accepts newer and legacy unsequenced bounds",
       sequence: 8,
     },
   );
+});
+
+test("browserPanelBoundsAreVisible requires non-zero width and height", () => {
+  assert.equal(browserPanelBoundsAreVisible({ width: 640, height: 480 }), true);
+  assert.equal(browserPanelBoundsAreVisible({ width: 0, height: 480 }), false);
+  assert.equal(browserPanelBoundsAreVisible({ width: 640, height: 0 }), false);
+  assert.equal(browserPanelBoundsAreVisible(null), false);
 });

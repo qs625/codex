@@ -347,7 +347,7 @@ test("main browser navigation gates stop completion on committed URL evidence", 
     -1,
   );
   assert.notEqual(
-    mainSource.indexOf("completeBrowserPanelNavigationWhenVisible", globalStopIndex),
+    mainSource.indexOf("completeBrowserPanelNavigationWhenTargetReady", globalStopIndex),
     -1,
   );
 });
@@ -399,4 +399,26 @@ test("main browser target wait maps devtools target id instead of page type", ()
   assert.notEqual(targetWaitIndex, -1);
   assert.match(targetWaitSource, /fromDevToolsTargetId\(candidate\.id\) === webContents/);
   assert.doesNotMatch(targetWaitSource, /candidate\.type !== "page"/);
+});
+
+test("main browser debug target creation can load hidden tabs while waiting for target publication", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const createTargetIndex = mainSource.indexOf(
+    "async function createBrowserPanelDebugTarget",
+  );
+  const createTargetSource = mainSource.slice(
+    createTargetIndex,
+    mainSource.indexOf("async function loadBrowserPanelTabAboutBlankBootstrap"),
+  );
+
+  assert.notEqual(createTargetIndex, -1);
+  assert.match(
+    createTargetSource,
+    /await loadBrowserPanelTabUrl\(panel, tab, targetRequest\.url, \{[\s\S]*requireVisiblePanel: false,[\s\S]*\}\);/,
+  );
+  assert.doesNotMatch(createTargetSource, /void loadBrowserPanelTabUrl/);
+  assert.match(
+    createTargetSource,
+    /const targetId = await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
+  );
 });

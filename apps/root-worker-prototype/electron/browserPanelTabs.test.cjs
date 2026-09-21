@@ -98,19 +98,39 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   );
   assert.match(
     mainSource,
-    /async function waitForBrowserPanelVisibleNavigationTarget\(panel, tab\) \{[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
+    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*if \(!panel\.visible\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);/,
   );
   assert.match(
     mainSource,
-    /async function loadBrowserPanelTabUrl\(panel, tab, target\) \{[\s\S]*stopBrowserPanelWebContentsLoad\(tab\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*tab\.view\.webContents\.loadURL\(normalized\.url\)[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab\);[\s\S]*completeBrowserPanelNavigation\(panel, tab, navigationSequence\);/,
+    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*browserPanelBoundsAreVisible\(panel\.bounds\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
   );
   assert.match(
     mainSource,
-    /tab\.view\.webContents\.on\("did-stop-loading", \(\) => \{[\s\S]*void completeBrowserPanelNavigationWhenVisible\([\s\S]*tab\.pendingNavigationSequence,[\s\S]*\);[\s\S]*return;/,
+    /async function waitForBrowserPanelVisibleNavigationTarget\(panel, tab\) \{[\s\S]*if \(!panel\.visible\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
   );
   assert.match(
     mainSource,
-    /tab\.view\.webContents\.on\("did-finish-load", \(\) => \{[\s\S]*void completeBrowserPanelNavigationWhenVisible\([\s\S]*tab\.pendingNavigationSequence,[\s\S]*\);[\s\S]*return;/,
+    /async function loadBrowserPanelTabUrl\([\s\S]*\{ requireVisiblePanel = true \} = \{\},[\s\S]*stopBrowserPanelWebContentsLoad\(tab\);[\s\S]*if \(requireVisiblePanel\) \{[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*tab\.view\.webContents\.loadURL\(normalized\.url\)[\s\S]*await waitForBrowserPanelNavigationTarget\(panel, tab, \{[\s\S]*requireVisiblePanel,[\s\S]*\}\);[\s\S]*completeBrowserPanelNavigation\(panel, tab, navigationSequence\);/,
+  );
+  assert.match(
+    mainSource,
+    /tab\.view\.webContents\.on\("did-stop-loading", \(\) => \{[\s\S]*void completeBrowserPanelNavigationWhenTargetReady\([\s\S]*tab\.pendingNavigationSequence,[\s\S]*\);[\s\S]*return;/,
+  );
+  assert.match(
+    mainSource,
+    /tab\.view\.webContents\.on\("did-finish-load", \(\) => \{[\s\S]*void completeBrowserPanelNavigationWhenTargetReady\([\s\S]*tab\.pendingNavigationSequence,[\s\S]*\);[\s\S]*return;/,
+  );
+  assert.match(
+    mainSource,
+    /ipcMain\.handle\("codex:browser:reload"[\s\S]*tab\.pendingNavigationSequence = navigationSequence;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = tab\.view\.webContents\.getURL\(\) \|\| null;/,
+  );
+  assert.match(
+    mainSource,
+    /tab\.view\.webContents\.on\("did-start-loading", \(\) => \{[\s\S]*tab\.pendingNavigationSequence = navigationSequence;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = currentUrl \|\| null;/,
+  );
+  assert.match(
+    mainSource,
+    /function stopBrowserPanelNavigation\(tab\) \{[\s\S]*tab\.pendingNavigationSequence = null;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = null;/,
   );
   assert.match(mainSource, /function detachAllBrowserPanelViews\(panel\)/);
 });

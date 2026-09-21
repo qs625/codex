@@ -29,6 +29,14 @@ function normalizeBrowserBoundsSequence(sequence) {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+function browserPanelBoundsAreVisible(bounds) {
+  return (
+    Number(bounds?.width) > 0 &&
+    Number(bounds?.height) > 0
+  );
+}
+
 module.exports = {
+  browserPanelBoundsAreVisible,
   normalizeBrowserBoundsUpdate,
 };
