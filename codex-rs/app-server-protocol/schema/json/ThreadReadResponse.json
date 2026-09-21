@@ -928,46 +928,6 @@
       ],
       "type": "string"
     },
-    "SessionSource": {
-      "oneOf": [
-        {
-          "enum": [
-            "cli",
-            "vscode",
-            "exec",
-            "appServer",
-            "unknown"
-          ],
-          "type": "string"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "custom": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "custom"
-          ],
-          "title": "CustomSessionSource",
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "subAgent": {
-              "$ref": "#/definitions/SubAgentSource"
-            }
-          },
-          "required": [
-            "subAgent"
-          ],
-          "title": "SubAgentSessionSource",
-          "type": "object"
-        }
-      ]
-    },
     "SubAgentSource": {
       "oneOf": [
         {
@@ -1193,8 +1153,12 @@
           "description": "Usually the first user message in the thread, if available.",
           "type": "string"
         },
+        "runtimeSessionId": {
+          "description": "Canonical runtime attachment/thread-tree id. Written alongside legacy `sessionId`.",
+          "type": "string"
+        },
         "sessionId": {
-          "description": "Session id shared by threads that belong to the same session tree.",
+          "description": "Legacy runtime attachment/thread-tree id. New clients should use `runtimeSessionId`; this compatibility field remains for older renderers and runtime attachment plumbing.",
           "type": "string"
         },
         "skills": {
@@ -1208,7 +1172,7 @@
         "source": {
           "allOf": [
             {
-              "$ref": "#/definitions/SessionSource"
+              "$ref": "#/definitions/ThreadOrigin"
             }
           ],
           "description": "Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.)."
@@ -1223,6 +1187,10 @@
             }
           ],
           "description": "Bounded thread-level historical statistics restored from persisted history."
+        },
+        "threadId": {
+          "description": "Canonical Morpheus thread identity. Written alongside legacy `id`.",
+          "type": "string"
         },
         "threadSource": {
           "anyOf": [
@@ -1268,8 +1236,10 @@
         "lifecycleStatus",
         "modelProvider",
         "preview",
+        "runtimeSessionId",
         "sessionId",
         "source",
+        "threadId",
         "turns",
         "updatedAt"
       ],
@@ -3135,6 +3105,46 @@
         "eventSubscription"
       ],
       "type": "string"
+    },
+    "ThreadOrigin": {
+      "oneOf": [
+        {
+          "enum": [
+            "cli",
+            "vscode",
+            "exec",
+            "appServer",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "custom"
+          ],
+          "title": "CustomThreadOrigin",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "subAgent": {
+              "$ref": "#/definitions/SubAgentSource"
+            }
+          },
+          "required": [
+            "subAgent"
+          ],
+          "title": "SubAgentThreadOrigin",
+          "type": "object"
+        }
+      ]
     },
     "ThreadSkill": {
       "properties": {

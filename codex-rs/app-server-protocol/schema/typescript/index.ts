@@ -361,7 +361,6 @@ export type { ServerNotification } from "./ServerNotification";
 export type { ServerRequest } from "./ServerRequest";
 export type { ServerRequestResolvedNotification } from "./ServerRequestResolvedNotification";
 export type { SessionMigration } from "./SessionMigration";
-export type { SessionSource } from "./SessionSource";
 export type { Settings } from "./Settings";
 export type { SkillDependencies } from "./SkillDependencies";
 export type { SkillErrorInfo } from "./SkillErrorInfo";
@@ -440,6 +439,7 @@ export type { ThreadMetadataGitInfoUpdateParams } from "./ThreadMetadataGitInfoU
 export type { ThreadMetadataUpdateParams } from "./ThreadMetadataUpdateParams";
 export type { ThreadMetadataUpdateResponse } from "./ThreadMetadataUpdateResponse";
 export type { ThreadNameUpdatedNotification } from "./ThreadNameUpdatedNotification";
+export type { ThreadOrigin } from "./ThreadOrigin";
 export type { ThreadProviderCapabilities } from "./ThreadProviderCapabilities";
 export type { ThreadProviderDescriptor } from "./ThreadProviderDescriptor";
 export type { ThreadProviderKind } from "./ThreadProviderKind";

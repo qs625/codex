@@ -16,22 +16,31 @@ use protocol::protocol::ThreadSkill as CoreThreadSkill;
 use protocol::protocol::ThreadSkillKind as CoreThreadSkillKind;
 use protocol::protocol::ThreadSource as CoreThreadSource;
 #[cfg(feature = "schema-export")]
-#[cfg(feature = "schema-export")]
 use schemars::JsonSchema;
+#[cfg(feature = "schema-export")]
+use schemars::r#gen::SchemaGenerator;
+#[cfg(feature = "schema-export")]
+use schemars::schema::Schema;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::de;
+use serde::ser::SerializeStruct;
+#[cfg(feature = "schema-export")]
+use std::borrow::Cow;
 use std::fmt;
 use std::path::PathBuf;
 #[cfg(feature = "schema-export")]
-#[cfg(feature = "schema-export")]
 use ts_rs::TS;
+#[cfg(feature = "schema-export")]
+use ts_rs::TypeVisitor;
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
 #[derive(Default)]
-pub enum SessionSource {
+pub enum ThreadOrigin {
     Cli,
     #[serde(rename = "vscode")]
     #[cfg_attr(feature = "schema-export", ts(rename = "vscode"))]
@@ -45,32 +54,36 @@ pub enum SessionSource {
     Unknown,
 }
 
-impl From<CoreSessionSource> for SessionSource {
+/// Legacy API name retained for compatibility. New app-server protocol code
+/// should use [`ThreadOrigin`] for Morpheus thread provenance.
+pub type SessionSource = ThreadOrigin;
+
+impl From<CoreSessionSource> for ThreadOrigin {
     fn from(value: CoreSessionSource) -> Self {
         match value {
-            CoreSessionSource::Cli => SessionSource::Cli,
-            CoreSessionSource::VSCode => SessionSource::VsCode,
-            CoreSessionSource::Exec => SessionSource::Exec,
-            CoreSessionSource::Mcp => SessionSource::AppServer,
-            CoreSessionSource::Custom(source) => SessionSource::Custom(source),
+            CoreSessionSource::Cli => ThreadOrigin::Cli,
+            CoreSessionSource::VSCode => ThreadOrigin::VsCode,
+            CoreSessionSource::Exec => ThreadOrigin::Exec,
+            CoreSessionSource::Mcp => ThreadOrigin::AppServer,
+            CoreSessionSource::Custom(source) => ThreadOrigin::Custom(source),
             // We do not want to render those at the app-server level.
-            CoreSessionSource::Internal(_) => SessionSource::Unknown,
-            CoreSessionSource::SubAgent(sub) => SessionSource::SubAgent(sub),
-            CoreSessionSource::Unknown => SessionSource::Unknown,
+            CoreSessionSource::Internal(_) => ThreadOrigin::Unknown,
+            CoreSessionSource::SubAgent(sub) => ThreadOrigin::SubAgent(sub),
+            CoreSessionSource::Unknown => ThreadOrigin::Unknown,
         }
     }
 }
 
-impl From<SessionSource> for CoreSessionSource {
-    fn from(value: SessionSource) -> Self {
+impl From<ThreadOrigin> for CoreSessionSource {
+    fn from(value: ThreadOrigin) -> Self {
         match value {
-            SessionSource::Cli => CoreSessionSource::Cli,
-            SessionSource::VsCode => CoreSessionSource::VSCode,
-            SessionSource::Exec => CoreSessionSource::Exec,
-            SessionSource::AppServer => CoreSessionSource::Mcp,
-            SessionSource::Custom(source) => CoreSessionSource::Custom(source),
-            SessionSource::SubAgent(sub) => CoreSessionSource::SubAgent(sub),
-            SessionSource::Unknown => CoreSessionSource::Unknown,
+            ThreadOrigin::Cli => CoreSessionSource::Cli,
+            ThreadOrigin::VsCode => CoreSessionSource::VSCode,
+            ThreadOrigin::Exec => CoreSessionSource::Exec,
+            ThreadOrigin::AppServer => CoreSessionSource::Mcp,
+            ThreadOrigin::Custom(source) => CoreSessionSource::Custom(source),
+            ThreadOrigin::SubAgent(sub) => CoreSessionSource::SubAgent(sub),
+            ThreadOrigin::Unknown => CoreSessionSource::Unknown,
         }
     }
 }
@@ -320,13 +333,12 @@ pub struct ThreadStats {
     pub compaction_count: u32,
 }
 
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(export))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Thread {
     pub id: String,
-    /// Session id shared by threads that belong to the same session tree.
+    /// Legacy runtime attachment/thread-tree id. New clients should use
+    /// `threadId`/`id` for Morpheus thread identity; this compatibility field
+    /// only remains for older renderers and runtime attachment plumbing.
     pub session_id: String,
     /// Source thread id when this thread was created by forking another thread.
     pub forked_from_id: Option<String>,
@@ -337,10 +349,8 @@ pub struct Thread {
     /// Model provider used for this thread (for example, 'openai').
     pub model_provider: String,
     /// Unix timestamp (in seconds) when the thread was created.
-    #[cfg_attr(feature = "schema-export", ts(type = "number"))]
     pub created_at: i64,
     /// Unix timestamp (in seconds) when the thread was last updated.
-    #[cfg_attr(feature = "schema-export", ts(type = "number"))]
     pub updated_at: i64,
     /// Current runtime lifecycle status for the thread.
     pub lifecycle_status: ThreadLifecycleStatus,
@@ -351,7 +361,7 @@ pub struct Thread {
     /// Version of the CLI that created the thread.
     pub cli_version: String,
     /// Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
-    pub source: SessionSource,
+    pub source: ThreadOrigin,
     /// Optional analytics source classification for this thread.
     pub thread_source: Option<ThreadSource>,
     /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
@@ -365,15 +375,12 @@ pub struct Thread {
     /// Optional user-facing thread title.
     pub name: Option<String>,
     /// Aggregate thread-level skill usage observed so far.
-    #[serde(default)]
     pub skills: Vec<ThreadSkill>,
     /// Restored aggregate thread token usage, when available.
     pub token_usage: Option<ThreadTokenUsage>,
     /// Restored aggregate thread context usage, when available.
     pub context_usage: Option<ThreadContextUsage>,
     /// Bounded thread-level historical statistics restored from persisted history.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema-export", ts(optional))]
     pub stats: Option<ThreadStats>,
     /// Populated only on responses that explicitly include display history, such as
     /// `thread/resume`, `thread/rollback`, `thread/fork`, and
@@ -384,15 +391,297 @@ pub struct Thread {
     /// Current active subscription display facts restored from persisted activity events.
     /// These are intentionally kept out of `turns`, which represents ordinary
     /// conversation history.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema-export", ts(optional))]
     pub active_subscription_items: Option<Vec<ThreadItem>>,
     /// Current command display facts restored from persisted activity events.
     /// These are intentionally kept out of `turns`, which represents ordinary
     /// conversation history.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema-export", ts(optional))]
     pub active_command_items: Option<Vec<ThreadItem>>,
+}
+
+#[cfg(feature = "schema-export")]
+#[derive(JsonSchema, TS)]
+#[schemars(rename = "Thread")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ThreadExport {
+    id: String,
+    /// Canonical Morpheus thread identity. Written alongside legacy `id`.
+    thread_id: String,
+    /// Legacy runtime attachment/thread-tree id. New clients should use
+    /// `runtimeSessionId`; this compatibility field remains for older renderers
+    /// and runtime attachment plumbing.
+    session_id: String,
+    /// Canonical runtime attachment/thread-tree id. Written alongside legacy
+    /// `sessionId`.
+    runtime_session_id: String,
+    /// Source thread id when this thread was created by forking another thread.
+    forked_from_id: Option<String>,
+    /// Usually the first user message in the thread, if available.
+    preview: String,
+    /// Whether the thread is ephemeral and should not be materialized on disk.
+    ephemeral: bool,
+    /// Model provider used for this thread (for example, 'openai').
+    model_provider: String,
+    /// Unix timestamp (in seconds) when the thread was created.
+    #[ts(type = "number")]
+    created_at: i64,
+    /// Unix timestamp (in seconds) when the thread was last updated.
+    #[ts(type = "number")]
+    updated_at: i64,
+    /// Current runtime lifecycle status for the thread.
+    lifecycle_status: ThreadLifecycleStatus,
+    /// [UNSTABLE] Path to the thread on disk.
+    path: Option<PathBuf>,
+    /// Working directory captured for the thread.
+    cwd: AbsolutePathBuf,
+    /// Version of the CLI that created the thread.
+    cli_version: String,
+    /// Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
+    source: ThreadOrigin,
+    /// Optional analytics source classification for this thread.
+    thread_source: Option<ThreadSource>,
+    /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
+    agent_nickname: Option<String>,
+    /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.
+    agent_role: Option<String>,
+    /// Optional canonical agent path assigned to this thread.
+    agent_path: Option<String>,
+    /// Optional Git metadata captured when the thread was created.
+    git_info: Option<GitInfo>,
+    /// Optional user-facing thread title.
+    name: Option<String>,
+    /// Aggregate thread-level skill usage observed so far.
+    #[serde(default)]
+    skills: Vec<ThreadSkill>,
+    /// Restored aggregate thread token usage, when available.
+    token_usage: Option<ThreadTokenUsage>,
+    /// Restored aggregate thread context usage, when available.
+    context_usage: Option<ThreadContextUsage>,
+    /// Bounded thread-level historical statistics restored from persisted history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    stats: Option<ThreadStats>,
+    /// Populated only on responses that explicitly include display history, such as
+    /// `thread/resume`, `thread/rollback`, `thread/fork`, and
+    /// `thread/read` (when `includeTurns` is true).
+    /// For `thread/start`, `thread/started`, and other metadata-only Thread payloads,
+    /// the turns field will be an empty list.
+    turns: Vec<Turn>,
+    /// Current active subscription display facts restored from persisted activity events.
+    /// These are intentionally kept out of `turns`, which represents ordinary
+    /// conversation history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    active_subscription_items: Option<Vec<ThreadItem>>,
+    /// Current command display facts restored from persisted activity events.
+    /// These are intentionally kept out of `turns`, which represents ordinary
+    /// conversation history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    active_command_items: Option<Vec<ThreadItem>>,
+}
+
+#[cfg(feature = "schema-export")]
+impl JsonSchema for Thread {
+    fn schema_name() -> String {
+        "Thread".to_string()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        Cow::Borrowed("app_server_protocol::protocol::thread_data::Thread")
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        ThreadExport::json_schema(generator)
+    }
+}
+
+#[cfg(feature = "schema-export")]
+impl TS for Thread {
+    type WithoutGenerics = Self;
+    type OptionInnerType = Self;
+
+    fn ident() -> String {
+        "Thread".to_string()
+    }
+
+    fn name() -> String {
+        "Thread".to_string()
+    }
+
+    fn decl() -> String {
+        format!("type Thread = {};", ThreadExport::inline())
+    }
+
+    fn decl_concrete() -> String {
+        Self::decl()
+    }
+
+    fn inline() -> String {
+        Self::name()
+    }
+
+    fn inline_flattened() -> String {
+        ThreadExport::inline_flattened()
+    }
+
+    fn visit_dependencies(v: &mut impl TypeVisitor)
+    where
+        Self: 'static,
+    {
+        ThreadExport::visit_dependencies(v);
+    }
+
+    fn output_path() -> Option<PathBuf> {
+        Some(PathBuf::from("Thread.ts"))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadWire {
+    id: Option<String>,
+    thread_id: Option<String>,
+    session_id: Option<String>,
+    runtime_session_id: Option<String>,
+    forked_from_id: Option<String>,
+    preview: String,
+    ephemeral: bool,
+    model_provider: String,
+    created_at: i64,
+    updated_at: i64,
+    lifecycle_status: ThreadLifecycleStatus,
+    path: Option<PathBuf>,
+    cwd: AbsolutePathBuf,
+    cli_version: String,
+    source: ThreadOrigin,
+    thread_source: Option<ThreadSource>,
+    agent_nickname: Option<String>,
+    agent_role: Option<String>,
+    agent_path: Option<String>,
+    git_info: Option<GitInfo>,
+    name: Option<String>,
+    #[serde(default)]
+    skills: Vec<ThreadSkill>,
+    token_usage: Option<ThreadTokenUsage>,
+    context_usage: Option<ThreadContextUsage>,
+    #[serde(default)]
+    stats: Option<ThreadStats>,
+    turns: Vec<Turn>,
+    #[serde(default)]
+    active_subscription_items: Option<Vec<ThreadItem>>,
+    #[serde(default)]
+    active_command_items: Option<Vec<ThreadItem>>,
+}
+
+impl<'de> Deserialize<'de> for Thread {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ThreadWire::deserialize(deserializer)?;
+        let id = reconcile_identity_field(wire.id, wire.thread_id, "id", "threadId")?;
+        let session_id = reconcile_identity_field(
+            wire.session_id,
+            wire.runtime_session_id,
+            "sessionId",
+            "runtimeSessionId",
+        )?;
+
+        Ok(Self {
+            id,
+            session_id,
+            forked_from_id: wire.forked_from_id,
+            preview: wire.preview,
+            ephemeral: wire.ephemeral,
+            model_provider: wire.model_provider,
+            created_at: wire.created_at,
+            updated_at: wire.updated_at,
+            lifecycle_status: wire.lifecycle_status,
+            path: wire.path,
+            cwd: wire.cwd,
+            cli_version: wire.cli_version,
+            source: wire.source,
+            thread_source: wire.thread_source,
+            agent_nickname: wire.agent_nickname,
+            agent_role: wire.agent_role,
+            agent_path: wire.agent_path,
+            git_info: wire.git_info,
+            name: wire.name,
+            skills: wire.skills,
+            token_usage: wire.token_usage,
+            context_usage: wire.context_usage,
+            stats: wire.stats,
+            turns: wire.turns,
+            active_subscription_items: wire.active_subscription_items,
+            active_command_items: wire.active_command_items,
+        })
+    }
+}
+
+fn reconcile_identity_field<E>(
+    legacy: Option<String>,
+    canonical: Option<String>,
+    legacy_name: &'static str,
+    canonical_name: &'static str,
+) -> Result<String, E>
+where
+    E: de::Error,
+{
+    match (legacy, canonical) {
+        (Some(legacy), Some(canonical)) if legacy == canonical => Ok(canonical),
+        (Some(legacy), Some(canonical)) => Err(E::custom(format!(
+            "conflicting {legacy_name} and {canonical_name} values: {legacy:?} != {canonical:?}"
+        ))),
+        (Some(legacy), None) => Ok(legacy),
+        (None, Some(canonical)) => Ok(canonical),
+        (None, None) => Err(E::missing_field(canonical_name)),
+    }
+}
+
+impl Serialize for Thread {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("Thread", 36)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("threadId", &self.id)?;
+        state.serialize_field("sessionId", &self.session_id)?;
+        state.serialize_field("runtimeSessionId", &self.session_id)?;
+        state.serialize_field("forkedFromId", &self.forked_from_id)?;
+        state.serialize_field("preview", &self.preview)?;
+        state.serialize_field("ephemeral", &self.ephemeral)?;
+        state.serialize_field("modelProvider", &self.model_provider)?;
+        state.serialize_field("createdAt", &self.created_at)?;
+        state.serialize_field("updatedAt", &self.updated_at)?;
+        state.serialize_field("lifecycleStatus", &self.lifecycle_status)?;
+        state.serialize_field("path", &self.path)?;
+        state.serialize_field("cwd", &self.cwd)?;
+        state.serialize_field("cliVersion", &self.cli_version)?;
+        state.serialize_field("source", &self.source)?;
+        state.serialize_field("threadSource", &self.thread_source)?;
+        state.serialize_field("agentNickname", &self.agent_nickname)?;
+        state.serialize_field("agentRole", &self.agent_role)?;
+        state.serialize_field("agentPath", &self.agent_path)?;
+        state.serialize_field("gitInfo", &self.git_info)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("skills", &self.skills)?;
+        state.serialize_field("tokenUsage", &self.token_usage)?;
+        state.serialize_field("contextUsage", &self.context_usage)?;
+        if let Some(stats) = &self.stats {
+            state.serialize_field("stats", stats)?;
+        }
+        state.serialize_field("turns", &self.turns)?;
+        if let Some(items) = &self.active_subscription_items {
+            state.serialize_field("activeSubscriptionItems", items)?;
+        }
+        if let Some(items) = &self.active_command_items {
+            state.serialize_field("activeCommandItems", items)?;
+        }
+        state.end()
+    }
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

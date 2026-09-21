@@ -605,7 +605,9 @@ fn serialize_client_response() -> Result<()> {
             "response": {
                 "thread": {
                     "id": "67e55044-10b1-426f-9247-bb680e5fe0c8",
+                    "threadId": "67e55044-10b1-426f-9247-bb680e5fe0c8",
                     "sessionId": "67e55044-10b1-426f-9247-bb680e5fe0c7",
+                    "runtimeSessionId": "67e55044-10b1-426f-9247-bb680e5fe0c7",
                     "forkedFromId": null,
                     "preview": "first prompt",
                     "ephemeral": true,

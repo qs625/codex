@@ -3198,7 +3198,13 @@ test("upsertThread normalizes the first inserted snapshot", () => {
 
   const threads = upsertThread([], thread);
 
-  assert.deepEqual(threads, [thread]);
+  assert.deepEqual(threads, [
+    {
+      ...thread,
+      threadId: thread.id,
+      runtimeSessionId: thread.sessionId,
+    },
+  ]);
 });
 
 test("mergeThreadSnapshot preserves live-derived turns with different item ids within next snapshot", () => {
@@ -6249,6 +6255,30 @@ test("normalizeThreadSnapshot drops legacy orphan command output placeholders", 
     buildConversationEntries(normalized).map((entry) => entry.id),
     ["cmd-real", "cmd-real-command-output"],
   );
+});
+
+test("normalizeThreadSnapshot fills canonical thread identity fields from legacy payloads", () => {
+  const legacy = {
+    ...makeThread(),
+    id: "thread-legacy",
+    sessionId: "runtime-tree-legacy",
+    threadId: undefined,
+    runtimeSessionId: undefined,
+  } satisfies Thread;
+
+  const normalizedLegacy = normalizeThreadSnapshot(legacy);
+
+  assert.equal(normalizedLegacy.threadId, "thread-legacy");
+  assert.equal(normalizedLegacy.runtimeSessionId, "runtime-tree-legacy");
+
+  const canonical = normalizeThreadSnapshot({
+    ...legacy,
+    threadId: "thread-canonical",
+    runtimeSessionId: "runtime-canonical",
+  });
+
+  assert.equal(canonical.threadId, "thread-canonical");
+  assert.equal(canonical.runtimeSessionId, "runtime-canonical");
 });
 
 test("mergeThreadSnapshot preserves live active command items from thread read", () => {

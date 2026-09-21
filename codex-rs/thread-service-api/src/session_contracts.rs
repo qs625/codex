@@ -1247,15 +1247,15 @@ pub trait NativeTurnEventRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, Result<(), String>>;
 }
 
-pub trait ThreadSessionCapability: Send + Sync + 'static {
-    /// Implementation-owned typed view for the session service that created
+pub trait ThreadContextCapability: Send + Sync + 'static {
+    /// Implementation-owned typed view for the thread service that created
     /// this capability. External services should not downcast this value.
     fn as_any(&self) -> &(dyn Any + Send + Sync);
 
     /// Implementation-owned erased `Arc` for owner-side downcasting.
     fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 
-    /// Thread identifier owned by this session runtime.
+    /// Thread identifier owned by this runtime context.
     fn conversation_id(&self) -> ThreadId;
 
     /// Return currently active subscriptions for this thread.
@@ -1418,7 +1418,7 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         })
     }
 
-    /// Sandbox runtime shared by the owning session.
+    /// Sandbox runtime shared by the owning thread context.
     fn sandbox_runtime(&self) -> SharedSandboxRuntime;
 
     /// Subscribe to out-of-band elicitation pause state for this session.
@@ -1750,6 +1750,14 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         response: &RuntimeResponse,
     );
 }
+
+/// Deprecated compatibility name for callers that still refer to a Morpheus
+/// thread runtime context as a session capability.
+#[deprecated(note = "use ThreadContextCapability; Morpheus product identity is Thread")]
+pub trait ThreadSessionCapability: ThreadContextCapability {}
+
+#[allow(deprecated)]
+impl<T> ThreadSessionCapability for T where T: ThreadContextCapability + ?Sized {}
 
 /// Common turn-runtime capability shared by tool services that need active turn
 /// identity, image-detail support, or filesystem-backed environment access.

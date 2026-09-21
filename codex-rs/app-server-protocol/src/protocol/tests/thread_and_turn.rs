@@ -56,6 +56,111 @@ fn thread_turns_list_params_accepts_items_view() {
 }
 
 #[test]
+fn thread_accepts_canonical_thread_identity_fields() {
+    let mut value = minimal_thread_json();
+    let object = value.as_object_mut().expect("thread JSON object");
+    object.remove("id");
+    object.remove("sessionId");
+
+    let thread: Thread = serde_json::from_value(value)
+        .expect("canonical thread identity payload should deserialize");
+
+    assert_eq!(thread.id, "thread-id");
+    assert_eq!(thread.session_id, "runtime-tree-id");
+}
+
+#[test]
+fn thread_accepts_legacy_thread_identity_fields() {
+    let mut value = minimal_thread_json();
+    let object = value.as_object_mut().expect("thread JSON object");
+    object.remove("threadId");
+    object.remove("runtimeSessionId");
+
+    let thread: Thread =
+        serde_json::from_value(value).expect("legacy thread identity payload should deserialize");
+
+    assert_eq!(thread.id, "thread-id");
+    assert_eq!(thread.session_id, "runtime-tree-id");
+}
+
+#[test]
+fn thread_identity_round_trips_when_legacy_and_canonical_fields_are_present() {
+    let thread: Thread =
+        serde_json::from_value(minimal_thread_json()).expect("thread should deserialize");
+    let value = serde_json::to_value(&thread).expect("thread should serialize");
+
+    assert_eq!(value["id"], "thread-id");
+    assert_eq!(value["threadId"], "thread-id");
+    assert_eq!(value["sessionId"], "runtime-tree-id");
+    assert_eq!(value["runtimeSessionId"], "runtime-tree-id");
+
+    let round_tripped: Thread =
+        serde_json::from_value(value).expect("serialized thread should deserialize");
+    assert_eq!(round_tripped.id, "thread-id");
+    assert_eq!(round_tripped.session_id, "runtime-tree-id");
+}
+
+#[test]
+fn thread_identity_rejects_conflicting_legacy_and_canonical_fields() {
+    let mut value = minimal_thread_json();
+    value["threadId"] = json!("other-thread-id");
+
+    let error = serde_json::from_value::<Thread>(value).expect_err("conflicting ids should fail");
+    assert!(
+        error.to_string().contains("conflicting id and threadId"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn thread_identity_rejects_conflicting_runtime_identity_fields() {
+    let mut value = minimal_thread_json();
+    value["runtimeSessionId"] = json!("other-runtime-tree-id");
+
+    let error =
+        serde_json::from_value::<Thread>(value).expect_err("conflicting runtime ids should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("conflicting sessionId and runtimeSessionId"),
+        "unexpected error: {error}"
+    );
+}
+
+fn minimal_thread_json() -> serde_json::Value {
+    json!({
+        "threadId": "thread-id",
+        "id": "thread-id",
+        "runtimeSessionId": "runtime-tree-id",
+        "sessionId": "runtime-tree-id",
+        "forkedFromId": null,
+        "preview": "",
+        "ephemeral": false,
+        "modelProvider": "openai",
+        "createdAt": 1,
+        "updatedAt": 1,
+        "lifecycleStatus": {
+            "type": "final",
+            "result": { "type": "completed" }
+        },
+        "path": null,
+        "cwd": absolute_path_string("tmp"),
+        "cliVersion": "0.0.0",
+        "source": "exec",
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "agentPath": null,
+        "gitInfo": null,
+        "name": null,
+        "skills": [],
+        "tokenUsage": null,
+        "contextUsage": null,
+        "turns": []
+    })
+}
+
+#[test]
 fn thread_turns_items_list_round_trips() {
     let params = ThreadTurnsItemsListParams {
         thread_id: "thr_123".to_string(),
@@ -343,7 +448,9 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
     let response = json!({
         "thread": {
             "id": "thread-id",
+            "threadId": "thread-id",
             "sessionId": "thread-id",
+            "runtimeSessionId": "thread-id",
             "forkedFromId": null,
             "preview": "",
             "ephemeral": false,

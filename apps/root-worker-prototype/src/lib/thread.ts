@@ -1742,11 +1742,22 @@ export function preserveTerminalLifecycleStatus(
 }
 
 export function normalizeThreadSnapshot(thread: Thread): Thread {
-  const activeSubscriptionItems = [...(thread.activeSubscriptionItems ?? [])];
+  const identityNormalizedThread =
+    thread.threadId === thread.id &&
+    thread.runtimeSessionId === thread.sessionId
+      ? thread
+      : {
+          ...thread,
+          threadId: thread.threadId ?? thread.id,
+          runtimeSessionId: thread.runtimeSessionId ?? thread.sessionId,
+        };
+  const activeSubscriptionItems = [
+    ...(identityNormalizedThread.activeSubscriptionItems ?? []),
+  ];
   let activeCommandItems = dropLegacyOrphanCommandOutputPlaceholders([
-    ...(thread.activeCommandItems ?? []),
+    ...(identityNormalizedThread.activeCommandItems ?? []),
   ]);
-  const turns = thread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
+  const turns = identityNormalizedThread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
     if (isActiveSubscriptionsTurn(turn)) {
       activeSubscriptionItems.splice(
         0,
@@ -1800,19 +1811,24 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
 
   const activeSubscriptionItemsChanged = !threadItemsArrayEqual(
     activeSubscriptionItems,
-    thread.activeSubscriptionItems ?? [],
+    identityNormalizedThread.activeSubscriptionItems ?? [],
   );
   const activeCommandItemsChanged = !threadItemsArrayEqual(
     activeCommandItems,
-    thread.activeCommandItems ?? [],
+    identityNormalizedThread.activeCommandItems ?? [],
   );
   const normalizedThread =
-    turns.length === thread.turns.length &&
-    turns.every((turn, index) => turn === thread.turns[index]) &&
+    turns.length === identityNormalizedThread.turns.length &&
+    turns.every((turn, index) => turn === identityNormalizedThread.turns[index]) &&
     !activeSubscriptionItemsChanged &&
     !activeCommandItemsChanged
-      ? thread
-      : { ...thread, turns, activeSubscriptionItems, activeCommandItems };
+      ? identityNormalizedThread
+      : {
+          ...identityNormalizedThread,
+          turns,
+          activeSubscriptionItems,
+          activeCommandItems,
+        };
   return dropDuplicateInitContextItems(
     reconcileThreadCommandExecutionExitNotifications(
       pruneThreadSnapshotToLatestCompact(normalizedThread),

@@ -65,9 +65,9 @@ use thread_service_api::PostToolUsePayload;
 use thread_service_api::PreToolUseHookOutcome;
 use thread_service_api::PreToolUsePayload;
 use thread_service_api::SessionCapabilityFuture;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadDiscoveryContext;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 use thread_service_api::ToolSessionDispatchTrace;
 use thread_service_api::ToolTelemetryTags;
@@ -475,7 +475,7 @@ async fn request_dynamic_tool(
     rx_response.await.ok()
 }
 
-impl ThreadSessionCapability for Session {
+impl ThreadContextCapability for Session {
     fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
         self
     }

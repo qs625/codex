@@ -1,4 +1,4 @@
-export type SessionSource =
+export type ThreadOrigin =
   | "cli"
   | "vscode"
   | "exec"
@@ -6,6 +6,9 @@ export type SessionSource =
   | "unknown"
   | { custom: string }
   | { subAgent: SubAgentSource };
+
+/** @deprecated Morpheus product identity is Thread; use ThreadOrigin. */
+export type SessionSource = ThreadOrigin;
 
 export type SubAgentSource =
   | "review"
@@ -564,7 +567,11 @@ export type ThreadGoal = {
 };
 
 export type Thread = {
+  /** Canonical Morpheus thread identity. Legacy payloads may only include id. */
+  threadId?: string;
   id: string;
+  /** Runtime attachment/tree id kept for legacy sessionId compatibility. */
+  runtimeSessionId?: string;
   sessionId: string;
   forkedFromId: string | null;
   preview: string;
@@ -578,7 +585,7 @@ export type Thread = {
   path: string | null;
   cwd: string;
   cliVersion: string;
-  source: SessionSource;
+  source: ThreadOrigin;
   threadSource: string | null;
   agentNickname: string | null;
   agentRole: string | null;
