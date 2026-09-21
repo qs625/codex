@@ -192,7 +192,7 @@ export function buildConversationState(
   const orderedFlatItems =
     activeTail.flatItems.length === 0
       ? flatItems
-      : [...flatItems].sort(compareConversationFlatItems);
+      : mergeActiveTailIntoHistory(flatItems, activeTail.flatItems);
   const entries = orderedFlatItems.flatMap((item) => item.entries);
 
   return {
@@ -282,6 +282,39 @@ function compareConversationFlatItems(
     return leftOrder - rightOrder;
   }
   return (left.sequence ?? 0) - (right.sequence ?? 0);
+}
+
+function mergeActiveTailIntoHistory(
+  flatItems: ConversationFlatItemState[],
+  activeTailItems: ConversationFlatItemState[],
+) {
+  if (activeTailItems.length === 0) {
+    return flatItems;
+  }
+  const activeTailIds = new Set(activeTailItems.map((item) => item.id));
+  const historyItems = flatItems.filter((item) => !activeTailIds.has(item.id));
+  const sortedActiveTailItems = [...activeTailItems].sort(
+    compareConversationFlatItems,
+  );
+  const orderedItems = [...historyItems];
+
+  for (const activeItem of sortedActiveTailItems) {
+    const insertIndex = orderedItems.findIndex((historyItem) => {
+      const activeOrder = activeItem.orderKeyMs ?? Number.POSITIVE_INFINITY;
+      const historyOrder = historyItem.orderKeyMs ?? Number.POSITIVE_INFINITY;
+      if (historyOrder !== activeOrder) {
+        return historyOrder > activeOrder;
+      }
+      return (historyItem.sequence ?? 0) > (activeItem.sequence ?? 0);
+    });
+    if (insertIndex === -1) {
+      orderedItems.push(activeItem);
+    } else {
+      orderedItems.splice(insertIndex, 0, activeItem);
+    }
+  }
+
+  return orderedItems;
 }
 
 function buildConversationItemEntries(
@@ -1083,6 +1116,33 @@ function formatItemTimestamp(item: ThreadItem) {
 }
 
 function itemOrderKeyMs(item: ThreadItem) {
+  if (
+    (item.type === "commandExecutionNotification" ||
+      item.type === "commandWait" ||
+      item.type === "commandWriteStdin") &&
+    Number.isFinite(item.createdAtMs)
+  ) {
+    return item.createdAtMs;
+  }
+
+  if (
+    item.type === "workflowRunProgress" &&
+    Number.isFinite(item.event.updatedAt)
+  ) {
+    return item.event.updatedAt * 1000;
+  }
+
+  if (item.type === "eventCommandEvent" && Number.isFinite(item.createdAt)) {
+    return item.createdAt * 1000;
+  }
+
+  if (item.type === "clientRecovery") {
+    const occurredAtMs = Date.parse(item.occurredAt);
+    if (Number.isFinite(occurredAtMs)) {
+      return occurredAtMs;
+    }
+  }
+
   const timestampMs = item.completedAtMs ?? item.startedAtMs;
   return Number.isFinite(timestampMs) ? timestampMs! : null;
 }
