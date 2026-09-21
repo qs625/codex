@@ -33,6 +33,7 @@ const {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure: shouldDeferBrowserPanelLoadFailureState,
@@ -1686,7 +1687,7 @@ async function waitForBrowserPanelDevToolsTarget(webContents) {
     try {
       const targets = await fetchRemoteDebuggingJson("/json/list");
       const target = targets.find((candidate) => {
-        if (!candidate || candidate.type !== "page" || !candidate.id) {
+        if (!candidate || !candidate.id) {
           return false;
         }
         return electronWebContents.fromDevToolsTargetId(candidate.id) === webContents;
@@ -1896,11 +1897,7 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
   stopBrowserPanelWebContentsLoad(tab);
   ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
   sendBrowserPanelState(panel);
-  const observedNavigation = observeBrowserPanelTargetNavigation(
-    tab,
-    normalized.url,
-    navigationSequence,
-  );
+  const observedNavigation = observeBrowserPanelTargetNavigation(tab, navigationSequence);
   try {
     await waitForBrowserPanelNavigationResult(
       tab.view.webContents.loadURL(normalized.url),
@@ -2055,13 +2052,17 @@ function bindBrowserPanelTab(panel, tab) {
   });
 }
 
-function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence) {
+function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
   const webContents = tab.view.webContents;
   let settled = false;
+  let navigationStarted = false;
+  let committedUrlForSequence = null;
   let resolveObserved;
   let rejectObserved;
   const cleanup = () => {
+    webContents.removeListener("did-start-navigation", handleStart);
     webContents.removeListener("did-navigate", handleNavigate);
+    webContents.removeListener("did-frame-navigate", handleFrameNavigate);
     webContents.removeListener("did-finish-load", handleFinish);
     webContents.removeListener("did-stop-loading", handleStop);
     webContents.removeListener("did-fail-load", handleFail);
@@ -2075,30 +2076,79 @@ function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence)
     cleanup();
     callback(value);
   };
-  const isCurrentTarget = (url) =>
-    tab.navigationSequence === navigationSequence &&
-    browserPanelUrlsEqual(url, targetUrl);
+  const acceptedCommittedUrl = (url, { committedUrl = null } = {}) => {
+    const decision = browserNavigationDecision(url);
+    if (!decision.allow) {
+      return null;
+    }
+    return shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: tab.navigationSequence,
+      pendingNavigationSequence: tab.pendingNavigationSequence,
+      navigationStarted,
+      committedUrl,
+      currentUrl: decision.url,
+    })
+      ? decision.url
+      : null;
+  };
+  const handleStart = (event, legacyUrl, _isInPlace, legacyIsMainFrame) => {
+    const isMainFrame = typeof event?.isMainFrame === "boolean"
+      ? event.isMainFrame
+      : legacyIsMainFrame !== false;
+    if (!isMainFrame || tab.navigationSequence !== navigationSequence) {
+      return;
+    }
+    const decision = browserNavigationEventDecision(event, legacyUrl);
+    if (decision.allow) {
+      navigationStarted = true;
+    }
+  };
   const handleNavigate = (_event, url) => {
-    if (isCurrentTarget(url)) {
+    const committedUrl = acceptedCommittedUrl(url);
+    if (committedUrl) {
+      committedUrlForSequence = committedUrl;
+      tab.state.url = committedUrl;
+      settle(resolveObserved);
+    }
+  };
+  const handleFrameNavigate = (
+    _event,
+    url,
+    _httpResponseCode,
+    _httpStatusText,
+    isMainFrame,
+  ) => {
+    if (!isMainFrame) {
+      return;
+    }
+    const committedUrl = acceptedCommittedUrl(url);
+    if (committedUrl) {
+      committedUrlForSequence = committedUrl;
+      tab.state.url = committedUrl;
       settle(resolveObserved);
     }
   };
   const handleFinish = () => {
     updateBrowserPanelLocationState(tab);
-    if (isCurrentTarget(tab.state.url)) {
+    const committedUrl = committedUrlForSequence
+      ? acceptedCommittedUrl(tab.state.url, {
+          committedUrl: committedUrlForSequence,
+        })
+      : null;
+    if (committedUrl) {
+      tab.state.url = committedUrl;
       settle(resolveObserved);
     }
   };
   const handleStop = () => {
     updateBrowserPanelLocationState(tab);
-    if (
-      shouldCompleteBrowserPanelStoppedNavigation({
-        navigationSequence,
-        pendingNavigationSequence: tab.pendingNavigationSequence,
-        currentUrl: tab.state.url,
-        targetUrl,
-      })
-    ) {
+    const committedUrl = committedUrlForSequence
+      ? acceptedCommittedUrl(tab.state.url, {
+          committedUrl: committedUrlForSequence,
+        })
+      : null;
+    if (committedUrl) {
+      tab.state.url = committedUrl;
       settle(resolveObserved);
     }
   };
@@ -2130,7 +2180,9 @@ function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence)
     resolveObserved = resolve;
     rejectObserved = reject;
   });
+  webContents.on("did-start-navigation", handleStart);
   webContents.on("did-navigate", handleNavigate);
+  webContents.on("did-frame-navigate", handleFrameNavigate);
   webContents.on("did-finish-load", handleFinish);
   webContents.on("did-stop-loading", handleStop);
   webContents.on("did-fail-load", handleFail);
