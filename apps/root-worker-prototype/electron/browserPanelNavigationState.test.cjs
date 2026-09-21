@@ -386,6 +386,18 @@ test("main browser navigation observes committed redirects before full load", ()
   );
 });
 
+test("main browser navigation imports committed URL security decision helper", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const securityImportIndex = mainSource.indexOf(
+    '} = require("./browserPanelSecurity.cjs");',
+  );
+  const securityImportSource = mainSource.slice(0, securityImportIndex);
+
+  assert.notEqual(securityImportIndex, -1);
+  assert.match(securityImportSource, /\bbrowserNavigationDecision,\n/);
+  assert.match(mainSource, /browserNavigationDecision\(url\)/);
+});
+
 test("main browser target wait maps devtools target id instead of page type", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
   const targetWaitIndex = mainSource.indexOf(

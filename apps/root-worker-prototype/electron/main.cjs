@@ -20,6 +20,7 @@ const {
 } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
 const {
+  browserNavigationDecision,
   browserNavigationEventDecision,
   browserNavigationEventTarget,
   normalizeBrowserDebugTarget,
