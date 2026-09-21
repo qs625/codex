@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -32,9 +33,22 @@ struct FixtureSseTransport {
     body: String,
 }
 
+#[derive(Clone)]
+struct FixtureSseChunksTransport {
+    chunks: Arc<Mutex<Option<Vec<std::result::Result<Bytes, TransportError>>>>>,
+}
+
 impl FixtureSseTransport {
     fn new(body: String) -> Self {
         Self { body }
+    }
+}
+
+impl FixtureSseChunksTransport {
+    fn new(chunks: Vec<std::result::Result<Bytes, TransportError>>) -> Self {
+        Self {
+            chunks: Arc::new(Mutex::new(Some(chunks))),
+        }
     }
 }
 
@@ -74,6 +88,28 @@ impl HttpTransport for FixtureSseTransport {
         let stream = futures::stream::iter(vec![Ok::<Bytes, TransportError>(Bytes::from(
             self.body.clone(),
         ))]);
+        Ok(StreamResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            bytes: Box::pin(stream),
+        })
+    }
+}
+
+#[async_trait]
+impl HttpTransport for FixtureSseChunksTransport {
+    async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
+        Err(TransportError::Build("execute should not run".to_string()))
+    }
+
+    async fn stream(&self, _req: Request) -> Result<StreamResponse, TransportError> {
+        let chunks = self
+            .chunks
+            .lock()
+            .expect("fixture chunks mutex should not be poisoned")
+            .take()
+            .expect("fixture chunks should be consumed once");
+        let stream = futures::stream::iter(chunks);
         Ok(StreamResponse {
             status: StatusCode::OK,
             headers: HeaderMap::new(),
@@ -124,6 +160,23 @@ fn build_responses_body(events: Vec<Value>) -> String {
 
 fn build_response_chunk(event: Value) -> String {
     build_responses_body(vec![event])
+}
+
+fn decode_failure() -> TransportError {
+    TransportError::Network(
+        "error decoding response body: stream disconnected before completion".to_string(),
+    )
+}
+
+async fn next_non_rate_limit_event(
+    stream: &mut model_service_api::ResponseStream,
+) -> Option<std::result::Result<ResponseEvent, model_service_api::ApiError>> {
+    loop {
+        match stream.next().await {
+            Some(Ok(ResponseEvent::RateLimits(_))) => continue,
+            other => return other,
+        }
+    }
 }
 
 #[tokio::test]
@@ -207,6 +260,107 @@ async fn property_name_error_uses_actual_sse_input_source_after_compatibility_fi
     assert_eq!(details.param.as_deref(), Some("input[0].arguments.outer"));
     assert_eq!(details.input_index, Some(0));
     assert_eq!(details.source, Some(target));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn structured_sse_error_survives_later_body_decode_failure() -> Result<()> {
+    let error_chunk = build_response_chunk(serde_json::json!({
+        "type": "response.failed",
+        "response": {
+            "id": "resp-invalid",
+            "error": {
+                "message": "bad input",
+                "type": "invalid_request_error",
+                "param": "input[0].content"
+            }
+        }
+    }));
+    let transport =
+        FixtureSseChunksTransport::new(vec![Ok(Bytes::from(error_chunk)), Err(decode_failure())]);
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let mut stream = client
+        .stream(
+            serde_json::json!({"echo": true}),
+            HeaderMap::new(),
+            Compression::None,
+            /*turn_state*/ None,
+            Vec::new(),
+        )
+        .await?;
+
+    let error = next_non_rate_limit_event(&mut stream)
+        .await
+        .expect("stream should emit an error")
+        .expect_err("structured response.failed should become an error");
+    let model_service_api::ApiError::InvalidModelInput(details) = error else {
+        panic!("expected invalid model input");
+    };
+    assert_eq!(details.message, "bad input");
+    assert_eq!(details.param.as_deref(), Some("input[0].content"));
+    assert!(stream.next().await.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn body_decode_failure_without_structured_error_remains_visible() -> Result<()> {
+    let transport = FixtureSseChunksTransport::new(vec![Err(decode_failure())]);
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let mut stream = client
+        .stream(
+            serde_json::json!({"echo": true}),
+            HeaderMap::new(),
+            Compression::None,
+            /*turn_state*/ None,
+            Vec::new(),
+        )
+        .await?;
+
+    let error = next_non_rate_limit_event(&mut stream)
+        .await
+        .expect("stream should emit the transport error")
+        .expect_err("body decode failure should remain an error");
+    assert!(matches!(
+        error,
+        model_service_api::ApiError::Stream(message)
+            if message.contains("error decoding response body")
+    ));
+    assert!(stream.next().await.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn completed_sse_event_ends_stream_before_later_body_decode_failure() -> Result<()> {
+    let completed_chunk = build_response_chunk(serde_json::json!({
+        "type": "response.completed",
+        "response": { "id": "resp-complete" }
+    }));
+    let transport = FixtureSseChunksTransport::new(vec![
+        Ok(Bytes::from(completed_chunk)),
+        Err(decode_failure()),
+    ]);
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let mut stream = client
+        .stream(
+            serde_json::json!({"echo": true}),
+            HeaderMap::new(),
+            Compression::None,
+            /*turn_state*/ None,
+            Vec::new(),
+        )
+        .await?;
+
+    let event = next_non_rate_limit_event(&mut stream)
+        .await
+        .expect("stream should emit response.completed")?;
+    assert!(matches!(
+        event,
+        ResponseEvent::Completed { response_id, .. } if response_id == "resp-complete"
+    ));
+    assert!(stream.next().await.is_none());
 
     Ok(())
 }
