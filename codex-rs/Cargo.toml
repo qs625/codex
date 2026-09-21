@@ -592,16 +592,15 @@ debug = "none"
 strip = "symbols"
 
 [profile.release]
-# Thin LTO keeps cross-crate optimization while avoiding the expensive whole-program
-# link step that dominates Runtime Capsule app-server release builds.
-lto = "thin"
+# Runtime Capsule packaging is a frequent local delivery path, so prefer faster
+# release codegen/linking over maximum cross-crate optimization.
+lto = false
 split-debuginfo = "off"
 # Because we bundle some of these executables with the TypeScript CLI, we
 # remove everything to make the binary as small as possible.
 strip = "symbols"
 
-# See https://github.com/openai/codex/issues/1411 for details.
-codegen-units = 1
+codegen-units = 16
 
 [profile.profiling]
 inherits = "release"
