@@ -24,8 +24,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -261,7 +261,7 @@ async fn dispatch_list_mcp_resources(
     let cursor = normalize_optional_string(args.cursor);
     let payload_result: Result<ListResourcesPayload, FunctionCallError> = async {
         if let Some(server_name) = server.clone() {
-            let session_api: Arc<dyn ThreadSessionCapability> = session.clone();
+            let session_api: Arc<dyn ThreadContextCapability> = session.clone();
             let params = cursor.clone().map(|value| PaginatedRequestParams {
                 cursor: Some(value),
             });
@@ -287,14 +287,10 @@ async fn dispatch_list_mcp_resources(
                     "cursor can only be used when a server is specified".to_string(),
                 ));
             }
-            let session_api: Arc<dyn ThreadSessionCapability> = session.clone();
+            let session_api: Arc<dyn ThreadContextCapability> = session.clone();
             Ok(ListResourcesPayload::from_all_servers(
                 service
-                    .list_all_resources(
-                        session_api,
-                        Arc::clone(&turn),
-                        call.call_id.clone(),
-                    )
+                    .list_all_resources(session_api, Arc::clone(&turn), call.call_id.clone())
                     .await,
             ))
         }
@@ -315,7 +311,7 @@ async fn dispatch_list_mcp_resource_templates(
     let cursor = normalize_optional_string(args.cursor);
     let payload_result: Result<ListResourceTemplatesPayload, FunctionCallError> = async {
         if let Some(server_name) = server.clone() {
-            let session_api: Arc<dyn ThreadSessionCapability> = session.clone();
+            let session_api: Arc<dyn ThreadContextCapability> = session.clone();
             let params = cursor.clone().map(|value| PaginatedRequestParams {
                 cursor: Some(value),
             });
@@ -343,7 +339,7 @@ async fn dispatch_list_mcp_resource_templates(
                     "cursor can only be used when a server is specified".to_string(),
                 ));
             }
-            let session_api: Arc<dyn ThreadSessionCapability> = session.clone();
+            let session_api: Arc<dyn ThreadContextCapability> = session.clone();
             Ok(ListResourceTemplatesPayload::from_all_servers(
                 service
                     .list_all_resource_templates(
@@ -370,7 +366,7 @@ async fn dispatch_read_mcp_resource(
     let server = normalize_required_string("server", args.server)?;
     let uri = normalize_required_string("uri", args.uri)?;
     let payload_result: Result<ReadResourcePayload, FunctionCallError> = async {
-        let session_api: Arc<dyn ThreadSessionCapability> = session.clone();
+        let session_api: Arc<dyn ThreadContextCapability> = session.clone();
         let result = service
             .read_resource(
                 session_api,

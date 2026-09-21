@@ -15,7 +15,7 @@ use state_api::state_goal_status_from_protocol;
 use state_api::thread_goal_update_response_item;
 use state_api::validate_thread_goal_budget;
 use thread_service_api::SessionCapabilityFuture;
-use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadTurnCapability;
 
 #[derive(Clone, Default)]
@@ -24,7 +24,7 @@ pub struct GoalService;
 impl GoalServiceApi for GoalService {
     fn get_thread_goal<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
         Box::pin(async move {
             let state_db = session.require_persisted_state_db().await?;
@@ -38,7 +38,7 @@ impl GoalServiceApi for GoalService {
 
     fn create_thread_goal<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         objective: String,
         token_budget: Option<i64>,
@@ -82,7 +82,7 @@ impl GoalServiceApi for GoalService {
 
     fn complete_thread_goal<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
     ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
         Box::pin(async move {
@@ -135,7 +135,7 @@ impl GoalServiceApi for GoalService {
 
     fn begin_turn_goal_accounting<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         token_usage: TokenUsage,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
@@ -144,7 +144,7 @@ impl GoalServiceApi for GoalService {
 
     fn account_non_goal_tool_completed<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         tool_name: &'a str,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
@@ -159,7 +159,7 @@ impl GoalServiceApi for GoalService {
 
     fn account_goal_mutation_completed<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
         Box::pin(async move { session.account_goal_mutation_completed(turn).await })
@@ -167,7 +167,7 @@ impl GoalServiceApi for GoalService {
 
     fn finish_turn_goal_accounting<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         turn_completed: bool,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
@@ -180,7 +180,7 @@ impl GoalServiceApi for GoalService {
 
     fn handle_goal_turn_abort<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: Option<&'a dyn ThreadTurnCapability>,
         reason: TurnAbortReason,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
@@ -189,21 +189,21 @@ impl GoalServiceApi for GoalService {
 
     fn maybe_continue_active_goal<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
         Box::pin(async move { session.maybe_continue_active_goal().await })
     }
 
     fn prepare_external_goal_mutation<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
         Box::pin(async move { session.prepare_external_goal_mutation().await })
     }
 
     fn apply_external_goal_set<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         external_set: ExternalGoalSet,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
         Box::pin(async move { session.apply_external_goal_set(external_set).await })
@@ -211,21 +211,21 @@ impl GoalServiceApi for GoalService {
 
     fn apply_external_goal_clear<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
         Box::pin(async move { session.apply_external_goal_clear().await })
     }
 
     fn restore_goal_runtime_after_resume<'a>(
         &'a self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
         Box::pin(async move { session.restore_goal_runtime_after_resume().await })
     }
 }
 
 async fn emit_goal_update(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadTurnCapability,
     goal: ThreadGoal,
     previous_status: Option<state_api::ThreadGoalStatus>,

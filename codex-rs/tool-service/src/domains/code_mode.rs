@@ -21,8 +21,8 @@ use codex_utils_output_truncation::truncate_function_output_items_with_policy;
 use command_service_api::resolve_max_tokens;
 use protocol::models::DEFAULT_IMAGE_DETAIL;
 use serde::Deserialize;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -73,7 +73,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     nested_tool_specs: Vec<ToolSpec>,
     call: ToolCall,
@@ -130,7 +130,7 @@ fn default_wait_yield_time_ms() -> u64 {
 }
 
 async fn dispatch_execute(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call_id: String,
     code: &str,
@@ -169,7 +169,7 @@ async fn dispatch_execute(
 }
 
 async fn dispatch_wait(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     arguments: &str,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
@@ -202,7 +202,7 @@ async fn dispatch_wait(
 }
 
 async fn handle_runtime_response(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,

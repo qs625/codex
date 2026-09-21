@@ -29,8 +29,8 @@ use protocol::protocol::AskForApproval;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -103,7 +103,7 @@ pub(crate) async fn dispatch(
     command_service_api: Arc<dyn CommandServiceApi>,
     permissions_api: Arc<dyn PermissionsServiceApi>,
     approval_session: Arc<dyn ApprovalSessionCapability>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     command_state: Arc<dyn command_service_api::CommandServiceSessionState>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     _tracker: SharedToolTurnDiffTracker,
@@ -143,7 +143,7 @@ async fn dispatch_exec_command(
     command_service_api: Arc<dyn CommandServiceApi>,
     permissions_api: Arc<dyn PermissionsServiceApi>,
     approval_session: Arc<dyn ApprovalSessionCapability>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     command_state: Arc<dyn command_service_api::CommandServiceSessionState>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
@@ -589,7 +589,7 @@ mod tests {
     impl CommandServiceApi for PanickingCommandService {
         fn run_exec_command<'a>(
             &'a self,
-            _session: Arc<dyn thread_service_api::ThreadSessionCapability>,
+            _session: Arc<dyn thread_service_api::ThreadContextCapability>,
             _approval_session: Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
             _state: Arc<dyn command_service_api::CommandServiceSessionState>,
             _turn: Arc<dyn ThreadRuntimeCapability>,
@@ -663,7 +663,7 @@ mod tests {
 
         fn run_exec_command<'a>(
             &'a self,
-            _session: Arc<dyn thread_service_api::ThreadSessionCapability>,
+            _session: Arc<dyn thread_service_api::ThreadContextCapability>,
             _approval_session: Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
             _turn: Arc<dyn ThreadRuntimeCapability>,
             _call_id: String,

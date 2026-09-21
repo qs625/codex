@@ -11,7 +11,7 @@ use protocol::protocol::ThreadGoal;
 use protocol::protocol::ThreadGoalStatus;
 use serde::Deserialize;
 use serde::Serialize;
-use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadTurnCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
@@ -52,7 +52,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     goal_api: Arc<dyn GoalServiceApi>,
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadTurnCapability,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -224,7 +224,7 @@ mod tests {
     use protocol::models::ResponseInputItem;
     use thread_service_api::SessionCapabilityFuture;
     use thread_service_api::ThreadCapability;
-    use thread_service_api::ThreadSessionCapability;
+    use thread_service_api::ThreadContextCapability;
     use tool_service_api::ToolOutput;
 
     struct MockTurn;
@@ -238,7 +238,7 @@ mod tests {
 
     impl ThreadTurnCapability for MockTurn {}
 
-    impl ThreadSessionCapability for MockSession {
+    impl ThreadContextCapability for MockSession {
         fn as_any(&self) -> &(dyn Any + Send + Sync) {
             self
         }
@@ -273,14 +273,14 @@ mod tests {
     impl GoalServiceApi for MockGoalApi {
         fn get_thread_goal<'a>(
             &'a self,
-            _session: &'a dyn ThreadSessionCapability,
+            _session: &'a dyn ThreadContextCapability,
         ) -> SessionCapabilityFuture<'a, Result<Option<ThreadGoal>, String>> {
             Box::pin(async move { Ok(self.goal.lock().expect("goal lock").clone()) })
         }
 
         fn create_thread_goal<'a>(
             &'a self,
-            _session: &'a dyn ThreadSessionCapability,
+            _session: &'a dyn ThreadContextCapability,
             _turn: &'a dyn ThreadTurnCapability,
             objective: String,
             token_budget: Option<i64>,
@@ -307,7 +307,7 @@ mod tests {
 
         fn complete_thread_goal<'a>(
             &'a self,
-            _session: &'a dyn ThreadSessionCapability,
+            _session: &'a dyn ThreadContextCapability,
             _turn: &'a dyn ThreadTurnCapability,
         ) -> SessionCapabilityFuture<'a, Result<ThreadGoal, String>> {
             Box::pin(async move {

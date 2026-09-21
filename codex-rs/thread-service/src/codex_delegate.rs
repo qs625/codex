@@ -721,7 +721,7 @@ async fn maybe_auto_review_mcp_request_user_input(
         .services
         .mcp_service
         .lookup_tool_metadata(
-            Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+            Arc::clone(parent_session) as Arc<dyn thread_service_api::ThreadContextCapability>,
             Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
             &invocation.server,
             &invocation.tool,

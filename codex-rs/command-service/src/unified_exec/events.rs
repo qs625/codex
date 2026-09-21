@@ -13,8 +13,8 @@ use protocol::protocol::ExecCommandEndEvent;
 use protocol::protocol::ExecCommandNotifyOn;
 use protocol::protocol::ExecCommandSource;
 use protocol::protocol::ExecCommandStatus;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tokio::sync::Mutex;
 
 use super::HeadTailBuffer;
@@ -49,7 +49,7 @@ pub(super) fn command_exit_notification_message(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_unified_exec_begin(
-    session_ref: Arc<dyn ThreadSessionCapability>,
+    session_ref: Arc<dyn ThreadContextCapability>,
     turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: &str,
     command: &[String],
@@ -81,7 +81,7 @@ pub(crate) async fn emit_unified_exec_begin(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_unified_exec_end(
-    session_ref: Arc<dyn ThreadSessionCapability>,
+    session_ref: Arc<dyn ThreadContextCapability>,
     turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,
@@ -121,7 +121,7 @@ pub(crate) async fn emit_unified_exec_end(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_unified_exec_end_with_output(
-    session_ref: Arc<dyn ThreadSessionCapability>,
+    session_ref: Arc<dyn ThreadContextCapability>,
     turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,

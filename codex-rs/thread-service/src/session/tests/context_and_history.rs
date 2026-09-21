@@ -889,7 +889,7 @@ impl SessionTask for CommandExitNotificationOnFinishTask {
         _cancellation_token: CancellationToken,
     ) -> Option<String> {
         let session = session.clone_session();
-        thread_service_api::ThreadSessionCapability::append_conversation_item_with_observed_event(
+        thread_service_api::ThreadContextCapability::append_conversation_item_with_observed_event(
             session.as_ref(),
             self.notification.clone(),
             self.observed_event.clone(),
@@ -3771,7 +3771,7 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
         status: protocol::protocol::ExecCommandStatus::Completed,
     });
 
-    thread_service_api::ThreadSessionCapability::append_conversation_item_with_observed_event(
+    thread_service_api::ThreadContextCapability::append_conversation_item_with_observed_event(
         sess.as_ref(),
         notification,
         exec_end,

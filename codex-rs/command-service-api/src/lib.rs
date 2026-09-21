@@ -78,8 +78,8 @@ use protocol::config_types::WindowsSandboxLevel;
 use protocol::exec_output::ExecToolCallOutput;
 use protocol::protocol::Event;
 pub use thread_service_api::HookToolName;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 
 /// Boxed future returned by object-safe command service APIs.
 pub type CommandServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -133,7 +133,7 @@ pub trait CommandServiceSessionState: Send + Sync + 'static {
 
     fn run_exec_command<'a>(
         &'a self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
@@ -198,7 +198,7 @@ pub struct UserShellRunRequest {
 pub trait CommandServiceApi: Send + Sync + 'static {
     fn run_exec_command<'a>(
         &'a self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         state: Arc<dyn CommandServiceSessionState>,
         turn: Arc<dyn ThreadRuntimeCapability>,

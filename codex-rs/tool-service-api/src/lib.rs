@@ -15,8 +15,8 @@ use protocol::models::ResponseInputItem;
 use protocol::protocol::EventMsg;
 use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 use tokio_util::sync::CancellationToken;
 use tool_config::ToolsConfig;
@@ -223,8 +223,8 @@ pub enum ToolCallOutcome {
 pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
     pub current_agent_path: Option<protocol::AgentPath>,
-    pub session_capability: Weak<dyn ThreadSessionCapability>,
-    pub session: Arc<dyn ThreadSessionCapability>,
+    pub session_capability: Weak<dyn ThreadContextCapability>,
+    pub session: Arc<dyn ThreadContextCapability>,
     pub approval_session: Arc<dyn ApprovalSessionCapability>,
     pub session_command_state: Arc<dyn CommandServiceSessionState>,
     pub session_command_interaction: Arc<dyn SessionCommandInteractionCaller>,

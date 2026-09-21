@@ -79,8 +79,8 @@ pub(crate) use output::decode_utf8_incremental;
 pub(crate) use output::resolve_aggregated_output;
 pub(crate) use output::split_valid_utf8_prefix;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 pub(crate) use unified_exec_process::NoopSpawnLifecycle;
 pub(crate) use unified_exec_process::SpawnLifecycleHandle;
@@ -91,7 +91,7 @@ pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
     command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
 
 pub(crate) struct UnifiedExecContext {
-    pub session: Arc<dyn ThreadSessionCapability>,
+    pub session: Arc<dyn ThreadContextCapability>,
     pub approval_session: Arc<dyn ApprovalSessionCapability>,
     pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub call_id: String,
@@ -99,7 +99,7 @@ pub(crate) struct UnifiedExecContext {
 
 impl UnifiedExecContext {
     pub fn new(
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
@@ -278,7 +278,7 @@ struct ProcessEntry {
     tty: bool,
     notify_on: CommandNotificationFilter,
     network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
-    session: Weak<dyn ThreadSessionCapability>,
+    session: Weak<dyn ThreadContextCapability>,
     last_used: tokio::time::Instant,
     #[allow(dead_code)]
     transcript: Arc<Mutex<HeadTailBuffer>>,

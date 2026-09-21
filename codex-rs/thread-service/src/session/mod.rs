@@ -1118,7 +1118,7 @@ impl Session {
         self.services
             .command_service_state
             .run_exec_command(
-                Arc::clone(self) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                Arc::clone(self) as Arc<dyn thread_service_api::ThreadContextCapability>,
                 Arc::clone(self) as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
                 turn as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                 call_id,

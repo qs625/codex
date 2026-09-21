@@ -1219,8 +1219,8 @@ pub(crate) fn test_tool_inputs(
     session: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> Arc<crate::session::turn::TurnToolInputs> {
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let default_agent_type_description =
         codex_agent_roles::spawn_tool_spec::build(&turn_context.config.agent_roles);
     let result = crate::session::turn::TurnToolInputs {
@@ -2433,8 +2433,8 @@ async fn built_tools_include_custom_agent_roles_in_spawn_agent_schema() {
     )
     .await;
 
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let tool_inputs = crate::session::turn::built_tools(
         Arc::clone(&session),
         Arc::clone(&turn_context),
@@ -2474,8 +2474,8 @@ async fn tool_service_request_carries_current_agent_path() {
     )
     .await;
 
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let tool_inputs = crate::session::turn::built_tools(
         Arc::clone(&session),
         Arc::clone(&turn_context),
@@ -2504,8 +2504,8 @@ async fn compact_turn_hides_model_visible_tools_without_affecting_regular_turns(
     )
     .await;
 
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let regular_tool_inputs = crate::session::turn::built_tools(
         Arc::clone(&session),
         Arc::clone(&turn_context),
@@ -2522,8 +2522,8 @@ async fn compact_turn_hides_model_visible_tools_without_affecting_regular_turns(
         "regular turns should keep model-visible tools enabled by default"
     );
 
-    let compact_session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let compact_session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let compact_tool_inputs = crate::session::turn::TurnToolInputs {
         session_capability: Arc::downgrade(&compact_session_capability),
         mcp_tools: Vec::new(),

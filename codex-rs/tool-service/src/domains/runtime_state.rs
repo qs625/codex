@@ -13,8 +13,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -58,7 +58,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     command_state: Arc<dyn CommandServiceSessionState>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -167,7 +167,7 @@ async fn list_commands_for_thread(
 }
 
 async fn list_subscriptions_for_session(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
 ) -> ListSubscriptionsOutput {
     let subscriptions = session
         .active_subscriptions()
@@ -327,7 +327,7 @@ fn display_arguments(call: &ToolCall) -> Result<Value, FunctionCallError> {
 }
 
 fn runtime_state_display_msg(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call_id: &str,
     tool: &str,
@@ -452,7 +452,7 @@ mod tests {
 
         fn run_exec_command<'a>(
             &'a self,
-            _session: Arc<dyn ThreadSessionCapability>,
+            _session: Arc<dyn ThreadContextCapability>,
             _approval_session: Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
             _turn: Arc<dyn thread_service_api::ThreadRuntimeCapability>,
             _call_id: String,

@@ -13,8 +13,8 @@ use protocol::protocol::FileChange;
 use protocol::protocol::GuardianAssessmentDecisionSource;
 use protocol::protocol::ReviewDecision;
 use thread_service_api::HookToolName;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 use thread_service_api::UnifiedExecApprovalKey;
 
@@ -91,7 +91,7 @@ pub struct ToolPermissionGrants {
 /// These methods are session-side state mutations and UI/runtime round-trips
 /// required by approval-service. They do not belong on the general thread
 /// capability surface consumed by unrelated domains.
-pub trait ApprovalSessionCapability: ThreadSessionCapability {
+pub trait ApprovalSessionCapability: ThreadContextCapability {
     fn take_review_rejection<'a>(
         &'a self,
         review_id: &'a str,

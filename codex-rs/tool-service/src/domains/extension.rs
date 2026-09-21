@@ -8,8 +8,8 @@ use protocol::protocol::BuiltinToolCallDisplayEvent;
 use protocol::protocol::BuiltinToolCallStatus;
 use protocol::protocol::EventMsg;
 use serde_json::Value;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -85,7 +85,7 @@ pub(crate) fn resolve_executor(
 }
 
 pub(crate) async fn dispatch(
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     executor: Arc<dyn ExtensionToolExecutor>,
     call: ToolCall,

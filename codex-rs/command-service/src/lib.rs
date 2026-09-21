@@ -27,8 +27,8 @@ use command_service_api::UnifiedExecError;
 use command_service_api::UserShellRunRequest;
 use command_service_api::WriteStdinOutput;
 use command_service_api::WriteStdinRequest;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use unified_exec::UnifiedExecProcessManager;
 
 pub use exec_env::create_env;
@@ -63,7 +63,7 @@ pub fn set_deterministic_process_ids_for_tests(enabled: bool) {
 impl CommandServiceApi for CommandService {
     fn run_exec_command<'a>(
         &'a self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         state: Arc<dyn CommandServiceSessionState>,
         turn: Arc<dyn ThreadRuntimeCapability>,
@@ -170,7 +170,7 @@ impl CommandServiceSessionState for CommandSessionState {
 
     fn run_exec_command<'a>(
         &'a self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,

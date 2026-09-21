@@ -42,6 +42,7 @@ use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::ThreadAgentRoleLoadResult;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadFollowupTaskInput;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadPollEventRequest;
@@ -50,7 +51,6 @@ use thread_service_api::ThreadPollEventTimeoutMetadata;
 use thread_service_api::ThreadReadAgentResult;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadServiceFuture;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
 use thread_service_api::ThreadSpawnExternalAgentRequest;
@@ -358,7 +358,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    session_capability: Arc<dyn ThreadSessionCapability>,
+    session_capability: Arc<dyn ThreadContextCapability>,
     session: Arc<dyn SessionAgentJobCaller>,
     agent_runtime: Arc<dyn AgentToolRuntime>,
     turn: Arc<dyn ThreadRuntimeCapability>,
@@ -1362,7 +1362,7 @@ mod tests {
         .await;
 
         let response = dispatch(
-            Arc::clone(&session) as Arc<dyn ThreadSessionCapability>,
+            Arc::clone(&session) as Arc<dyn ThreadContextCapability>,
             Arc::clone(&session) as Arc<dyn SessionAgentJobCaller>,
             Arc::new(StubAgentToolRuntime),
             Arc::clone(&turn_context) as Arc<dyn ThreadRuntimeCapability>,

@@ -11,8 +11,8 @@ use protocol::models::ResponseItem;
 use protocol::protocol::TerminalInteractionEvent;
 use serde::Deserialize;
 use serde::Serialize;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -54,7 +54,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     session_interaction: Arc<dyn SessionCommandInteractionCaller>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -84,7 +84,7 @@ pub(crate) async fn dispatch(
 
 async fn dispatch_command_write_stdin(
     session_interaction: &dyn SessionCommandInteractionCaller,
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {

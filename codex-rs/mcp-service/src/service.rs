@@ -35,8 +35,8 @@ use protocol::request_user_input::RequestUserInputResponse;
 use skill_service_api::SkillMetadata;
 use thread_service_api::AutoApprovalSafetyOutcome;
 use thread_service_api::HookToolName;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 
 use crate::AppToolPolicy;
@@ -80,7 +80,7 @@ impl McpService {
 
 struct ServiceMcpHost {
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     approval_session: Option<Arc<dyn ApprovalSessionCapability>>,
     turn: Arc<dyn ThreadRuntimeCapability>,
 }
@@ -92,7 +92,7 @@ impl ServiceMcpHost {
 }
 
 struct ServiceMcpSkillDependencyHost<'a> {
-    session: &'a dyn ThreadSessionCapability,
+    session: &'a dyn ThreadContextCapability,
     turn: &'a dyn ThreadTurnCapability,
 }
 
@@ -277,7 +277,7 @@ impl McpServiceApi for McpService {
 
     fn maybe_prompt_and_install_mcp_dependencies<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         config: &'a config_service::Config,
         cancellation_token: &'a tokio_util::sync::CancellationToken,
@@ -586,7 +586,7 @@ impl McpServiceApi for McpService {
 
     fn request_server_elicitation<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         request_id: RequestId,
         params: McpServerElicitationRequestParams,
@@ -600,7 +600,7 @@ impl McpServiceApi for McpService {
 
     fn resolve_elicitation<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         server_name: String,
         request_id: RequestId,
         response: ElicitationResponse,
@@ -614,7 +614,7 @@ impl McpServiceApi for McpService {
 
     fn refresh_servers_if_requested<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         elicitation_reviewer: Option<mcp_types::ElicitationReviewerHandle>,
     ) -> McpRuntimeFuture<'a, ()> {
@@ -627,7 +627,7 @@ impl McpServiceApi for McpService {
 
     fn queue_server_refresh<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         refresh_config: protocol::protocol::McpServerRefreshConfig,
     ) -> McpRuntimeFuture<'a, ()> {
         Box::pin(async move { session.queue_mcp_server_refresh(refresh_config).await })
@@ -635,7 +635,7 @@ impl McpServiceApi for McpService {
 
     fn refresh_servers_now<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         refresh_config: protocol::protocol::McpServerRefreshConfig,
         elicitation_reviewer: Option<mcp_types::ElicitationReviewerHandle>,
@@ -649,21 +649,21 @@ impl McpServiceApi for McpService {
 
     fn cancel_startup<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> McpRuntimeFuture<'a, ()> {
         Box::pin(async move { session.cancel_mcp_startup().await })
     }
 
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> McpRuntimeFuture<'a, Result<Vec<ToolInfo>, String>> {
         Box::pin(async move { session.hard_refresh_codex_apps_tools_cache().await })
     }
 
     fn lookup_tool_metadata<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         server: &'a str,
         tool_name: &'a str,
@@ -679,7 +679,7 @@ impl McpServiceApi for McpService {
 
     fn call_tool<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
@@ -723,7 +723,7 @@ impl McpServiceApi for McpService {
 
     fn list_resources<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: &'a str,
@@ -753,7 +753,7 @@ impl McpServiceApi for McpService {
 
     fn list_all_resources<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> McpRuntimeFuture<'a, HashMap<String, Vec<Resource>>> {
@@ -785,7 +785,7 @@ impl McpServiceApi for McpService {
 
     fn list_resource_templates<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: &'a str,
@@ -815,7 +815,7 @@ impl McpServiceApi for McpService {
 
     fn list_all_resource_templates<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> McpRuntimeFuture<'a, HashMap<String, Vec<ResourceTemplate>>> {
@@ -847,7 +847,7 @@ impl McpServiceApi for McpService {
 
     fn read_resource<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: &'a str,
@@ -1281,7 +1281,7 @@ impl McpToolCallHost for ServiceMcpHost {
 }
 
 async fn emit_mcp_resource_started(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call_id: &str,
     invocation: &McpInvocation,
@@ -1291,7 +1291,7 @@ async fn emit_mcp_resource_started(
 }
 
 async fn emit_mcp_resource_completed<T>(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call_id: &str,
     invocation: McpInvocation,

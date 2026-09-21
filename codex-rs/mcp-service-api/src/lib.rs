@@ -9,12 +9,12 @@ use std::time::Duration;
 
 use async_channel::Sender;
 use codex_approval_service_api::ApprovalSessionCapability;
-use config_service::Config;
 use codex_config_types::Constrained;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
 use codex_connectors_api::AppInfo;
 use codex_openai_files_api::OpenAiFileUploader;
+use config_service::Config;
 use exec_server_api::ExecBackend;
 use exec_server_api::ExecEnvironment;
 use exec_server_api::HttpClient;
@@ -47,8 +47,8 @@ use protocol::protocol::Event;
 use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::McpStartupFailure;
 use skill_service_api::SkillMetadata;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 use tokio_util::sync::CancellationToken;
 use tool_config::ToolsConfig;
@@ -613,7 +613,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn maybe_prompt_and_install_mcp_dependencies<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         config: &'a Config,
         cancellation_token: &'a CancellationToken,
@@ -748,7 +748,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn request_server_elicitation<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         request_id: RequestId,
         params: McpServerElicitationRequestParams,
@@ -756,7 +756,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn resolve_elicitation<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         server_name: String,
         request_id: RequestId,
         response: ElicitationResponse,
@@ -764,20 +764,20 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn refresh_servers_if_requested<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
     ) -> McpRuntimeFuture<'a, ()>;
 
     fn queue_server_refresh<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         refresh_config: McpServerRefreshConfig,
     ) -> McpRuntimeFuture<'a, ()>;
 
     fn refresh_servers_now<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
         turn: &'a dyn ThreadTurnCapability,
         refresh_config: McpServerRefreshConfig,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
@@ -785,17 +785,17 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn cancel_startup<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> McpRuntimeFuture<'a, ()>;
 
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &self,
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ThreadContextCapability,
     ) -> McpRuntimeFuture<'a, Result<Vec<mcp_types::ToolInfo>, String>>;
 
     fn lookup_tool_metadata<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         server: &'a str,
         tool_name: &'a str,
@@ -804,7 +804,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn call_tool<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
@@ -816,7 +816,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn list_resources<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: &'a str,
@@ -825,14 +825,14 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn list_all_resources<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> McpRuntimeFuture<'a, HashMap<String, Vec<Resource>>>;
 
     fn list_resource_templates<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: &'a str,
@@ -841,14 +841,14 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn list_all_resource_templates<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> McpRuntimeFuture<'a, HashMap<String, Vec<ResourceTemplate>>>;
 
     fn read_resource<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ThreadContextCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: &'a str,

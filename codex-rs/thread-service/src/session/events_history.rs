@@ -79,8 +79,8 @@ impl Session {
             );
             return Vec::new();
         };
-        let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-            Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+        let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+            Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadContextCapability>;
         let tool_inputs = match crate::session::turn::built_tools(
             Arc::clone(&sess),
             Arc::clone(&turn_context),

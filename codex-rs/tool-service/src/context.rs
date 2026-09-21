@@ -6,8 +6,8 @@ use tool_service_api::ToolSpecRequest;
 pub(crate) struct TypedToolSpecRequest<'a> {
     pub(crate) config: &'a tool_config::ToolsConfig,
     pub(crate) current_agent_path: Option<protocol::AgentPath>,
-    pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
-    pub(crate) session: Arc<dyn thread_service_api::ThreadSessionCapability>,
+    pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadContextCapability>,
+    pub(crate) session: Arc<dyn thread_service_api::ThreadContextCapability>,
     pub(crate) approval_session: Arc<dyn ApprovalSessionCapability>,
     pub(crate) session_command_state: Arc<dyn command_service_api::CommandServiceSessionState>,
     pub(crate) session_command_interaction:

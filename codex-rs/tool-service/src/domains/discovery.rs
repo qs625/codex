@@ -20,9 +20,9 @@ use crate::planning::dynamic_tool_to_responses_api_tool;
 use crate::planning::filter_request_plugin_install_discoverable_tools_for_client;
 use crate::planning::mcp_tool_to_deferred_responses_api_tool;
 use crate::planning::mcp_tool_to_responses_api_tool;
+use codex_config_types::ToolSuggestDisabledTool;
 use config_service::ConfigEdit;
 use config_service::ConfigEditsBuilder;
-use codex_config_types::ToolSuggestDisabledTool;
 use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
 use mcp_types::ElicitationAction;
 use mcp_types::ElicitationResponse;
@@ -38,8 +38,8 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
@@ -102,7 +102,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     dynamic_tools: &[protocol::dynamic_tools::DynamicToolSpec],
     mcp_tools: Option<&[ToolInfo]>,
@@ -153,7 +153,7 @@ fn dispatch_tool_search(
 }
 
 async fn dispatch_request_plugin_install(
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     discoverable_tools: Option<&[DiscoverableTool]>,
     call: ToolCall,
@@ -307,7 +307,7 @@ fn disabled_install_request(tool: &DiscoverableTool) -> ToolSuggestDisabledTool 
 }
 
 async fn complete_request_plugin_install_if_ready(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadTurnCapability,
     tool: &DiscoverableTool,
 ) -> bool {
@@ -351,7 +351,7 @@ async fn complete_request_plugin_install_if_ready(
 }
 
 async fn refresh_missing_requested_connectors(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadTurnCapability,
     auth_snapshot: Option<&codex_auth_types::RequestAuthSnapshot>,
     expected_connector_ids: &[String],

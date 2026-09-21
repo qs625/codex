@@ -229,7 +229,7 @@ impl ToolServiceApi for ToolService {
                 domains::ToolDomain::Agent => {
                     domains::agent::dispatch(
                         Arc::clone(&session)
-                            as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                            as Arc<dyn thread_service_api::ThreadContextCapability>,
                         Arc::clone(&tool_request.session_agent_jobs),
                         self.agent_runtime()?,
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
@@ -301,7 +301,7 @@ impl ToolServiceApi for ToolService {
                 domains::ToolDomain::Discovery => {
                     domains::discovery::dispatch(
                         Arc::clone(&session)
-                            as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                            as Arc<dyn thread_service_api::ThreadContextCapability>,
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         &dynamic_tools,
                         mcp_tools.as_deref(),
@@ -362,7 +362,7 @@ impl ToolServiceApi for ToolService {
                         Arc::clone(&permissions_api),
                         Arc::clone(&approval_session),
                         Arc::clone(&session)
-                            as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                            as Arc<dyn thread_service_api::ThreadContextCapability>,
                         Arc::clone(&tool_request.session_command_state),
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         tracker,

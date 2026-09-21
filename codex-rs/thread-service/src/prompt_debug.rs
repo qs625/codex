@@ -98,8 +98,8 @@ pub(crate) async fn build_prompt_input_from_session(
         .clone_history()
         .await
         .for_prompt(&turn_context.model_info.input_modalities);
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let router = built_tools(
         Arc::clone(&sess),
         Arc::clone(&turn_context),

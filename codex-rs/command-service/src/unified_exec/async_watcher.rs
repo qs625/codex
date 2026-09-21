@@ -2,8 +2,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use command_service_api::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -158,7 +158,7 @@ pub(crate) fn start_streaming_output(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_exit_watcher(
     process: Arc<UnifiedExecProcess>,
-    session_ref: Arc<dyn ThreadSessionCapability>,
+    session_ref: Arc<dyn ThreadContextCapability>,
     turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,
@@ -378,7 +378,7 @@ async fn process_chunk(
     exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
     process_id: i32,
-    session_ref: &Arc<dyn ThreadSessionCapability>,
+    session_ref: &Arc<dyn ThreadContextCapability>,
     turn_ref: &Arc<dyn ThreadRuntimeCapability>,
     emitted_deltas: &mut usize,
     notify_on: CommandNotificationFilter,
@@ -516,7 +516,7 @@ async fn flush_output_notification(
     output_notification_aggregator: &mut OutputNotificationAggregator,
     exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
-    session_ref: &Arc<dyn ThreadSessionCapability>,
+    session_ref: &Arc<dyn ThreadContextCapability>,
     notification_state: &Arc<CommandNotificationState>,
 ) {
     let Some(item) = output_notification_aggregator.take_item(call_id) else {
@@ -537,7 +537,7 @@ async fn flush_output_notification(
 /// text when the transcript is empty.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_exec_end_for_unified_exec(
-    session_ref: Arc<dyn ThreadSessionCapability>,
+    session_ref: Arc<dyn ThreadContextCapability>,
     turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,
@@ -570,7 +570,7 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_failed_exec_end_for_unified_exec(
-    session_ref: Arc<dyn ThreadSessionCapability>,
+    session_ref: Arc<dyn ThreadContextCapability>,
     turn_ref: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     command: Vec<String>,

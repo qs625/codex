@@ -233,8 +233,8 @@ async fn schedule_startup_prewarm_inner(
     );
     let startup_cancellation_token = CancellationToken::new();
     let built_tools_started_at = Instant::now();
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let startup_router = built_tools(
         Arc::clone(&session),
         Arc::clone(&startup_turn_context),

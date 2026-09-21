@@ -7,8 +7,8 @@ use protocol::protocol::EventMsg;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
+use thread_service_api::ThreadContextCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -51,7 +51,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     current_agent_path: Option<AgentPath>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ThreadContextCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     runtime: Option<Arc<dyn HostLifecycleToolRuntime>>,
     call: ToolCall,
@@ -165,11 +165,7 @@ fn create_request_runtime_restart_tool() -> ToolSpec {
         .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(
-            properties,
-            Some(vec![]),
-            Some(false.into()),
-        ),
+        parameters: JsonSchema::object(properties, Some(vec![]), Some(false.into())),
         output_schema: Some(request_runtime_restart_output_schema()),
     })
 }
@@ -215,7 +211,7 @@ fn request_runtime_restart_output_schema() -> Value {
 }
 
 fn display_event_started(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call_id: &str,
     arguments: Value,
@@ -233,7 +229,7 @@ fn display_event_started(
 }
 
 fn display_event_completed(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ThreadContextCapability,
     turn: &dyn ThreadRuntimeCapability,
     call_id: &str,
     arguments: Value,
@@ -259,10 +255,7 @@ fn normalize_reason(reason: Option<String>) -> Option<String> {
     })
 }
 
-fn unsupported_relaunch_result(
-    request_id: String,
-    reason: Option<String>,
-) -> HostRelaunchResult {
+fn unsupported_relaunch_result(request_id: String, reason: Option<String>) -> HostRelaunchResult {
     HostRelaunchResult {
         request_id,
         status: HostRelaunchStatus::Unsupported,

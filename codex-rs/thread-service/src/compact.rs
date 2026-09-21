@@ -275,8 +275,8 @@ async fn run_compact_task_inner_impl(
     let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
         thread_service_api::TurnDiffTracker::default(),
     ));
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let compact_tool_inputs = Arc::new(crate::session::turn::TurnToolInputs {
         session_capability: Arc::downgrade(&session_capability),
         mcp_tools: Vec::new(),

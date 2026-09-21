@@ -1622,8 +1622,8 @@ pub(crate) async fn run_sampling_request(
         skills_outcome,
         cancellation_token,
     } = request;
-    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
-        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let session_capability: Arc<dyn thread_service_api::ThreadContextCapability> =
+        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadContextCapability>;
     let tool_inputs = match tool_inputs_override {
         Some(tool_inputs) => tool_inputs,
         None => Arc::new(
@@ -1761,7 +1761,7 @@ pub(crate) async fn run_sampling_request(
 pub(crate) async fn built_tools(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
+    session_capability: std::sync::Weak<dyn thread_service_api::ThreadContextCapability>,
     input: &[ResponseItem],
     explicitly_enabled_connectors: &HashSet<String>,
     skills_outcome: Option<&SkillLoadOutcome>,
@@ -1865,7 +1865,7 @@ pub(crate) async fn built_tools(
 }
 
 pub(crate) struct TurnToolInputs {
-    pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
+    pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadContextCapability>,
     pub(crate) mcp_tools: Vec<mcp_types::ToolInfo>,
     pub(crate) deferred_mcp_tools: Vec<mcp_types::ToolInfo>,
     pub(crate) discoverable_tools: Vec<tool_service_api::DiscoverableTool>,
@@ -1882,7 +1882,7 @@ pub(crate) fn tool_service_request<'a>(
         config: &turn_context.tools_config,
         current_agent_path: Some(sess.current_agent_path_for_turn(turn_context)),
         session_capability: tool_inputs.session_capability.clone(),
-        session: Arc::clone(sess) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+        session: Arc::clone(sess) as Arc<dyn thread_service_api::ThreadContextCapability>,
         approval_session: Arc::clone(sess)
             as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
         session_command_state: Arc::clone(&sess.services.command_service_state)
