@@ -49,6 +49,18 @@ function shouldCompleteRejectedBrowserPanelNavigation({
   );
 }
 
+function shouldCompleteBrowserPanelStoppedNavigation({
+  navigationSequence,
+  pendingNavigationSequence,
+  currentUrl,
+  targetUrl,
+}) {
+  return (
+    navigationSequence === pendingNavigationSequence &&
+    browserPanelUrlsEqual(currentUrl, targetUrl)
+  );
+}
+
 function shouldExposeBrowserPanelLoading({
   observedLoading,
   pendingNavigationSequence,
@@ -90,6 +102,7 @@ module.exports = {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
   shouldExposeBrowserPanelLoading,

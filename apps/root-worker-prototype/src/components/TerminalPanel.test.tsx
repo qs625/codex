@@ -295,3 +295,38 @@ test("TerminalPanel focuses xterm only from explicit focus requests", () => {
   );
   assert.notEqual(tabClickFocusIndex, -1);
 });
+
+test("TerminalPanel passive state refreshes do not request xterm focus", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const subscriptionStart = source.indexOf(
+    "const unsubscribe = window.codexDesktop.subscribeTerminalState",
+  );
+  const subscriptionEnd = source.indexOf(
+    "const requestSeq = terminalStateRequestSeqRef.current.begin();",
+    subscriptionStart,
+  );
+  const subscriptionSource = source.slice(subscriptionStart, subscriptionEnd);
+  const statusEffectStart = source.indexOf(
+    "terminal.options.cursorBlink = isInteractive(activeTab.status);",
+  );
+  const statusEffectEnd = source.indexOf(
+    "  useEffect(() => {\n    queueMicrotask(applyPendingTerminalFocus);",
+    statusEffectStart,
+  );
+  const statusEffectSource = source.slice(statusEffectStart, statusEffectEnd);
+
+  assert.notEqual(subscriptionStart, -1);
+  assert.notEqual(subscriptionEnd, -1);
+  assert.match(subscriptionSource, /setState\(event\.state\)/);
+  assert.match(
+    subscriptionSource,
+    /terminalRef\.current\?\.write\(decodeBase64\(event\.deltaBase64\)\)/,
+  );
+  assert.doesNotMatch(subscriptionSource, /requestTerminalViewportFocus/);
+  assert.doesNotMatch(subscriptionSource, /terminal\.focus\(\)/);
+  assert.notEqual(statusEffectStart, -1);
+  assert.notEqual(statusEffectEnd, -1);
+  assert.match(statusEffectSource, /writeTerminalStatusMarker/);
+  assert.doesNotMatch(statusEffectSource, /requestTerminalViewportFocus/);
+  assert.doesNotMatch(statusEffectSource, /terminal\.focus\(\)/);
+});

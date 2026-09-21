@@ -1,10 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
   shouldExposeBrowserPanelLoading,
@@ -104,6 +107,39 @@ test("shouldCompleteRejectedBrowserPanelNavigation rejects same-sequence non-tar
       finishedNavigationSequence: 4,
       finishedUrl: "https://previous.example/",
       currentUrl: "https://example.com/",
+      targetUrl: "https://example.com/",
+    }),
+    false,
+  );
+});
+
+test("shouldCompleteBrowserPanelStoppedNavigation accepts matching stopped target", () => {
+  assert.equal(
+    shouldCompleteBrowserPanelStoppedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      currentUrl: "https://example.com",
+      targetUrl: "https://example.com/",
+    }),
+    true,
+  );
+});
+
+test("shouldCompleteBrowserPanelStoppedNavigation rejects stale or non-target stop evidence", () => {
+  assert.equal(
+    shouldCompleteBrowserPanelStoppedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 3,
+      currentUrl: "https://example.com/",
+      targetUrl: "https://example.com/",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompleteBrowserPanelStoppedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      currentUrl: "https://previous.example/",
       targetUrl: "https://example.com/",
     }),
     false,
@@ -220,5 +256,31 @@ test("waitForBrowserPanelNavigationResult rejects observed navigation failure be
       Promise.reject(new Error("ERR_NAME_NOT_RESOLVED (-105)")),
     ),
     /ERR_NAME_NOT_RESOLVED \(-105\)/,
+  );
+});
+
+test("main browser navigation observes did-stop-loading as bounded target completion evidence", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const observerIndex = mainSource.indexOf("function observeBrowserPanelTargetNavigation");
+  const stopHandlerIndex = mainSource.indexOf("const handleStop = () => {", observerIndex);
+  const observedStopListenerIndex = mainSource.indexOf(
+    'webContents.on("did-stop-loading", handleStop);',
+    observerIndex,
+  );
+  const globalStopIndex = mainSource.indexOf(
+    'tab.view.webContents.on("did-stop-loading", () => {',
+  );
+
+  assert.notEqual(observerIndex, -1);
+  assert.notEqual(stopHandlerIndex, -1);
+  assert.notEqual(observedStopListenerIndex, -1);
+  assert.notEqual(globalStopIndex, -1);
+  assert.notEqual(
+    mainSource.indexOf("shouldCompleteBrowserPanelStoppedNavigation", stopHandlerIndex),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("completeBrowserPanelNavigation(panel, tab, tab.pendingNavigationSequence)", globalStopIndex),
+    -1,
   );
 });
