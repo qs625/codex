@@ -183,6 +183,8 @@ export function buildConversationState(
     sequenceStart: flatItemSequence,
     commandLookup,
     historyItemIds,
+    includeItem: (item) =>
+      !isActiveCommandBeforeCompactBoundary(item, latestCompactOrderKeyMs),
     previous: canReusePrevious ? previous : null,
     buildItemEntries: buildConversationItemEntries,
   });
@@ -223,6 +225,17 @@ function liveCommandDisplayItem(
     startedAtMs: item.startedAtMs ?? activeItem.startedAtMs,
     completedAtMs: activeItem.completedAtMs ?? item.completedAtMs,
   };
+}
+
+function isActiveCommandBeforeCompactBoundary(
+  item: ThreadItem,
+  latestCompactOrderKeyMs: number | null,
+) {
+  if (latestCompactOrderKeyMs === null) {
+    return false;
+  }
+  const itemOrderKey = itemOrderKeyMs(item);
+  return itemOrderKey !== null && itemOrderKey < latestCompactOrderKeyMs;
 }
 
 function latestContextCompactionItemId(thread: Thread) {

@@ -1284,7 +1284,7 @@ test("places older active command snapshots by command start time instead of at 
   );
 });
 
-test("keeps pre-compact orphan active command visible after the compact marker", () => {
+test("omits pre-compact orphan active command after the compact marker", () => {
   const thread = {
     ...makeThreadWithTurns([
       {
@@ -1293,6 +1293,7 @@ test("keeps pre-compact orphan active command visible after the compact marker",
           {
             type: "contextCompaction",
             id: "compact-1",
+            summary: "Compact summary must be the first visible message.",
             replacementHistory: [],
           },
         ],
@@ -1349,17 +1350,94 @@ test("keeps pre-compact orphan active command visible after the compact marker",
     state.entries.map((entry) => [entry.id, entry.turnId, entry.timestamp]),
     [
       ["compact-1", "turn-compact", formatClockTime(100)],
+      ["compact-1:summary", "turn-compact", formatClockTime(100)],
+      ["agent-later", "turn-later", formatClockTime(120)],
+    ],
+  );
+  assert.deepEqual(
+    state.cells.map((cell) => cell.entries.map((entry) => entry.id)),
+    [["compact-1"], ["compact-1:summary"], ["agent-later"]],
+  );
+});
+
+test("keeps post-compact orphan active command visible after the compact summary", () => {
+  const thread = {
+    ...makeThreadWithTurns([
+      {
+        id: "turn-compact",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            summary: "Compact summary remains first.",
+            replacementHistory: [],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 100,
+        completedAt: 100,
+        durationMs: 0,
+      },
+      {
+        id: "turn-later",
+        items: [
+          {
+            type: "agentMessage",
+            id: "agent-later",
+            text: "later message",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 120,
+        completedAt: 120,
+        durationMs: 0,
+      },
+    ]),
+    updatedAt: 180,
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-post-compact",
+        command: "pnpm build",
+        cwd: "/tmp/project",
+        processId: "process-post-compact",
+        source: "agent",
+        status: "running",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "pnpm build" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+        startedAtMs: 110_000,
+      },
+    ],
+  } satisfies Thread;
+
+  const state = buildConversationState(thread);
+
+  assert.deepEqual(
+    state.entries.map((entry) => [entry.id, entry.turnId, entry.timestamp]),
+    [
+      ["compact-1", "turn-compact", formatClockTime(100)],
+      ["compact-1:summary", "turn-compact", formatClockTime(100)],
       [
-        "exec-pre-compact",
-        "active-command:exec-pre-compact",
-        formatClockTime(60),
+        "exec-post-compact",
+        "active-command:exec-post-compact",
+        formatClockTime(110),
       ],
       ["agent-later", "turn-later", formatClockTime(120)],
     ],
   );
   assert.deepEqual(
     state.cells.map((cell) => cell.entries.map((entry) => entry.id)),
-    [["compact-1"], ["exec-pre-compact"], ["agent-later"]],
+    [["compact-1"], ["compact-1:summary"], ["exec-post-compact"], ["agent-later"]],
   );
 });
 
