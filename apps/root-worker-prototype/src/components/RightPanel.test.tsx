@@ -394,6 +394,27 @@ test("browser native view hides under app overlays and restores with measured bo
     rightPanelSource,
     /else \{[\s\S]*const bounds = measureBounds\(\)[\s\S]*\.showBrowserView\(bounds\)/,
   );
+  assert.match(
+    rightPanelSource,
+    /const passiveBoundsCorrectionRef = useRef<\(\(\) => void\) \| null>\(null\)/,
+  );
+  assert.match(
+    rightPanelSource,
+    /const applyBrowserState = \(nextState: BrowserPanelState\) => \{[\s\S]*passiveBoundsCorrectionRef\.current\?\.\(\);[\s\S]*\};/,
+  );
+  assert.match(
+    rightPanelSource,
+    /passiveBoundsCorrectionRef\.current = scheduleBoundsUpdate;[\s\S]*scheduleBoundsUpdate\(\);/,
+  );
+  assert.match(
+    rightPanelSource,
+    /const sendBounds = \(\) => \{[\s\S]*\.setBrowserViewBounds\(bounds\)/,
+  );
+  const showBranch = rightPanelSource.slice(
+    rightPanelSource.indexOf("} else {", rightPanelSource.indexOf("if (shouldHideNativeView)")),
+    rightPanelSource.indexOf("scheduleBoundsUpdate();"),
+  );
+  assert.doesNotMatch(showBranch, /lastSentBounds = bounds/);
   assert.doesNotMatch(
     rightPanelSource,
     /requestAnimationFrame\(watchBounds\)/,

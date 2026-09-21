@@ -861,6 +861,7 @@ function BrowserPanel({
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const boundsSequenceRef = useRef(0);
+  const passiveBoundsCorrectionRef = useRef<(() => void) | null>(null);
   const [address, setAddress] = useState("");
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -883,6 +884,7 @@ function BrowserPanel({
     if (shouldClearBrowserLocalError(normalizedState, normalizedActiveTab)) {
       setLocalError(null);
     }
+    passiveBoundsCorrectionRef.current?.();
   };
 
   useEffect(() => {
@@ -956,6 +958,7 @@ function BrowserPanel({
         sendBounds();
       });
     };
+    passiveBoundsCorrectionRef.current = scheduleBoundsUpdate;
 
     if (shouldHideNativeView) {
       void browserApi
@@ -964,7 +967,6 @@ function BrowserPanel({
         .catch((error) => setLocalError(toBrowserError(error)));
     } else {
       const bounds = measureBounds();
-      lastSentBounds = bounds;
       void browserApi
         .showBrowserView(bounds)
         .then((nextState) => {
@@ -981,6 +983,9 @@ function BrowserPanel({
     return () => {
       if (boundsUpdateFrame !== null) {
         window.cancelAnimationFrame(boundsUpdateFrame);
+      }
+      if (passiveBoundsCorrectionRef.current === scheduleBoundsUpdate) {
+        passiveBoundsCorrectionRef.current = null;
       }
       resizeObserver.disconnect();
       window.removeEventListener("resize", scheduleBoundsUpdate);

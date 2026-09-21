@@ -45,6 +45,22 @@ function eventEntry(id: string, text: string): ConversationEntry {
   };
 }
 
+function initContextEntry(id: string, label = "Runtime Activity"): ConversationEntry {
+  return {
+    id,
+    kind: "tool",
+    author: "root",
+    role: "system",
+    text: "Runtime restart evidence.",
+    timestamp: "now",
+    attachments: [],
+    toolName: `Init Context · ${label}`,
+    toolStatus: "completed",
+    toolDetails: `${label}\nRuntime restart evidence.`,
+    toolCategory: "context",
+  };
+}
+
 test("keeps command entries visible while filtering command notifications", () => {
   const cells = [
     {
@@ -250,6 +266,49 @@ test("filters duplicate restart recovery marker rows across compact details", ()
       ]),
     ),
     ["item-26", "compact-entry"],
+  );
+});
+
+test("filters duplicate top-level init context already retained in compact details", () => {
+  const cells = [
+    {
+      id: "replayed-init-context",
+      kind: "tool",
+      entries: [initContextEntry("ctx-live")],
+    },
+    {
+      id: "compact",
+      kind: "compact",
+      entries: [
+        {
+          ...entry("compact-entry"),
+          replacementHistoryCells: [
+            {
+              id: "replacement-init-context",
+              kind: "tool",
+              entries: [initContextEntry("ctx-retained")],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "ordinary-context",
+      kind: "tool",
+      entries: [initContextEntry("ctx-different", "Environment")],
+    },
+  ] satisfies ConversationCell[];
+
+  assert.deepEqual(
+    filterConversationCellsForDisplay(cells).flatMap((cell) =>
+      cell.entries.flatMap((displayEntry) => [
+        displayEntry.id,
+        ...(displayEntry.replacementHistoryCells ?? []).flatMap((nestedCell) =>
+          nestedCell.entries.map((entry) => entry.id),
+        ),
+      ]),
+    ),
+    ["compact-entry", "ctx-retained", "ctx-different"],
   );
 });
 
