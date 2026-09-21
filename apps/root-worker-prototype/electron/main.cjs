@@ -33,6 +33,7 @@ const {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure: shouldDeferBrowserPanelLoadFailureState,
   shouldExposeBrowserPanelLoading,
@@ -1794,7 +1795,7 @@ function setBrowserPanelBounds(panel, bounds) {
     !panel.window.isDestroyed() &&
     !tab.view.webContents.isDestroyed()
   ) {
-    attachActiveBrowserPanelView(panel, { raise: true });
+    attachActiveBrowserPanelView(panel);
   }
 }
 
@@ -1963,6 +1964,18 @@ function bindBrowserPanelTab(panel, tab) {
   });
   tab.view.webContents.on("did-stop-loading", () => {
     updateBrowserPanelLocationState(tab);
+    if (
+      tab.pendingNavigationSequence !== null &&
+      shouldCompleteBrowserPanelStoppedNavigation({
+        navigationSequence: tab.navigationSequence,
+        pendingNavigationSequence: tab.pendingNavigationSequence,
+        currentUrl: tab.state.url,
+        targetUrl: tab.pendingNavigationTarget,
+      })
+    ) {
+      completeBrowserPanelNavigation(panel, tab, tab.pendingNavigationSequence);
+      return;
+    }
     tab.state.loading = false;
     sendBrowserPanelState(panel);
   });
@@ -2017,6 +2030,7 @@ function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence)
   const cleanup = () => {
     webContents.removeListener("did-navigate", handleNavigate);
     webContents.removeListener("did-finish-load", handleFinish);
+    webContents.removeListener("did-stop-loading", handleStop);
     webContents.removeListener("did-fail-load", handleFail);
     webContents.removeListener("destroyed", handleDestroyed);
   };
@@ -2039,6 +2053,19 @@ function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence)
   const handleFinish = () => {
     updateBrowserPanelLocationState(tab);
     if (isCurrentTarget(tab.state.url)) {
+      settle(resolveObserved);
+    }
+  };
+  const handleStop = () => {
+    updateBrowserPanelLocationState(tab);
+    if (
+      shouldCompleteBrowserPanelStoppedNavigation({
+        navigationSequence,
+        pendingNavigationSequence: tab.pendingNavigationSequence,
+        currentUrl: tab.state.url,
+        targetUrl,
+      })
+    ) {
       settle(resolveObserved);
     }
   };
@@ -2072,6 +2099,7 @@ function observeBrowserPanelTargetNavigation(tab, targetUrl, navigationSequence)
   });
   webContents.on("did-navigate", handleNavigate);
   webContents.on("did-finish-load", handleFinish);
+  webContents.on("did-stop-loading", handleStop);
   webContents.on("did-fail-load", handleFail);
   webContents.on("destroyed", handleDestroyed);
   return {

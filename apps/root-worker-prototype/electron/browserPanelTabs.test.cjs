@@ -61,7 +61,7 @@ test("shouldDetachAttachedBrowserPanelView skips destroyed windows and tabs", ()
   );
 });
 
-test("browser panel native view lifecycle raises active view and detaches hidden views", () => {
+test("browser panel native view lifecycle raises only on explicit show or tab actions", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
 
   assert.match(
@@ -78,7 +78,15 @@ test("browser panel native view lifecycle raises active view and detaches hidden
   );
   assert.match(
     mainSource,
-    /function setBrowserPanelBounds\(panel, bounds\) \{[\s\S]*attachActiveBrowserPanelView\(panel, \{ raise: true \}\);[\s\S]*\}/,
+    /function setBrowserPanelBounds\(panel, bounds\) \{[\s\S]*attachActiveBrowserPanelView\(panel\);[\s\S]*\}/,
+  );
+  assert.doesNotMatch(
+    mainSource.slice(
+      mainSource.indexOf("function setBrowserPanelBounds(panel, bounds) {"),
+      mainSource.indexOf("function sendBrowserPanelState(panel)", mainSource.indexOf("function setBrowserPanelBounds(panel, bounds) {")),
+    ),
+    /attachActiveBrowserPanelView\(panel, \{ raise: true \}\)/,
+    "passive Browser bounds refresh must not raise the native view and steal focus",
   );
   assert.match(
     mainSource,
