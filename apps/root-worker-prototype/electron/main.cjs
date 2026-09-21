@@ -1706,6 +1706,17 @@ async function waitForBrowserPanelDevToolsTarget(webContents) {
   throw new Error(`Browser panel DevTools target was not published${suffix}`);
 }
 
+async function waitForBrowserPanelVisibleNavigationTarget(panel, tab) {
+  if (!panel.visible) {
+    return;
+  }
+  ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
+  if (!remoteDebuggingConfig.enabled) {
+    return;
+  }
+  await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
+}
+
 function fetchRemoteDebuggingJson(pathname) {
   return new Promise((resolve, reject) => {
     const request = http.request(
@@ -1883,6 +1894,7 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
   tab.state.error = null;
   tab.state.loading = true;
   stopBrowserPanelWebContentsLoad(tab);
+  ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
   sendBrowserPanelState(panel);
   const observedNavigation = observeBrowserPanelTargetNavigation(
     tab,
@@ -1899,6 +1911,7 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
     observedNavigation.dispose();
     await waitForBrowserPanelLoadStop(tab.view.webContents);
     if (tab.navigationSequence === navigationSequence) {
+      await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
       completeBrowserPanelNavigation(panel, tab, navigationSequence);
     }
   } catch (error) {
@@ -1910,7 +1923,19 @@ async function loadBrowserPanelTabUrl(panel, tab, target) {
     updateBrowserPanelLocationState(tab);
     if (browserPanelTabHasFinishedTarget(tab, normalized.url, navigationSequence)) {
       if (tab.navigationSequence === navigationSequence) {
-        completeBrowserPanelNavigation(panel, tab, navigationSequence);
+        try {
+          await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
+          completeBrowserPanelNavigation(panel, tab, navigationSequence);
+        } catch (visibilityError) {
+          failBrowserPanelNavigation(panel, tab, {
+            errorDescription:
+              visibilityError instanceof Error
+                ? visibilityError.message
+                : String(visibilityError),
+            validatedUrl: normalized.url,
+          });
+          throw visibilityError;
+        }
       }
       return;
     }
@@ -1973,7 +1998,11 @@ function bindBrowserPanelTab(panel, tab) {
         targetUrl: tab.pendingNavigationTarget,
       })
     ) {
-      completeBrowserPanelNavigation(panel, tab, tab.pendingNavigationSequence);
+      void completeBrowserPanelNavigationWhenVisible(
+        panel,
+        tab,
+        tab.pendingNavigationSequence,
+      );
       return;
     }
     tab.state.loading = false;
@@ -1981,7 +2010,11 @@ function bindBrowserPanelTab(panel, tab) {
   });
   tab.view.webContents.on("did-finish-load", () => {
     if (tab.pendingNavigationSequence !== null) {
-      completeBrowserPanelNavigation(panel, tab, tab.pendingNavigationSequence);
+      void completeBrowserPanelNavigationWhenVisible(
+        panel,
+        tab,
+        tab.pendingNavigationSequence,
+      );
       return;
     }
     updateBrowserPanelLocationState(tab);
@@ -2128,6 +2161,27 @@ function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {
   sendBrowserPanelState(panel);
 }
 
+async function completeBrowserPanelNavigationWhenVisible(
+  panel,
+  tab,
+  navigationSequence,
+) {
+  try {
+    await waitForBrowserPanelVisibleNavigationTarget(panel, tab);
+  } catch (error) {
+    if (tab.pendingNavigationSequence === navigationSequence) {
+      failBrowserPanelNavigation(panel, tab, {
+        errorDescription: error instanceof Error ? error.message : String(error),
+        validatedUrl: tab.pendingNavigationTarget,
+      });
+    }
+    return;
+  }
+  if (tab.pendingNavigationSequence === navigationSequence) {
+    completeBrowserPanelNavigation(panel, tab, navigationSequence);
+  }
+}
+
 function failBrowserPanelNavigation(panel, tab, failure) {
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
@@ -2230,7 +2284,7 @@ function deferBrowserPanelFailure(panel, tab, failure) {
         deferredFailure.navigationSequence,
       )
     ) {
-      completeBrowserPanelNavigation(
+      void completeBrowserPanelNavigationWhenVisible(
         panel,
         tab,
         deferredFailure.navigationSequence,
@@ -2377,7 +2431,7 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
     panel.window.isDestroyed() ||
     tab.view.webContents.isDestroyed()
   ) {
-    return;
+    return false;
   }
   if (panel.attachedTabId === tab.id) {
     if (raise) {
@@ -2386,12 +2440,30 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
       panel.attachedTabId = tab.id;
     }
     tab.view.setBounds(panel.bounds);
-    return;
+    return true;
   }
   detachAttachedBrowserPanelView(panel);
   panel.window.contentView.addChildView(tab.view);
   panel.attachedTabId = tab.id;
   tab.view.setBounds(panel.bounds);
+  return true;
+}
+
+function ensureBrowserPanelTabAttachedForNavigation(
+  panel,
+  tab,
+  { raise = false } = {},
+) {
+  if (!panel.visible) {
+    return;
+  }
+  const activeTab = activeBrowserPanelTab(panel);
+  if (activeTab?.id !== tab.id) {
+    throw new Error("Browser navigation target is not the active tab");
+  }
+  if (!attachActiveBrowserPanelView(panel, { raise })) {
+    throw new Error("Browser page is not visible in the panel");
+  }
 }
 
 function detachAttachedBrowserPanelView(panel) {

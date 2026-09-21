@@ -6,6 +6,7 @@ function browserPanelWebPreferences() {
   return {
     allowRunningInsecureContent: false,
     contextIsolation: true,
+    devTools: true,
     nodeIntegration: false,
     partition: browserSessionPartition,
     sandbox: true,

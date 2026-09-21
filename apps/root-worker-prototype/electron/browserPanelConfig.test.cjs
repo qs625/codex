@@ -10,6 +10,7 @@ test("browser panel keeps isolated sandboxed webContents preferences", () => {
   assert.deepEqual(browserPanelWebPreferences(), {
     allowRunningInsecureContent: false,
     contextIsolation: true,
+    devTools: true,
     nodeIntegration: false,
     partition: browserSessionPartition,
     sandbox: true,

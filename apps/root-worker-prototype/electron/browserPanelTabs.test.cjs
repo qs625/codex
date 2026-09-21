@@ -92,5 +92,25 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     mainSource,
     /function attachActiveBrowserPanelView\(panel, \{ raise = false \} = \{\}\)/,
   );
+  assert.match(
+    mainSource,
+    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*attachActiveBrowserPanelView\(panel, \{ raise \}\)/,
+  );
+  assert.match(
+    mainSource,
+    /async function waitForBrowserPanelVisibleNavigationTarget\(panel, tab\) \{[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
+  );
+  assert.match(
+    mainSource,
+    /async function loadBrowserPanelTabUrl\(panel, tab, target\) \{[\s\S]*stopBrowserPanelWebContentsLoad\(tab\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*tab\.view\.webContents\.loadURL\(normalized\.url\)[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab\);[\s\S]*completeBrowserPanelNavigation\(panel, tab, navigationSequence\);/,
+  );
+  assert.match(
+    mainSource,
+    /tab\.view\.webContents\.on\("did-stop-loading", \(\) => \{[\s\S]*void completeBrowserPanelNavigationWhenVisible\([\s\S]*tab\.pendingNavigationSequence,[\s\S]*\);[\s\S]*return;/,
+  );
+  assert.match(
+    mainSource,
+    /tab\.view\.webContents\.on\("did-finish-load", \(\) => \{[\s\S]*void completeBrowserPanelNavigationWhenVisible\([\s\S]*tab\.pendingNavigationSequence,[\s\S]*\);[\s\S]*return;/,
+  );
   assert.match(mainSource, /function detachAllBrowserPanelViews\(panel\)/);
 });
