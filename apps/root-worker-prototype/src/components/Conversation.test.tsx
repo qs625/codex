@@ -11,6 +11,8 @@ import {
   CompactRow,
   MessageRow,
   ToolRow,
+  TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE,
+  planTerminalOutputPreviewWrite,
 } from "./Conversation";
 import {
   ConversationVirtualList,
@@ -935,6 +937,43 @@ test("terminal-emulated tool output renders in a terminal preview surface", () =
   assert.match(markup, /tool-terminal-output-preview/);
   assert.match(markup, /Terminal-rendered command output/);
   assert.doesNotMatch(markup, /<pre>Layer already exists/);
+});
+
+test("terminal output preview appends streaming growth without replaying full output", () => {
+  assert.deepEqual(
+    planTerminalOutputPreviewWrite("line one\n", "line one\nline two\n"),
+    {
+      kind: "append",
+      text: "line two\n",
+    },
+  );
+  assert.deepEqual(
+    planTerminalOutputPreviewWrite("line one\n", "line one\n"),
+    { kind: "noop" },
+  );
+  assert.deepEqual(
+    planTerminalOutputPreviewWrite("old output\n", "new output\n"),
+    {
+      kind: "reset",
+      text: "new output\n",
+    },
+  );
+  assert.equal(
+    `${TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE}new output\n`,
+    "\x1b[3J\x1b[H\x1b[2Jnew output\n",
+  );
+});
+
+test("terminal output preview resets through the xterm write queue", () => {
+  const source = readFileSync(new URL("./Conversation.tsx", import.meta.url), "utf8");
+  const previewStart = source.indexOf("function TerminalOutputPreview");
+  const previewEnd = source.indexOf("function toolOutputClassName", previewStart);
+  const previewSource = source.slice(previewStart, previewEnd);
+
+  assert.notEqual(previewStart, -1);
+  assert.notEqual(previewEnd, -1);
+  assert.match(previewSource, /terminal\.write\(`\$\{TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE\}/);
+  assert.doesNotMatch(previewSource, /terminal\.clear\(\)/);
 });
 
 test("command start, output, and exit notifications render in one command cell with selectable output", () => {
