@@ -496,17 +496,6 @@ impl Session {
         snapshots
     }
 
-    pub(crate) async fn pending_thread_poll_event_snapshots_for_source(
-        &self,
-        source_hint: &str,
-    ) -> Vec<PendingThreadPollEventSnapshot> {
-        self.pending_thread_poll_event_snapshots()
-            .await
-            .into_iter()
-            .filter(|snapshot| snapshot.source_hint == source_hint)
-            .collect()
-    }
-
     pub(crate) async fn poll_event(
         &self,
         request: thread_service_api::ThreadPollEventRequest,
@@ -523,7 +512,10 @@ impl Session {
             thread_wait.reset_after_event().await;
             return Ok(poll_event_result(
                 Some(source_hint.to_string()),
-                source_events.first().cloned(),
+                source_events
+                    .first()
+                    .cloned()
+                    .or_else(|| events.first().cloned()),
                 events,
                 0,
                 metadata,
@@ -536,18 +528,20 @@ impl Session {
                 waited_ms,
             } => {
                 let source_hint = snapshot.source.map(thread_wait_source_hint);
-                let events = match source_hint.as_deref() {
-                    Some(source_hint) => self
-                        .pending_thread_poll_event_snapshots_for_source(source_hint)
-                        .await
-                        .into_iter()
-                        .filter_map(|snapshot| snapshot.event)
-                        .collect(),
-                    None => Vec::new(),
-                };
+                let pending_events = PendingThreadPollEventsSnapshot::new(
+                    self.pending_thread_poll_event_snapshots().await,
+                );
+                let source_events = source_hint
+                    .as_deref()
+                    .map(|source_hint| pending_events.events_for_source(source_hint))
+                    .unwrap_or_default();
+                let events = pending_events.events();
                 Ok(poll_event_result(
                     source_hint,
-                    events.first().cloned(),
+                    source_events
+                        .first()
+                        .cloned()
+                        .or_else(|| events.first().cloned()),
                     events,
                     waited_ms,
                     metadata,

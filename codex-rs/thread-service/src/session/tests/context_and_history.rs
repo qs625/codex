@@ -3360,6 +3360,164 @@ async fn poll_event_existing_pending_events_keep_first_source_event_and_all_even
 }
 
 #[tokio::test]
+async fn poll_event_user_input_source_does_not_hide_pending_command_event() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.steer_input(
+        vec![UserInput::Text {
+            text: "wake first".to_string(),
+            text_elements: Vec::new(),
+        }],
+        None,
+        None,
+    )
+    .await
+    .expect("user input should steer active turn");
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-exit-1".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command exit notification received.".to_string(),
+            output: Some("done\n".to_string()),
+            exit_code: Some(0),
+            created_at_ms: 1234,
+        },
+    ))
+    .await;
+
+    let result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should succeed");
+
+    assert!(!result.timed_out);
+    assert_eq!(result.waited_ms, 0);
+    assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+    match result.event {
+        Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            command_item_id,
+            kind,
+            output,
+            exit_code,
+            ..
+        }) => {
+            assert_eq!(command_item_id, "cmd-1");
+            assert_eq!(
+                kind,
+                protocol::models::CommandExecutionNotificationKind::Exit
+            );
+            assert_eq!(output.as_deref(), Some("done\n"));
+            assert_eq!(exit_code, Some(0));
+        }
+        other => panic!("expected command exit payload despite user_input source, got {other:?}"),
+    }
+    assert_eq!(result.events.len(), 1);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_user_input_wake_includes_mailbox_command_event() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-output-1".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            message: "Command output notification received.".to_string(),
+            output: Some("ready\n".to_string()),
+            exit_code: None,
+            created_at_ms: 1234,
+        },
+    ))
+    .await;
+
+    let mut waiter = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.poll_event(thread_service_api::ThreadPollEventRequest {
+                initial_timeout_ms: Some(100),
+                hard_cap_timeout_ms: Some(400),
+            })
+            .await
+            .expect("poll_event should succeed")
+        })
+    };
+    assert!(
+        timeout(Duration::from_millis(20), &mut waiter).await.is_err(),
+        "poll_event should still be waiting before user_input wakes it"
+    );
+
+    sess.steer_input(
+        vec![UserInput::Text {
+            text: "wake first".to_string(),
+            text_elements: Vec::new(),
+        }],
+        None,
+        None,
+    )
+    .await
+    .expect("user input should steer active turn");
+
+    let result = timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("poll_event should finish")
+        .expect("poll_event task");
+
+    assert!(!result.timed_out);
+    assert!(
+        result.waited_ms > 0,
+        "poll_event should be satisfied by the wait branch"
+    );
+    assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+    match result.event {
+        Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            command_item_id,
+            kind,
+            output,
+            exit_code,
+            ..
+        }) => {
+            assert_eq!(command_item_id, "cmd-1");
+            assert_eq!(
+                kind,
+                protocol::models::CommandExecutionNotificationKind::Output
+            );
+            assert_eq!(output.as_deref(), Some("ready\n"));
+            assert_eq!(exit_code, None);
+        }
+        other => panic!("expected command output payload despite user_input wake, got {other:?}"),
+    }
+    assert_eq!(result.events.len(), 1);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn poll_event_wakes_for_child_completion() {
     let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
     sess.spawn_task(
