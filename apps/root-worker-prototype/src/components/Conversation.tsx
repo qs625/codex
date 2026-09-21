@@ -1463,8 +1463,66 @@ function ToolEntryBody({ entry }: { entry: ConversationEntry }) {
   );
 }
 
+type TerminalOutputPreviewWritePlan =
+  | { kind: "append"; text: string }
+  | { kind: "reset"; text: string }
+  | { kind: "noop" };
+
+export const TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE = "\x1b[3J\x1b[H\x1b[2J";
+
+export function planTerminalOutputPreviewWrite(
+  previousText: string,
+  nextText: string,
+): TerminalOutputPreviewWritePlan {
+  if (nextText === previousText) {
+    return { kind: "noop" };
+  }
+  if (nextText.startsWith(previousText)) {
+    return { kind: "append", text: nextText.slice(previousText.length) };
+  }
+  return { kind: "reset", text: nextText };
+}
+
 function TerminalOutputPreview({ text }: { text: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<{
+    dispose: () => void;
+    write: (value: string) => void;
+  } | null>(null);
+  const fitAddonRef = useRef<{ fit: () => void } | null>(null);
+  const latestTextRef = useRef(text);
+  const writtenTextRef = useRef("");
+  const plainTextFallbackRef = useRef(false);
+
+  useEffect(() => {
+    latestTextRef.current = text;
+
+    if (plainTextFallbackRef.current) {
+      const container = containerRef.current;
+      if (container) {
+        container.textContent = text;
+      }
+      writtenTextRef.current = text;
+      return;
+    }
+
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    const plan = planTerminalOutputPreviewWrite(writtenTextRef.current, text);
+    if (plan.kind === "noop") {
+      return;
+    }
+
+    if (plan.kind === "reset") {
+      terminal.write(`${TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE}${plan.text}`);
+    } else {
+      terminal.write(plan.text);
+    }
+    writtenTextRef.current = text;
+  }, [text]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1473,9 +1531,6 @@ function TerminalOutputPreview({ text }: { text: string }) {
     }
 
     let disposed = false;
-    let terminal: { dispose: () => void; write: (value: string) => void } | null =
-      null;
-    let fitAddon: { fit: () => void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
 
     void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
@@ -1504,33 +1559,42 @@ function TerminalOutputPreview({ text }: { text: string }) {
         const nextFitAddon = new FitAddon();
         nextTerminal.loadAddon(nextFitAddon);
         nextTerminal.open(container);
-        terminal = nextTerminal;
-        fitAddon = nextFitAddon;
+        terminalRef.current = nextTerminal;
+        fitAddonRef.current = nextFitAddon;
         const fit = () => {
           try {
-            fitAddon?.fit();
+            fitAddonRef.current?.fit();
           } catch {
             // Hidden or not-yet-laid-out details cannot be fitted until visible.
           }
         };
         fit();
-        nextTerminal.write(text);
+        const initialText = latestTextRef.current;
+        nextTerminal.write(initialText);
+        writtenTextRef.current = initialText;
         resizeObserver = new ResizeObserver(fit);
         resizeObserver.observe(container);
         queueMicrotask(fit);
       })
       .catch(() => {
         if (!disposed) {
-          container.textContent = text;
+          plainTextFallbackRef.current = true;
+          const latestText = latestTextRef.current;
+          container.textContent = latestText;
+          writtenTextRef.current = latestText;
         }
       });
 
     return () => {
       disposed = true;
       resizeObserver?.disconnect();
-      terminal?.dispose();
+      terminalRef.current?.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      plainTextFallbackRef.current = false;
+      writtenTextRef.current = "";
     };
-  }, [text]);
+  }, []);
 
   return (
     <div
