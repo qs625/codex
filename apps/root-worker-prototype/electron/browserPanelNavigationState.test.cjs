@@ -7,6 +7,7 @@ const {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
@@ -146,6 +147,68 @@ test("shouldCompleteBrowserPanelStoppedNavigation rejects stale or non-target st
   );
 });
 
+test("shouldAcceptBrowserPanelCommittedNavigation accepts redirected committed URLs", () => {
+  assert.equal(
+    shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      navigationStarted: true,
+      currentUrl: "https://www.baidu.com/",
+    }),
+    true,
+  );
+});
+
+test("shouldAcceptBrowserPanelCommittedNavigation requires current started navigation", () => {
+  assert.equal(
+    shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 3,
+      navigationStarted: true,
+      currentUrl: "https://www.baidu.com/",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      navigationStarted: false,
+      currentUrl: "https://www.baidu.com/",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      navigationStarted: true,
+      currentUrl: "about:blank",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      navigationStarted: true,
+      committedUrl: "https://www.baidu.com/",
+      currentUrl: "https://previous.example/",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptBrowserPanelCommittedNavigation({
+      navigationSequence: 4,
+      pendingNavigationSequence: 4,
+      navigationStarted: true,
+      committedUrl: "https://www.baidu.com/",
+      currentUrl: "https://www.baidu.com",
+    }),
+    true,
+  );
+});
+
 test("browserPanelLoadErrorMessage includes Electron error code when present", () => {
   assert.equal(
     browserPanelLoadErrorMessage({
@@ -259,7 +322,7 @@ test("waitForBrowserPanelNavigationResult rejects observed navigation failure be
   );
 });
 
-test("main browser navigation observes did-stop-loading as bounded target completion evidence", () => {
+test("main browser navigation gates stop completion on committed URL evidence", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
   const observerIndex = mainSource.indexOf("function observeBrowserPanelTargetNavigation");
   const stopHandlerIndex = mainSource.indexOf("const handleStop = () => {", observerIndex);
@@ -276,11 +339,64 @@ test("main browser navigation observes did-stop-loading as bounded target comple
   assert.notEqual(observedStopListenerIndex, -1);
   assert.notEqual(globalStopIndex, -1);
   assert.notEqual(
-    mainSource.indexOf("shouldCompleteBrowserPanelStoppedNavigation", stopHandlerIndex),
+    mainSource.indexOf("committedUrlForSequence", stopHandlerIndex),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("committedUrl: committedUrlForSequence", stopHandlerIndex),
     -1,
   );
   assert.notEqual(
     mainSource.indexOf("completeBrowserPanelNavigationWhenVisible", globalStopIndex),
     -1,
   );
+});
+
+test("main browser navigation observes committed redirects before full load", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const observerIndex = mainSource.indexOf("function observeBrowserPanelTargetNavigation");
+  const startListenerIndex = mainSource.indexOf(
+    'webContents.on("did-start-navigation", handleStart);',
+    observerIndex,
+  );
+  const frameNavigateListenerIndex = mainSource.indexOf(
+    'webContents.on("did-frame-navigate", handleFrameNavigate);',
+    observerIndex,
+  );
+  const committedHelperIndex = mainSource.indexOf(
+    "shouldAcceptBrowserPanelCommittedNavigation",
+    observerIndex,
+  );
+
+  assert.notEqual(observerIndex, -1);
+  assert.notEqual(startListenerIndex, -1);
+  assert.notEqual(frameNavigateListenerIndex, -1);
+  assert.notEqual(committedHelperIndex, -1);
+  assert.notEqual(
+    mainSource.indexOf("browserNavigationDecision(url)", observerIndex),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("let committedUrlForSequence = null;", observerIndex),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("committedUrl: committedUrlForSequence", observerIndex),
+    -1,
+  );
+});
+
+test("main browser target wait maps devtools target id instead of page type", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const targetWaitIndex = mainSource.indexOf(
+    "async function waitForBrowserPanelDevToolsTarget",
+  );
+  const targetWaitSource = mainSource.slice(
+    targetWaitIndex,
+    mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget"),
+  );
+
+  assert.notEqual(targetWaitIndex, -1);
+  assert.match(targetWaitSource, /fromDevToolsTargetId\(candidate\.id\) === webContents/);
+  assert.doesNotMatch(targetWaitSource, /candidate\.type !== "page"/);
 });

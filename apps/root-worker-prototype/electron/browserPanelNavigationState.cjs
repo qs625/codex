@@ -61,6 +61,22 @@ function shouldCompleteBrowserPanelStoppedNavigation({
   );
 }
 
+function shouldAcceptBrowserPanelCommittedNavigation({
+  navigationSequence,
+  pendingNavigationSequence,
+  navigationStarted,
+  committedUrl = null,
+  currentUrl,
+}) {
+  return (
+    navigationSequence === pendingNavigationSequence &&
+    Boolean(navigationStarted) &&
+    Boolean(currentUrl) &&
+    currentUrl !== "about:blank" &&
+    (!committedUrl || browserPanelUrlsEqual(currentUrl, committedUrl))
+  );
+}
+
 function shouldExposeBrowserPanelLoading({
   observedLoading,
   pendingNavigationSequence,
@@ -102,6 +118,7 @@ module.exports = {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
