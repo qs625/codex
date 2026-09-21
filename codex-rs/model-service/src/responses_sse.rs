@@ -465,7 +465,10 @@ async fn process_sse(
             Ok(Some(Ok(sse))) => sse,
             Ok(Some(Err(error))) => {
                 debug!("SSE Error: {error:#}");
-                terminal_error.send(Err(ApiError::Stream(error.to_string())));
+                let mut error =
+                    response_error.unwrap_or_else(|| ApiError::Stream(error.to_string()));
+                model_service_api::attach_model_input_source(&mut error, &input_sources);
+                terminal_error.send(Err(error));
                 return;
             }
             Ok(None) => {
