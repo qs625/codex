@@ -280,7 +280,7 @@ test("main browser navigation observes did-stop-loading as bounded target comple
     -1,
   );
   assert.notEqual(
-    mainSource.indexOf("completeBrowserPanelNavigation(panel, tab, tab.pendingNavigationSequence)", globalStopIndex),
+    mainSource.indexOf("completeBrowserPanelNavigationWhenVisible", globalStopIndex),
     -1,
   );
 });
