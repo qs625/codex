@@ -221,10 +221,22 @@ fn is_external_agent_provider_label(label: &str) -> bool {
 pub(super) fn resume_config_cwd(
     thread_history: &InitialHistory,
     persisted_metadata: Option<&ThreadMetadata>,
+    stored_thread_cwd: Option<&PathBuf>,
 ) -> Option<PathBuf> {
-    thread_history
-        .session_cwd()
-        .or_else(|| persisted_metadata.map(|metadata| metadata.cwd.clone()))
+    resume_config_cwd_candidates(thread_history, persisted_metadata, stored_thread_cwd)
+        .into_iter()
+        .next()
+}
+
+#[cfg(test)]
+pub(super) fn resume_agent_role_cwd(
+    thread_history: &InitialHistory,
+    persisted_metadata: Option<&ThreadMetadata>,
+    stored_thread_cwd: Option<&PathBuf>,
+) -> Option<PathBuf> {
+    resume_agent_role_cwd_candidates(thread_history, persisted_metadata, stored_thread_cwd)
+        .into_iter()
+        .next()
 }
 
 pub(super) async fn load_resume_config_for_agent_role(
@@ -233,11 +245,23 @@ pub(super) async fn load_resume_config_for_agent_role(
     typesafe_overrides: ConfigOverrides,
     thread_history: &InitialHistory,
     persisted_metadata: Option<&ThreadMetadata>,
+    stored_thread_cwd: Option<PathBuf>,
     resume_agent_role: Option<&str>,
 ) -> Result<Config, JSONRPCErrorError> {
-    let history_cwd = thread_history.session_cwd();
-    let persisted_cwd = persisted_metadata.map(|metadata| metadata.cwd.clone());
-    let resume_cwd = history_cwd.clone().or_else(|| persisted_cwd.clone());
+    let cwd_candidates = if resume_agent_role.is_some() {
+        resume_agent_role_cwd_candidates(
+            thread_history,
+            persisted_metadata,
+            stored_thread_cwd.as_ref(),
+        )
+    } else {
+        resume_config_cwd_candidates(
+            thread_history,
+            persisted_metadata,
+            stored_thread_cwd.as_ref(),
+        )
+    };
+    let resume_cwd = cwd_candidates.first().cloned();
     let mut config = config_manager
         .load_for_cwd(
             request_overrides.clone(),
@@ -252,22 +276,72 @@ pub(super) async fn load_resume_config_for_agent_role(
     };
     match codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await {
         Ok(()) => Ok(config),
-        Err(err)
-            if is_unknown_agent_type_error(&err)
-                && persisted_cwd.is_some()
-                && history_cwd.as_ref() != persisted_cwd.as_ref() =>
-        {
-            let mut config = config_manager
-                .load_for_cwd(request_overrides, typesafe_overrides, persisted_cwd)
-                .await
-                .map_err(|err| config_load_error(&err))?;
-            codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role))
-                .await
-                .map_err(invalid_request)?;
-            Ok(config)
+        Err(err) if is_unknown_agent_type_error(&err) => {
+            let mut last_err = err;
+            for cwd in cwd_candidates.into_iter().skip(1) {
+                let mut config = config_manager
+                    .load_for_cwd(
+                        request_overrides.clone(),
+                        typesafe_overrides.clone(),
+                        Some(cwd),
+                    )
+                    .await
+                    .map_err(|err| config_load_error(&err))?;
+                match codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
+                {
+                    Ok(()) => return Ok(config),
+                    Err(err) if is_unknown_agent_type_error(&err) => {
+                        last_err = err;
+                    }
+                    Err(err) => return Err(invalid_request(err)),
+                }
+            }
+            Err(invalid_request(last_err))
         }
         Err(err) => Err(invalid_request(err)),
     }
+}
+
+fn resume_config_cwd_candidates(
+    thread_history: &InitialHistory,
+    persisted_metadata: Option<&ThreadMetadata>,
+    stored_thread_cwd: Option<&PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for cwd in [
+        thread_history.session_cwd(),
+        persisted_metadata.map(|metadata| metadata.cwd.clone()),
+        stored_thread_cwd.cloned(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !candidates.iter().any(|candidate| candidate == &cwd) {
+            candidates.push(cwd);
+        }
+    }
+    candidates
+}
+
+fn resume_agent_role_cwd_candidates(
+    thread_history: &InitialHistory,
+    persisted_metadata: Option<&ThreadMetadata>,
+    stored_thread_cwd: Option<&PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for cwd in [
+        persisted_metadata.map(|metadata| metadata.cwd.clone()),
+        stored_thread_cwd.cloned(),
+        thread_history.session_cwd(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !candidates.iter().any(|candidate| candidate == &cwd) {
+            candidates.push(cwd);
+        }
+    }
+    candidates
 }
 
 fn is_unknown_agent_type_error(err: &str) -> bool {

@@ -775,6 +775,9 @@ impl ThreadRequestProcessor {
             typesafe_overrides,
             &thread_history,
             persisted_metadata.as_ref(),
+            resume_source_thread
+                .as_ref()
+                .map(|thread| thread.cwd.clone()),
             resume_agent_role,
         )
         .await
@@ -1247,6 +1250,7 @@ impl ThreadRequestProcessor {
             typesafe_overrides,
             &thread_history,
             persisted_metadata.as_ref(),
+            Some(stored_thread.cwd.clone()),
             resume_agent_role,
         )
         .await?;

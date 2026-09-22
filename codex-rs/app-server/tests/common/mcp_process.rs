@@ -775,6 +775,14 @@ impl McpProcess {
         self.send_request("turn/start", params).await
     }
 
+    /// Send a raw `turn/start` JSON-RPC request.
+    pub async fn send_turn_start_json_request(
+        &mut self,
+        params: serde_json::Value,
+    ) -> anyhow::Result<i64> {
+        self.send_request("turn/start", Some(params)).await
+    }
+
     pub async fn send_client_lifecycle_register_request(
         &mut self,
         params: ClientLifecycleRegisterParams,

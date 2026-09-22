@@ -994,6 +994,7 @@ impl TurnRequestProcessor {
             typesafe_overrides,
             &thread_history,
             persisted_metadata.as_ref(),
+            Some(stored_thread.cwd.clone()),
             resume_agent_role,
         )
         .await?;

@@ -1353,3 +1353,266 @@ description: Project PM role fixture.
 
     Ok(())
 }
+
+#[tokio::test]
+async fn thread_read_then_turn_start_overrides_keep_project_agent_role_cwd() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    const ROLE_BODY: &str = "ROLE_READ_THEN_SEND_PM_AGENT_MD_UNIQUE_INSTRUCTION";
+    const WRONG_ROLE_BODY: &str = "ROLE_READ_THEN_SEND_WRONG_PM_AGENT_MD_INSTRUCTION";
+
+    let server = responses::start_mock_server().await;
+    let first_body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Seeded"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let second_body = responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_assistant_message("msg-2", "Done"),
+        responses::ev_completed("resp-2"),
+    ]);
+    let response_mock = responses::mount_sse_sequence(&server, vec![first_body, second_body]).await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let project = TempDir::new()?;
+    std::fs::create_dir_all(project.path().join(".git"))?;
+    let agents_dir = project.path().join(".morpheus").join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("pm.agent.md"),
+        format!(
+            r#"---
+name: pm
+description: Project PM role fixture.
+---
+
+{ROLE_BODY}
+"#
+        ),
+    )?;
+    let wrong_project = TempDir::new()?;
+    std::fs::create_dir_all(wrong_project.path().join(".git"))?;
+    let wrong_agents_dir = wrong_project.path().join(".morpheus").join("agents");
+    std::fs::create_dir_all(&wrong_agents_dir)?;
+    std::fs::write(
+        wrong_agents_dir.join("pm.agent.md"),
+        format!(
+            r#"---
+name: pm
+description: Wrong PM role fixture.
+---
+
+{WRONG_ROLE_BODY}
+"#
+        ),
+    )?;
+
+    let mut primary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, primary.initialize()).await??;
+
+    let start_id = primary
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(project.path().to_string_lossy().to_string()),
+            agent_type: Some("pm".to_string()),
+            model: Some("gpt-5.4".to_string()),
+            reasoning_effort: Some(protocol::openai_models::ReasoningEffort::High),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    let rollout_path = thread.path.clone().expect("thread path");
+    assert_eq!(thread.agent_role.as_deref(), Some("pm"));
+
+    let materialize_id = primary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(materialize_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    drop(primary);
+
+    rewrite_rollout_session_meta_cwd(rollout_path.as_path(), wrong_project.path())?;
+
+    let mut secondary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, secondary.initialize()).await??;
+
+    let read_id = secondary
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let read: ThreadReadResponse = to_response::<ThreadReadResponse>(read_resp)?;
+    assert_eq!(read.thread.agent_role.as_deref(), Some("pm"));
+    assert_eq!(
+        std::fs::canonicalize(read.thread.cwd.as_path())?,
+        std::fs::canonicalize(project.path())?
+    );
+
+    let turn_start_params = json!({
+        "threadId": read.thread.id,
+        "input": [{
+            "type": "text",
+            "text": "after metadata read",
+            "text_elements": [],
+        }],
+        "model": "gpt-5.4",
+        "effort": "high",
+    });
+    assert!(
+        turn_start_params.get("cwd").is_none(),
+        "Electron sendMessage turn/start params must not include cwd"
+    );
+    let turn_id = secondary
+        .send_turn_start_json_request(turn_start_params)
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    wait_for_response_mock_request_count(&response_mock, 2).await?;
+    let requests = response_mock.requests();
+    let request = &requests[1];
+    assert!(
+        request.body_contains_text(ROLE_BODY),
+        "expected read-then-send model context to include project role body, got {:?}",
+        request.body_json()
+    );
+    assert!(
+        !request.body_contains_text(WRONG_ROLE_BODY),
+        "expected stale rollout cwd role body to be ignored, got {:?}",
+        request.body_json()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn turn_start_lazy_resume_keeps_invalid_project_agent_role_error() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let first_body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Seeded"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let _response_mock = responses::mount_sse_sequence(&server, vec![first_body]).await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let project = TempDir::new()?;
+    std::fs::create_dir_all(project.path().join(".git"))?;
+    let agents_dir = project.path().join(".morpheus").join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    let agent_path = agents_dir.join("pm.agent.md");
+    std::fs::write(
+        &agent_path,
+        r#"---
+name: pm
+description: Project PM role fixture.
+---
+
+ROLE_REMOVED_PM_AGENT_MD_UNIQUE_INSTRUCTION
+"#,
+    )?;
+
+    let mut primary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, primary.initialize()).await??;
+
+    let start_id = primary
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(project.path().to_string_lossy().to_string()),
+            agent_type: Some("pm".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    let rollout_path = thread.path.clone().expect("thread path");
+    assert_eq!(thread.agent_role.as_deref(), Some("pm"));
+
+    let materialize_id = primary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(materialize_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    drop(primary);
+
+    std::fs::remove_file(agent_path)?;
+    rewrite_rollout_session_meta_cwd(rollout_path.as_path(), codex_home.path())?;
+
+    let mut secondary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, secondary.initialize()).await??;
+
+    let turn_id = secondary
+        .send_turn_start_json_request(json!({
+            "threadId": thread.id,
+            "input": [{
+                "type": "text",
+                "text": "after role removal",
+                "text_elements": [],
+            }],
+        }))
+        .await?;
+    let err: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_error_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    assert!(
+        err.error.message.contains("unknown agent_type 'pm'"),
+        "unexpected error message: {}",
+        err.error.message
+    );
+
+    Ok(())
+}
