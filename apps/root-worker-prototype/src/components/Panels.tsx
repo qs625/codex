@@ -312,11 +312,14 @@ export function NewThreadPopover({
   const [threadProviders, setThreadProviders] = useState<
     ThreadProviderDescriptor[]
   >([]);
+  const [threadProvidersProjectPath, setThreadProvidersProjectPath] =
+    useState("");
   const [threadProvidersError, setThreadProvidersError] = useState<string | null>(
     null,
   );
   const [isLoadingThreadProviders, setIsLoadingThreadProviders] = useState(false);
   const [agentTypes, setAgentTypes] = useState<AgentTypeOption[]>([]);
+  const [agentTypesProjectPath, setAgentTypesProjectPath] = useState("");
   const [agentTypesError, setAgentTypesError] = useState<string | null>(null);
   const [isLoadingAgentTypes, setIsLoadingAgentTypes] = useState(false);
   const [models, setModels] = useState<RunModel[]>([]);
@@ -331,16 +334,42 @@ export function NewThreadPopover({
   const defaultThreadStartParams = defaultNewThreadStartParams(trimmedProjectPath);
   const trimmedTaskName = taskName.trim();
   const pathPreview = trimmedTaskName ? `/${trimmedTaskName}` : "";
+  const scopedThreadProviders = resolveNewThreadProjectScopedOptions({
+    options: threadProviders,
+    optionsProjectPath: threadProvidersProjectPath,
+    projectPath: trimmedProjectPath,
+  });
+  const scopedAgentTypes = resolveNewThreadProjectScopedOptions({
+    options: agentTypes,
+    optionsProjectPath: agentTypesProjectPath,
+    projectPath: trimmedProjectPath,
+  });
   const selectedThreadProvider =
-    threadProviders.find((provider) => provider.id === threadProvider) ?? null;
+    scopedThreadProviders.find((provider) => provider.id === threadProvider) ??
+    null;
   const providerControls = resolveNewThreadProviderControls({
-    fallbackAgentTypes: agentTypes,
+    fallbackAgentTypes: scopedAgentTypes,
     selectedThreadProvider,
   });
   const effectiveThreadProvider = providerControls.effectiveThreadProvider;
   const providerAgentTypes = providerControls.agentTypes;
   const providerModelProviders = providerControls.modelProviders;
   const canSelectModel = providerControls.canSelectModel;
+  const hasProjectPath = trimmedProjectPath.length > 0;
+  const isLoadingProjectThreadOptions =
+    hasProjectPath &&
+    (isLoadingThreadProviders ||
+      isLoadingAgentTypes ||
+      threadProvidersProjectPath !== trimmedProjectPath ||
+      agentTypesProjectPath !== trimmedProjectPath);
+  const validatedAgentType = resolveNewThreadAgentTypeSelection({
+    agentType,
+    effectiveThreadProvider,
+    providerAgentTypes,
+  });
+  const displayedAgentType = isLoadingProjectThreadOptions
+    ? ""
+    : validatedAgentType;
   const modelProviders = useMemo(
     () =>
       [
@@ -407,11 +436,16 @@ export function NewThreadPopover({
   }, [taskName, trimmedProjectPath]);
 
   useEffect(() => {
+    setThreadProviders([]);
+    setThreadProvidersProjectPath("");
+    setThreadProvidersError(null);
+    setIsLoadingThreadProviders(false);
+    setAgentTypes([]);
+    setAgentTypesProjectPath("");
+    setAgentTypesError(null);
+    setIsLoadingAgentTypes(false);
+
     if (!trimmedProjectPath) {
-      setThreadProviders([]);
-      setThreadProvidersError(null);
-      setAgentTypes([]);
-      setAgentTypesError(null);
       return;
     }
 
@@ -426,6 +460,7 @@ export function NewThreadPopover({
         if (!cancelled) {
           const providers = response.data ?? [];
           setThreadProviders(providers);
+          setThreadProvidersProjectPath(trimmedProjectPath);
           if (!providers.some((provider) => provider.id === threadProvider)) {
             setThreadProvider(providers[0]?.id ?? "native");
           }
@@ -434,6 +469,7 @@ export function NewThreadPopover({
       .catch((error: unknown) => {
         if (!cancelled) {
           setThreadProviders([]);
+          setThreadProvidersProjectPath(trimmedProjectPath);
           setThreadProvidersError(toErrorMessage(error));
         }
       })
@@ -447,11 +483,13 @@ export function NewThreadPopover({
       .then((response: AgentTypeListResponse) => {
         if (!cancelled) {
           setAgentTypes(response.data ?? []);
+          setAgentTypesProjectPath(trimmedProjectPath);
         }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
           setAgentTypes([]);
+          setAgentTypesProjectPath(trimmedProjectPath);
           setAgentTypesError(toErrorMessage(error));
         }
       })
@@ -465,6 +503,16 @@ export function NewThreadPopover({
       cancelled = true;
     };
   }, [trimmedProjectPath]);
+
+  useEffect(() => {
+    if (isLoadingProjectThreadOptions) {
+      return;
+    }
+    const nextAgentType = validatedAgentType;
+    if (nextAgentType !== agentType) {
+      setAgentType(nextAgentType);
+    }
+  }, [agentType, isLoadingProjectThreadOptions, validatedAgentType]);
 
   useEffect(() => {
     if (effectiveThreadProvider !== "native") {
@@ -550,7 +598,7 @@ export function NewThreadPopover({
         taskName,
         threadProvider:
           effectiveThreadProvider === "native" ? "" : effectiveThreadProvider,
-        agentType,
+        agentType: displayedAgentType,
         model: canSelectModel ? (selectedRunModel?.model ?? "") : "",
         modelProvider: canSelectModel
           ? (selectedRunModel?.modelProvider ?? modelProvider)
@@ -655,7 +703,7 @@ export function NewThreadPopover({
           <option value="native">
             {isLoadingThreadProviders ? "Loading providers..." : "Morpheus"}
           </option>
-          {threadProviders
+          {scopedThreadProviders
             .filter((provider) => provider.id !== "native")
             .map((provider) => (
               <option key={provider.id} value={provider.id}>
@@ -673,7 +721,7 @@ export function NewThreadPopover({
         <select
           disabled={effectiveThreadProvider !== "native"}
           onChange={(event) => setAgentType(event.target.value)}
-          value={agentType}
+          value={displayedAgentType}
         >
           <option value="">
             {isLoadingAgentTypes ? "Loading agent types..." : "Use default"}
@@ -836,6 +884,39 @@ export function resolveNewThreadProviderControls({
     canSelectModel: modelSelectionMode === "catalog",
     canStartThread: selectedThreadProvider?.capabilities.startThread ?? true,
   };
+}
+
+export function resolveNewThreadProjectScopedOptions<T>({
+  options,
+  optionsProjectPath,
+  projectPath,
+}: {
+  options: T[];
+  optionsProjectPath: string;
+  projectPath: string;
+}) {
+  const normalizedProjectPath = projectPath.trim();
+  return normalizedProjectPath && optionsProjectPath === normalizedProjectPath
+    ? options
+    : [];
+}
+
+export function resolveNewThreadAgentTypeSelection({
+  agentType,
+  effectiveThreadProvider,
+  providerAgentTypes,
+}: {
+  agentType: string;
+  effectiveThreadProvider: string;
+  providerAgentTypes: AgentTypeOption[];
+}) {
+  const trimmedAgentType = agentType.trim();
+  if (!trimmedAgentType || effectiveThreadProvider !== "native") {
+    return "";
+  }
+  return providerAgentTypes.some((option) => option.name === trimmedAgentType)
+    ? trimmedAgentType
+    : "";
 }
 
 export function buildBlankChatThreadDraft(): NewThreadDraft {
