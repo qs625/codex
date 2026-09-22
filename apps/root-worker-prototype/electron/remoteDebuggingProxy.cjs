@@ -31,6 +31,7 @@ function startRemoteDebuggingProxy({
       address,
       port,
       backendPort,
+      createTarget,
       logger,
     });
   });
@@ -90,8 +91,21 @@ function proxyHttpRequest({
   address,
   port,
   backendPort,
+  createTarget,
   logger,
 }) {
+  if (isJsonNewRequest(request.url)) {
+    void handleJsonNewRequest({
+      request,
+      response,
+      address,
+      port,
+      createTarget,
+      logger,
+    });
+    return;
+  }
+
   const backendRequest = http.request(
     {
       host: address,
@@ -139,6 +153,53 @@ function proxyHttpRequest({
   request.pipe(backendRequest);
 }
 
+async function handleJsonNewRequest({
+  request,
+  response,
+  address,
+  port,
+  createTarget,
+  logger,
+}) {
+  if (request.method !== "PUT" && request.method !== "GET") {
+    response.writeHead(405, {
+      "content-type": "text/plain; charset=utf-8",
+      allow: "GET, PUT",
+    });
+    response.end("Method not allowed");
+    return;
+  }
+
+  const targetUrl = targetUrlFromJsonNewRequest(request.url);
+  try {
+    const target = await createTarget(targetUrl);
+    const body = Buffer.from(
+      JSON.stringify(
+        buildJsonNewTargetInfo({
+          address,
+          port,
+          targetId: target.targetId,
+          url: target.url ?? targetUrl,
+        }),
+      ),
+      "utf8",
+    );
+    response.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "content-length": String(body.length),
+    });
+    response.end(body);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      "[prototype] /json/new rejected",
+      JSON.stringify({ message }),
+    );
+    response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    response.end(message);
+  }
+}
+
 function proxyWebSocketUpgrade({
   request,
   socket,
@@ -153,7 +214,6 @@ function proxyWebSocketUpgrade({
   let handshake = Buffer.alloc(0);
   let handshakeComplete = false;
   const browserSocket = isBrowserWebSocketPath(request.url);
-  const browserState = browserSocket ? createBrowserWebSocketState(socket) : null;
   const clientFrames = createFrameParser({
     onFrame: (frame) => {
       if (browserSocket && frame.opcode === 0x1) {
@@ -161,7 +221,6 @@ function proxyWebSocketUpgrade({
           frame,
           clientSocket: socket,
           backendSocket,
-          browserState,
           createTarget,
           logger,
         });
@@ -173,16 +232,13 @@ function proxyWebSocketUpgrade({
   const backendFrames = createFrameParser({
     onFrame: (frame) => {
       let payload = frame.payload;
-      if (browserState && frame.opcode === 0x1) {
+      if (browserSocket && frame.opcode === 0x1) {
         payload = filterBrowserBackendMessage(frame.payload);
         if (!payload) {
           return;
         }
       }
       socket.write(encodeWebSocketFrame(payload, frame.opcode, false));
-      if (browserState && frame.opcode === 0x1) {
-        browserState.markAttachedTarget(attachedTargetIdFromPayload(payload));
-      }
     },
   });
 
@@ -236,7 +292,6 @@ async function handleBrowserClientMessage({
   frame,
   clientSocket,
   backendSocket,
-  browserState,
   createTarget,
   logger,
 }) {
@@ -256,7 +311,7 @@ async function handleBrowserClientMessage({
 
   try {
     const target = await createTarget(message.params?.url);
-    browserState.resolveCreateTargetAfterAttach(message.id, target.targetId);
+    writeCreateTargetResponse(clientSocket, message.id, target.targetId);
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
     logger.warn(
@@ -275,46 +330,6 @@ async function handleBrowserClientMessage({
   }
 }
 
-function createBrowserWebSocketState(clientSocket) {
-  const attachedTargets = new Set();
-  const pendingCreateTargetResponses = new Map();
-  return {
-    markAttachedTarget(targetId) {
-      if (!targetId) {
-        return;
-      }
-      attachedTargets.add(targetId);
-      const pending = pendingCreateTargetResponses.get(targetId);
-      if (!pending) {
-        return;
-      }
-      pendingCreateTargetResponses.delete(targetId);
-      clearTimeout(pending.timeout);
-      writeCreateTargetResponse(clientSocket, pending.id, targetId);
-    },
-    resolveCreateTargetAfterAttach(id, targetId) {
-      if (attachedTargets.has(targetId)) {
-        writeCreateTargetResponse(clientSocket, id, targetId);
-        return;
-      }
-      const timeout = setTimeout(() => {
-        pendingCreateTargetResponses.delete(targetId);
-        clientSocket.write(
-          encodeWebSocketText({
-            id,
-            error: {
-              code: -32000,
-              message:
-                "Target.createTarget timed out waiting for Target.attachedToTarget",
-            },
-          }),
-        );
-      }, 5_000);
-      pendingCreateTargetResponses.set(targetId, { id, timeout });
-    },
-  };
-}
-
 function writeCreateTargetResponse(clientSocket, id, targetId) {
   clientSocket.write(
     encodeWebSocketText({
@@ -322,19 +337,6 @@ function writeCreateTargetResponse(clientSocket, id, targetId) {
       result: { targetId },
     }),
   );
-}
-
-function attachedTargetIdFromPayload(payload) {
-  let message;
-  try {
-    message = JSON.parse(payload.toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (message?.method !== "Target.attachedToTarget") {
-    return null;
-  }
-  return message.params?.targetInfo?.targetId ?? null;
 }
 
 function rewriteDevToolsHttpBody({ body, headers, address, port, backendPort }) {
@@ -619,9 +621,51 @@ function isBrowserWebSocketPath(path) {
   return typeof path === "string" && path.startsWith("/devtools/browser/");
 }
 
+function isJsonNewRequest(path) {
+  return (
+    typeof path === "string" &&
+    (path === "/json/new" || path.startsWith("/json/new?"))
+  );
+}
+
+function targetUrlFromJsonNewRequest(path) {
+  if (typeof path !== "string") {
+    return "about:blank";
+  }
+  const separator = path.indexOf("?");
+  if (separator === -1) {
+    return "about:blank";
+  }
+  const rawTarget = path.slice(separator + 1);
+  if (!rawTarget) {
+    return "about:blank";
+  }
+  try {
+    return decodeURIComponent(rawTarget);
+  } catch {
+    return rawTarget;
+  }
+}
+
+function buildJsonNewTargetInfo({ address, port, targetId, url }) {
+  const targetUrl = url || "about:blank";
+  return {
+    description: "",
+    devtoolsFrontendUrl:
+      `/devtools/inspector.html?ws=${address}:${port}/devtools/page/${targetId}`,
+    id: targetId,
+    title: "",
+    type: "page",
+    url: targetUrl,
+    webSocketDebuggerUrl: `ws://${address}:${port}/devtools/page/${targetId}`,
+  };
+}
+
 module.exports = {
+  buildJsonNewTargetInfo,
   encodeWebSocketFrame,
   filterBrowserBackendMessage,
+  targetUrlFromJsonNewRequest,
   parseWebSocketFrame,
   rewriteDevToolsWebSocketUrls,
   startRemoteDebuggingProxy,

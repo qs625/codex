@@ -1654,8 +1654,12 @@ async function createBrowserPanelDebugTarget(target) {
   const tab = createBrowserPanelTab(panel, { activate: true });
   try {
     if (targetRequest.url) {
-      await loadBrowserPanelTabUrl(panel, tab, targetRequest.url, {
+      void loadBrowserPanelTabUrl(panel, tab, targetRequest.url, {
         requireVisiblePanel: false,
+      }).catch((error) => {
+        tab.state.loading = false;
+        tab.state.error = error instanceof Error ? error.message : String(error);
+        sendBrowserPanelState(panel);
       });
     } else {
       await loadBrowserPanelTabAboutBlankBootstrap(panel, tab);

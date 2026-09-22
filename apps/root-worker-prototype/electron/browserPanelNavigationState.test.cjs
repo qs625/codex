@@ -413,7 +413,7 @@ test("main browser target wait maps devtools target id instead of page type", ()
   assert.doesNotMatch(targetWaitSource, /candidate\.type !== "page"/);
 });
 
-test("main browser debug target creation can load hidden tabs while waiting for target publication", () => {
+test("main browser debug target creation starts hidden tab navigation before target publication", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
   const createTargetIndex = mainSource.indexOf(
     "async function createBrowserPanelDebugTarget",
@@ -426,9 +426,12 @@ test("main browser debug target creation can load hidden tabs while waiting for 
   assert.notEqual(createTargetIndex, -1);
   assert.match(
     createTargetSource,
-    /await loadBrowserPanelTabUrl\(panel, tab, targetRequest\.url, \{[\s\S]*requireVisiblePanel: false,[\s\S]*\}\);/,
+    /void loadBrowserPanelTabUrl\(panel, tab, targetRequest\.url, \{[\s\S]*requireVisiblePanel: false,[\s\S]*\}\)\.catch/,
   );
-  assert.doesNotMatch(createTargetSource, /void loadBrowserPanelTabUrl/);
+  assert.doesNotMatch(
+    createTargetSource,
+    /await loadBrowserPanelTabUrl\(panel, tab, targetRequest\.url/,
+  );
   assert.match(
     createTargetSource,
     /const targetId = await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
