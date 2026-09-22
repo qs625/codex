@@ -4,11 +4,13 @@ const http = require("node:http");
 const net = require("node:net");
 
 const {
+  buildJsonNewTargetInfo,
   encodeWebSocketFrame,
   filterBrowserBackendMessage,
   parseWebSocketFrame,
   rewriteDevToolsWebSocketUrls,
   startRemoteDebuggingProxy,
+  targetUrlFromJsonNewRequest,
 } = require("./remoteDebuggingProxy.cjs");
 
 test("rewriteDevToolsWebSocketUrls keeps CDP clients on the proxy port", () => {
@@ -140,6 +142,115 @@ test("remote debugging proxy rewrites /json/version WebSocket URLs", async (t) =
   );
 });
 
+test("remote debugging proxy maps /json/new to Browser panel creation", async (t) => {
+  const backendRequests = [];
+  const backend = await startFakeBackend({
+    requestHandler(request, response) {
+      backendRequests.push(request.url);
+      response.writeHead(500, { "content-type": "text/plain" });
+      response.end("backend should not create pages");
+    },
+  });
+  t.after(() => backend.close());
+
+  const proxyPort = await getFreePort();
+  const createdTargets = [];
+  const proxy = startRemoteDebuggingProxy({
+    address: "127.0.0.1",
+    port: String(proxyPort),
+    backendPort: String(backend.port),
+    createTarget: async (url) => {
+      createdTargets.push(url);
+      return {
+        targetId: "browser-panel-target-1",
+        url: "https://example.org/",
+      };
+    },
+    logger: quietLogger(),
+  });
+  t.after(() => proxy.close());
+  await waitForListening(proxy.server);
+
+  const response = await fetchJson(
+    `http://127.0.0.1:${proxyPort}/json/new?https%3A%2F%2Fexample.org%2F`,
+    { method: "PUT" },
+  );
+
+  assert.deepEqual(createdTargets, ["https://example.org/"]);
+  assert.deepEqual(backendRequests, []);
+  assert.deepEqual(response, {
+    description: "",
+    devtoolsFrontendUrl:
+      `/devtools/inspector.html?ws=127.0.0.1:${proxyPort}/devtools/page/browser-panel-target-1`,
+    id: "browser-panel-target-1",
+    title: "",
+    type: "page",
+    url: "https://example.org/",
+    webSocketDebuggerUrl:
+      `ws://127.0.0.1:${proxyPort}/devtools/page/browser-panel-target-1`,
+  });
+});
+
+test("remote debugging proxy returns /json/new failures without falling through", async (t) => {
+  const backendRequests = [];
+  const backend = await startFakeBackend({
+    requestHandler(request, response) {
+      backendRequests.push(request.url);
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("backend response");
+    },
+  });
+  t.after(() => backend.close());
+
+  const proxyPort = await getFreePort();
+  const proxy = startRemoteDebuggingProxy({
+    address: "127.0.0.1",
+    port: String(proxyPort),
+    backendPort: String(backend.port),
+    createTarget: async () => {
+      throw new Error("Only http and https URLs can open here.");
+    },
+    logger: quietLogger(),
+  });
+  t.after(() => proxy.close());
+  await waitForListening(proxy.server);
+
+  const response = await fetchText(
+    `http://127.0.0.1:${proxyPort}/json/new?javascript%3Aalert(1)`,
+    { method: "PUT" },
+  );
+
+  assert.equal(response.statusCode, 500);
+  assert.match(response.body, /Only http and https/);
+  assert.deepEqual(backendRequests, []);
+});
+
+test("remote debugging proxy parses and builds /json/new targets", () => {
+  assert.equal(
+    targetUrlFromJsonNewRequest("/json/new?https%3A%2F%2Fexample.org%2F"),
+    "https://example.org/",
+  );
+  assert.equal(targetUrlFromJsonNewRequest("/json/new"), "about:blank");
+  assert.deepEqual(
+    buildJsonNewTargetInfo({
+      address: "127.0.0.1",
+      port: "9222",
+      targetId: "target-1",
+      url: "about:blank",
+    }),
+    {
+      description: "",
+      devtoolsFrontendUrl:
+        "/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/target-1",
+      id: "target-1",
+      title: "",
+      type: "page",
+      url: "about:blank",
+      webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/target-1",
+    },
+  );
+});
+
 test("remote debugging proxy maps Target.createTarget to Browser panel creation", async (t) => {
   const backendMessages = [];
   let backendSocket = null;
@@ -222,6 +333,10 @@ test("remote debugging proxy maps Target.createTarget to Browser panel creation"
 
   const [firstMessage, secondMessage] = await messages;
   assert.deepEqual(JSON.parse(firstMessage), {
+    id: 1,
+    result: { targetId: "browser-panel-target-1" },
+  });
+  assert.deepEqual(JSON.parse(secondMessage), {
     method: "Target.attachedToTarget",
     params: {
       sessionId: "session-1",
@@ -232,12 +347,56 @@ test("remote debugging proxy maps Target.createTarget to Browser panel creation"
       },
     },
   });
-  assert.deepEqual(JSON.parse(secondMessage), {
+  assert.deepEqual(createdTargets, ["about:blank"]);
+  assert.deepEqual(backendMessages, []);
+});
+
+test("remote debugging proxy returns Target.createTarget without waiting for attach", async (t) => {
+  const backend = await startFakeBackend({
+    upgradeHandler(_request, socket) {
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "\r\n",
+      );
+    },
+  });
+  t.after(() => backend.close());
+
+  const proxyPort = await getFreePort();
+  const proxy = startRemoteDebuggingProxy({
+    address: "127.0.0.1",
+    port: String(proxyPort),
+    backendPort: String(backend.port),
+    createTarget: async () => ({ targetId: "browser-panel-target-1" }),
+    logger: quietLogger(),
+  });
+  t.after(() => proxy.close());
+  await waitForListening(proxy.server);
+
+  const socket = await connectWebSocket(proxyPort, "/devtools/browser/root");
+  t.after(() => socket.destroy());
+
+  const responseMessage = readWebSocketMessage(socket);
+  socket.write(
+    encodeWebSocketFrame(
+      Buffer.from(
+        JSON.stringify({
+          id: 1,
+          method: "Target.createTarget",
+          params: { url: "about:blank" },
+        }),
+      ),
+      0x1,
+      true,
+    ),
+  );
+
+  assert.deepEqual(JSON.parse(await responseMessage), {
     id: 1,
     result: { targetId: "browser-panel-target-1" },
   });
-  assert.deepEqual(createdTargets, ["about:blank"]);
-  assert.deepEqual(backendMessages, []);
 });
 
 test("remote debugging proxy forwards page initialization messages after createTarget", async (t) => {
@@ -629,21 +788,30 @@ function waitForListening(server) {
   });
 }
 
-function fetchJson(url) {
+function fetchJson(url, options = {}) {
+  return fetchText(url, options).then((response) =>
+    JSON.parse(response.body),
+  );
+}
+
+function fetchText(url, options = {}) {
   return new Promise((resolve, reject) => {
-    http
-      .get(url, (response) => {
+    const request = http.request(
+      url,
+      { method: options.method ?? "GET" },
+      (response) => {
         const chunks = [];
         response.on("data", (chunk) => chunks.push(chunk));
         response.on("end", () => {
-          try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-          } catch (error) {
-            reject(error);
-          }
+          resolve({
+            body: Buffer.concat(chunks).toString("utf8"),
+            statusCode: response.statusCode ?? 0,
+          });
         });
-      })
-      .on("error", reject);
+      },
+    );
+    request.on("error", reject);
+    request.end();
   });
 }
 
