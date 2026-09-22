@@ -44,10 +44,10 @@ pub struct ContextManager {
     /// This is the baseline for the next regular model turn, and may already
     /// match the current turn after context updates are persisted.
     ///
-    /// When this is `None`, settings diffing treats the next turn as having no
-    /// baseline and emits a full reinjection of context state. Rollback may
-    /// also clear this when it trims a mixed initial-context developer bundle
-    /// whose non-diff fragments no longer exist in the surviving history.
+    /// When this is `None`, steady-state settings diffing cannot safely infer
+    /// what the model has already seen. Runtime callers should treat that as a
+    /// diagnostic recovery case and install a fresh baseline without replaying a
+    /// full init context as an ordinary turn update.
     reference_context_item: Option<TurnContextItem>,
 }
 
@@ -337,9 +337,9 @@ impl ContextManager {
     ///
     /// If rollback trims a pre-turn developer message that mixes contextual fragments with
     /// persistent developer text from `build_initial_context`, this also clears
-    /// `reference_context_item`. The surviving history no longer contains the full bundle that
-    /// established the prior baseline, so future turns must fall back to full reinjection instead
-    /// of diffing against stale state.
+    /// `reference_context_item`. The surviving history no longer contains enough structured
+    /// baseline evidence for steady-state diffing, so future turns must recover by installing a
+    /// fresh diagnostic baseline without appending ordinary full init context.
     pub fn drop_last_n_user_turns(&mut self, num_turns: u32) {
         if num_turns == 0 {
             return;
@@ -546,8 +546,9 @@ impl ContextManager {
     ///
     /// If any trimmed developer message was a mixed `build_initial_context` bundle containing both
     /// rollback-trimmable contextual fragments and persistent developer text, this also clears the
-    /// stored `reference_context_item` baseline so the next real turn falls back to full
-    /// reinjection.
+    /// stored `reference_context_item` baseline. Runtime callers that continue from that state
+    /// must treat the next regular turn as diagnostic baseline recovery, not as permission to
+    /// append full init context.
     fn trim_pre_turn_context_updates(
         &mut self,
         snapshot: &[ResponseItem],
@@ -561,8 +562,9 @@ impl ContextManager {
                 {
                     if has_non_contextual_dev_message_content(content) {
                         // Mixed `build_initial_context` bundles are not reconstructible from
-                        // steady-state diffs once trimmed, so the next real turn must fully
-                        // reinject context instead of diffing against a stale baseline.
+                        // steady-state diffs once trimmed. Clear the baseline so runtime callers
+                        // use diagnostic baseline recovery rather than diffing against stale
+                        // state.
                         self.reference_context_item = None;
                     }
                     cut_idx -= 1;

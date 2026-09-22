@@ -1737,10 +1737,6 @@ impl Session {
             })
             .transpose()?;
         let update_root_agent_metadata = root_agent_path.is_some() || root_agent_role.is_some();
-        let previous_cwd = {
-            let state = self.state.lock().await;
-            state.session_configuration.cwd.clone()
-        };
         let resume_user_instructions = AgentsMdManager::new(&resume_config)
             .user_instructions_with_fs(LOCAL_FS.as_ref())
             .await;
@@ -1761,22 +1757,6 @@ impl Session {
                     self.services
                         .agent_control
                         .get_agent_metadata(self.conversation_id)
-                });
-            let reference_context_needs_refresh = previous_cwd != cwd
-                || state.session_configuration.developer_instructions
-                    != resume_config.developer_instructions
-                || state.session_configuration.user_instructions != resume_user_instructions
-                || root_agent_path.as_ref().is_some_and(|agent_path| {
-                    current_root_agent_metadata
-                        .as_ref()
-                        .and_then(|metadata| metadata.agent_path.as_ref())
-                        != Some(agent_path)
-                })
-                || root_agent_role.as_ref().is_some_and(|agent_role| {
-                    current_root_agent_metadata
-                        .as_ref()
-                        .and_then(|metadata| metadata.agent_role.as_ref())
-                        != Some(agent_role)
                 });
             let previous_config =
                 Self::build_effective_session_config(&state.session_configuration);
@@ -1840,9 +1820,6 @@ impl Session {
                 state.session_configuration.root_agent_metadata = Some(metadata.clone());
                 metadata
             });
-            if reference_context_needs_refresh {
-                state.set_reference_context_item(None);
-            }
             let permission_profile_changed =
                 previous_permission_profile != state.session_configuration.permission_profile();
             let new_config = Self::build_effective_session_config(&state.session_configuration);

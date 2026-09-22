@@ -2288,6 +2288,11 @@ impl Session {
             let state = self.state.lock().await;
             state.reference_context_item()
         };
+        if reference_context_item.is_none() {
+            warn!(
+                "ordinary context update missing reference context baseline; installing diagnostic baseline without full init context reinjection"
+            );
+        }
         let turn_context_item = self.reference_context_item_for_turn(turn_context).await;
         let context_items = self
             .build_settings_update_items(

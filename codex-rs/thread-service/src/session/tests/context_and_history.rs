@@ -71,19 +71,31 @@ async fn turn_context_item_stores_split_file_system_sandbox_policy_when_differen
 }
 
 #[tokio::test]
-async fn record_context_updates_and_set_reference_context_item_does_not_full_inject_when_baseline_missing()
- {
-    let (session, turn_context) = make_session_and_context().await;
+async fn record_context_updates_and_set_reference_context_item_missing_baseline_is_diagnostic_only()
+{
+    let instruction_dir = tempfile::tempdir().expect("instruction tempdir");
+    let instruction_path = instruction_dir.path().join("AGENTS.md");
+    std::fs::write(&instruction_path, "diagnostic fallback instructions")
+        .expect("write instructions");
+    let absolute_instruction_path =
+        AbsolutePathBuf::try_from(instruction_path.clone()).expect("absolute instruction path");
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.instruction_files = vec![absolute_instruction_path];
+        },
+    )
+    .await;
+
     session
         .record_context_updates_and_set_reference_context_item(&turn_context)
         .await;
     let history = session.clone_history().await;
-    assert_ne!(
-        history.raw_items(),
-        session
-            .build_initial_context_for_external_agent_tools(&turn_context)
-            .await,
-        "ordinary baseline recovery must not append full Init Context"
+    let text = response_input_text(history.raw_items());
+    assert!(
+        !text.contains("diagnostic fallback instructions"),
+        "ordinary diagnostic recovery must not append current init snapshot sections: {text}"
     );
 
     let current_context = session.reference_context_item().await;
@@ -92,6 +104,17 @@ async fn record_context_updates_and_set_reference_context_item_does_not_full_inj
         serde_json::to_value(current_context).expect("serialize current context item"),
         serde_json::to_value(Some(expected_context)).expect("serialize expected context item")
     );
+
+    std::fs::write(&instruction_path, "diagnostic follow-up instructions")
+        .expect("write updated instructions");
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+
+    let history = session.clone_history().await;
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("diagnostic follow-up instructions"), "{text}");
+    assert!(!text.contains("diagnostic fallback instructions"), "{text}");
 }
 
 #[tokio::test]
@@ -548,6 +571,67 @@ async fn ordinary_context_update_emits_agent_role_diff_without_full_init_context
     assert!(text.contains("# Agent Role: ordinary-role"), "{text}");
     assert!(text.contains("role instructions v2"), "{text}");
     assert!(!text.contains("role instructions v1"), "{text}");
+}
+
+#[tokio::test]
+async fn persisted_resume_metadata_agent_role_refresh_preserves_baseline_for_ordinary_diff() {
+    let role_dir = tempfile::tempdir().expect("agent role tempdir");
+    let role_path = role_dir.path().join("resume-role.agent.md");
+    std::fs::write(
+        &role_path,
+        "---\nname: resume-role\ndescription: Resume role.\n---\nresume role instructions\n",
+    )
+    .expect("write role file");
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.agent_roles.insert(
+                "resume-role".to_string(),
+                crate::config::AgentRoleConfig {
+                    description: Some("Resume role.".to_string()),
+                    source_path: Some(role_path.clone()),
+                    ..Default::default()
+                },
+            );
+        },
+    )
+    .await;
+    let previous_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item.clone()));
+    }
+
+    session
+        .apply_persisted_resume_metadata(
+            (*turn_context.config).clone(),
+            turn_context
+                .single_local_environment_cwd()
+                .expect("single local cwd"),
+            None,
+            Some("resume-role".to_string()),
+        )
+        .await
+        .expect("resume metadata applies");
+
+    assert_eq!(
+        serde_json::to_value(session.reference_context_item().await)
+            .expect("serialize retained reference context item"),
+        serde_json::to_value(Some(previous_context_item))
+            .expect("serialize expected reference context item")
+    );
+
+    session
+        .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
+        .await;
+
+    let history = session.clone_history().await;
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("# Agent Role: resume-role"), "{text}");
+    assert!(text.contains("resume role instructions"), "{text}");
 }
 
 #[tokio::test]

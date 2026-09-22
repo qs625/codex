@@ -187,7 +187,10 @@ fn build_init_context_snapshot_update_items(
     let previous_snapshot = input
         .previous
         .and_then(|item| item.init_context_snapshot.as_ref());
-    if previous_snapshot == Some(current_snapshot) {
+    let Some(previous_snapshot) = previous_snapshot else {
+        return (Vec::new(), None);
+    };
+    if previous_snapshot == current_snapshot {
         return (Vec::new(), None);
     }
 
