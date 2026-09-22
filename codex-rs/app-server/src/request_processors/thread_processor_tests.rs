@@ -1953,13 +1953,13 @@ mod thread_processor_behavior_tests {
         .expect_err("invalid persisted agent path should fail");
 
         assert_eq!(
-            err.error.code,
+            err.code,
             crate::error_code::INVALID_REQUEST_ERROR_CODE
         );
         assert!(
-            err.error.message.contains("invalid persisted agent_path"),
+            err.message.contains("invalid persisted agent_path"),
             "unexpected error: {:?}",
-            err.error
+            err
         );
 
         Ok(())
