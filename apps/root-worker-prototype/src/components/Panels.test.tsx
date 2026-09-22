@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -22,6 +23,8 @@ const {
   defaultNewThreadStartParams,
   isValidAgentPathSegment,
   isValidNewThreadAgentPath,
+  resolveNewThreadAgentTypeSelection,
+  resolveNewThreadProjectScopedOptions,
   resolveNewThreadProviderControls,
   resolveNewThreadStartParamsForProject,
 } = await import("./Panels");
@@ -527,6 +530,90 @@ test("new thread provider controls gate external model and role fields", () => {
   assert.equal(externalControls.canStartThread, false);
   assert.deepEqual(externalControls.agentTypes, []);
   assert.deepEqual(externalControls.modelProviders, []);
+});
+
+test("new thread agent type selection is scoped to the selected project cwd", () => {
+  const sourceWorkspaceAgentTypes = [
+    { name: "code-review", builtIn: false },
+    { name: "project-pm", builtIn: false },
+  ];
+
+  assert.deepEqual(
+    resolveNewThreadProjectScopedOptions({
+      options: sourceWorkspaceAgentTypes,
+      optionsProjectPath: "/Users/bytedance/.morpheus/source_workspace",
+      projectPath: "/telebot",
+    }),
+    [],
+  );
+  assert.deepEqual(
+    resolveNewThreadProjectScopedOptions({
+      options: [{ name: "telebot-owner", builtIn: false }],
+      optionsProjectPath: "/telebot",
+      projectPath: " /telebot ",
+    }),
+    [{ name: "telebot-owner", builtIn: false }],
+  );
+  assert.equal(
+    resolveNewThreadAgentTypeSelection({
+      agentType: "project-pm",
+      effectiveThreadProvider: "native",
+      providerAgentTypes: sourceWorkspaceAgentTypes,
+    }),
+    "project-pm",
+  );
+  assert.equal(
+    resolveNewThreadAgentTypeSelection({
+      agentType: "shared-owner",
+      effectiveThreadProvider: "native",
+      providerAgentTypes: [{ name: "shared-owner", builtIn: false }],
+    }),
+    "shared-owner",
+  );
+  assert.equal(
+    resolveNewThreadAgentTypeSelection({
+      agentType: "project-pm",
+      effectiveThreadProvider: "native",
+      providerAgentTypes: [{ name: "telebot-owner", builtIn: false }],
+    }),
+    "",
+  );
+  assert.equal(
+    resolveNewThreadAgentTypeSelection({
+      agentType: "telebot-owner",
+      effectiveThreadProvider: "codex_cli",
+      providerAgentTypes: [{ name: "telebot-owner", builtIn: false }],
+    }),
+    "",
+  );
+});
+
+test("new thread project path changes clear cwd-scoped provider and role option lists before reloading", () => {
+  const source = readFileSync(new URL("./Panels.tsx", import.meta.url), "utf8");
+  const effectStart = source.indexOf(
+    "  useEffect(() => {\n    setThreadProviders([]);",
+  );
+  const effectEnd = source.indexOf("  }, [trimmedProjectPath]);", effectStart);
+  const effectSource = source.slice(effectStart, effectEnd);
+
+  assert.notEqual(effectStart, -1);
+  assert.notEqual(effectEnd, -1);
+  assert.ok(
+    effectSource.indexOf("setThreadProviders([]);") <
+      effectSource.indexOf(".listThreadProviders(trimmedProjectPath)"),
+  );
+  assert.ok(
+    effectSource.indexOf("setThreadProvidersProjectPath(\"\");") <
+      effectSource.indexOf(".listThreadProviders(trimmedProjectPath)"),
+  );
+  assert.ok(
+    effectSource.indexOf("setAgentTypes([]);") <
+      effectSource.indexOf(".listAgentTypes(trimmedProjectPath)"),
+  );
+  assert.ok(
+    effectSource.indexOf("setAgentTypesProjectPath(\"\");") <
+      effectSource.indexOf(".listAgentTypes(trimmedProjectPath)"),
+  );
 });
 
 test("new thread agent path validation matches backend path rules", () => {
