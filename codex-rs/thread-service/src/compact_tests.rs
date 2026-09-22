@@ -569,6 +569,17 @@ fn persisted_post_compact_items_follow_reconciled_history_without_summary_seed()
 }
 
 #[test]
+fn persisted_compacted_item_carries_post_compact_replacement_history() {
+    let replacement_history = vec![user_message("fresh init context")];
+
+    let compacted = persisted_compacted_item("summary".to_string(), replacement_history.clone());
+
+    assert_eq!(compacted.message, "summary");
+    assert_eq!(compacted.replacement_history, Some(replacement_history));
+    assert_eq!(compacted.visible_replacement_history_len, None);
+}
+
+#[test]
 fn compact_drops_quarantine_marker_when_no_transaction_fragment_survives() {
     let quarantine = ResponseItem::ModelContextQuarantine {
         target: protocol::error::ModelContextQuarantineReference::ModelItem {

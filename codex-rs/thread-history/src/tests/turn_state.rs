@@ -459,7 +459,7 @@ fn checkpoint_compaction_prompt_without_summary_does_not_mark_boundary() {
 }
 
 #[test]
-fn checkpoint_compaction_summary_boundary_suppresses_later_replacement_history() {
+fn checkpoint_compaction_summary_boundary_preserves_later_replacement_history() {
     let items = vec![
         RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-compact".into(),
@@ -503,7 +503,13 @@ fn checkpoint_compaction_summary_boundary_suppresses_later_replacement_history()
             ThreadItem::ContextCompaction {
                 id: "item-1".into(),
                 summary: Some("summary".into()),
-                replacement_history: None,
+                replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
+                    id: "replacement-0".into(),
+                    content: vec![UserInput::Text {
+                        text: "recent request".into(),
+                        text_elements: Vec::new(),
+                    }],
+                }]),
             },
             ThreadItem::AgentMessage {
                 id: "item-2".into(),
@@ -516,7 +522,7 @@ fn checkpoint_compaction_summary_boundary_suppresses_later_replacement_history()
 }
 
 #[test]
-fn suppresses_compaction_replacement_history_while_preserving_summary() {
+fn preserves_compaction_replacement_history_while_preserving_summary() {
     let replacement_history = vec![
         ResponseItem::Message {
             id: None,
@@ -555,7 +561,13 @@ fn suppresses_compaction_replacement_history_while_preserving_summary() {
         vec![ThreadItem::ContextCompaction {
             id: "item-1".into(),
             summary: Some("summary".into()),
-            replacement_history: None,
+            replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
+                id: "replacement-0".into(),
+                content: vec![UserInput::Text {
+                    text: "recent request".into(),
+                    text_elements: Vec::new(),
+                }],
+            }]),
         }]
     );
 }
@@ -608,7 +620,13 @@ fn deduplicates_legacy_context_compacted_after_replacement_history() {
             items: vec![ThreadItem::ContextCompaction {
                 id: "item-1".into(),
                 summary: Some("summary".into()),
-                replacement_history: None,
+                replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
+                    id: "replacement-0".into(),
+                    content: vec![UserInput::Text {
+                        text: "recent request".into(),
+                        text_elements: Vec::new(),
+                    }],
+                }]),
             }],
         }]
     );
