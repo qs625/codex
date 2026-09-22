@@ -52,6 +52,7 @@ const {
 } = require("./permissionHandlers.cjs");
 const {
   nextBrowserTabIdAfterClose,
+  shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,
 } = require("./browserPanelTabs.cjs");
 const {
@@ -2519,11 +2520,21 @@ function closeBrowserPanelTabContents(tab) {
 
 function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
   const tab = activeBrowserPanelTab(panel);
+  const tabMissing = !tab;
+  const windowDestroyed = panel.window.isDestroyed();
+  const tabDestroyed = tabMissing || tab.view.webContents.isDestroyed();
+  const boundsVisible = browserPanelBoundsAreVisible(panel.bounds);
+  if (!boundsVisible) {
+    detachAttachedBrowserPanelView(panel);
+  }
   if (
-    !tab ||
-    !panel.visible ||
-    panel.window.isDestroyed() ||
-    tab.view.webContents.isDestroyed()
+    !shouldAttachBrowserPanelView({
+      boundsVisible,
+      tabMissing,
+      tabDestroyed,
+      panelVisible: panel.visible,
+      windowDestroyed,
+    })
   ) {
     return false;
   }

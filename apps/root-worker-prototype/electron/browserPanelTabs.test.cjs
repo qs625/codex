@@ -5,6 +5,7 @@ const { join } = require("node:path");
 
 const {
   nextBrowserTabIdAfterClose,
+  shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,
 } = require("./browserPanelTabs.cjs");
 
@@ -61,6 +62,69 @@ test("shouldDetachAttachedBrowserPanelView skips destroyed windows and tabs", ()
   );
 });
 
+test("shouldAttachBrowserPanelView requires a visible panel with visible bounds", () => {
+  assert.equal(
+    shouldAttachBrowserPanelView({
+      boundsVisible: true,
+      tabMissing: false,
+      tabDestroyed: false,
+      panelVisible: true,
+      windowDestroyed: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAttachBrowserPanelView({
+      boundsVisible: true,
+      tabMissing: false,
+      tabDestroyed: false,
+      panelVisible: false,
+      windowDestroyed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAttachBrowserPanelView({
+      boundsVisible: false,
+      tabMissing: false,
+      tabDestroyed: false,
+      panelVisible: true,
+      windowDestroyed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAttachBrowserPanelView({
+      boundsVisible: true,
+      tabMissing: true,
+      tabDestroyed: false,
+      panelVisible: true,
+      windowDestroyed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAttachBrowserPanelView({
+      boundsVisible: true,
+      tabMissing: false,
+      tabDestroyed: true,
+      panelVisible: true,
+      windowDestroyed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAttachBrowserPanelView({
+      boundsVisible: true,
+      tabMissing: false,
+      tabDestroyed: false,
+      panelVisible: true,
+      windowDestroyed: true,
+    }),
+    false,
+  );
+});
+
 test("browser panel native view lifecycle raises only on explicit show or tab actions", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
 
@@ -91,6 +155,20 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   assert.match(
     mainSource,
     /function attachActiveBrowserPanelView\(panel, \{ raise = false \} = \{\}\)/,
+  );
+  const attachFunction = mainSource.slice(
+    mainSource.indexOf("function attachActiveBrowserPanelView(panel, { raise = false } = {})"),
+    mainSource.indexOf("function ensureBrowserPanelTabAttachedForNavigation", mainSource.indexOf("function attachActiveBrowserPanelView(panel, { raise = false } = {})")),
+  );
+  assert.match(
+    attachFunction,
+    /const boundsVisible = browserPanelBoundsAreVisible\(panel\.bounds\);[\s\S]*shouldAttachBrowserPanelView\(\{[\s\S]*boundsVisible,[\s\S]*\}\)[\s\S]*panel\.window\.contentView\.addChildView\(tab\.view\);/,
+    "native Browser views must not attach before panel bounds are visible",
+  );
+  assert.match(
+    attachFunction,
+    /if \(!boundsVisible\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}/,
+    "native Browser views must detach when bounds stop being visible",
   );
   assert.match(
     mainSource,
@@ -133,4 +211,28 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     /function stopBrowserPanelNavigation\(tab\) \{[\s\S]*tab\.pendingNavigationSequence = null;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = null;/,
   );
   assert.match(mainSource, /function detachAllBrowserPanelViews\(panel\)/);
+});
+
+test("direct CDP-created Browser tabs do not force native attach while hidden", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const createTargetFunction = mainSource.slice(
+    mainSource.indexOf("async function createBrowserPanelDebugTarget(target)"),
+    mainSource.indexOf("async function loadBrowserPanelTabAboutBlankBootstrap", mainSource.indexOf("async function createBrowserPanelDebugTarget(target)")),
+  );
+
+  assert.match(
+    createTargetFunction,
+    /createBrowserPanelTab\(panel, \{ activate: true \}\)/,
+    "direct CDP target creation still creates Browser-panel-managed tab state",
+  );
+  assert.match(
+    createTargetFunction,
+    /loadBrowserPanelTabUrl\(panel, tab, targetRequest\.url, \{\s*requireVisiblePanel: false,\s*\}\)/,
+    "direct CDP target navigation must not require the panel to be visible",
+  );
+  assert.doesNotMatch(
+    createTargetFunction,
+    /ensureBrowserPanelTabAttachedForNavigation|attachActiveBrowserPanelView/,
+    "direct CDP target creation must not directly attach or raise the native view",
+  );
 });

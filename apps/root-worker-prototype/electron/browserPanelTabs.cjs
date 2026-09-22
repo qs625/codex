@@ -21,7 +21,24 @@ function shouldDetachAttachedBrowserPanelView({
   return Boolean(attachedTabId) && !windowDestroyed && !tabDestroyed;
 }
 
+function shouldAttachBrowserPanelView({
+  boundsVisible,
+  tabMissing,
+  tabDestroyed,
+  panelVisible,
+  windowDestroyed,
+}) {
+  return (
+    !tabMissing &&
+    panelVisible &&
+    boundsVisible &&
+    !windowDestroyed &&
+    !tabDestroyed
+  );
+}
+
 module.exports = {
   nextBrowserTabIdAfterClose,
+  shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,
 };
