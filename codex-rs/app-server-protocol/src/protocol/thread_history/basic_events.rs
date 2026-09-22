@@ -227,38 +227,57 @@ impl ThreadHistoryBuilder {
     }
 
     fn append_compaction_injected_context(&mut self, context: &InjectedContextItem) -> bool {
-        let Some(turn) = self
+        if let Some(turn) = self
             .current_turn
             .as_mut()
             .filter(|turn| turn.saw_compaction)
-        else {
-            return false;
-        };
-        let Some(ThreadItem::ContextCompaction {
-            replacement_history,
-            ..
-        }) = turn
-            .items
-            .iter_mut()
-            .rev()
-            .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
-        else {
-            return false;
-        };
-        let replacement_history = replacement_history.get_or_insert_with(Vec::new);
-        replacement_history.push(ContextCompactionReplacementItem::InjectedContext {
-            id: context.id.clone(),
-            title: context.title.clone(),
-            preview: context.preview.clone(),
-            sections: context
-                .sections
-                .iter()
-                .map(|section| InjectedContextSection {
-                    label: section.label.clone(),
-                    text: section.text.clone(),
-                })
-                .collect(),
-        });
-        true
+            && append_injected_context_to_compaction_items(&mut turn.items, context)
+        {
+            return true;
+        }
+
+        false
     }
+}
+
+fn append_injected_context_to_compaction_items(
+    items: &mut [ThreadItem],
+    context: &InjectedContextItem,
+) -> bool {
+    let Some(ThreadItem::ContextCompaction {
+        replacement_history,
+        ..
+    }) = items
+        .iter_mut()
+        .rev()
+        .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+    else {
+        return false;
+    };
+
+    let replacement_history = replacement_history.get_or_insert_with(Vec::new);
+    let replacement_item = ContextCompactionReplacementItem::InjectedContext {
+        id: context.id.clone(),
+        title: context.title.clone(),
+        preview: context.preview.clone(),
+        sections: context
+            .sections
+            .iter()
+            .map(|section| InjectedContextSection {
+                label: section.label.clone(),
+                text: section.text.clone(),
+            })
+            .collect(),
+    };
+    if let Some(existing_item) = replacement_history.iter_mut().find(|item| {
+        matches!(
+            item,
+            ContextCompactionReplacementItem::InjectedContext { id, .. } if id == &context.id
+        )
+    }) {
+        *existing_item = replacement_item;
+    } else {
+        replacement_history.push(replacement_item);
+    }
+    true
 }

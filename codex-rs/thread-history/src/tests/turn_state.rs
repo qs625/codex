@@ -362,6 +362,114 @@ fn compact_head_attaches_following_init_context_to_marker() {
 }
 
 #[test]
+fn compact_head_deduplicates_repeated_init_context_completion() {
+    let items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".into(),
+            replacement_history: Some(Vec::new()),
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+        RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread id"),
+            turn_id: "turn-after-compact".into(),
+            item: CoreTurnItem::InjectedContext(CoreInjectedContextItem {
+                id: "ctx-1".into(),
+                title: "Init Context".into(),
+                preview: "Permissions".into(),
+                sections: vec![CoreInjectedContextSection {
+                    label: "Permissions".into(),
+                    text: "danger-full-access".into(),
+                }],
+            }),
+            completed_at_ms: 1,
+        })),
+        RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread id"),
+            turn_id: "turn-after-compact".into(),
+            item: CoreTurnItem::InjectedContext(CoreInjectedContextItem {
+                id: "ctx-1".into(),
+                title: "Init Context".into(),
+                preview: "Permissions".into(),
+                sections: vec![CoreInjectedContextSection {
+                    label: "Permissions".into(),
+                    text: "danger-full-access".into(),
+                }],
+            }),
+            completed_at_ms: 2,
+        })),
+        RolloutItem::TurnContext(turn_context_item_with_id("turn-after-compact")),
+    ];
+
+    let turns = build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert!(matches!(
+        &turns[0].items[0],
+        ThreadItem::ContextCompaction {
+            summary,
+            replacement_history,
+            ..
+        } if summary.as_deref() == Some("summary")
+            && replacement_history.as_ref().is_some_and(|items| matches!(
+                items.as_slice(),
+                [ContextCompactionReplacementItem::InjectedContext {
+                    title,
+                    sections,
+                    ..
+                }] if title == "Init Context"
+                    && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                        == vec!["Permissions"]
+            ))
+    ));
+}
+
+#[test]
+fn init_context_after_compact_turn_context_stays_top_level() {
+    let items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".into(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+        RolloutItem::TurnContext(turn_context_item_with_id("turn-after-compact")),
+        RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread id"),
+            turn_id: "turn-after-compact".into(),
+            item: CoreTurnItem::InjectedContext(CoreInjectedContextItem {
+                id: "ctx-1".into(),
+                title: "Init Context".into(),
+                preview: "Permissions".into(),
+                sections: vec![CoreInjectedContextSection {
+                    label: "Permissions".into(),
+                    text: "danger-full-access".into(),
+                }],
+            }),
+            completed_at_ms: 1,
+        })),
+    ];
+
+    let turns = build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 2);
+    assert!(matches!(
+        &turns[0].items[0],
+        ThreadItem::ContextCompaction {
+            replacement_history,
+            ..
+        } if replacement_history.is_none()
+    ));
+    assert!(matches!(
+        &turns[1].items[0],
+        ThreadItem::InjectedContext { title, .. } if title == "Init Context"
+    ));
+}
+
+#[test]
 fn checkpoint_compaction_prompt_marks_boundary_without_hiding_summary() {
     let items = vec![
         RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {

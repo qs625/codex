@@ -645,6 +645,7 @@ mod build_api_turns_from_rollout_items_tests {
     use protocol::protocol::ExecCommandSource as CoreExecCommandSource;
     use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::RolloutItem;
+    use protocol::protocol::RolloutLine;
     use protocol::protocol::TurnContextItem;
     use protocol::protocol::TurnStartedEvent;
     use rollout::EventPersistenceMode;
@@ -663,6 +664,18 @@ mod build_api_turns_from_rollout_items_tests {
             items_view: app_server_protocol::TurnItemsView::Full,
             items,
         }
+    }
+
+    fn rollout_items_from_jsonl(jsonl: &str) -> Vec<RolloutItem> {
+        jsonl
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<RolloutLine>(line)
+                    .expect("rollout line fixture parses")
+                    .item
+            })
+            .collect()
     }
 
     fn agent_message(id: &str, text: &str) -> ThreadItem {
@@ -949,6 +962,117 @@ mod build_api_turns_from_rollout_items_tests {
                         && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
                             == vec!["Permissions", "Environment"]
                 ))
+        ));
+    }
+
+    #[test]
+    fn compact_head_deduplicates_repeated_init_context_completion() {
+        let thread_id = protocol::ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+            .expect("valid thread id");
+        let context_item =
+            protocol::items::TurnItem::InjectedContext(protocol::items::InjectedContextItem {
+                id: "ctx-1".to_string(),
+                title: "Init Context".to_string(),
+                preview: "Permissions".to_string(),
+                sections: vec![protocol::items::InjectedContextSection {
+                    label: "Permissions".to_string(),
+                    text: "danger-full-access".to_string(),
+                }],
+            });
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: "summary".to_string(),
+                    replacement_history: Some(Vec::new()),
+                    visible_replacement_history_len: None,
+                }),
+                RolloutItem::EventMsg(EventMsg::ContextCompacted(
+                    protocol::protocol::ContextCompactedEvent {},
+                )),
+                RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                    thread_id: thread_id.clone(),
+                    turn_id: "turn-after-compact".to_string(),
+                    item: context_item.clone(),
+                    completed_at_ms: 1,
+                })),
+                RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                    thread_id,
+                    turn_id: "turn-after-compact".to_string(),
+                    item: context_item,
+                    completed_at_ms: 2,
+                })),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history,
+                ..
+            } if replacement_history.as_ref().is_some_and(|items| items.len() == 1)
+        ));
+    }
+
+    #[test]
+    fn compact_head_jsonl_projects_real_init_context_shape_as_replacement_history() {
+        let items = rollout_items_from_jsonl(
+            r#"{"timestamp":"2026-09-22T06:42:12.722Z","type":"compacted","payload":{"message":"summary","replacement_history":[]}}
+{"timestamp":"2026-09-22T06:42:12.751Z","type":"event_msg","payload":{"type":"context_compacted"}}
+{"timestamp":"2026-09-22T06:42:12.825Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b","turn_id":"01a0c7d8-6d88-72e3-b595-432324a3cb2d","item":{"type":"InjectedContext","id":"1b3bafee-6686-4454-8ddb-f3582e6b31f4","title":"Init Context","preview":"Permissions \u2022 Apps \u2022 Skills","sections":[{"label":"Permissions","text":"Filesystem sandboxing defines which files can be read or written."},{"label":"Apps","text":"Apps can be explicitly triggered."},{"label":"Skills","text":"Available skills."}]}}}
+{"timestamp":"2026-09-22T06:42:12.825Z","type":"turn_context","payload":{"turn_id":"01a0c7d8-6d88-72e3-b595-432324a3cb2d","cwd":"/Users/bytedance/.morpheus/source_workspace","current_date":"2026-09-22","timezone":"Asia/Shanghai","approval_policy":"never","sandbox_policy":{"type":"danger-full-access"},"model":"gpt-5.5","summary":"none"}}"#,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                summary,
+                replacement_history,
+                ..
+            } if summary.as_deref() == Some("summary")
+                && replacement_history.as_ref().is_some_and(|items| matches!(
+                    items.as_slice(),
+                    [ContextCompactionReplacementItem::InjectedContext {
+                        title,
+                        preview,
+                        sections,
+                        ..
+                    }] if title == "Init Context"
+                        && preview == "Permissions \u{2022} Apps \u{2022} Skills"
+                        && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                            == vec!["Permissions", "Apps", "Skills"]
+                ))
+        ));
+    }
+
+    #[test]
+    fn compact_head_jsonl_keeps_init_context_top_level_when_turn_context_arrives_first() {
+        let items = rollout_items_from_jsonl(
+            r#"{"timestamp":"2026-09-22T06:42:12.722Z","type":"compacted","payload":{"message":"summary"}}
+{"timestamp":"2026-09-22T06:42:12.751Z","type":"event_msg","payload":{"type":"context_compacted"}}
+{"timestamp":"2026-09-22T06:42:12.825Z","type":"turn_context","payload":{"turn_id":"01a0c7d8-6d88-72e3-b595-432324a3cb2d","cwd":"/Users/bytedance/.morpheus/source_workspace","current_date":"2026-09-22","timezone":"Asia/Shanghai","approval_policy":"never","sandbox_policy":{"type":"danger-full-access"},"model":"gpt-5.5","summary":"none"}}
+{"timestamp":"2026-09-22T06:42:12.825Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b","turn_id":"01a0c7d8-6d88-72e3-b595-432324a3cb2d","item":{"type":"InjectedContext","id":"1b3bafee-6686-4454-8ddb-f3582e6b31f4","title":"Init Context","preview":"Permissions","sections":[{"label":"Permissions","text":"danger-full-access"}]}}}"#,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history,
+                ..
+            } if replacement_history.is_none()
+        ));
+        assert!(matches!(
+            &turns[1].items[0],
+            ThreadItem::InjectedContext { title, .. } if title == "Init Context"
         ));
     }
 

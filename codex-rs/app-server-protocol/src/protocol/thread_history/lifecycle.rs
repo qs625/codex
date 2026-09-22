@@ -21,7 +21,9 @@ use protocol::protocol::TurnStartedEvent;
 
 impl ThreadHistoryBuilder {
     pub(super) fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
-        if self.ensure_turn().items.iter().any(|item| {
+        let turn = self.ensure_turn();
+        turn.saw_compaction = true;
+        if turn.items.iter().any(|item| {
             matches!(
                 item,
                 ThreadItem::ContextCompaction {
