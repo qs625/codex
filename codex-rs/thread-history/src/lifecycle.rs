@@ -2,9 +2,12 @@ use super::PendingTurn;
 use super::ThreadHistoryBuilder;
 use super::support::REVIEW_FALLBACK_MESSAGE;
 use super::support::render_review_output_text;
+use app_server_protocol::ContextCompactionReplacementItem;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::TurnError as V2TurnError;
 use app_server_protocol::TurnStatus;
+use app_server_protocol::context_compaction_replacement_item_from_core;
+use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
@@ -303,6 +306,7 @@ impl ThreadHistoryBuilder {
         self.pending_checkpoint_compaction = None;
         self.pending_compact_summary_echo = compact_summary_response_item(payload);
         let summary = compact_summary(payload);
+        let replacement_history = compact_replacement_history(payload);
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;
@@ -318,7 +322,7 @@ impl ThreadHistoryBuilder {
                 .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
             {
                 *existing_summary = summary;
-                *existing_replacement_history = None;
+                *existing_replacement_history = replacement_history;
                 return;
             }
         }
@@ -328,7 +332,7 @@ impl ThreadHistoryBuilder {
         turn.items.push(ThreadItem::ContextCompaction {
             id,
             summary,
-            replacement_history: None,
+            replacement_history,
         });
     }
 
@@ -358,6 +362,21 @@ fn compact_summary(compacted: &CompactedItem) -> Option<String> {
         return None;
     }
     Some(summary.to_string())
+}
+
+fn compact_replacement_history(
+    compacted: &CompactedItem,
+) -> Option<Vec<ContextCompactionReplacementItem>> {
+    compacted
+        .replacement_history
+        .clone()
+        .map(context_compaction_replacement_items_from_response_items)
+        .map(|items| {
+            items
+                .into_iter()
+                .map(context_compaction_replacement_item_from_core)
+                .collect()
+        })
 }
 
 fn is_checkpoint_compaction_prompt(item: &ResponseItem) -> bool {

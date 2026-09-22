@@ -441,11 +441,10 @@ async fn run_compact_task_inner_impl(
     post_compact_history.extend(retained_suffix.clone());
     reconcile_model_context_quarantines(history_items, &mut post_compact_history);
     let post_compact_response_items = persisted_post_compact_response_items(&post_compact_history);
-    let compacted_item = CompactedItem {
-        message: compacted_message.clone(),
-        replacement_history: None,
-        visible_replacement_history_len: None,
-    };
+    let compacted_item = persisted_compacted_item(
+        compacted_message.clone(),
+        post_compact_response_items.clone(),
+    );
     let compaction_item = ContextCompactionItem {
         summary: Some(compacted_message.clone()),
         replacement_history: Vec::new(),
@@ -478,6 +477,17 @@ fn persisted_post_compact_response_items(
     post_compact_history: &[ResponseItem],
 ) -> Vec<ResponseItem> {
     post_compact_history.iter().skip(1).cloned().collect()
+}
+
+fn persisted_compacted_item(
+    message: String,
+    replacement_history: Vec<ResponseItem>,
+) -> CompactedItem {
+    CompactedItem {
+        message,
+        replacement_history: Some(replacement_history),
+        visible_replacement_history_len: None,
+    }
 }
 
 fn reconcile_model_context_quarantines(

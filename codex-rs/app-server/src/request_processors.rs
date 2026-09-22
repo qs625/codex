@@ -626,10 +626,12 @@ mod build_api_turns_from_rollout_items_tests {
     use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
     use app_server_protocol::CommandExecutionSource;
     use app_server_protocol::CommandExecutionStatus;
+    use app_server_protocol::ContextCompactionReplacementItem;
     use app_server_protocol::DynamicToolCallStatus;
     use app_server_protocol::ThreadItem;
     use app_server_protocol::Turn;
     use app_server_protocol::TurnStatus;
+    use app_server_protocol::UserInput;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -793,7 +795,49 @@ mod build_api_turns_from_rollout_items_tests {
                 summary,
                 replacement_history,
                 ..
-            } if summary.as_deref() == Some("summary") && replacement_history.is_none()
+            } if summary.as_deref() == Some("summary")
+                && replacement_history.as_ref().is_some_and(|items| matches!(
+                    items.as_slice(),
+                    [ContextCompactionReplacementItem::AgentMessage { text, .. }]
+                        if text == "summary"
+                ))
+        ));
+    }
+
+    #[test]
+    fn compacted_item_projects_replacement_history() {
+        let turns = build_api_turns_from_rollout_items(&[RolloutItem::Compacted(
+            protocol::protocol::CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(vec![ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "recent request".to_string(),
+                    }],
+                    phase: None,
+                }]),
+                visible_replacement_history_len: None,
+            },
+        )]);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                summary,
+                replacement_history,
+                ..
+            } if summary.as_deref() == Some("summary")
+                && replacement_history.as_ref().is_some_and(|items| matches!(
+                    items.as_slice(),
+                    [ContextCompactionReplacementItem::UserMessage { content, .. }]
+                        if content == &vec![UserInput::Text {
+                            text: "recent request".to_string(),
+                            text_elements: Vec::new(),
+                        }]
+                ))
         ));
     }
 
