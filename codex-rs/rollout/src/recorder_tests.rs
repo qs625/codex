@@ -63,6 +63,7 @@ fn compact_turn_context_item(turn_id: &str) -> TurnContextItem {
         summary: ReasoningSummaryConfig::Auto,
         user_instructions: Some("fresh instructions".to_string()),
         developer_instructions: None,
+        init_context_snapshot: None,
         final_output_json_schema: None,
         truncation_policy: None,
     }
@@ -810,7 +811,10 @@ async fn compact_segment_is_not_published_before_following_checkpoint_items() ->
         .expect("current rollout path lock")
         .clone();
     assert_ne!(head_path, initial_path);
-    assert_eq!(resolve_current_segment_path(&initial_path).await?, head_path);
+    assert_eq!(
+        resolve_current_segment_path(&initial_path).await?,
+        head_path
+    );
 
     let (head_items, _, _) = RolloutRecorder::load_rollout_items(&head_path).await?;
     let compact_count = head_items
@@ -1960,6 +1964,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             summary: ReasoningSummaryConfig::Auto,
             user_instructions: None,
             developer_instructions: None,
+            init_context_snapshot: None,
             final_output_json_schema: None,
             truncation_policy: None,
         }),

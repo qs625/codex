@@ -99,15 +99,16 @@ fn finalize_active_segment(
         *previous_turn_settings = active_segment.previous_turn_settings;
     }
 
-    // `reference_context_item` comes from the newest surviving user turn
-    // baseline, or from a surviving compaction that explicitly cleared that
-    // baseline.
+    // `reference_context_item` comes from the newest surviving durable turn
+    // context baseline, or from a surviving compaction that explicitly cleared
+    // that baseline. Unlike previous-turn settings, this does not require a
+    // user-message boundary: resume/lazy replay may have a persisted context
+    // item without enough event history to classify the segment as a user turn.
     if matches!(reference_context_item, TurnReferenceContextItem::NeverSet)
-        && (active_segment.counts_as_user_turn
-            || matches!(
-                active_segment.reference_context_item,
-                TurnReferenceContextItem::Cleared
-            ))
+        && !matches!(
+            active_segment.reference_context_item,
+            TurnReferenceContextItem::NeverSet
+        )
     {
         *reference_context_item = active_segment.reference_context_item;
     }

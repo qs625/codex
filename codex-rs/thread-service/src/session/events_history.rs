@@ -1,6 +1,8 @@
 use super::*;
 use std::sync::Weak;
 
+use protocol::protocol::InitContextSnapshot;
+
 pub(crate) struct FreshCompactInitialContext {
     pub(crate) user_instructions: Option<String>,
     pub(crate) response_items: Vec<ResponseItem>,
@@ -227,6 +229,127 @@ impl Session {
         registry
     }
 
+    async fn current_user_instructions_for_turn(
+        &self,
+        turn_context: &TurnContext,
+        fallback: Option<String>,
+    ) -> Option<String> {
+        match AgentsMdManager::new(&turn_context.config)
+            .try_user_instructions_with_fs(codex_file_system::LOCAL_FS.as_ref())
+            .await
+        {
+            Ok(Some(user_instructions)) => Some(user_instructions),
+            Ok(None) if turn_context.config.instruction_files.is_empty() => fallback,
+            Ok(None) => None,
+            Err(err) => {
+                warn!("failed to refresh configured instruction files for turn context: {err}");
+                fallback
+            }
+        }
+    }
+
+    async fn build_init_context_snapshot(
+        &self,
+        turn_context: &TurnContext,
+        user_instructions_override: Option<&Option<String>>,
+        agent_role_instructions_override: Option<&Option<AgentRoleDeveloperInstructions>>,
+    ) -> InitContextSnapshot {
+        let (session_source, session_user_instructions) = {
+            let state = self.state.lock().await;
+            (
+                state.session_configuration.session_source.clone(),
+                state.session_configuration.user_instructions.clone(),
+            )
+        };
+        let mut developer_sections = Vec::new();
+        let mut contextual_user_sections = Vec::new();
+
+        let agent_role_instructions = match agent_role_instructions_override {
+            Some(instructions) => instructions.clone(),
+            None => {
+                self.current_agent_role_developer_instructions(turn_context, &session_source)
+                    .await
+            }
+        };
+        if let Some(agent_role_instructions) = agent_role_instructions {
+            developer_sections.push(format_agent_role_init_context_section(
+                &agent_role_instructions,
+            ));
+        }
+
+        if turn_context.config.include_skill_instructions
+            && let Some(skills_section) = self.render_available_skills_section(turn_context).await
+        {
+            developer_sections.push(skills_section);
+        }
+        developer_sections.extend(
+            self.render_skill_instruction_file_sections(turn_context)
+                .await,
+        );
+
+        let user_instructions = match user_instructions_override {
+            Some(user_instructions) => user_instructions.clone(),
+            None => {
+                self.current_user_instructions_for_turn(turn_context, session_user_instructions)
+                    .await
+            }
+        };
+        if let Some(user_instructions) = user_instructions.as_deref() {
+            contextual_user_sections.push(
+                UserInstructions {
+                    text: user_instructions.to_string(),
+                    #[allow(deprecated)]
+                    directory: turn_context.cwd.to_string_lossy().into_owned(),
+                }
+                .render(),
+            );
+        }
+
+        InitContextSnapshot {
+            developer_sections,
+            contextual_user_sections,
+        }
+    }
+
+    async fn render_available_skills_section(&self, turn_context: &TurnContext) -> Option<String> {
+        let available_skills = build_available_skills(
+            &turn_context.turn_skills.outcome,
+            default_skill_metadata_budget(turn_context.model_info.context_window),
+            SkillRenderSideEffects::None,
+        )?;
+        Some(AvailableSkillsInstructions::from(available_skills).render())
+    }
+
+    async fn render_skill_instruction_file_sections(
+        &self,
+        turn_context: &TurnContext,
+    ) -> Vec<String> {
+        if !turn_context.config.include_skill_instructions {
+            return Vec::new();
+        }
+        let mut sections = Vec::new();
+        for skill in turn_context
+            .turn_skills
+            .outcome
+            .allowed_skills_for_implicit_invocation()
+        {
+            let path = skill.path_to_skills_md.as_path();
+            let Ok(contents) = tokio::fs::read_to_string(path).await else {
+                continue;
+            };
+            if contents.trim().is_empty() {
+                continue;
+            }
+            sections.push(format!(
+                "<skill>\n<name>{}</name>\n<path>{}</path>\n{}\n</skill>",
+                skill.name,
+                path.display(),
+                contents.trim()
+            ));
+        }
+        sections
+    }
+
     async fn current_agent_role_developer_instructions(
         &self,
         turn_context: &TurnContext,
@@ -290,13 +413,16 @@ impl Session {
         turn_context: &TurnContext,
     ) -> TurnContextItem {
         let mut item = turn_context.to_turn_context_item();
-        let (session_source, user_instructions) = {
+        let (session_source, session_user_instructions) = {
             let state = self.state.lock().await;
             (
                 state.session_configuration.session_source.clone(),
                 state.session_configuration.user_instructions.clone(),
             )
         };
+        let user_instructions = self
+            .current_user_instructions_for_turn(turn_context, session_user_instructions)
+            .await;
         item.user_instructions = user_instructions;
         if let Some(agent_role_instructions) = self
             .current_agent_role_developer_instructions(turn_context, &session_source)
@@ -310,6 +436,12 @@ impl Session {
                 &mut item.developer_instructions,
                 agent_role_instructions.instructions,
             );
+        }
+        let snapshot = self
+            .build_init_context_snapshot(turn_context, None, None)
+            .await;
+        if !snapshot.is_empty() {
+            item.init_context_snapshot = Some(snapshot);
         }
         item
     }
@@ -1853,6 +1985,10 @@ impl Session {
                 }
                 developer_sections.push(skills_instructions.render());
             }
+            developer_sections.extend(
+                self.render_skill_instruction_file_sections(turn_context)
+                    .await,
+            );
         }
         let workflow_registry = self.init_context_workflow_registry(turn_context);
         if let Some(workflow_instructions) =
@@ -2062,7 +2198,7 @@ impl Session {
             .await;
         let mut reference_context_item = turn_context.to_turn_context_item();
         reference_context_item.user_instructions = user_instructions.clone();
-        if let Some(agent_role_instructions) = agent_role_instructions
+        if let Some(agent_role_instructions) = agent_role_instructions.as_ref()
             && !developer_instructions_contains_section(
                 reference_context_item.developer_instructions.as_deref(),
                 &agent_role_instructions.instructions,
@@ -2070,8 +2206,18 @@ impl Session {
         {
             append_developer_instructions_section(
                 &mut reference_context_item.developer_instructions,
-                agent_role_instructions.instructions,
+                agent_role_instructions.instructions.clone(),
             );
+        }
+        let snapshot = self
+            .build_init_context_snapshot(
+                turn_context,
+                Some(&user_instructions),
+                Some(&agent_role_instructions),
+            )
+            .await;
+        if !snapshot.is_empty() {
+            reference_context_item.init_context_snapshot = Some(snapshot);
         }
         Ok(FreshCompactInitialContext {
             user_instructions,
@@ -2129,16 +2275,11 @@ impl Session {
     /// Persist the latest turn context snapshot for the first real user turn and for
     /// steady-state turns that emit model-visible context updates.
     ///
-    /// When the reference snapshot is missing, this injects full initial context. Otherwise, it
-    /// emits only settings diff items.
-    ///
-    /// If full context is injected and a model switch occurred, this prepends the
-    /// `<model_switch>` developer message so model-specific instructions are not lost.
-    ///
-    /// This is the normal runtime path that establishes a new `reference_context_item`.
-    /// Mid-turn compaction is the other path that can re-establish that baseline when it
-    /// reinjects full initial context into replacement history. Other non-regular tasks
-    /// intentionally do not update the baseline.
+    /// This is the normal runtime path for ordinary turns. Missing in-memory
+    /// reference state is recovered by constructing a current durable baseline
+    /// and emitting only deterministic diff items; it is not authorization to
+    /// reinject full initial context. True new-thread startup and compaction
+    /// call explicit full-context paths.
     pub(crate) async fn record_context_updates_and_set_reference_context_item(
         &self,
         turn_context: &TurnContext,
@@ -2147,24 +2288,17 @@ impl Session {
             let state = self.state.lock().await;
             state.reference_context_item()
         };
-        let should_inject_full_context = reference_context_item.is_none();
-        let context_items = if should_inject_full_context {
-            self.build_initial_context_for_external_agent_tools(turn_context)
-                .await
-        } else {
-            // Steady-state path: append only context diffs to minimize token overhead.
-            self.build_settings_update_items(reference_context_item.as_ref(), turn_context)
-                .await
-        };
         let turn_context_item = self.reference_context_item_for_turn(turn_context).await;
+        let context_items = self
+            .build_settings_update_items(
+                reference_context_item.as_ref(),
+                turn_context_item.init_context_snapshot.as_ref(),
+                turn_context,
+            )
+            .await;
         if !context_items.is_empty() {
             self.record_conversation_items(turn_context, &context_items)
                 .await;
-            if should_inject_full_context
-                && let Some(item) = injected_context_item_from_response_items(&context_items)
-            {
-                self.emit_turn_item_completed(turn_context, item).await;
-            }
         }
         // Persist one `TurnContextItem` per real user turn so resume/lazy replay can recover the
         // latest durable baseline even when this turn emitted no model-visible context diffs.
@@ -2173,6 +2307,28 @@ impl Session {
 
         // Advance the in-memory diff baseline even when this turn emitted no model-visible
         // context items. This keeps later runtime diffing aligned with the current turn state.
+        let mut state = self.state.lock().await;
+        state.set_reference_context_item(Some(turn_context_item));
+    }
+
+    pub(crate) async fn record_initial_context_and_set_reference_context_item(
+        &self,
+        turn_context: &TurnContext,
+    ) {
+        let context_items = self
+            .build_initial_context_for_external_agent_tools(turn_context)
+            .await;
+        let turn_context_item = self.reference_context_item_for_turn(turn_context).await;
+        if !context_items.is_empty() {
+            self.record_conversation_items(turn_context, &context_items)
+                .await;
+            if let Some(item) = injected_context_item_from_response_items(&context_items) {
+                self.emit_turn_item_completed(turn_context, item).await;
+            }
+        }
+        self.persist_rollout_items(&[RolloutItem::TurnContext(turn_context_item.clone())])
+            .await;
+
         let mut state = self.state.lock().await;
         state.set_reference_context_item(Some(turn_context_item));
     }

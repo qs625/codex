@@ -775,8 +775,9 @@ mod tests {
         let expected_docs_public =
             AbsolutePathBuf::from_absolute_path(canonical_cwd.join("docs/public"))
                 .expect("canonical docs/public");
-        let expected_dot_morpheus = AbsolutePathBuf::from_absolute_path(canonical_cwd.join(".morpheus"))
-            .expect("canonical .morpheus");
+        let expected_dot_morpheus =
+            AbsolutePathBuf::from_absolute_path(canonical_cwd.join(".morpheus"))
+                .expect("canonical .morpheus");
         let policy = FileSystemSandboxPolicy::restricted(vec![
             FileSystemSandboxEntry {
                 path: FileSystemPath::Special {
@@ -1573,6 +1574,7 @@ mod tests {
             summary: ReasoningSummaryConfig::Auto,
             user_instructions: None,
             developer_instructions: None,
+            init_context_snapshot: None,
             final_output_json_schema: None,
             truncation_policy: None,
         };

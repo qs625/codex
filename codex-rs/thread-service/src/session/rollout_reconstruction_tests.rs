@@ -60,8 +60,7 @@ fn resumed_history(history: Vec<RolloutItem>) -> InitialHistory {
 }
 
 #[tokio::test]
-async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previous_turn_settings()
-{
+async fn record_initial_history_resumed_bare_turn_context_hydrates_reference_context_only() {
     let (session, turn_context) = make_session_and_context().await;
     let previous_context_item = turn_context_item(
         &turn_context,
@@ -71,12 +70,17 @@ async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previ
 
     session
         .record_initial_history(resumed_history(vec![RolloutItem::TurnContext(
-            previous_context_item,
+            previous_context_item.clone(),
         )]))
         .await;
 
     assert_eq!(session.previous_turn_settings().await, None);
-    assert!(session.reference_context_item().await.is_none());
+    assert_eq!(
+        serde_json::to_value(session.reference_context_item().await)
+            .expect("serialize seeded reference context item"),
+        serde_json::to_value(Some(previous_context_item))
+            .expect("serialize expected reference context item")
+    );
 }
 
 #[tokio::test]

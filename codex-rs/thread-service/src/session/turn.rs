@@ -1264,7 +1264,7 @@ async fn run_pre_sampling_compact(
             sess,
             turn_context,
             client_session,
-            InitialContextInjection::DoNotInject,
+            InitialContextInjection::BeforeLastUserMessage,
             CompactionReason::ContextLimit,
             CompactionPhase::PreTurn,
         )
@@ -1385,7 +1385,7 @@ async fn maybe_run_previous_model_inline_compact(
             sess,
             &previous_model_turn_context,
             client_session,
-            InitialContextInjection::DoNotInject,
+            InitialContextInjection::BeforeLastUserMessage,
             CompactionReason::ModelDownshift,
             CompactionPhase::PreTurn,
         )

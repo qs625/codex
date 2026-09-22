@@ -15,6 +15,26 @@ fn file_system_policy_with_unreadable_glob(turn_context: &TurnContext) -> FileSy
     policy
 }
 
+fn response_input_text(items: &[ResponseItem]) -> String {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[tokio::test]
 async fn turn_context_item_omits_legacy_equivalent_file_system_sandbox_policy() {
     let (_session, turn_context) = make_session_and_context().await;
@@ -51,23 +71,26 @@ async fn turn_context_item_stores_split_file_system_sandbox_policy_when_differen
 }
 
 #[tokio::test]
-async fn record_context_updates_and_set_reference_context_item_injects_full_context_when_baseline_missing()
+async fn record_context_updates_and_set_reference_context_item_does_not_full_inject_when_baseline_missing()
  {
     let (session, turn_context) = make_session_and_context().await;
     session
         .record_context_updates_and_set_reference_context_item(&turn_context)
         .await;
     let history = session.clone_history().await;
-    let initial_context = session
-        .build_initial_context_for_external_agent_tools(&turn_context)
-        .await;
-    assert_eq!(history.raw_items().to_vec(), initial_context);
+    assert_ne!(
+        history.raw_items(),
+        session
+            .build_initial_context_for_external_agent_tools(&turn_context)
+            .await,
+        "ordinary baseline recovery must not append full Init Context"
+    );
 
     let current_context = session.reference_context_item().await;
+    let expected_context = session.reference_context_item_for_turn(&turn_context).await;
     assert_eq!(
         serde_json::to_value(current_context).expect("serialize current context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
-            .expect("serialize expected context item")
+        serde_json::to_value(Some(expected_context)).expect("serialize expected context item")
     );
 }
 
@@ -114,7 +137,7 @@ async fn record_context_updates_emits_injected_context_with_agent_file_instructi
         .session_source = session_source;
 
     session
-        .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
+        .record_initial_context_and_set_reference_context_item(turn_context.as_ref())
         .await;
 
     let mut injected_context = None;
@@ -420,6 +443,220 @@ async fn fresh_compact_initial_context_preserves_external_agent_tool_specs() {
 }
 
 #[tokio::test]
+async fn ordinary_context_update_emits_instruction_file_diff_without_full_init_context() {
+    let instruction_dir = tempfile::tempdir().expect("instruction tempdir");
+    let instruction_path = instruction_dir.path().join("AGENTS.md");
+    std::fs::write(&instruction_path, "ordinary instruction v1")
+        .expect("write initial instruction");
+    let absolute_instruction_path =
+        AbsolutePathBuf::try_from(instruction_path.clone()).expect("absolute instruction path");
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.instruction_files = vec![absolute_instruction_path];
+        },
+    )
+    .await;
+    let previous_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item));
+    }
+    std::fs::write(&instruction_path, "ordinary instruction v2")
+        .expect("write updated instruction");
+
+    session
+        .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
+        .await;
+
+    let history = session.clone_history().await;
+    assert_ne!(
+        history.raw_items(),
+        session
+            .build_initial_context_for_external_agent_tools(turn_context.as_ref())
+            .await,
+        "ordinary instruction diff must not append full Init Context"
+    );
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("ordinary instruction v2"), "{text}");
+    assert!(!text.contains("ordinary instruction v1"), "{text}");
+}
+
+#[tokio::test]
+async fn ordinary_context_update_emits_agent_role_diff_without_full_init_context() {
+    let role_dir = tempfile::tempdir().expect("agent role tempdir");
+    let role_path = role_dir.path().join("ordinary-role.agent.md");
+    std::fs::write(
+        &role_path,
+        "---\nname: ordinary-role\ndescription: Ordinary role.\n---\nrole instructions v1\n",
+    )
+    .expect("write initial role file");
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.agent_roles.insert(
+                "ordinary-role".to_string(),
+                crate::config::AgentRoleConfig {
+                    description: Some("Ordinary role.".to_string()),
+                    source_path: Some(role_path.clone()),
+                    ..Default::default()
+                },
+            );
+        },
+    )
+    .await;
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.root_agent_metadata =
+            Some(codex_agent_runtime::AgentMetadata {
+                agent_id: Some(session.conversation_id),
+                agent_path: Some("/root".parse().expect("agent path")),
+                agent_role: Some("ordinary-role".to_string()),
+                ..Default::default()
+            });
+    }
+    let previous_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item));
+    }
+    std::fs::write(
+        &role_path,
+        "---\nname: ordinary-role\ndescription: Ordinary role.\n---\nrole instructions v2\n",
+    )
+    .expect("write updated role file");
+
+    session
+        .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
+        .await;
+
+    let history = session.clone_history().await;
+    assert_ne!(
+        history.raw_items(),
+        session
+            .build_initial_context_for_external_agent_tools(turn_context.as_ref())
+            .await,
+        "ordinary role diff must not append full Init Context"
+    );
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("# Agent Role: ordinary-role"), "{text}");
+    assert!(text.contains("role instructions v2"), "{text}");
+    assert!(!text.contains("role instructions v1"), "{text}");
+}
+
+#[tokio::test]
+async fn ordinary_context_update_emits_skill_instruction_diff_without_full_init_context() {
+    let skill_dir = tempfile::tempdir().expect("skill tempdir");
+    let skill_path = skill_dir.path().join("SKILL.md");
+    std::fs::write(
+        &skill_path,
+        "---\nname: ordinary-skill\ndescription: Ordinary skill.\n---\nskill body v1\n",
+    )
+    .expect("write initial skill file");
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut outcome = SkillLoadOutcome::default();
+    outcome.skills = vec![SkillMetadata {
+        name: "ordinary-skill".to_string(),
+        description: "Ordinary skill.".to_string(),
+        short_description: None,
+        interface: None,
+        dependencies: None,
+        policy: None,
+        path_to_skills_md: AbsolutePathBuf::try_from(skill_path.clone())
+            .expect("absolute skill path"),
+        scope: protocol::protocol::SkillScope::Repo,
+        plugin_id: None,
+    }];
+    turn_context.turn_skills = TurnSkillsContext::new(Arc::new(outcome));
+    let previous_context_item = session.reference_context_item_for_turn(&turn_context).await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item));
+    }
+    std::fs::write(
+        &skill_path,
+        "---\nname: ordinary-skill\ndescription: Ordinary skill.\n---\nskill body v2\n",
+    )
+    .expect("write updated skill file");
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+
+    let history = session.clone_history().await;
+    assert_ne!(
+        history.raw_items(),
+        session
+            .build_initial_context_for_external_agent_tools(&turn_context)
+            .await,
+        "ordinary skill diff must not append full Init Context"
+    );
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("<skill>"), "{text}");
+    assert!(text.contains("ordinary-skill"), "{text}");
+    assert!(text.contains("skill body v2"), "{text}");
+    assert!(!text.contains("skill body v1"), "{text}");
+}
+
+#[tokio::test]
+async fn fresh_compact_initial_context_reloads_skill_instruction_snapshot() {
+    let skill_dir = tempfile::tempdir().expect("skill tempdir");
+    let skill_path = skill_dir.path().join("SKILL.md");
+    std::fs::write(
+        &skill_path,
+        "---\nname: compact-skill\ndescription: Compact skill.\n---\ncompact skill body v1\n",
+    )
+    .expect("write initial skill file");
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut outcome = SkillLoadOutcome::default();
+    outcome.skills = vec![SkillMetadata {
+        name: "compact-skill".to_string(),
+        description: "Compact skill.".to_string(),
+        short_description: None,
+        interface: None,
+        dependencies: None,
+        policy: None,
+        path_to_skills_md: AbsolutePathBuf::try_from(skill_path.clone())
+            .expect("absolute skill path"),
+        scope: protocol::protocol::SkillScope::Repo,
+        plugin_id: None,
+    }];
+    turn_context.turn_skills = TurnSkillsContext::new(Arc::new(outcome));
+    let previous_context_item = session.reference_context_item_for_turn(&turn_context).await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item));
+    }
+    std::fs::write(
+        &skill_path,
+        "---\nname: compact-skill\ndescription: Compact skill.\n---\ncompact skill body v2\n",
+    )
+    .expect("write updated skill file");
+
+    let snapshot = session
+        .build_fresh_compact_initial_context(&turn_context)
+        .await
+        .expect("fresh compact initial context");
+
+    let initial_context_text = response_input_text(&snapshot.response_items);
+    assert!(initial_context_text.contains("compact skill body v2"));
+    assert!(!initial_context_text.contains("compact skill body v1"));
+    let baseline_snapshot = snapshot
+        .reference_context_item
+        .init_context_snapshot
+        .expect("expected compact baseline snapshot");
+    let developer_snapshot = baseline_snapshot.developer_sections.join("\n");
+    assert!(developer_snapshot.contains("compact skill body v2"));
+    assert!(!developer_snapshot.contains("compact skill body v1"));
+}
+
+#[tokio::test]
 async fn initial_context_and_reference_baseline_follow_compact_session_instructions() {
     let (session, mut turn_context) = make_session_and_context().await;
     turn_context.user_instructions = Some("stale turn instruction".to_string());
@@ -540,8 +777,8 @@ async fn resumed_compact_window_start_includes_persisted_post_compact_baseline()
 }
 
 #[tokio::test]
-async fn record_context_updates_and_set_reference_context_item_reinjects_full_context_after_clear()
-{
+async fn record_context_updates_and_set_reference_context_item_recovers_cleared_baseline_without_full_context()
+ {
     let (session, turn_context) = make_session_and_context().await;
     let compacted_summary = ResponseItem::Message {
         id: None,
@@ -573,13 +810,19 @@ async fn record_context_updates_and_set_reference_context_item_reinjects_full_co
         .await;
 
     let history = session.clone_history().await;
-    let mut expected_history = vec![compacted_summary];
-    expected_history.extend(
+    assert_eq!(history.raw_items().first(), Some(&compacted_summary));
+    let appended_items = &history.raw_items()[1..];
+    assert_ne!(
+        appended_items,
         session
             .build_initial_context_for_external_agent_tools(&turn_context)
             .await,
+        "ordinary baseline recovery must not append full Init Context"
     );
-    assert_eq!(history.raw_items().to_vec(), expected_history);
+    assert!(
+        session.reference_context_item().await.is_some(),
+        "ordinary baseline recovery should install a fresh reference context"
+    );
 }
 
 #[tokio::test]
@@ -594,7 +837,10 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     let turn_context = previous_context
         .with_model(next_model.to_string(), &session.services.model_service)
         .await;
-    let previous_context_item = previous_context.to_turn_context_item();
+    let previous_context_item = session
+        .reference_context_item_for_turn(&previous_context)
+        .await;
+    let expected_context_item = session.reference_context_item_for_turn(&turn_context).await;
     {
         let mut state = session.state.lock().await;
         state.set_reference_context_item(Some(previous_context_item.clone()));
@@ -602,7 +848,11 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     let rollout_path = attach_thread_persistence(&mut session).await;
 
     let update_items = session
-        .build_settings_update_items(Some(&previous_context_item), &turn_context)
+        .build_settings_update_items(
+            Some(&previous_context_item),
+            expected_context_item.init_context_snapshot.as_ref(),
+            &turn_context,
+        )
         .await;
     assert_eq!(update_items, Vec::new());
 
@@ -617,7 +867,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     assert_eq!(
         serde_json::to_value(session.reference_context_item().await)
             .expect("serialize current context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
+        serde_json::to_value(Some(expected_context_item.clone()))
             .expect("serialize expected context item")
     );
     session.ensure_rollout_materialized().await;
@@ -636,7 +886,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     assert_eq!(
         serde_json::to_value(persisted_turn_context)
             .expect("serialize persisted turn context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
+        serde_json::to_value(Some(expected_context_item))
             .expect("serialize expected turn context item")
     );
 }
@@ -699,7 +949,7 @@ async fn build_initial_context_prepends_model_switch_message() {
 }
 
 #[tokio::test]
-async fn record_context_updates_and_set_reference_context_item_persists_full_reinjection_to_rollout()
+async fn record_context_updates_and_set_reference_context_item_persists_recovered_baseline_to_rollout()
  {
     let (mut session, previous_context) = make_session_and_context().await;
     let next_model = if previous_context.model_info.slug == "gpt-5.4" {
@@ -734,6 +984,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
             realtime_active: Some(previous_context.realtime_active),
         }))
         .await;
+    let expected_context_item = session.reference_context_item_for_turn(&turn_context).await;
     session
         .record_context_updates_and_set_reference_context_item(&turn_context)
         .await;
@@ -754,7 +1005,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
     assert_eq!(
         serde_json::to_value(persisted_turn_context)
             .expect("serialize persisted turn context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
+        serde_json::to_value(Some(expected_context_item))
             .expect("serialize expected turn context item")
     );
 }
@@ -3468,7 +3719,9 @@ async fn poll_event_user_input_wake_includes_mailbox_command_event() {
         })
     };
     assert!(
-        timeout(Duration::from_millis(20), &mut waiter).await.is_err(),
+        timeout(Duration::from_millis(20), &mut waiter)
+            .await
+            .is_err(),
         "poll_event should still be waiting before user_input wakes it"
     );
 

@@ -65,6 +65,7 @@ pub fn build_turn_context_item(input: TurnContextItemBuildInput) -> TurnContextI
         summary: input.summary,
         user_instructions: input.user_instructions,
         developer_instructions: input.developer_instructions,
+        init_context_snapshot: None,
         final_output_json_schema: input.final_output_json_schema,
         truncation_policy: Some(input.truncation_policy),
     }

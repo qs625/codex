@@ -934,6 +934,7 @@ mod build_api_turns_from_rollout_items_tests {
                     summary: protocol::config_types::ReasoningSummary::Auto,
                     user_instructions: None,
                     developer_instructions: None,
+                    init_context_snapshot: None,
                     final_output_json_schema: None,
                     truncation_policy: None,
                 }),

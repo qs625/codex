@@ -1454,7 +1454,7 @@ impl Session {
             InitialHistory::New | InitialHistory::Cleared => {
                 self.set_previous_turn_settings(/*previous_turn_settings*/ None)
                     .await;
-                self.record_context_updates_and_set_reference_context_item(&turn_context)
+                self.record_initial_context_and_set_reference_context_item(&turn_context)
                     .await;
                 self.ensure_rollout_materialized().await;
                 let _ = self.flush_rollout().await;
@@ -2274,6 +2274,7 @@ impl Session {
     async fn build_settings_update_items(
         &self,
         reference_context_item: Option<&TurnContextItem>,
+        current_init_context_snapshot: Option<&protocol::protocol::InitContextSnapshot>,
         current_context: &TurnContext,
     ) -> Vec<ResponseItem> {
         // TODO: Make context updates a pure diff of persisted previous/current TurnContextItem
@@ -2290,6 +2291,7 @@ impl Session {
             crate::context::environment_context_from_turn_context(current_context, shell.as_ref());
         codex_context_manager::build_settings_update_items(SettingsUpdateInput {
             previous: reference_context_item,
+            current_init_context_snapshot,
             previous_turn_settings: previous_turn_settings_view(previous_turn_settings.as_ref()),
             include_environment_context: current_context.config.include_environment_context,
             environment_context: Some(&environment_context),

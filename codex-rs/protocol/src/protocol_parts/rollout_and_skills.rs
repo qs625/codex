@@ -36,6 +36,20 @@ pub struct TurnContextNetworkItem {
     pub denied_domains: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+pub struct InitContextSnapshot {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub developer_sections: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contextual_user_sections: Vec<String>,
+}
+
+impl InitContextSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.developer_sections.is_empty() && self.contextual_user_sections.is_empty()
+    }
+}
+
 /// Persist once per real user turn after computing that turn's model-visible
 /// context updates, and again after mid-turn compaction when replacement
 /// history re-establishes full context, so resume/fork replay can recover the
@@ -73,6 +87,8 @@ pub struct TurnContextItem {
     pub user_instructions: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub developer_instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init_context_snapshot: Option<InitContextSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_output_json_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

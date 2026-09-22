@@ -9,6 +9,7 @@ use protocol::models::PermissionProfile;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ModelInfo;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::InitContextSnapshot;
 use protocol::protocol::TurnContextItem;
 
 use crate::CollaborationModeInstructions;
@@ -33,6 +34,7 @@ pub struct PreviousTurnSettingsView<'a> {
 /// Inputs for building model-visible context update items between turns.
 pub struct SettingsUpdateInput<'a> {
     pub previous: Option<&'a TurnContextItem>,
+    pub current_init_context_snapshot: Option<&'a InitContextSnapshot>,
     pub previous_turn_settings: Option<PreviousTurnSettingsView<'a>>,
     pub include_environment_context: bool,
     pub environment_context: Option<&'a EnvironmentContext>,
@@ -176,6 +178,25 @@ fn build_personality_update_item(input: &SettingsUpdateInput<'_>) -> Option<Stri
     }
 }
 
+fn build_init_context_snapshot_update_items(
+    input: &SettingsUpdateInput<'_>,
+) -> (Vec<String>, Option<ResponseItem>) {
+    let Some(current_snapshot) = input.current_init_context_snapshot else {
+        return (Vec::new(), None);
+    };
+    let previous_snapshot = input
+        .previous
+        .and_then(|item| item.init_context_snapshot.as_ref());
+    if previous_snapshot == Some(current_snapshot) {
+        return (Vec::new(), None);
+    }
+
+    let developer_sections = current_snapshot.developer_sections.clone();
+    let contextual_user_message =
+        build_contextual_user_message(current_snapshot.contextual_user_sections.clone());
+    (developer_sections, contextual_user_message)
+}
+
 pub fn personality_message_for(model_info: &ModelInfo, personality: Personality) -> Option<String> {
     model_info
         .model_messages
@@ -233,8 +254,10 @@ pub fn build_settings_update_items(input: SettingsUpdateInput<'_>) -> Vec<Respon
     // model-visible item emitted by build_initial_context. Persist the remaining
     // inputs or add explicit replay events so fork/resume can diff everything
     // deterministically.
-    let contextual_user_message = build_environment_update_item(&input);
-    let developer_update_sections = [
+    let environment_update_item = build_environment_update_item(&input);
+    let (init_context_developer_sections, init_context_user_message) =
+        build_init_context_snapshot_update_items(&input);
+    let mut developer_update_sections: Vec<String> = [
         // Keep model-switch instructions first so model-specific guidance is
         // read before any other context diffs on this turn.
         build_model_instructions_update_item(
@@ -255,12 +278,16 @@ pub fn build_settings_update_items(input: SettingsUpdateInput<'_>) -> Vec<Respon
     .into_iter()
     .flatten()
     .collect();
+    developer_update_sections.extend(init_context_developer_sections);
 
-    let mut items = Vec::with_capacity(2);
+    let mut items = Vec::with_capacity(3);
     if let Some(developer_message) = build_developer_update_item(developer_update_sections) {
         items.push(developer_message);
     }
-    if let Some(contextual_user_message) = contextual_user_message {
+    if let Some(contextual_user_message) = init_context_user_message {
+        items.push(contextual_user_message);
+    }
+    if let Some(contextual_user_message) = environment_update_item {
         items.push(contextual_user_message);
     }
     items

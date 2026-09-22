@@ -3748,9 +3748,9 @@ async fn record_initial_history_new_materializes_initial_context_immediately() {
 }
 
 #[tokio::test]
-async fn resumed_history_injects_initial_context_on_first_context_update_only() {
+async fn resumed_history_recovers_reference_context_without_full_initial_context() {
     let (session, turn_context) = make_session_and_context().await;
-    let (rollout_items, mut expected) = sample_rollout(&session, &turn_context).await;
+    let (rollout_items, expected) = sample_rollout(&session, &turn_context).await;
 
     session
         .record_initial_history(InitialHistory::Resumed(ResumedHistory {
@@ -3766,13 +3766,20 @@ async fn resumed_history_injects_initial_context_on_first_context_update_only() 
     session
         .record_context_updates_and_set_reference_context_item(&turn_context)
         .await;
-    expected.extend(
-        session
-            .build_initial_context_for_external_agent_tools(&turn_context)
-            .await,
-    );
     let history_after_seed = session.clone_history().await;
-    assert_eq!(expected, history_after_seed.raw_items());
+    assert_eq!(expected, &history_after_seed.raw_items()[..expected.len()]);
+    let appended_items = &history_after_seed.raw_items()[expected.len()..];
+    let full_initial_context = session
+        .build_initial_context_for_external_agent_tools(&turn_context)
+        .await;
+    assert_ne!(
+        appended_items, full_initial_context,
+        "ordinary resume baseline recovery must not append full Init Context"
+    );
+    assert!(
+        session.reference_context_item().await.is_some(),
+        "ordinary resume baseline recovery should install a fresh reference context"
+    );
 
     session
         .record_context_updates_and_set_reference_context_item(&turn_context)

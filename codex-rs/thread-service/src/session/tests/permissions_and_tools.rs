@@ -2114,7 +2114,7 @@ async fn build_settings_update_items_emits_environment_item_for_network_changes(
 
     let reference_context_item = previous_context.to_turn_context_item();
     let update_items = session
-        .build_settings_update_items(Some(&reference_context_item), &current_context)
+        .build_settings_update_items(Some(&reference_context_item), None, &current_context)
         .await;
 
     let environment_update = user_input_texts(&update_items)
@@ -2182,7 +2182,7 @@ async fn build_settings_update_items_emits_environment_item_for_time_changes() {
 
     let reference_context_item = previous_context.to_turn_context_item();
     let update_items = session
-        .build_settings_update_items(Some(&reference_context_item), &current_context)
+        .build_settings_update_items(Some(&reference_context_item), None, &current_context)
         .await;
 
     let environment_update = user_input_texts(&update_items)
@@ -2210,7 +2210,7 @@ async fn build_settings_update_items_omits_environment_item_when_disabled() {
 
     let reference_context_item = previous_context.to_turn_context_item();
     let update_items = session
-        .build_settings_update_items(Some(&reference_context_item), &current_context)
+        .build_settings_update_items(Some(&reference_context_item), None, &current_context)
         .await;
 
     let user_texts = user_input_texts(&update_items);
@@ -2237,6 +2237,7 @@ async fn build_settings_update_items_emits_realtime_start_when_session_becomes_l
     let update_items = session
         .build_settings_update_items(
             Some(&previous_context.to_turn_context_item()),
+            None,
             &current_context,
         )
         .await;
@@ -2265,6 +2266,7 @@ async fn build_settings_update_items_emits_realtime_end_when_session_stops_being
     let update_items = session
         .build_settings_update_items(
             Some(&previous_context.to_turn_context_item()),
+            None,
             &current_context,
         )
         .await;
@@ -2299,7 +2301,7 @@ async fn build_settings_update_items_uses_previous_turn_settings_for_realtime_en
         .set_previous_turn_settings(Some(previous_turn_settings))
         .await;
     let update_items = session
-        .build_settings_update_items(Some(&previous_context_item), &current_context)
+        .build_settings_update_items(Some(&previous_context_item), None, &current_context)
         .await;
 
     let developer_texts = developer_input_texts(&update_items);

@@ -57,18 +57,13 @@ pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_pref
 pub(crate) const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
 pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str = "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 
-/// Controls whether the post-compaction context segment must include initial context.
+/// Controls where the post-compaction context segment includes fresh initial context.
 ///
-/// Pre-turn compaction may use `DoNotInject`: it replaces history with a summary and clears
-/// `reference_context_item`, so the next regular turn will fully reinject initial context after
-/// compaction.
-///
-/// Manual and mid-turn compaction use `BeforeLastUserMessage` so the fresh context lands in the
-/// new model-visible segment immediately after the compaction summary.
+/// Compaction is a semantic context rewrite point, so production compaction must install fresh
+/// initial context immediately rather than relying on a later ordinary turn to rebuild it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InitialContextInjection {
     BeforeLastUserMessage,
-    DoNotInject,
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -415,19 +410,11 @@ async fn run_compact_task_inner_impl(
     let fresh_initial_context = sess
         .build_fresh_compact_initial_context(turn_context.as_ref())
         .await?;
-    let reference_context_item = match initial_context_injection {
-        InitialContextInjection::DoNotInject => None,
+    let reference_context_item = Some(fresh_initial_context.reference_context_item);
+    let initial_context_items = match initial_context_injection {
         InitialContextInjection::BeforeLastUserMessage => {
-            Some(fresh_initial_context.reference_context_item)
+            fresh_initial_context.response_items.clone()
         }
-    };
-    let initial_context_items = if matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
-    ) {
-        fresh_initial_context.response_items.clone()
-    } else {
-        Vec::new()
     };
     let mut post_compact_history = vec![
         CompactedItem {
@@ -859,13 +846,10 @@ pub(crate) async fn process_compacted_history(
     compacted_history: Vec<ResponseItem>,
     initial_context_injection: InitialContextInjection,
 ) -> Vec<ResponseItem> {
-    let initial_context = if matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
-    ) {
-        sess.build_initial_context(turn_context).await
-    } else {
-        Vec::new()
+    let initial_context = match initial_context_injection {
+        InitialContextInjection::BeforeLastUserMessage => {
+            sess.build_initial_context(turn_context).await
+        }
     };
 
     process_remote_compacted_history(compacted_history, initial_context)

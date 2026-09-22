@@ -154,6 +154,7 @@ fn reference_context_item() -> TurnContextItem {
         summary: ReasoningSummary::Auto,
         user_instructions: None,
         developer_instructions: None,
+        init_context_snapshot: None,
         final_output_json_schema: None,
         truncation_policy: Some(protocol::protocol::TruncationPolicy::Tokens(10_000)),
     }

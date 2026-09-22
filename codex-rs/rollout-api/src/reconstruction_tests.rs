@@ -82,6 +82,7 @@ fn turn_context_item(turn_id: &str, model: &str) -> TurnContextItem {
         summary: ReasoningSummary::Auto,
         user_instructions: None,
         developer_instructions: None,
+        init_context_snapshot: None,
         final_output_json_schema: None,
         truncation_policy: Some(TruncationPolicy::Tokens(1024)),
     }
@@ -120,6 +121,22 @@ fn rollback(num_turns: u32) -> RolloutItem {
     RolloutItem::EventMsg(EventMsg::ThreadRolledBack(ThreadRolledBackEvent {
         num_turns,
     }))
+}
+
+#[test]
+fn bare_turn_context_hydrates_reference_context_without_previous_turn_settings() {
+    let context_item = turn_context_item("bare-turn", "model-1");
+    let reconstructed = reconstruct_history_from_rollout(
+        &[RolloutItem::TurnContext(context_item.clone())],
+        options(),
+    );
+
+    assert_eq!(reconstructed.previous_turn_settings, None);
+    assert_eq!(
+        serde_json::to_value(reconstructed.reference_context_item)
+            .expect("serialize reconstructed reference context"),
+        serde_json::to_value(Some(context_item)).expect("serialize expected context")
+    );
 }
 
 #[test]

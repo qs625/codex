@@ -147,6 +147,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         summary: turn_context.reasoning_summary,
         user_instructions: None,
         developer_instructions: None,
+        init_context_snapshot: None,
         final_output_json_schema: None,
         truncation_policy: Some(turn_context.truncation_policy),
     };
