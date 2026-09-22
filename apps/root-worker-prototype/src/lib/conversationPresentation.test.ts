@@ -269,10 +269,10 @@ test("filters duplicate restart recovery marker rows across compact details", ()
   );
 });
 
-test("filters duplicate top-level init context already retained in compact details", () => {
+test("hides top-level init context while keeping compact replacement init context", () => {
   const cells = [
     {
-      id: "replayed-init-context",
+      id: "live-init-context",
       kind: "tool",
       entries: [initContextEntry("ctx-live")],
     },
@@ -308,7 +308,7 @@ test("filters duplicate top-level init context already retained in compact detai
         ),
       ]),
     ),
-    ["compact-entry", "ctx-retained", "ctx-different"],
+    ["compact-entry", "ctx-retained"],
   );
 });
 

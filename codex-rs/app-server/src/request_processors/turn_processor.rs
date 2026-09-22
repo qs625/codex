@@ -12,10 +12,10 @@ use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::apply_stored_agent_metadata_to_loaded_thread;
 use crate::request_processors::thread_processor::build_thread_from_snapshot;
+use crate::request_processors::thread_processor::load_resume_config_for_agent_role;
 use crate::request_processors::thread_processor::merge_persisted_resume_metadata;
 use crate::request_processors::thread_processor::native_agent_role_for_resume;
 use crate::request_processors::thread_processor::restore_persisted_display_turns_from_rollout_items;
-use crate::request_processors::thread_processor::resume_config_cwd;
 use crate::request_processors::thread_processor::stored_thread_root_agent_metadata;
 use crate::request_processors::thread_processor::stored_thread_session_source_with_agent_metadata;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
@@ -987,19 +987,16 @@ impl TurnRequestProcessor {
                 persisted_metadata,
             );
         }
-        let resume_cwd = resume_config_cwd(&thread_history, persisted_metadata.as_ref());
 
-        let mut config = self
-            .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, resume_cwd)
-            .await
-            .map_err(|err| config_load_error(&err))?;
-        if let Some(agent_role) = resume_agent_role
-            && let Err(err) =
-                codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
-        {
-            return Err(invalid_request(err));
-        }
+        let config = load_resume_config_for_agent_role(
+            &self.config_manager,
+            request_overrides,
+            typesafe_overrides,
+            &thread_history,
+            persisted_metadata.as_ref(),
+            resume_agent_role,
+        )
+        .await?;
         let new_thread = self
             .native_thread_creation
             .resume_thread_with_history_and_source(

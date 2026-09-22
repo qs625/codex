@@ -43,6 +43,49 @@ stream_max_retries = 0
     )
 }
 
+fn rewrite_rollout_session_meta_cwd(
+    rollout_path: &std::path::Path,
+    cwd: &std::path::Path,
+) -> Result<()> {
+    let contents = std::fs::read_to_string(rollout_path)?;
+    let mut rewrote = false;
+    let lines = contents
+        .lines()
+        .map(|line| -> Result<String> {
+            let mut value: serde_json::Value = serde_json::from_str(line)?;
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("session_meta") {
+                value["payload"]["cwd"] =
+                    serde_json::Value::String(cwd.to_string_lossy().to_string());
+                rewrote = true;
+            }
+            Ok(value.to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    anyhow::ensure!(rewrote, "expected rollout to contain session_meta");
+    std::fs::write(rollout_path, format!("{}\n", lines.join("\n")))?;
+    Ok(())
+}
+
+async fn wait_for_response_mock_request_count(
+    response_mock: &responses::ResponseMock,
+    expected_count: usize,
+) -> Result<()> {
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let actual_count = response_mock.requests().len();
+            if actual_count == expected_count {
+                return Ok(());
+            }
+            if actual_count > expected_count {
+                anyhow::bail!("expected {expected_count} Responses requests, got {actual_count}");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
+}
+
 #[tokio::test]
 async fn thread_resume_replays_pending_command_execution_request_approval() -> Result<()> {
     let responses = vec![
@@ -1194,6 +1237,119 @@ description: Project owner role fixture.
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(owner_start_resp)?;
     assert_eq!(thread.agent_path, None);
     assert_eq!(thread.agent_role.as_deref(), Some("owner"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn turn_start_lazy_resume_retries_project_agent_role_with_persisted_cwd() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    const ROLE_BODY: &str = "ROLE_LAZY_RESUME_PM_AGENT_MD_UNIQUE_INSTRUCTION";
+
+    let server = responses::start_mock_server().await;
+    let first_body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Seeded"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let second_body = responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_assistant_message("msg-2", "Done"),
+        responses::ev_completed("resp-2"),
+    ]);
+    let response_mock = responses::mount_sse_sequence(&server, vec![first_body, second_body]).await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let project = TempDir::new()?;
+    std::fs::create_dir_all(project.path().join(".git"))?;
+    let agents_dir = project.path().join(".morpheus").join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("pm.agent.md"),
+        format!(
+            r#"---
+name: pm
+description: Project PM role fixture.
+---
+
+{ROLE_BODY}
+"#
+        ),
+    )?;
+
+    let mut primary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, primary.initialize()).await??;
+
+    let start_id = primary
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(project.path().to_string_lossy().to_string()),
+            agent_type: Some("pm".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    let rollout_path = thread.path.clone().expect("thread path");
+    assert_eq!(thread.agent_role.as_deref(), Some("pm"));
+
+    let materialize_id = primary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(materialize_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    drop(primary);
+
+    rewrite_rollout_session_meta_cwd(rollout_path.as_path(), codex_home.path())?;
+
+    let mut secondary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, secondary.initialize()).await??;
+
+    let turn_id = secondary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "after lazy resume".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    wait_for_response_mock_request_count(&response_mock, 2).await?;
+    let requests = response_mock.requests();
+    let request = &requests[1];
+    assert!(
+        request.body_contains_text(ROLE_BODY),
+        "expected lazy-resumed model context to include project role body, got {:?}",
+        request.body_json()
+    );
 
     Ok(())
 }

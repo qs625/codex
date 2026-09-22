@@ -10,6 +10,7 @@ use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+#[cfg(test)]
 use std::path::PathBuf;
 
 mod listing;
@@ -216,6 +217,7 @@ fn is_external_agent_provider_label(label: &str) -> bool {
     is_external_cli_thread_provider_id(label)
 }
 
+#[cfg(test)]
 pub(super) fn resume_config_cwd(
     thread_history: &InitialHistory,
     persisted_metadata: Option<&ThreadMetadata>,
@@ -223,6 +225,53 @@ pub(super) fn resume_config_cwd(
     thread_history
         .session_cwd()
         .or_else(|| persisted_metadata.map(|metadata| metadata.cwd.clone()))
+}
+
+pub(super) async fn load_resume_config_for_agent_role(
+    config_manager: &ConfigManager,
+    request_overrides: Option<HashMap<String, serde_json::Value>>,
+    typesafe_overrides: ConfigOverrides,
+    thread_history: &InitialHistory,
+    persisted_metadata: Option<&ThreadMetadata>,
+    resume_agent_role: Option<&str>,
+) -> Result<Config, JSONRPCErrorError> {
+    let history_cwd = thread_history.session_cwd();
+    let persisted_cwd = persisted_metadata.map(|metadata| metadata.cwd.clone());
+    let resume_cwd = history_cwd.clone().or_else(|| persisted_cwd.clone());
+    let mut config = config_manager
+        .load_for_cwd(
+            request_overrides.clone(),
+            typesafe_overrides.clone(),
+            resume_cwd,
+        )
+        .await
+        .map_err(|err| config_load_error(&err))?;
+
+    let Some(agent_role) = resume_agent_role else {
+        return Ok(config);
+    };
+    match codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await {
+        Ok(()) => Ok(config),
+        Err(err)
+            if is_unknown_agent_type_error(&err)
+                && persisted_cwd.is_some()
+                && history_cwd.as_ref() != persisted_cwd.as_ref() =>
+        {
+            let mut config = config_manager
+                .load_for_cwd(request_overrides, typesafe_overrides, persisted_cwd)
+                .await
+                .map_err(|err| config_load_error(&err))?;
+            codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role))
+                .await
+                .map_err(invalid_request)?;
+            Ok(config)
+        }
+        Err(err) => Err(invalid_request(err)),
+    }
+}
+
+fn is_unknown_agent_type_error(err: &str) -> bool {
+    err.starts_with("unknown agent_type ")
 }
 
 pub(super) fn merge_persisted_resume_metadata(

@@ -11,14 +11,12 @@ export function filterConversationCellsForDisplay(
 ): ConversationCell[] {
   const topLevelRecoveryFacts = collectTopLevelRecoveryFactKeys(cells);
   const topLevelUserRecoveryFacts = collectTopLevelUserRecoveryFactKeys(cells);
-  const nestedInitContextFacts = collectNestedInitContextFactKeys(cells);
   return filterConversationCellsForDisplayWithState(
     cells,
     {
       topLevelSeenRecoveryFacts: new Set(),
       nestedSeenRecoveryFacts: new Set(topLevelRecoveryFacts),
       topLevelUserRecoveryFacts,
-      nestedInitContextFacts,
     },
     true,
   );
@@ -28,7 +26,6 @@ type RecoveryFactFilterState = {
   topLevelSeenRecoveryFacts: Set<string>;
   nestedSeenRecoveryFacts: Set<string>;
   topLevelUserRecoveryFacts: Set<string>;
-  nestedInitContextFacts: Set<string>;
 };
 
 function filterConversationCellsForDisplayWithState(
@@ -41,7 +38,7 @@ function filterConversationCellsForDisplayWithState(
     const entries: ConversationEntry[] = [];
     for (const entry of cell.entries) {
       if (
-        shouldHideDuplicateTopLevelInitContext(entry, isTopLevel, state) ||
+        shouldHideTopLevelInitContext(entry, isTopLevel) ||
         (isTopLevel &&
           shouldPreferTopLevelUserRecoveryFact(entry, state)) ||
         !consumeRecoveryFactIfDuplicate(
@@ -63,16 +60,11 @@ function filterConversationCellsForDisplayWithState(
   return displayCells;
 }
 
-function shouldHideDuplicateTopLevelInitContext(
+function shouldHideTopLevelInitContext(
   entry: ConversationEntry,
   isTopLevel: boolean,
-  state: RecoveryFactFilterState,
 ) {
-  if (!isTopLevel) {
-    return false;
-  }
-  const key = initContextFactKey(entry);
-  return key !== null && state.nestedInitContextFacts.has(key);
+  return isTopLevel && initContextFactKey(entry) !== null;
 }
 
 function filterConversationEntryForDisplay(
@@ -126,29 +118,6 @@ function collectTopLevelUserRecoveryFactKeys(cells: ConversationCell[]) {
       if (key) {
         keys.add(key);
       }
-    }
-  }
-  return keys;
-}
-
-function collectNestedInitContextFactKeys(cells: ConversationCell[]) {
-  const keys = new Set<string>();
-  const collect = (nestedCells: ConversationCell[] | null | undefined) => {
-    for (const cell of nestedCells ?? []) {
-      for (const entry of cell.entries) {
-        const key = initContextFactKey(entry);
-        if (key) {
-          keys.add(key);
-        }
-        collect(entry.replacementHistoryCells);
-        collect(entry.archivedCells);
-      }
-    }
-  };
-  for (const cell of cells) {
-    for (const entry of cell.entries) {
-      collect(entry.replacementHistoryCells);
-      collect(entry.archivedCells);
     }
   }
   return keys;

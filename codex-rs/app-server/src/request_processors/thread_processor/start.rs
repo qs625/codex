@@ -767,30 +767,24 @@ impl ThreadRequestProcessor {
                 &mut typesafe_overrides,
             )
             .await;
-        let resume_cwd = resume_config_cwd(&thread_history, persisted_metadata.as_ref());
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let mut config = match self
-            .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, resume_cwd)
-            .await
+        let config = match load_resume_config_for_agent_role(
+            &self.config_manager,
+            request_overrides,
+            typesafe_overrides,
+            &thread_history,
+            persisted_metadata.as_ref(),
+            resume_agent_role,
+        )
+        .await
         {
             Ok(config) => config,
-            Err(err) => {
-                let error = config_load_error(&err);
+            Err(error) => {
                 self.outgoing.send_error(request_id, error).await;
                 return Ok(());
             }
         };
-        if let Some(agent_role) = resume_agent_role
-            && let Err(err) =
-                codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
-        {
-            self.outgoing
-                .send_error(request_id, invalid_request(err))
-                .await;
-            return Ok(());
-        }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
@@ -1246,19 +1240,16 @@ impl ThreadRequestProcessor {
                 &mut typesafe_overrides,
             )
             .await;
-        let resume_cwd = resume_config_cwd(&thread_history, persisted_metadata.as_ref());
 
-        let mut config = self
-            .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, resume_cwd)
-            .await
-            .map_err(|err| config_load_error(&err))?;
-        if let Some(agent_role) = resume_agent_role
-            && let Err(err) =
-                codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
-        {
-            return Err(invalid_request(err));
-        }
+        let config = load_resume_config_for_agent_role(
+            &self.config_manager,
+            request_overrides,
+            typesafe_overrides,
+            &thread_history,
+            persisted_metadata.as_ref(),
+            resume_agent_role,
+        )
+        .await?;
 
         let new_thread = self
             .native_thread_creation
@@ -1307,7 +1298,8 @@ impl ThreadRequestProcessor {
             .upsert_thread_silently_with_lifecycle_status(loaded_thread, lifecycle_status.clone())
             .await;
         if let Some(lifecycle_status) = lifecycle_status {
-            self.persist_thread_status(thread_id, &lifecycle_status).await;
+            self.persist_thread_status(thread_id, &lifecycle_status)
+                .await;
         }
         Ok(())
     }
