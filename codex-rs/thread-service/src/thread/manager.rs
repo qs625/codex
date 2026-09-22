@@ -2694,6 +2694,32 @@ impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
                 })
         }
     }
+
+    fn apply_live_thread_persisted_resume_metadata(
+        &self,
+        thread_id: ThreadId,
+        resume_config: thread_service_api::LiveThreadResumeConfig,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread_service_api::LiveThreadHandle::apply_persisted_resume_metadata(
+                thread.as_ref(),
+                resume_config,
+                cwd,
+                root_agent_path,
+                root_agent_role,
+            )
+            .await
+            .map_err(|err| {
+                CodexErr::InvalidRequest(format!(
+                    "failed to apply persisted resume metadata: {err}"
+                ))
+            })
+        }
+    }
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -3165,6 +3191,24 @@ impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
             self.state.as_ref(),
             thread_id,
             overrides,
+        )
+    }
+
+    fn apply_live_thread_persisted_resume_metadata(
+        &self,
+        thread_id: ThreadId,
+        resume_config: thread_service_api::LiveThreadResumeConfig,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadTurnRuntime::apply_live_thread_persisted_resume_metadata(
+            self.state.as_ref(),
+            thread_id,
+            resume_config,
+            cwd,
+            root_agent_path,
+            root_agent_role,
         )
     }
 }

@@ -1,5 +1,5 @@
-pub use permissions_service_api::ExecApprovalRequirement;
 use codex_utils_absolute_path::AbsolutePathBuf;
+pub use permissions_service_api::ExecApprovalRequirement;
 use protocol::error::CodexErr;
 use protocol::models::AdditionalPermissionProfile;
 use protocol::models::SandboxPermissions;

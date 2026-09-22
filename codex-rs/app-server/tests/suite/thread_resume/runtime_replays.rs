@@ -1,8 +1,10 @@
 use super::*;
+use anyhow::Context;
 use app_server_protocol::ItemCompletedNotification;
 use app_test_support::create_exec_command_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
 use codex_features::Feature;
+use state::StateRuntime;
 use std::collections::BTreeMap;
 
 fn create_config_toml_with_sandbox(
@@ -63,6 +65,33 @@ fn rewrite_rollout_session_meta_cwd(
         .collect::<Result<Vec<_>>>()?;
     anyhow::ensure!(rewrote, "expected rollout to contain session_meta");
     std::fs::write(rollout_path, format!("{}\n", lines.join("\n")))?;
+    Ok(())
+}
+
+fn copy_rollout_to_compact_with_session_meta_cwd(
+    rollout_path: &std::path::Path,
+    compact_path: &std::path::Path,
+    cwd: &std::path::Path,
+) -> Result<()> {
+    let contents = std::fs::read_to_string(rollout_path)?;
+    let mut rewrote = false;
+    let lines = contents
+        .lines()
+        .map(|line| -> Result<String> {
+            let mut value: serde_json::Value = serde_json::from_str(line)?;
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("session_meta") {
+                value["payload"]["cwd"] =
+                    serde_json::Value::String(cwd.to_string_lossy().to_string());
+                rewrote = true;
+            }
+            Ok(value.to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    anyhow::ensure!(rewrote, "expected rollout to contain session_meta");
+    if let Some(parent) = compact_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(compact_path, format!("{}\n", lines.join("\n")))?;
     Ok(())
 }
 
@@ -1510,6 +1539,317 @@ description: Wrong PM role fixture.
     assert!(
         !request.body_contains_text(WRONG_ROLE_BODY),
         "expected stale rollout cwd role body to be ignored, got {:?}",
+        request.body_json()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_then_turn_start_repairs_live_thread_config_without_root_agent_metadata()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    const PROJECT_INSTRUCTION: &str = "ROLELESS_PROJECT_CONFIG_REPAIR_UNIQUE_INSTRUCTION";
+
+    let server = responses::start_mock_server().await;
+    let first_body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Seeded"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let second_body = responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_assistant_message("msg-2", "Done"),
+        responses::ev_completed("resp-2"),
+    ]);
+    let response_mock = responses::mount_sse_sequence(&server, vec![first_body, second_body]).await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let project = TempDir::new()?;
+    std::fs::create_dir_all(project.path().join(".git"))?;
+    let project_config_dir = project.path().join(".morpheus");
+    std::fs::create_dir_all(&project_config_dir)?;
+    let instruction_dir = project.path().join("instructions");
+    std::fs::create_dir_all(&instruction_dir)?;
+    std::fs::write(
+        instruction_dir.join("project-understanding.md"),
+        PROJECT_INSTRUCTION,
+    )?;
+    std::fs::write(
+        project_config_dir.join("config.toml"),
+        r#"
+instruction_files = [
+  "instructions/project-understanding.md",
+]
+"#,
+    )?;
+
+    let stale_project = TempDir::new()?;
+    std::fs::create_dir_all(stale_project.path().join(".git"))?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(stale_project.path().to_string_lossy().to_string()),
+            model: Some("gpt-5.4".to_string()),
+            reasoning_effort: Some(protocol::openai_models::ReasoningEffort::High),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)
+        .context("deserializing thread/start response for compact state DB repair test")?;
+    let thread_id = ThreadId::from_string(&thread.id)
+        .context("parsing started thread id for compact state DB repair test")?;
+    assert_eq!(thread.agent_role, None);
+    assert_eq!(thread.agent_path, None);
+
+    let materialize_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(materialize_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let state_db =
+        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let mut metadata = state_db
+        .get_thread(thread_id)
+        .await?
+        .expect("thread metadata should be persisted");
+    metadata.cwd = project.path().to_path_buf();
+    metadata.agent_role = None;
+    metadata.agent_path = None;
+    metadata.model = Some("gpt-5.4".to_string());
+    metadata.reasoning_effort = Some(protocol::openai_models::ReasoningEffort::High);
+    state_db.upsert_thread(&metadata).await?;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let read: ThreadReadResponse = to_response::<ThreadReadResponse>(read_resp)?;
+    assert_eq!(read.thread.agent_role, None);
+    assert_eq!(read.thread.agent_path, None);
+    assert_eq!(
+        std::fs::canonicalize(read.thread.cwd.as_path())?,
+        std::fs::canonicalize(project.path())?
+    );
+
+    let turn_id = mcp
+        .send_turn_start_json_request(json!({
+            "threadId": read.thread.id,
+            "input": [{
+                "type": "text",
+                "text": "after roleless metadata read",
+                "text_elements": [],
+            }],
+            "model": "gpt-5.4",
+            "effort": "high",
+        }))
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    wait_for_response_mock_request_count(&response_mock, 2).await?;
+    let requests = response_mock.requests();
+    let request = &requests[1];
+    assert!(
+        request.body_contains_text(PROJECT_INSTRUCTION),
+        "expected roleless live config repair to include project instruction, got {:?}",
+        request.body_json()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_then_turn_start_repairs_live_thread_from_compact_state_db_metadata()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    const ROLE_BODY: &str = "ROLE_COMPACT_DB_PM_AGENT_MD_UNIQUE_INSTRUCTION";
+
+    let server = responses::start_mock_server().await;
+    let first_body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Seeded"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let second_body = responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_assistant_message("msg-2", "Done"),
+        responses::ev_completed("resp-2"),
+    ]);
+    let response_mock = responses::mount_sse_sequence(&server, vec![first_body, second_body]).await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let project = TempDir::new()?;
+    std::fs::create_dir_all(project.path().join(".git"))?;
+    let agents_dir = project.path().join(".morpheus").join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("pm.agent.md"),
+        format!(
+            r#"---
+name: pm
+description: Project PM role fixture.
+---
+
+{ROLE_BODY}
+"#
+        ),
+    )?;
+
+    let stale_project = TempDir::new()?;
+    std::fs::create_dir_all(stale_project.path().join(".git"))?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(stale_project.path().to_string_lossy().to_string()),
+            model: Some("gpt-5.4".to_string()),
+            reasoning_effort: Some(protocol::openai_models::ReasoningEffort::High),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    let rollout_path = thread.path.clone().expect("thread path");
+    let thread_id = ThreadId::from_string(&thread.id)?;
+    assert_eq!(thread.agent_role, None);
+
+    let materialize_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(materialize_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let compact_path = rollout_path
+        .parent()
+        .expect("rollout parent")
+        .join("rollout-2026-09-14T13-40-15-01a09e6e-2db6-7eb3-bd51-3a5bc57d0f0a")
+        .join("compact-000004.jsonl");
+    copy_rollout_to_compact_with_session_meta_cwd(
+        rollout_path.as_path(),
+        compact_path.as_path(),
+        project.path(),
+    )?;
+    let state_db =
+        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let mut metadata = state_db
+        .get_thread(thread_id)
+        .await?
+        .expect("thread metadata should be persisted");
+    metadata.rollout_path = compact_path;
+    metadata.cwd = project.path().to_path_buf();
+    metadata.agent_role = Some("pm".to_string());
+    metadata.agent_path = Some("/cp_http_api".to_string());
+    metadata.model = Some("gpt-5.4".to_string());
+    metadata.reasoning_effort = Some(protocol::openai_models::ReasoningEffort::High);
+    state_db.upsert_thread(&metadata).await?;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let read: ThreadReadResponse = to_response::<ThreadReadResponse>(read_resp)?;
+    assert_eq!(read.thread.agent_role.as_deref(), Some("pm"));
+    assert_eq!(
+        std::fs::canonicalize(read.thread.cwd.as_path())?,
+        std::fs::canonicalize(project.path())?
+    );
+
+    let turn_start_params = json!({
+        "threadId": read.thread.id,
+        "input": [{
+            "type": "text",
+            "text": "after compact metadata read",
+            "text_elements": [],
+        }],
+        "model": "gpt-5.4",
+        "effort": "high",
+    });
+    assert!(
+        turn_start_params.get("cwd").is_none(),
+        "Electron sendMessage turn/start params must not include cwd"
+    );
+    let turn_id = mcp.send_turn_start_json_request(turn_start_params).await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    wait_for_response_mock_request_count(&response_mock, 2).await?;
+    let requests = response_mock.requests();
+    let request = &requests[1];
+    assert!(
+        request.body_contains_text(ROLE_BODY),
+        "expected repaired live model context to include project role body, got {:?}",
         request.body_json()
     );
 

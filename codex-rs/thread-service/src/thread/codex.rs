@@ -5,8 +5,10 @@ use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
 use codex_agent_runtime::ThreadIdleReason;
 use codex_agent_runtime::ThreadPostTurnState;
-use config_service::ConstraintResult;
 use codex_features::Feature;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use config_service::Config;
+use config_service::ConstraintResult;
 use mcp_service_api::McpToolRuntime;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
@@ -358,6 +360,21 @@ impl CodexThread {
         self.codex.session.validate_settings(&updates).await
     }
 
+    /// Repair sticky resume metadata on a live native thread before app-server
+    /// accepts a turn for a persisted root thread.
+    pub async fn apply_persisted_resume_metadata(
+        &self,
+        resume_config: Config,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> ConstraintResult<()> {
+        self.codex
+            .session
+            .apply_persisted_resume_metadata(resume_config, cwd, root_agent_path, root_agent_role)
+            .await
+    }
+
     /// Use sparingly: this is intended to be removed soon.
     pub async fn submit_with_id(&self, sub: Submission) -> CodexResult<()> {
         self.codex.submit_with_id(sub).await
@@ -482,9 +499,8 @@ impl CodexThread {
         for segment_path in rollout::segment_paths_for_rollout(&rollout_path)? {
             let (items, _, _) = rollout::RolloutRecorder::load_rollout_items(&segment_path).await?;
             for item in items {
-                if let protocol::protocol::RolloutItem::EventMsg(
-                    EventMsg::ClientRecovery(existing),
-                ) = item
+                if let protocol::protocol::RolloutItem::EventMsg(EventMsg::ClientRecovery(existing)) =
+                    item
                     && existing.recovery_id == event.recovery_id
                 {
                     if existing == event {
@@ -500,9 +516,7 @@ impl CodexThread {
 
         let event_msg = EventMsg::ClientRecovery(event.clone());
         live_thread
-            .append_items(&[protocol::protocol::RolloutItem::EventMsg(
-                event_msg.clone(),
-            )])
+            .append_items(&[protocol::protocol::RolloutItem::EventMsg(event_msg.clone())])
             .await
             .map_err(|err| CodexErr::Fatal(err.to_string()))?;
         self.codex.session.flush_rollout().await?;
@@ -783,6 +797,35 @@ impl thread_service_api::LiveThreadHandle for CodexThread {
         overrides: CodexThreadTurnContextOverrides,
     ) -> impl std::future::Future<Output = ConstraintResult<()>> + Send + '_ {
         CodexThread::validate_turn_context_overrides(self, overrides)
+    }
+
+    fn apply_persisted_resume_metadata(
+        &self,
+        resume_config: thread_service_api::LiveThreadResumeConfig,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> impl std::future::Future<Output = ConstraintResult<()>> + Send + '_ {
+        let resume_config = resume_config
+            .downcast::<Config>()
+            .map(|config| (*config).clone())
+            .map_err(|_| config_service::ConstraintError::InvalidValue {
+                field_name: "resume_config",
+                candidate: "opaque resume config".to_string(),
+                allowed: "config_service::Config".to_string(),
+                requirement_source: config_service::RequirementSource::Unknown,
+            });
+        async move {
+            let resume_config = resume_config?;
+            CodexThread::apply_persisted_resume_metadata(
+                self,
+                resume_config,
+                cwd,
+                root_agent_path,
+                root_agent_role,
+            )
+            .await
+        }
     }
 
     fn token_usage_info(

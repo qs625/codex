@@ -97,13 +97,10 @@ impl ThreadWaitState {
         initial_timeout_ms: i64,
         hard_cap_timeout_ms: i64,
     ) -> Duration {
-        self.backoff
-            .lock()
-            .await
-            .current_window(
-                duration_from_config_ms(initial_timeout_ms),
-                duration_from_config_ms(hard_cap_timeout_ms),
-            )
+        self.backoff.lock().await.current_window(
+            duration_from_config_ms(initial_timeout_ms),
+            duration_from_config_ms(hard_cap_timeout_ms),
+        )
     }
 
     pub(crate) async fn timeout_metadata(
@@ -154,8 +151,11 @@ impl ThreadWaitState {
                 }
             }
             Ok(None) | Err(_) => {
-                self.advance_after_timeout(metadata.initial_timeout_ms, metadata.hard_cap_timeout_ms)
-                    .await;
+                self.advance_after_timeout(
+                    metadata.initial_timeout_ms,
+                    metadata.hard_cap_timeout_ms,
+                )
+                .await;
                 ThreadWaitOutcome::Timeout {
                     waited_ms: started.elapsed().as_millis() as i64,
                 }

@@ -703,6 +703,39 @@ pub(crate) fn stored_thread_root_agent_metadata(thread: &StoredThread) -> Option
     })
 }
 
+pub(crate) fn stored_thread_root_agent_metadata_with_persisted(
+    thread: &StoredThread,
+    persisted_metadata: Option<&state_api::ThreadMetadata>,
+) -> Result<Option<AgentMetadata>, JSONRPCErrorError> {
+    if thread.source.is_non_root_agent() {
+        return Ok(None);
+    }
+
+    let mut metadata = stored_thread_root_agent_metadata(thread).unwrap_or_default();
+    let mut has_metadata = metadata.agent_path.is_some() || metadata.agent_role.is_some();
+    if let Some(persisted_metadata) = persisted_metadata {
+        if let Some(agent_path) = persisted_metadata.agent_path.as_ref() {
+            match AgentPath::try_from(agent_path.as_str()) {
+                Ok(agent_path) => {
+                    metadata.agent_path = Some(agent_path);
+                    has_metadata = true;
+                }
+                Err(err) => {
+                    return Err(invalid_request(format!(
+                        "invalid persisted agent_path: {err}"
+                    )));
+                }
+            }
+        }
+        if let Some(agent_role) = persisted_metadata.agent_role.as_ref() {
+            metadata.agent_role = Some(agent_role.clone());
+            has_metadata = true;
+        }
+    }
+
+    Ok(has_metadata.then_some(metadata))
+}
+
 pub(crate) fn thread_from_stored_thread(
     thread: StoredThread,
     fallback_provider: &str,

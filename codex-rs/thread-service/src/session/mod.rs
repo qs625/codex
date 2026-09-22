@@ -1717,6 +1717,177 @@ impl Session {
         state.session_configuration.apply(updates).map(|_| ())
     }
 
+    pub(crate) async fn apply_persisted_resume_metadata(
+        &self,
+        resume_config: Config,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> ConstraintResult<()> {
+        let root_agent_path = root_agent_path
+            .map(|path| {
+                AgentPath::try_from(path.clone()).map_err(|err| {
+                    config_service::ConstraintError::InvalidValue {
+                        field_name: "agent_path",
+                        candidate: path,
+                        allowed: format!("valid absolute agent path ({err})"),
+                        requirement_source: config_service::RequirementSource::Unknown,
+                    }
+                })
+            })
+            .transpose()?;
+        let update_root_agent_metadata = root_agent_path.is_some() || root_agent_role.is_some();
+        let previous_cwd = {
+            let state = self.state.lock().await;
+            state.session_configuration.cwd.clone()
+        };
+        let resume_user_instructions = AgentsMdManager::new(&resume_config)
+            .user_instructions_with_fs(LOCAL_FS.as_ref())
+            .await;
+
+        self.update_settings(SessionSettingsUpdate {
+            cwd: Some(cwd.to_path_buf()),
+            ..Default::default()
+        })
+        .await?;
+
+        let (previous_config, new_config, config, root_agent_metadata, permission_profile_changed) = {
+            let mut state = self.state.lock().await;
+            let current_root_agent_metadata = state
+                .session_configuration
+                .root_agent_metadata
+                .clone()
+                .or_else(|| {
+                    self.services
+                        .agent_control
+                        .get_agent_metadata(self.conversation_id)
+                });
+            let reference_context_needs_refresh = previous_cwd != cwd
+                || state.session_configuration.developer_instructions
+                    != resume_config.developer_instructions
+                || state.session_configuration.user_instructions != resume_user_instructions
+                || root_agent_path.as_ref().is_some_and(|agent_path| {
+                    current_root_agent_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.agent_path.as_ref())
+                        != Some(agent_path)
+                })
+                || root_agent_role.as_ref().is_some_and(|agent_role| {
+                    current_root_agent_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.agent_role.as_ref())
+                        != Some(agent_role)
+                });
+            let previous_config =
+                Self::build_effective_session_config(&state.session_configuration);
+            let previous_permission_profile = state.session_configuration.permission_profile();
+            state.session_configuration.provider = resume_config.model_provider.clone();
+            let model = resume_config.model.clone().unwrap_or_default();
+            state.session_configuration.collaboration_mode =
+                state.session_configuration.collaboration_mode.with_updates(
+                    Some(model),
+                    Some(resume_config.model_reasoning_effort),
+                    None,
+                );
+            state.session_configuration.model_reasoning_summary =
+                resume_config.model_reasoning_summary.clone();
+            state.session_configuration.developer_instructions =
+                resume_config.developer_instructions.clone();
+            state.session_configuration.user_instructions = resume_user_instructions;
+            state.session_configuration.compact_prompt = resume_config.compact_prompt.clone();
+            state.session_configuration.personality = resume_config.personality;
+            state.session_configuration.approval_policy =
+                resume_config.permissions.approval_policy.clone();
+            state
+                .session_configuration
+                .approval_policy_is_session_override =
+                SessionConfiguration::approval_policy_is_session_override(&resume_config);
+            state.session_configuration.approvals_reviewer = resume_config.approvals_reviewer;
+            state.session_configuration.permission_profile_state =
+                session_permission_profile_state_from_config(&resume_config).map_err(|err| {
+                    config_service::ConstraintError::InvalidValue {
+                        field_name: "permission_profile",
+                        candidate: err.to_string(),
+                        allowed: "valid permission profile".to_string(),
+                        requirement_source: config_service::RequirementSource::Unknown,
+                    }
+                })?;
+            state
+                .session_configuration
+                .permission_profile_is_session_override =
+                SessionConfiguration::permission_profile_is_session_override(&resume_config);
+            state.session_configuration.windows_sandbox_level =
+                WindowsSandboxLevel::from_config(&resume_config);
+            state.session_configuration.workspace_roots = resume_config.workspace_roots.clone();
+            let config = Arc::new(resume_config);
+            state.session_configuration.original_config_do_not_use = Arc::clone(&config);
+
+            let root_agent_metadata = update_root_agent_metadata.then(|| {
+                let mut metadata =
+                    current_root_agent_metadata
+                        .clone()
+                        .unwrap_or_else(|| AgentMetadata {
+                            agent_id: Some(self.conversation_id),
+                            ..Default::default()
+                        });
+                metadata.agent_id = Some(self.conversation_id);
+                if let Some(agent_path) = root_agent_path {
+                    metadata.agent_path = Some(agent_path);
+                }
+                if let Some(agent_role) = root_agent_role {
+                    metadata.agent_role = Some(agent_role);
+                }
+                state.session_configuration.root_agent_metadata = Some(metadata.clone());
+                metadata
+            });
+            if reference_context_needs_refresh {
+                state.set_reference_context_item(None);
+            }
+            let permission_profile_changed =
+                previous_permission_profile != state.session_configuration.permission_profile();
+            let new_config = Self::build_effective_session_config(&state.session_configuration);
+            (
+                previous_config,
+                new_config,
+                config,
+                root_agent_metadata,
+                permission_profile_changed,
+            )
+        };
+        self.emit_config_changed_contributors(Some(&previous_config), Some(&new_config));
+        self.services.skill_service.clear_cache();
+        self.services.plugins_manager.clear_cache();
+        if permission_profile_changed {
+            self.refresh_managed_network_proxy_for_current_permission_profile()
+                .await;
+        }
+        if let Some(root_agent_metadata) = root_agent_metadata {
+            self.services
+                .agent_control
+                .register_root_scope_agent_metadata(root_agent_metadata);
+        }
+        let hooks = build_hooks_for_config(
+            config.as_ref(),
+            self.services.plugins_manager.as_ref(),
+            self.services.user_shell.as_ref(),
+            self.services.hook_runtime_factory.as_ref(),
+        )
+        .await;
+
+        let state = self.state.lock().await;
+        if Arc::ptr_eq(
+            &state.session_configuration.original_config_do_not_use,
+            &config,
+        ) {
+            *self
+                .services
+                .hooks
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = hooks;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn set_session_startup_prewarm(
         &self,
         startup_prewarm: SessionStartupPrewarmHandle,

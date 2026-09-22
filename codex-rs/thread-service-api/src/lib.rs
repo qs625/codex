@@ -9,6 +9,7 @@ mod exec_runtime;
 mod session_contracts;
 mod turn_diff_tracker;
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
@@ -109,6 +110,11 @@ pub struct LiveThreadConfigRefreshSnapshot {
     pub cwd: AbsolutePathBuf,
     pub session_layers: Vec<ConfigLayerEntry>,
 }
+
+/// Opaque effective config resolved by the app-server for a persisted native
+/// thread resume. Concrete live-thread runtimes downcast it internally without
+/// forcing this API crate to depend on the native config crate.
+pub type LiveThreadResumeConfig = Arc<dyn Any + Send + Sync>;
 
 /// Turn context overrides that a caller wants to apply to the next live turn.
 ///
@@ -374,6 +380,17 @@ pub trait LiveThreadTurnRuntime: Send + Sync {
         thread_id: ThreadId,
         overrides: CodexThreadTurnContextOverrides,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    /// Reapply persisted root-thread metadata to an already-loaded native
+    /// thread before accepting input for a resumed thread.
+    fn apply_live_thread_persisted_resume_metadata(
+        &self,
+        thread_id: ThreadId,
+        resume_config: LiveThreadResumeConfig,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
 /// Read-only inspection surface for live threads without exposing concrete handles.
@@ -568,6 +585,15 @@ pub trait LiveThreadHandle: SessionCommandHandle + Send + Sync {
     fn validate_turn_context_overrides(
         &self,
         overrides: CodexThreadTurnContextOverrides,
+    ) -> impl Future<Output = ConstraintResult<()>> + Send + '_;
+
+    /// Reapply persisted root-thread metadata to this live native thread.
+    fn apply_persisted_resume_metadata(
+        &self,
+        resume_config: LiveThreadResumeConfig,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
     ) -> impl Future<Output = ConstraintResult<()>> + Send + '_;
 
     /// Return the complete token usage snapshot currently cached for this live thread.

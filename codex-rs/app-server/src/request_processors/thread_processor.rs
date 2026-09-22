@@ -7,6 +7,7 @@ use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -28,7 +29,7 @@ use self::runtime::*;
 pub(crate) use self::support::apply_stored_agent_metadata_to_loaded_thread;
 pub(crate) use self::support::build_thread_from_snapshot;
 pub(super) use self::support::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
-pub(crate) use self::support::stored_thread_root_agent_metadata;
+pub(crate) use self::support::stored_thread_root_agent_metadata_with_persisted;
 pub(crate) use self::support::stored_thread_session_source_with_agent_metadata;
 pub(crate) use self::support::thread_from_stored_thread;
 pub(crate) use self::support::thread_store_resume_read_error;
@@ -247,8 +248,15 @@ pub(super) async fn load_resume_config_for_agent_role(
     persisted_metadata: Option<&ThreadMetadata>,
     stored_thread_cwd: Option<PathBuf>,
     resume_agent_role: Option<&str>,
+    prefer_persisted_cwd: bool,
 ) -> Result<Config, JSONRPCErrorError> {
     let cwd_candidates = if resume_agent_role.is_some() {
+        resume_agent_role_cwd_candidates(
+            thread_history,
+            persisted_metadata,
+            stored_thread_cwd.as_ref(),
+        )
+    } else if prefer_persisted_cwd {
         resume_agent_role_cwd_candidates(
             thread_history,
             persisted_metadata,
@@ -578,6 +586,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     pub(super) live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     pub(super) live_thread_elicitation: Arc<dyn AppServerLiveThreadElicitationRuntime>,
+    pub(super) live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
     pub(super) thread_agent_directory_runtime:
         Arc<dyn thread_service_api::ThreadAgentDirectoryRuntime>,
@@ -629,6 +638,7 @@ impl ThreadRequestProcessor {
             live_thread_usage: thread_service.clone(),
             live_thread_goal: thread_service.clone(),
             live_thread_elicitation: thread_service.clone(),
+            live_thread_turn: thread_service.clone(),
             thread_metadata_runtime: thread_service.clone(),
             thread_agent_directory_runtime: thread_service.clone(),
             persisted_thread_provider_facts_runtime: thread_service.clone(),

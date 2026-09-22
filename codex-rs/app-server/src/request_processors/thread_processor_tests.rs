@@ -1912,6 +1912,60 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn persisted_root_agent_metadata_rejects_invalid_agent_path() -> Result<()> {
+        let created_at = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z")?;
+        let thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000123")?;
+        let stored_thread = StoredThread {
+            thread_id,
+            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            name: None,
+            model_provider: "openai".to_string(),
+            model: None,
+            reasoning_effort: None,
+            created_at: created_at.with_timezone(&Utc),
+            updated_at: created_at.with_timezone(&Utc),
+            archived_at: None,
+            cwd: PathBuf::from("/tmp"),
+            cli_version: "0.0.0".to_string(),
+            source: SessionSource::Cli,
+            thread_source: Some(protocol::protocol::ThreadSource::User),
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            approval_mode: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            skills: Vec::new(),
+            token_usage: None,
+            first_user_message: Some("first user message".to_string()),
+            thread_status: None,
+            history: None,
+        };
+        let mut persisted_metadata = test_thread_metadata(None, None)?;
+        persisted_metadata.agent_path = Some("not/absolute".to_string());
+
+        let err = stored_thread_root_agent_metadata_with_persisted(
+            &stored_thread,
+            Some(&persisted_metadata),
+        )
+        .expect_err("invalid persisted agent path should fail");
+
+        assert_eq!(
+            err.error.code,
+            crate::error_code::INVALID_REQUEST_ERROR_CODE
+        );
+        assert!(
+            err.error.message.contains("invalid persisted agent_path"),
+            "unexpected error: {:?}",
+            err.error
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn thread_from_stored_thread_restores_agent_path_from_metadata() -> Result<()> {
         let created_at = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z")?;
         let thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000123")?;

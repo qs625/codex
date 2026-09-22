@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use codex_features::Feature;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use config_service::Config;
 use futures::future::BoxFuture;
 use protocol::ThreadId;
 use protocol::error::Result as CodexResult;
@@ -550,6 +552,15 @@ pub(crate) trait AppServerLiveThreadTurnRuntime: Send + Sync {
         thread_id: ThreadId,
         overrides: CodexThreadTurnContextOverrides,
     ) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn apply_live_thread_persisted_resume_metadata(
+        &self,
+        thread_id: ThreadId,
+        resume_config: Config,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> BoxFuture<'_, CodexResult<()>>;
 }
 
 impl<T> AppServerLiveThreadTurnRuntime for T
@@ -564,6 +575,26 @@ where
         Box::pin(
             LiveThreadTurnRuntime::validate_live_thread_turn_context_overrides(
                 self, thread_id, overrides,
+            ),
+        )
+    }
+
+    fn apply_live_thread_persisted_resume_metadata(
+        &self,
+        thread_id: ThreadId,
+        resume_config: Config,
+        cwd: AbsolutePathBuf,
+        root_agent_path: Option<String>,
+        root_agent_role: Option<String>,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(
+            LiveThreadTurnRuntime::apply_live_thread_persisted_resume_metadata(
+                self,
+                thread_id,
+                Arc::new(resume_config),
+                cwd,
+                root_agent_path,
+                root_agent_role,
             ),
         )
     }

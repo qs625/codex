@@ -16,7 +16,7 @@ use crate::request_processors::thread_processor::load_resume_config_for_agent_ro
 use crate::request_processors::thread_processor::merge_persisted_resume_metadata;
 use crate::request_processors::thread_processor::native_agent_role_for_resume;
 use crate::request_processors::thread_processor::restore_persisted_display_turns_from_rollout_items;
-use crate::request_processors::thread_processor::stored_thread_root_agent_metadata;
+use crate::request_processors::thread_processor::stored_thread_root_agent_metadata_with_persisted;
 use crate::request_processors::thread_processor::stored_thread_session_source_with_agent_metadata;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
 use crate::request_processors::thread_processor::thread_store_resume_read_error;
@@ -935,14 +935,6 @@ impl TurnRequestProcessor {
                 "thread {thread_id} is closing; retry after the thread is closed"
             )));
         }
-        if self
-            .live_thread_inspection
-            .is_live_thread_loaded(thread_id)
-            .await
-        {
-            return Ok(());
-        }
-
         let stored_thread = self
             .thread_store
             .read_thread(StoreReadThreadParams {
@@ -955,6 +947,22 @@ impl TurnRequestProcessor {
         if stored_thread.archived_at.is_some() {
             return Err(invalid_request(format!("thread {thread_id} is archived")));
         }
+        let persisted_metadata = match self.state_db.as_ref() {
+            Some(state_db) => state_db.get_thread(thread_id).await.ok().flatten(),
+            None => None,
+        };
+        let repair_cwd = persisted_metadata
+            .as_ref()
+            .map(|metadata| metadata.cwd.as_path())
+            .unwrap_or(stored_thread.cwd.as_path());
+        let stored_cwd = AbsolutePathBuf::relative_to_current_dir(
+            path_utils::normalize_for_native_workdir(repair_cwd),
+        )
+        .map_err(|err| {
+            internal_error(format!(
+                "failed to normalize persisted cwd for thread {thread_id}: {err}"
+            ))
+        })?;
         let thread_history = InitialHistory::Resumed(ResumedHistory {
             conversation_id: thread_id,
             history: stored_thread
@@ -969,17 +977,16 @@ impl TurnRequestProcessor {
             rollout_path: stored_thread.rollout_path.clone(),
         });
         let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
-        let agent_metadata = stored_thread_root_agent_metadata(&stored_thread);
+        let agent_metadata = stored_thread_root_agent_metadata_with_persisted(
+            &stored_thread,
+            persisted_metadata.as_ref(),
+        )?;
         let resume_agent_role =
             native_agent_role_for_resume(Some(&session_source), agent_metadata.as_ref());
         let stored_agent_path = stored_thread.agent_path.clone();
         let stored_agent_role = stored_thread.agent_role.clone();
         let mut request_overrides = None;
         let mut typesafe_overrides = ConfigOverrides::default();
-        let persisted_metadata = match self.state_db.as_ref() {
-            Some(state_db) => state_db.get_thread(thread_id).await.ok().flatten(),
-            None => None,
-        };
         if let Some(persisted_metadata) = persisted_metadata.as_ref() {
             merge_persisted_resume_metadata(
                 &mut request_overrides,
@@ -996,8 +1003,40 @@ impl TurnRequestProcessor {
             persisted_metadata.as_ref(),
             Some(stored_thread.cwd.clone()),
             resume_agent_role,
+            /*prefer_persisted_cwd*/ true,
         )
         .await?;
+        if self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
+            self.live_thread_turn
+                .apply_live_thread_persisted_resume_metadata(
+                    thread_id,
+                    config,
+                    stored_cwd,
+                    persisted_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.agent_path.clone())
+                        .or_else(|| stored_thread.agent_path.clone()),
+                    persisted_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.agent_role.clone())
+                        .or_else(|| stored_thread.agent_role.clone()),
+                )
+                .await
+                .map_err(|err| match err {
+                    CodexErr::ThreadNotFound(thread_id) => {
+                        invalid_request(format!("thread not found: {thread_id}"))
+                    }
+                    CodexErr::InvalidRequest(message) => invalid_request(message),
+                    err => internal_error(format!(
+                        "failed to repair live thread resume metadata: {err}"
+                    )),
+                })?;
+            return Ok(());
+        }
         let new_thread = self
             .native_thread_creation
             .resume_thread_with_history_and_source(
