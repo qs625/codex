@@ -27,8 +27,8 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 - review 通过后，再在所属 checkout 内串行执行必要验证。
 - 默认 Rust/Cargo 验证保持最小化：
   - 修改模块的单元测试或最小 crate 测试
-  - 涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时：在 `codex-rs/` 下运行 `cargo build -p app-server --bin app-server`
-  - 只有确实改到 CLI/TUI 或 CLI app-server 包装时，才增加 `cargo build -p codex-cli`
+  - 涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时：从 checkout 根目录运行 `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`
+  - 只有确实改到 CLI/TUI 或 CLI app-server 包装时，才增加 `cargo build --manifest-path codex-rs/Cargo.toml -p codex-cli`
 
 ## 四、实现约束
 

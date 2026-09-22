@@ -28,8 +28,8 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 - review 通过后，再在所属 checkout 内串行执行必要验证。
 - 默认 Rust/Cargo 验证保持最小化：
   - 修改模块的单元测试或最小 crate 测试
-  - 涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时：在 `codex-rs/` 下运行 `cargo build -p app-server --bin app-server`
-  - 只有确实改到 CLI/TUI 或 CLI app-server 包装时，才增加 `cargo build -p codex-cli`
+  - 涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时：从 checkout 根目录运行 `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`
+  - 只有确实改到 CLI/TUI 或 CLI app-server 包装时，才增加 `cargo build --manifest-path codex-rs/Cargo.toml -p codex-cli`
 - 不默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才加入。
 
 ## 四、实现约束
