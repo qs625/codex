@@ -288,6 +288,74 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn resume_config_cwd_falls_back_to_persisted_metadata_cwd() {
+        let thread_id =
+            ThreadId::from_string("019e62fa-2c20-77c3-b942-858ef2a52137").expect("thread id");
+        let persisted_cwd = test_path_buf("/tmp/project").abs().to_path_buf();
+        let mut metadata = ThreadMetadataBuilder::new(
+            thread_id,
+            test_path_buf("/tmp/rollout.jsonl"),
+            Utc::now(),
+            SessionSource::Cli,
+        )
+        .build("openai");
+        metadata.cwd = persisted_cwd.clone();
+        let history = InitialHistory::Resumed(protocol::protocol::ResumedHistory {
+            conversation_id: thread_id,
+            history: vec![RolloutItem::EventMsg(EventMsg::UserMessage(
+                protocol::protocol::UserMessageEvent {
+                    message: "hello".to_string(),
+                    images: None,
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                },
+            ))],
+            rollout_path: Some(test_path_buf("/tmp/rollout.jsonl")),
+        });
+
+        assert_eq!(
+            resume_config_cwd(&history, Some(&metadata)),
+            Some(persisted_cwd)
+        );
+    }
+
+    #[test]
+    fn resume_config_cwd_prefers_history_cwd_over_persisted_metadata_cwd() {
+        let thread_id =
+            ThreadId::from_string("019e62fa-2c20-77c3-b942-858ef2a52137").expect("thread id");
+        let history_cwd = test_path_buf("/tmp/history-project").abs().to_path_buf();
+        let persisted_cwd = test_path_buf("/tmp/persisted-project").abs().to_path_buf();
+        let mut metadata = ThreadMetadataBuilder::new(
+            thread_id,
+            test_path_buf("/tmp/rollout.jsonl"),
+            Utc::now(),
+            SessionSource::Cli,
+        )
+        .build("openai");
+        metadata.cwd = persisted_cwd;
+        let history = InitialHistory::Resumed(protocol::protocol::ResumedHistory {
+            conversation_id: thread_id,
+            history: vec![RolloutItem::SessionMeta(
+                protocol::protocol::SessionMetaLine {
+                    meta: SessionMeta {
+                        id: thread_id,
+                        cwd: history_cwd.clone(),
+                        ..SessionMeta::default()
+                    },
+                    git: None,
+                },
+            )],
+            rollout_path: Some(test_path_buf("/tmp/rollout.jsonl")),
+        });
+
+        assert_eq!(
+            resume_config_cwd(&history, Some(&metadata)),
+            Some(history_cwd)
+        );
+    }
+
+    #[test]
     fn merge_persisted_resume_metadata_preserves_explicit_permission_overrides() {
         let thread_id =
             ThreadId::from_string("019e62fa-2c20-77c3-b942-858ef2a52137").expect("thread id");

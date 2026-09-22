@@ -10,6 +10,7 @@ use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use std::path::PathBuf;
 
 mod listing;
 mod ops;
@@ -213,6 +214,15 @@ pub(super) fn native_agent_role_for_resume<'a>(
 
 fn is_external_agent_provider_label(label: &str) -> bool {
     is_external_cli_thread_provider_id(label)
+}
+
+pub(super) fn resume_config_cwd(
+    thread_history: &InitialHistory,
+    persisted_metadata: Option<&ThreadMetadata>,
+) -> Option<PathBuf> {
+    thread_history
+        .session_cwd()
+        .or_else(|| persisted_metadata.map(|metadata| metadata.cwd.clone()))
 }
 
 pub(super) fn merge_persisted_resume_metadata(

@@ -15,6 +15,7 @@ use crate::request_processors::thread_processor::build_thread_from_snapshot;
 use crate::request_processors::thread_processor::merge_persisted_resume_metadata;
 use crate::request_processors::thread_processor::native_agent_role_for_resume;
 use crate::request_processors::thread_processor::restore_persisted_display_turns_from_rollout_items;
+use crate::request_processors::thread_processor::resume_config_cwd;
 use crate::request_processors::thread_processor::stored_thread_root_agent_metadata;
 use crate::request_processors::thread_processor::stored_thread_session_source_with_agent_metadata;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
@@ -973,23 +974,24 @@ impl TurnRequestProcessor {
             native_agent_role_for_resume(Some(&session_source), agent_metadata.as_ref());
         let stored_agent_path = stored_thread.agent_path.clone();
         let stored_agent_role = stored_thread.agent_role.clone();
-        let history_cwd = thread_history.session_cwd();
         let mut request_overrides = None;
         let mut typesafe_overrides = ConfigOverrides::default();
-        if let Some(persisted_metadata) = match self.state_db.as_ref() {
+        let persisted_metadata = match self.state_db.as_ref() {
             Some(state_db) => state_db.get_thread(thread_id).await.ok().flatten(),
             None => None,
-        } {
+        };
+        if let Some(persisted_metadata) = persisted_metadata.as_ref() {
             merge_persisted_resume_metadata(
                 &mut request_overrides,
                 &mut typesafe_overrides,
-                &persisted_metadata,
+                persisted_metadata,
             );
         }
+        let resume_cwd = resume_config_cwd(&thread_history, persisted_metadata.as_ref());
 
         let mut config = self
             .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
+            .load_for_cwd(request_overrides, typesafe_overrides, resume_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
         if let Some(agent_role) = resume_agent_role

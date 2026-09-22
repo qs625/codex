@@ -379,7 +379,10 @@ async fn thread_resume_with_overrides_defers_updated_at_until_turn_start() -> Re
     } = to_response::<ThreadResumeResponse>(resume_resp)?;
 
     assert_eq!(resumed_thread.updated_at, updated_at);
-    assert_eq!(resumed_thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed_thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     let after_resume_modified = std::fs::metadata(&rollout_file_path)?.modified()?;
     assert_eq!(after_resume_modified, before_modified);
@@ -647,7 +650,10 @@ async fn thread_resume_can_load_source_by_external_path() -> Result<()> {
         normalized_existing_path(&thread_path)?
     );
     assert_eq!(resumed.preview, "external path history");
-    assert_eq!(resumed.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     Ok(())
 }
@@ -695,7 +701,10 @@ async fn thread_resume_supports_history_and_overrides() -> Result<()> {
     assert!(!resumed.id.is_empty());
     assert_eq!(model_provider, "mock_provider");
     assert_eq!(resumed.preview, history_text);
-    assert_eq!(resumed.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resumed.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     Ok(())
 }
@@ -807,12 +816,7 @@ async fn thread_read_after_restart_keeps_unified_exec_command_execution_items() 
                 status,
                 exit_code,
                 ..
-            } if id == "uexec-reload-1" => Some((
-                id.clone(),
-                *source,
-                status.clone(),
-                *exit_code,
-            )),
+            } if id == "uexec-reload-1" => Some((id.clone(), *source, status.clone(), *exit_code)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -983,7 +987,10 @@ async fn thread_resume_accepts_personality_override() -> Result<()> {
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resume.thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     let turn_id = secondary
         .send_turn_start_request(TurnStartParams {
@@ -1028,10 +1035,11 @@ async fn thread_resume_accepts_personality_override() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_resume_reapplies_stored_agent_role_to_model_context() -> Result<()> {
+async fn thread_resume_reapplies_project_agent_role_to_model_context() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     const ROLE_BODY: &str = "ROLE_RESUME_AGENT_MD_UNIQUE_INSTRUCTION";
+    const OWNER_ROLE_BODY: &str = "ROLE_RESUME_OWNER_AGENT_MD_UNIQUE_INSTRUCTION";
 
     let server = responses::start_mock_server().await;
     let first_body = responses::sse(vec![
@@ -1048,17 +1056,31 @@ async fn thread_resume_reapplies_stored_agent_role_to_model_context() -> Result<
 
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
-    let agents_dir = codex_home.path().join("agents");
+    let project = TempDir::new()?;
+    std::fs::create_dir_all(project.path().join(".git"))?;
+    let agents_dir = project.path().join(".morpheus").join("agents");
     std::fs::create_dir_all(&agents_dir)?;
     std::fs::write(
-        agents_dir.join("resume-role.md"),
+        agents_dir.join("pm.agent.md"),
         format!(
             r#"---
-name: resume-role
-description: Resume role fixture.
+name: pm
+description: Project PM role fixture.
 ---
 
 {ROLE_BODY}
+"#
+        ),
+    )?;
+    std::fs::write(
+        agents_dir.join("owner.agent.md"),
+        format!(
+            r#"---
+name: owner
+description: Project owner role fixture.
+---
+
+{OWNER_ROLE_BODY}
 "#
         ),
     )?;
@@ -1068,7 +1090,8 @@ description: Resume role fixture.
 
     let start_id = primary
         .send_thread_start_request(ThreadStartParams {
-            agent_type: Some("resume-role".to_string()),
+            cwd: Some(project.path().to_string_lossy().to_string()),
+            agent_type: Some("pm".to_string()),
             ..Default::default()
         })
         .await?;
@@ -1079,7 +1102,7 @@ description: Resume role fixture.
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
     assert_eq!(thread.agent_path, None);
-    assert_eq!(thread.agent_role.as_deref(), Some("resume-role"));
+    assert_eq!(thread.agent_role.as_deref(), Some("pm"));
 
     let materialize_id = primary
         .send_turn_start_request(TurnStartParams {
@@ -1118,7 +1141,7 @@ description: Resume role fixture.
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
     assert_eq!(resume.thread.agent_path, None);
-    assert_eq!(resume.thread.agent_role.as_deref(), Some("resume-role"));
+    assert_eq!(resume.thread.agent_role.as_deref(), Some("pm"));
 
     let turn_id = secondary
         .send_turn_start_request(TurnStartParams {
@@ -1150,6 +1173,27 @@ description: Resume role fixture.
         "expected resumed model context to include agent role body, got {:?}",
         request.body_json()
     );
+    assert!(
+        !request.body_contains_text(OWNER_ROLE_BODY),
+        "expected resumed pm thread to keep its own project role, got {:?}",
+        request.body_json()
+    );
+
+    let owner_start_id = secondary
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(project.path().to_string_lossy().to_string()),
+            agent_type: Some("owner".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let owner_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_response_message(RequestId::Integer(owner_start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(owner_start_resp)?;
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role.as_deref(), Some("owner"));
 
     Ok(())
 }

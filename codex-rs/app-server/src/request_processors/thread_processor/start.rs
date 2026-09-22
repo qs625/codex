@@ -746,7 +746,6 @@ impl ThreadRequestProcessor {
             resume_agent_metadata.as_ref(),
         );
 
-        let history_cwd = thread_history.session_cwd();
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
@@ -761,17 +760,19 @@ impl ThreadRequestProcessor {
             developer_instructions,
             personality,
         );
-        self.load_and_apply_persisted_resume_metadata(
-            &thread_history,
-            &mut request_overrides,
-            &mut typesafe_overrides,
-        )
-        .await;
+        let persisted_metadata = self
+            .load_and_apply_persisted_resume_metadata(
+                &thread_history,
+                &mut request_overrides,
+                &mut typesafe_overrides,
+            )
+            .await;
+        let resume_cwd = resume_config_cwd(&thread_history, persisted_metadata.as_ref());
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
         let mut config = match self
             .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
+            .load_for_cwd(request_overrides, typesafe_overrides, resume_cwd)
             .await
         {
             Ok(config) => config,
@@ -1230,7 +1231,6 @@ impl ThreadRequestProcessor {
             native_agent_role_for_resume(Some(&session_source), agent_metadata.as_ref());
         let stored_agent_path = stored_thread.agent_path.clone();
         let stored_agent_role = stored_thread.agent_role.clone();
-        let history_cwd = thread_history.session_cwd();
         let mut request_overrides = None;
         let mut typesafe_overrides = self.build_thread_config_overrides(
             /*model*/ None, /*model_provider*/ None, /*service_tier*/ None,
@@ -1239,16 +1239,18 @@ impl ThreadRequestProcessor {
             /*permissions*/ None, /*base_instructions*/ None,
             /*developer_instructions*/ None, /*personality*/ None,
         );
-        self.load_and_apply_persisted_resume_metadata(
-            &thread_history,
-            &mut request_overrides,
-            &mut typesafe_overrides,
-        )
-        .await;
+        let persisted_metadata = self
+            .load_and_apply_persisted_resume_metadata(
+                &thread_history,
+                &mut request_overrides,
+                &mut typesafe_overrides,
+            )
+            .await;
+        let resume_cwd = resume_config_cwd(&thread_history, persisted_metadata.as_ref());
 
         let mut config = self
             .config_manager
-            .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
+            .load_for_cwd(request_overrides, typesafe_overrides, resume_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
         if let Some(agent_role) = resume_agent_role
