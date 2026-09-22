@@ -38,9 +38,7 @@ function filterConversationCellsForDisplayWithState(
     const entries: ConversationEntry[] = [];
     for (const entry of cell.entries) {
       if (
-        shouldHideTopLevelInitContext(entry, isTopLevel) ||
-        (isTopLevel &&
-          shouldPreferTopLevelUserRecoveryFact(entry, state)) ||
+        (isTopLevel && shouldPreferTopLevelUserRecoveryFact(entry, state)) ||
         !consumeRecoveryFactIfDuplicate(
           entry,
           isTopLevel
@@ -58,13 +56,6 @@ function filterConversationCellsForDisplayWithState(
     }
   }
   return displayCells;
-}
-
-function shouldHideTopLevelInitContext(
-  entry: ConversationEntry,
-  isTopLevel: boolean,
-) {
-  return isTopLevel && initContextFactKey(entry) !== null;
 }
 
 function filterConversationEntryForDisplay(
@@ -196,19 +187,4 @@ function restartRecoveryIdFactKey(id: string) {
 function restartRecoveryMarkerFactKey(text: string) {
   const requestId = text.match(RUNTIME_RESTART_MARKER_PATTERN)?.[1];
   return requestId ? `${RESTART_RECOVERY_NOTICE_ID_PREFIX}${requestId}` : null;
-}
-
-function initContextFactKey(entry: ConversationEntry) {
-  if (
-    entry.kind !== "tool" ||
-    entry.toolCategory !== "context" ||
-    !entry.toolName?.startsWith("Init Context")
-  ) {
-    return null;
-  }
-  return JSON.stringify({
-    toolName: entry.toolName,
-    text: entry.text,
-    details: entry.toolDetails ?? "",
-  });
 }

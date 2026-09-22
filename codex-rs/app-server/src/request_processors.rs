@@ -643,7 +643,9 @@ mod build_api_turns_from_rollout_items_tests {
     use protocol::protocol::ExecCommandEndEvent;
     use protocol::protocol::ExecCommandNotifyOn;
     use protocol::protocol::ExecCommandSource as CoreExecCommandSource;
+    use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::RolloutItem;
+    use protocol::protocol::TurnContextItem;
     use protocol::protocol::TurnStartedEvent;
     use rollout::EventPersistenceMode;
     use rollout::persisted_rollout_items;
@@ -861,6 +863,92 @@ mod build_api_turns_from_rollout_items_tests {
                 ..
             } if summary.as_deref() == Some("## Current Goal\n\n- Compact summary")
                 && replacement_history.is_none()
+        ));
+    }
+
+    #[test]
+    fn compact_head_projects_following_init_context_as_replacement_history() {
+        let thread_id = protocol::ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+            .expect("valid thread id");
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: "summary".to_string(),
+                    replacement_history: Some(Vec::new()),
+                    visible_replacement_history_len: None,
+                }),
+                RolloutItem::EventMsg(EventMsg::ContextCompacted(
+                    protocol::protocol::ContextCompactedEvent {},
+                )),
+                RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                    thread_id,
+                    turn_id: "turn-after-compact".to_string(),
+                    item: protocol::items::TurnItem::InjectedContext(
+                        protocol::items::InjectedContextItem {
+                            id: "ctx-1".to_string(),
+                            title: "Init Context".to_string(),
+                            preview: "Permissions, Environment".to_string(),
+                            sections: vec![
+                                protocol::items::InjectedContextSection {
+                                    label: "Permissions".to_string(),
+                                    text: "danger-full-access".to_string(),
+                                },
+                                protocol::items::InjectedContextSection {
+                                    label: "Environment".to_string(),
+                                    text: "cwd=/tmp/project".to_string(),
+                                },
+                            ],
+                        },
+                    ),
+                    completed_at_ms: 1,
+                })),
+                RolloutItem::TurnContext(TurnContextItem {
+                    turn_id: Some("turn-after-compact".to_string()),
+                    trace_id: None,
+                    cwd: std::path::PathBuf::from("/tmp/project"),
+                    current_date: None,
+                    timezone: None,
+                    approval_policy: protocol::protocol::AskForApproval::Never,
+                    sandbox_policy: protocol::protocol::SandboxPolicy::DangerFullAccess,
+                    permission_profile: None,
+                    network: None,
+                    file_system_sandbox_policy: None,
+                    model: "test-model".to_string(),
+                    personality: None,
+                    collaboration_mode: None,
+                    realtime_active: None,
+                    effort: None,
+                    summary: protocol::config_types::ReasoningSummary::Auto,
+                    user_instructions: None,
+                    developer_instructions: None,
+                    final_output_json_schema: None,
+                    truncation_policy: None,
+                }),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                summary,
+                replacement_history,
+                ..
+            } if summary.as_deref() == Some("summary")
+                && replacement_history.as_ref().is_some_and(|items| matches!(
+                    items.as_slice(),
+                    [ContextCompactionReplacementItem::InjectedContext {
+                        title,
+                        sections,
+                        ..
+                    }] if title == "Init Context"
+                        && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                            == vec!["Permissions", "Environment"]
+                ))
         ));
     }
 

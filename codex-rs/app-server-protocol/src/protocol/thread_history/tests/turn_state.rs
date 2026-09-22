@@ -305,6 +305,63 @@ fn preserves_compaction_only_turn() {
 }
 
 #[test]
+fn compact_head_attaches_following_init_context_to_marker() {
+    let items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".into(),
+            replacement_history: Some(Vec::new()),
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+        RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread id"),
+            turn_id: "turn-after-compact".into(),
+            item: CoreTurnItem::InjectedContext(CoreInjectedContextItem {
+                id: "ctx-1".into(),
+                title: "Init Context".into(),
+                preview: "Permissions, Environment".into(),
+                sections: vec![
+                    CoreInjectedContextSection {
+                        label: "Permissions".into(),
+                        text: "danger-full-access".into(),
+                    },
+                    CoreInjectedContextSection {
+                        label: "Environment".into(),
+                        text: "cwd=/tmp/project".into(),
+                    },
+                ],
+            }),
+            completed_at_ms: 1,
+        })),
+        RolloutItem::TurnContext(turn_context_item_with_id("turn-after-compact")),
+    ];
+
+    let turns = build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].items.len(), 1);
+    assert!(matches!(
+        &turns[0].items[0],
+        ThreadItem::ContextCompaction {
+            summary,
+            replacement_history,
+            ..
+        } if summary.as_deref() == Some("summary")
+            && replacement_history.as_ref().is_some_and(|items| matches!(
+                items.as_slice(),
+                [ContextCompactionReplacementItem::InjectedContext {
+                    title,
+                    sections,
+                    ..
+                }] if title == "Init Context"
+                    && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                        == vec!["Permissions", "Environment"]
+            ))
+    ));
+}
+
+#[test]
 fn preserves_compaction_turn_display_items_alongside_compaction_marker() {
     let items = vec![
         RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
