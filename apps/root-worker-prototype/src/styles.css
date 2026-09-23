@@ -322,16 +322,35 @@ a,
 }
 
 .sidebar-section-header {
-  min-height: 48px;
-  padding: 6px 12px 6px 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "drag actions"
+    "heading heading";
+  align-items: center;
+  min-height: 64px;
+  padding: 8px 12px 8px 14px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 6px;
   -webkit-app-region: drag;
 }
 
 body.macos-window-chrome .sidebar > .sidebar-section-header:first-child {
-  min-height: 52px;
-  padding-left: 86px;
+  min-height: 76px;
+  padding-top: 10px;
+}
+
+.sidebar-window-drag-strip {
+  grid-area: drag;
+  min-height: 22px;
+}
+
+body.macos-window-chrome
+  .sidebar
+  > .sidebar-section-header:first-child
+  .sidebar-window-drag-strip {
+  min-width: 86px;
 }
 
 .sidebar-section-header h2,
@@ -343,22 +362,30 @@ body.macos-window-chrome .sidebar > .sidebar-section-header:first-child {
 }
 
 .section-heading {
+  grid-area: heading;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
   min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .section-heading span {
-  color: #a8a29e;
-  font-size: 11px;
+  color: #78716c;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .sidebar-actions {
+  grid-area: actions;
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
+  -webkit-app-region: no-drag;
 }
 
 .sidebar-action-button {
@@ -5781,38 +5808,6 @@ body.macos-window-chrome .sidebar > .sidebar-section-header:first-child {
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
-}
-
-.file-object-toolbar {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.06);
-  background: rgba(250, 250, 249, 0.72);
-}
-
-.file-object-toolbar button {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #78716c;
-  cursor: pointer;
-}
-
-.file-object-toolbar button.active {
-  border-color: rgba(16, 24, 40, 0.12);
-  background: rgba(255, 255, 255, 0.92);
-  color: #171717;
-}
-
-.file-object-toolbar svg {
-  width: 14px;
-  height: 14px;
 }
 
 .preview-empty {

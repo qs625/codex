@@ -272,6 +272,11 @@ test("SidebarPanel renders projects with nested subagents and no extra root row"
   const markup = renderSidebar(sidebar);
 
   assert.match(markup, /Projects/);
+  assert.match(markup, /sidebar-window-drag-strip/);
+  assert.match(
+    markup,
+    /sidebar-actions[\s\S]*>New<[\s\S]*section-heading[\s\S]*<h2>Projects<\/h2>[\s\S]*2 projects · 0 chats/,
+  );
   assert.match(markup, /alpha/);
   assert.match(markup, /beta/);
   assert.match(markup, /owner_dev/);

@@ -152,12 +152,7 @@ export function SidebarPanel({
   return (
     <aside className="sidebar">
       <div className="sidebar-section-header">
-        <div className="section-heading">
-          <h2>Projects</h2>
-          <span>
-            {projectCount} projects · {chatCount} chats
-          </span>
-        </div>
+        <div className="sidebar-window-drag-strip" aria-hidden="true" />
         <div className="sidebar-actions">
           <button
             type="button"
@@ -177,6 +172,12 @@ export function SidebarPanel({
               workspacePath={workspacePath}
             />
           ) : null}
+        </div>
+        <div className="section-heading">
+          <h2>Projects</h2>
+          <span>
+            {projectCount} projects · {chatCount} chats
+          </span>
         </div>
       </div>
 

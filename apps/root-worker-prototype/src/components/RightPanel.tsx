@@ -76,6 +76,17 @@ import type {
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 export type WorkspaceOpenableRightPanelObject = "file" | "browser" | "terminal";
 
+export const WORKSPACE_OBJECT_DRAG_TYPE =
+  "application/x-morpheus-workspace-object-tab";
+
+export function writeWorkspaceObjectDragData(
+  dataTransfer: Pick<DataTransfer, "effectAllowed" | "setData">,
+  kind: WorkspaceOpenableRightPanelObject,
+) {
+  dataTransfer.effectAllowed = "move";
+  dataTransfer.setData(WORKSPACE_OBJECT_DRAG_TYPE, kind);
+}
+
 type BrowserViewBounds = {
   x: number;
   y: number;
@@ -402,11 +413,7 @@ export function RightPanel({
       event.preventDefault();
       return;
     }
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(
-      "application/x-morpheus-workspace-object-tab",
-      kind,
-    );
+    writeWorkspaceObjectDragData(event.dataTransfer, kind);
   }
 
   function openGitFileDiff(change: GitChange, mode: "staged" | "unstaged") {
@@ -505,6 +512,10 @@ export function RightPanel({
     preview?.path,
     previewRootId,
   ]);
+  const fileSourcePanelView: FilePanelView =
+    gitDiffPreview.loading || gitDiffPreview.diff || gitDiffPreview.error
+      ? "preview"
+      : "tree";
 
   return (
     <aside className={`right-panel ${isCollapsed ? "collapsed" : ""}`}>
@@ -550,7 +561,7 @@ export function RightPanel({
             ) : (
               <FilePreviewPanel
                 expandedTreeDirectories={expandedTreeDirectories}
-                filePanelView={filePanelView}
+                filePanelView={fileSourcePanelView}
                 fileTreeEntriesByPath={fileTreeEntriesByPath}
                 fileTreeErrorsByPath={fileTreeErrorsByPath}
                 fileTreeLoadingPath={fileTreeLoadingPath}
@@ -562,7 +573,6 @@ export function RightPanel({
                 gitDiffPreviewLoading={gitDiffPreview.loading}
                 onOpenTreeFile={openTreeFileFromPreview}
                 onPreviewUpdated={onPreviewUpdated}
-                onSetFilePanelView={onSetFilePanelView}
                 onToggleTreeDirectory={onToggleTreeDirectory}
                 preview={preview}
                 previewError={previewError}
@@ -3296,7 +3306,6 @@ export function FilePreviewPanel({
   onOpenPreviewInBrowser,
   onOpenTreeFile,
   onPreviewUpdated,
-  onSetFilePanelView,
   onToggleTreeDirectory,
   preview,
   previewError,
@@ -3317,7 +3326,6 @@ export function FilePreviewPanel({
   onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
-  onSetFilePanelView: (value: FilePanelView) => void;
   onToggleTreeDirectory: (path: string) => void;
   preview: FilePreview | null;
   previewError: string | null;
@@ -3538,38 +3546,19 @@ export function FilePreviewPanel({
               <BrowserIcon />
             </button>
           ) : null}
-          <button
-            type="button"
-            className="panel-inline-action preview-open-button"
-            aria-label="Open preview in system editor"
-            onClick={onOpenPreviewExternally}
-            disabled={!preview || filePanelView !== "preview" || showingGitDiffPreview}
-          >
-            <OpenIcon />
-          </button>
+          {filePanelView === "preview" ? (
+            <button
+              type="button"
+              className="panel-inline-action preview-open-button"
+              aria-label="Open preview in system editor"
+              onClick={onOpenPreviewExternally}
+              disabled={!preview || showingGitDiffPreview}
+            >
+              <OpenIcon />
+            </button>
+          ) : null}
         </div>
       </header>
-
-      <div className="file-object-toolbar" role="toolbar" aria-label="File object source">
-        <button
-          type="button"
-          className={filePanelView === "preview" ? "active" : ""}
-          aria-label="Show current file"
-          aria-pressed={filePanelView === "preview"}
-          onClick={() => onSetFilePanelView("preview")}
-        >
-          <DocumentIcon />
-        </button>
-        <button
-          type="button"
-          className={filePanelView === "tree" ? "active" : ""}
-          aria-label="Show file tree"
-          aria-pressed={filePanelView === "tree"}
-          onClick={() => onSetFilePanelView("tree")}
-        >
-          <GridIcon />
-        </button>
-      </div>
 
       {filePanelView === "tree" ? (
         <CwdFileTreePanel
