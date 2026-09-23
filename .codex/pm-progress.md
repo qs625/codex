@@ -12,7 +12,7 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
 
 ## Active Work
 - id: workspace-tabbed-shell-ui
-  status: pm_validated_pending_merge
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev_3
   reviewer: /self/owner_dev_3/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
@@ -21,9 +21,9 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
   depends_on: main `8f6afc3472482b0c8b0cf85c80890c562686d28b`; intermediate built capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49` intentionally not installed
   files: `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/TerminalPanel.tsx`, `apps/root-worker-prototype/src/styles.css`, frontend tests
   base_commit: `8f6afc3472482b0c8b0cf85c80890c562686d28b`
-  next_action: PM should merge owner commit `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d` into canonical main, then build and install a fresh Runtime Capsule covering this UI tranche plus the previously merged Context Window and poll_event changes.
-  validation: Owner implemented first-slice workspace tabs and fixed reviewer findings. PM design/diff validation passed: Conversation/File/Terminal/Browser are same-level workspace tabs; Conversation app-internal header was removed and thread metadata/run config/cwd/search moved into the composer area; Files/Terminal/Browser reuse real existing panels; Browser native view is hidden while Browser is inactive or overlays/resizing are active; Terminal is only mounted while the Terminal workspace tab is active; RightPanel is reduced to auxiliary Thread Analysis/Git/Workflow surfaces in tabbed mode; no close/new workspace-tab buttons or placeholder/no-op Conversation buttons remain. Owner and PM both ran `pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts src/lib/rightPanelView.test.ts src/lib/filePreviewMemory.test.ts src/lib/conversation.test.ts` with 190 passed. Owner `pnpm --dir apps/root-worker-prototype build` passed with existing Vite chunk/xterm dynamic import warnings. PM `git diff --check f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d^ f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d` passed.
-  commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; merge pending
+  next_action: Build and install a fresh Runtime Capsule from canonical main `120c8ee4df89efe74e02bf283ffa5a6771cabaf6`, covering this UI shell plus previously merged Context Window and poll_event changes. Then perform installed self-debug validation.
+  validation: Owner implemented first-slice workspace tabs and fixed reviewer findings. PM design/diff validation passed: Conversation/File/Terminal/Browser are same-level workspace tabs; Conversation app-internal header was removed and thread metadata/run config/cwd/search moved into the composer area; Files/Terminal/Browser reuse real existing panels; Browser native view is hidden while Browser is inactive or overlays/resizing are active; Terminal is only mounted while the Terminal workspace tab is active; RightPanel is reduced to auxiliary Thread Analysis/Git/Workflow surfaces in tabbed mode; no close/new workspace-tab buttons or placeholder/no-op Conversation buttons remain. Owner and PM both ran `pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts src/lib/rightPanelView.test.ts src/lib/filePreviewMemory.test.ts src/lib/conversation.test.ts` with 190 passed. Owner and PM `pnpm --dir apps/root-worker-prototype build` passed with existing Vite chunk/xterm dynamic import and chunk-size warnings. PM `git diff --check` passed before and after merge.
+  commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; PM progress `8edc9bc57`; merge `120c8ee4df89efe74e02bf283ffa5a6771cabaf6`
 
 - id: poll-event-category-only-result
   status: capsule_built_not_installed_superseded_by_ui_tranche
