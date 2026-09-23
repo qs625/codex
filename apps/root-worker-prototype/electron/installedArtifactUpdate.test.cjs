@@ -35,9 +35,12 @@ const {
 
 function writeComputerUseHelperSources(workspace, sourceAppDir) {
   const scriptsDir = path.join(workspace, "scripts");
+  const assetsDir = path.join(sourceAppDir, "assets");
   const electronDir = path.join(sourceAppDir, "electron");
   fs.mkdirSync(scriptsDir, { recursive: true });
+  fs.mkdirSync(assetsDir, { recursive: true });
   fs.mkdirSync(electronDir, { recursive: true });
+  fs.writeFileSync(path.join(assetsDir, "morpheus-icon.icns"), "icon");
   fs.writeFileSync(
     path.join(scriptsDir, "morpheus-computer-use-mcp.mjs"),
     "export {}\n",
@@ -1491,6 +1494,7 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
     for (const generated of GENERATED_SOURCE_DIR_NAMES) {
       assert.ok(packagerArgs.includes(`--ignore=^/${generated}($|/)`));
     }
+    assert.ok(packagerArgs.includes("--icon=assets/morpheus-icon"));
     assert.ok(
       packagerArgs.includes(
         `--extra-resource=${path.join(
@@ -1553,6 +1557,13 @@ test("producer writes a complete Electron app Capsule under incoming", () => {
       ).mode & 0o111,
       0o111,
     );
+    const iconEntry = result.manifest.entries.find(
+      (entry) =>
+        entry.path ===
+        `payload/${APP_NAME}.app/Contents/Resources/morpheus-icon.icns`,
+    );
+    assert.equal(iconEntry?.type, "file");
+    assert.match(iconEntry?.sha256, /^[0-9a-f]{64}$/);
     assert.ok(rawAppAsarReads > 0);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });

@@ -14,6 +14,8 @@ const {
 } = require("./workspace.cjs");
 
 const APP_NAME = "Root Worker Runtime";
+const APP_ICON_BASE_PATH = "assets/morpheus-icon";
+const APP_ICON_FILE_NAME = "morpheus-icon.icns";
 const SOURCE_APP_RELATIVE_PATH = path.join("apps", "root-worker-prototype");
 const PAYLOAD_RELATIVE_PATH = path.join("payload", `${APP_NAME}.app`);
 const PAYLOAD_EXECUTABLE_RELATIVE_PATH = path.join(
@@ -261,6 +263,7 @@ function updateInstalledArtifacts(plan, options = {}) {
         "--app-bundle-id=com.openai.root-worker-prototype.runtime.dev",
         "--app-category-type=public.app-category.developer-tools",
         "--extend-info=electron/PayloadInfo.plist",
+        `--icon=${APP_ICON_BASE_PATH}`,
         "--asar",
         ...GENERATED_SOURCE_DIR_NAMES.map(
           (name) => `--ignore=^/${name}($|/)`,
@@ -283,6 +286,10 @@ function updateInstalledArtifacts(plan, options = {}) {
       mode: 0o755,
     });
     fsOps.renameSync(packagedPayload, payloadPath);
+    fsOps.copyFileSync(
+      path.join(plan.sourceAppDir, APP_ICON_BASE_PATH + ".icns"),
+      path.join(payloadPath, "Contents", "Resources", APP_ICON_FILE_NAME),
+    );
     fsOps.rmSync(buildRoot, { force: true, recursive: true });
     fsOps.rmSync(resourceRoot, { force: true, recursive: true });
     normalizeRuntimeCapsuleTree(incomingRoot, fsOps);
