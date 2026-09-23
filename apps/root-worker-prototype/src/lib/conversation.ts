@@ -1806,7 +1806,7 @@ function formatCollabAgentToolDetails(
   }
 
   const agentStates = Object.entries(item.agentsStates ?? {});
-  if (agentStates.length > 0) {
+  if (shouldShowCollabAgentStateDetails(item) && agentStates.length > 0) {
     sections.push(
       `Agent States\n${agentStates
         .map(([threadId, state]) =>
@@ -1826,6 +1826,22 @@ function formatCollabAgentToolDetails(
   }
 
   return sections.join("\n\n");
+}
+
+function shouldShowCollabAgentStateDetails(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
+  switch (item.tool) {
+    case "spawnAgent":
+    case "listAgents":
+    case "list_agents":
+      return true;
+    case "sendInput":
+    case "resumeAgent":
+      return false;
+    default:
+      return false;
+  }
 }
 
 function formatWaitTimeout(timeoutMs: number) {
