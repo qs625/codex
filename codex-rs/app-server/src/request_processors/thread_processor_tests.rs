@@ -1230,8 +1230,6 @@ mod thread_processor_behavior_tests {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".to_string(),
-                    summary: None,
-                    replacement_history: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "item-2".to_string(),
@@ -1392,8 +1390,6 @@ mod thread_processor_behavior_tests {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".to_string(),
-                    summary: None,
-                    replacement_history: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "item-2".to_string(),
@@ -1668,13 +1664,12 @@ mod thread_processor_behavior_tests {
                 .collect::<Vec<_>>(),
             vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
         );
-        assert!(matches!(
-            &thread.turns[0].items[0],
+        assert_eq!(
+            thread.turns[0].items[0],
             ThreadItem::ContextCompaction {
-                replacement_history: None,
-                ..
+                id: "item-3".to_string(),
             }
-        ));
+        );
         assert!(matches!(
             &thread.turns[0].items[1],
             ThreadItem::AgentMessage { text, .. } if text == "summary"
@@ -1732,13 +1727,12 @@ mod thread_processor_behavior_tests {
                 .collect::<Vec<_>>(),
             vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
         );
-        assert!(matches!(
-            &thread.turns[0].items[0],
+        assert_eq!(
+            thread.turns[0].items[0],
             ThreadItem::ContextCompaction {
-                replacement_history: None,
-                ..
+                id: "item-3".to_string(),
             }
-        ));
+        );
         assert!(matches!(
             &thread.turns[0].items[1],
             ThreadItem::AgentMessage { text, .. } if text == "summary"
@@ -1820,13 +1814,12 @@ mod thread_processor_behavior_tests {
                 .collect::<Vec<_>>(),
             vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
         );
-        assert!(matches!(
-            &turns[0].items[0],
+        assert_eq!(
+            turns[0].items[0],
             ThreadItem::ContextCompaction {
-                replacement_history: None,
-                ..
+                id: "item-3".to_string(),
             }
-        ));
+        );
         assert!(matches!(
             &turns[0].items[1],
             ThreadItem::AgentMessage { text, .. } if text == "summary"

@@ -3925,43 +3925,6 @@ fn thread_visible_texts(thread: &app_server_protocol::Thread) -> Vec<String> {
                 })
                 .collect::<Vec<_>>(),
             ThreadItem::AgentMessage { text, .. } => vec![text.clone()],
-            ThreadItem::ContextCompaction {
-                replacement_history,
-                ..
-            } => replacement_history
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .flat_map(|replacement| {
-                    match replacement {
-                    app_server_protocol::ContextCompactionReplacementItem::InjectedContext {
-                        sections,
-                        ..
-                    } => sections
-                        .iter()
-                        .map(|section| section.text.clone())
-                        .collect::<Vec<_>>(),
-                    app_server_protocol::ContextCompactionReplacementItem::UserMessage {
-                        content,
-                        ..
-                    } => content
-                        .iter()
-                        .filter_map(|input| match input {
-                            UserInput::Text { text, .. } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>(),
-                    app_server_protocol::ContextCompactionReplacementItem::AgentMessage {
-                        text,
-                        ..
-                    } => vec![text.clone()],
-                    app_server_protocol::ContextCompactionReplacementItem::ConversationArtifact {
-                        content,
-                        ..
-                    } => vec![content.clone()],
-                }
-                })
-                .collect(),
             _ => Vec::new(),
         })
         .collect()

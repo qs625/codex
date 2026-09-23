@@ -344,11 +344,9 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> Option<ThreadItem> {
                 duration_ms,
             })
         }
-        CoreTurnItem::ContextCompaction(compaction) => Some(ThreadItem::ContextCompaction {
-            id: compaction.id,
-            summary: None,
-            replacement_history: None,
-        }),
+        CoreTurnItem::ContextCompaction(compaction) => {
+            Some(ThreadItem::ContextCompaction { id: compaction.id })
+        }
     }
 }
 

@@ -628,12 +628,10 @@ mod build_api_turns_from_rollout_items_tests {
     use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
     use app_server_protocol::CommandExecutionSource;
     use app_server_protocol::CommandExecutionStatus;
-    use app_server_protocol::ContextCompactionReplacementItem;
     use app_server_protocol::DynamicToolCallStatus;
     use app_server_protocol::ThreadItem;
     use app_server_protocol::Turn;
     use app_server_protocol::TurnStatus;
-    use app_server_protocol::UserInput;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -690,11 +688,7 @@ mod build_api_turns_from_rollout_items_tests {
     }
 
     fn context_compaction(id: &str) -> ThreadItem {
-        ThreadItem::ContextCompaction {
-            id: id.into(),
-            summary: Some("summary".into()),
-            replacement_history: None,
-        }
+        ThreadItem::ContextCompaction { id: id.into() }
     }
 
     fn compacted_rollout_item() -> RolloutItem {
@@ -770,13 +764,7 @@ mod build_api_turns_from_rollout_items_tests {
                 .collect::<Vec<_>>(),
             vec!["compact-1", "suffix-agent", "new-agent"]
         );
-        assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                replacement_history,
-                ..
-            } if replacement_history.is_none()
-        ));
+        assert_eq!(turns[0].items[0], context_compaction("compact-1"));
     }
 
     #[test]
@@ -805,24 +793,17 @@ mod build_api_turns_from_rollout_items_tests {
         ]);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                summary,
-                replacement_history,
-                ..
-            } if summary.as_deref() == Some("summary")
-                && replacement_history.as_ref().is_some_and(|items| matches!(
-                    items.as_slice(),
-                    [ContextCompactionReplacementItem::AgentMessage { text, .. }]
-                        if text == "summary"
-                ))
-        ));
+        assert_eq!(
+            turns[0].items,
+            vec![
+                context_compaction("item-1"),
+                agent_message("item-1:summary", "summary")
+            ]
+        );
     }
 
     #[test]
-    fn compacted_item_projects_replacement_history() {
+    fn compacted_item_ignores_replacement_history_for_display_api() {
         let turns = build_api_turns_from_rollout_items(&[RolloutItem::Compacted(
             protocol::protocol::CompactedItem {
                 message: "summary".to_string(),
@@ -839,27 +820,17 @@ mod build_api_turns_from_rollout_items_tests {
         )]);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                summary,
-                replacement_history,
-                ..
-            } if summary.as_deref() == Some("summary")
-                && replacement_history.as_ref().is_some_and(|items| matches!(
-                    items.as_slice(),
-                    [ContextCompactionReplacementItem::UserMessage { content, .. }]
-                        if content == &vec![UserInput::Text {
-                            text: "recent request".to_string(),
-                            text_elements: Vec::new(),
-                        }]
-                ))
-        ));
+        assert_eq!(
+            turns[0].items,
+            vec![
+                context_compaction("item-1"),
+                agent_message("item-1:summary", "summary")
+            ]
+        );
     }
 
     #[test]
-    fn compacted_item_projects_summary_independently_from_replacement_history() {
+    fn compacted_item_projects_summary_as_independent_agent_message() {
         let turns = build_api_turns_from_rollout_items(&[RolloutItem::Compacted(
             protocol::protocol::CompactedItem {
                 message: "## Current Goal\n\n- Compact summary".to_string(),
@@ -869,20 +840,17 @@ mod build_api_turns_from_rollout_items_tests {
         )]);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
-        assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                summary,
-                replacement_history,
-                ..
-            } if summary.as_deref() == Some("## Current Goal\n\n- Compact summary")
-                && replacement_history.is_none()
-        ));
+        assert_eq!(
+            turns[0].items,
+            vec![
+                context_compaction("item-1"),
+                agent_message("item-1:summary", "## Current Goal\n\n- Compact summary"),
+            ]
+        );
     }
 
     #[test]
-    fn compact_head_projects_following_init_context_as_replacement_history() {
+    fn compact_head_projects_following_init_context_as_flat_item() {
         let thread_id = protocol::ThreadId::from_string("00000000-0000-0000-0000-000000000001")
             .expect("valid thread id");
         let persisted = persisted_rollout_items(
@@ -947,24 +915,18 @@ mod build_api_turns_from_rollout_items_tests {
         let turns = build_api_turns_from_rollout_items(&persisted);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
+        assert_eq!(turns[0].items.len(), 3);
+        assert_eq!(turns[0].items[0], context_compaction("item-1"));
+        assert_eq!(
+            turns[0].items[1],
+            agent_message("item-1:summary", "summary")
+        );
         assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                summary,
-                replacement_history,
-                ..
-            } if summary.as_deref() == Some("summary")
-                && replacement_history.as_ref().is_some_and(|items| matches!(
-                    items.as_slice(),
-                    [ContextCompactionReplacementItem::InjectedContext {
-                        title,
-                        sections,
-                        ..
-                    }] if title == "Init Context"
-                        && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
-                            == vec!["Permissions", "Environment"]
-                ))
+            &turns[0].items[2],
+            ThreadItem::InjectedContext { title, sections, .. }
+                if title == "Init Context"
+                    && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                        == vec!["Permissions", "Environment"]
         ));
     }
 
@@ -1010,17 +972,24 @@ mod build_api_turns_from_rollout_items_tests {
 
         let turns = build_api_turns_from_rollout_items(&persisted);
 
-        assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                replacement_history,
-                ..
-            } if replacement_history.as_ref().is_some_and(|items| items.len() == 1)
-        ));
+        assert_eq!(turns[0].items.len(), 3);
+        assert_eq!(turns[0].items[0], context_compaction("item-1"));
+        assert_eq!(
+            turns[0].items[1],
+            agent_message("item-1:summary", "summary")
+        );
+        assert_eq!(
+            turns[0]
+                .items
+                .iter()
+                .filter(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+                .count(),
+            1
+        );
     }
 
     #[test]
-    fn compact_head_jsonl_projects_real_init_context_shape_as_replacement_history() {
+    fn compact_head_jsonl_projects_real_init_context_shape_as_flat_item() {
         let items = rollout_items_from_jsonl(
             r#"{"timestamp":"2026-09-22T06:42:12.722Z","type":"compacted","payload":{"message":"summary","replacement_history":[]}}
 {"timestamp":"2026-09-22T06:42:12.751Z","type":"event_msg","payload":{"type":"context_compacted"}}
@@ -1031,26 +1000,23 @@ mod build_api_turns_from_rollout_items_tests {
         let turns = build_api_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items.len(), 1);
+        assert_eq!(turns[0].items.len(), 3);
+        assert_eq!(turns[0].items[0], context_compaction("item-1"));
+        assert_eq!(
+            turns[0].items[1],
+            agent_message("item-1:summary", "summary")
+        );
         assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                summary,
-                replacement_history,
+            &turns[0].items[2],
+            ThreadItem::InjectedContext {
+                title,
+                preview,
+                sections,
                 ..
-            } if summary.as_deref() == Some("summary")
-                && replacement_history.as_ref().is_some_and(|items| matches!(
-                    items.as_slice(),
-                    [ContextCompactionReplacementItem::InjectedContext {
-                        title,
-                        preview,
-                        sections,
-                        ..
-                    }] if title == "Init Context"
-                        && preview == "Permissions \u{2022} Apps \u{2022} Skills"
-                        && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
-                            == vec!["Permissions", "Apps", "Skills"]
-                ))
+            } if title == "Init Context"
+                && preview == "Permissions \u{2022} Apps \u{2022} Skills"
+                && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                    == vec!["Permissions", "Apps", "Skills"]
         ));
     }
 
@@ -1066,13 +1032,11 @@ mod build_api_turns_from_rollout_items_tests {
         let turns = build_api_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 2);
-        assert!(matches!(
-            &turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                replacement_history,
-                ..
-            } if replacement_history.is_none()
-        ));
+        assert_eq!(turns[0].items[0], context_compaction("item-1"));
+        assert_eq!(
+            turns[0].items[1],
+            agent_message("item-1:summary", "summary")
+        );
         assert!(matches!(
             &turns[1].items[0],
             ThreadItem::InjectedContext { title, .. } if title == "Init Context"

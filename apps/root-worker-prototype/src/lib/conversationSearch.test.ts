@@ -142,8 +142,7 @@ test("keeps same text in different thread item entries as separate results", () 
   );
 });
 
-test("does not search hidden compact replacement or archived body text", () => {
-  const replacementEntry = makeEntry("replacement-1", "replacement needle");
+test("does not search hidden archived compact body text", () => {
   const archivedEntry = makeEntry("archived-1", "archived needle");
   const cells = [
     makeCell(
@@ -151,7 +150,6 @@ test("does not search hidden compact replacement or archived body text", () => {
       [
         makeEntry("compact-entry", "current", {
           kind: "compact",
-          replacementHistoryEntries: [replacementEntry],
           archivedCells: [makeCell("archived-cell", [archivedEntry])],
         }),
       ],

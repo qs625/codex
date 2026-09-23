@@ -297,8 +297,6 @@ fn preserves_compaction_only_turn() {
             items_view: TurnItemsView::Full,
             items: vec![ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                summary: None,
-                replacement_history: None,
             }],
         }]
     );
@@ -341,14 +339,12 @@ fn compact_head_projects_summary_and_init_context_as_flat_items() {
 
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].items.len(), 3);
-    assert!(matches!(
-        &turns[0].items[0],
+    assert_eq!(
+        turns[0].items[0],
         ThreadItem::ContextCompaction {
-            summary,
-            replacement_history,
-            ..
-        } if summary.is_none() && replacement_history.is_none()
-    ));
+            id: "item-1".into(),
+        }
+    );
     assert!(matches!(
         &turns[0].items[1],
         ThreadItem::AgentMessage { id, text, .. }
@@ -450,14 +446,12 @@ fn init_context_after_compact_turn_context_stays_top_level() {
     let turns = build_turns_from_rollout_items(&items);
 
     assert_eq!(turns.len(), 2);
-    assert!(matches!(
-        &turns[0].items[0],
+    assert_eq!(
+        turns[0].items[0],
         ThreadItem::ContextCompaction {
-            summary,
-            replacement_history,
-            ..
-        } if summary.is_none() && replacement_history.is_none()
-    ));
+            id: "item-1".into(),
+        }
+    );
     assert!(matches!(
         &turns[1].items[0],
         ThreadItem::InjectedContext { title, .. } if title == "Init Context"
@@ -521,8 +515,6 @@ fn checkpoint_compaction_prompt_marks_boundary_without_hiding_summary() {
         vec![
             ThreadItem::ContextCompaction {
                 id: "item-2".into(),
-                summary: None,
-                replacement_history: None,
             },
             ThreadItem::AgentMessage {
                 id: "item-3".into(),
@@ -567,8 +559,6 @@ fn checkpoint_compaction_prompt_before_turn_start_uses_summary_turn_boundary() {
         vec![
             ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                summary: None,
-                replacement_history: None,
             },
             ThreadItem::AgentMessage {
                 id: "item-2".into(),
@@ -655,8 +645,6 @@ fn checkpoint_compaction_summary_boundary_preserves_flat_summary() {
         vec![
             ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                summary: None,
-                replacement_history: None,
             },
             ThreadItem::AgentMessage {
                 id: "item-1:summary".into(),
@@ -714,8 +702,6 @@ fn compact_marker_remains_single_marker_when_context_compacted_repeats() {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".into(),
-                    summary: None,
-                    replacement_history: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "item-1:summary".into(),

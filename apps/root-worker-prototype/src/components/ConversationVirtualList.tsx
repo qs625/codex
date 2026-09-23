@@ -479,14 +479,6 @@ function conversationEntryContainsId(
   }
 
   if (
-    entry.replacementHistoryEntries?.some((nestedEntry) =>
-      conversationEntryContainsId(nestedEntry, targetId),
-    )
-  ) {
-    return true;
-  }
-
-  if (
     entry.archivedCells?.some((cell) =>
       cell.entries.some((nestedEntry) =>
         conversationEntryContainsId(nestedEntry, targetId),

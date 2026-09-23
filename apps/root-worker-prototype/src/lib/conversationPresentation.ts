@@ -64,15 +64,6 @@ function filterConversationEntryForDisplay(
 ): ConversationEntry {
   return {
     ...entry,
-    ...(entry.replacementHistoryCells
-      ? {
-          replacementHistoryCells: filterConversationCellsForDisplayWithState(
-            entry.replacementHistoryCells,
-            state,
-            false,
-          ),
-        }
-      : {}),
     ...(entry.archivedCells
       ? {
           archivedCells: filterConversationCellsForDisplayWithState(

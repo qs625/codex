@@ -1086,8 +1086,6 @@ mod tests {
                 completed_at_ms: event.completed_at_ms,
                 item: ThreadItem::ContextCompaction {
                     id: "compact-1".to_string(),
-                    summary: None,
-                    replacement_history: None,
                 },
             },
         );

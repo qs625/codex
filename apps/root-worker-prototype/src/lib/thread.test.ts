@@ -195,15 +195,6 @@ function makeCompactItem(id: string): ThreadItem {
   return {
     type: "contextCompaction",
     id,
-    replacementHistory: [
-      {
-        type: "agentMessage",
-        id: `${id}-seed`,
-        text: "compact seed",
-        phase: null,
-        memoryCitation: null,
-      },
-    ],
   };
 }
 
@@ -3077,13 +3068,6 @@ test("mergeThreadSnapshot preserves same-turn user messages across compact snaps
           {
             type: "contextCompaction" as const,
             id: "compact-1",
-            replacementHistory: [
-              {
-                type: "message" as const,
-                role: "assistant" as const,
-                content: [{ type: "output_text" as const, text: "summary" }],
-              },
-            ],
           },
           makeUserMessage("item-16", followupPrompt),
         ]),

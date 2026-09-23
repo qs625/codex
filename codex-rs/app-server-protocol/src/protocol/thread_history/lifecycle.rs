@@ -21,26 +21,18 @@ impl ThreadHistoryBuilder {
     pub(super) fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
         let turn = self.ensure_turn();
         turn.saw_compaction = true;
-        if turn.items.iter().any(|item| {
-            matches!(
-                item,
-                ThreadItem::ContextCompaction {
-                    replacement_history: _,
-                    ..
-                }
-            )
-        }) {
+        if turn
+            .items
+            .iter()
+            .any(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+        {
             return;
         }
 
         let id = self.next_item_id();
         self.ensure_turn()
             .items
-            .push(ThreadItem::ContextCompaction {
-                id,
-                summary: None,
-                replacement_history: None,
-            });
+            .push(ThreadItem::ContextCompaction { id });
     }
 
     pub(super) fn handle_entered_review_mode(
@@ -245,8 +237,6 @@ impl ThreadHistoryBuilder {
                 let compact_id = turn.items[compaction_index].id().to_string();
                 turn.items[compaction_index] = ThreadItem::ContextCompaction {
                     id: compact_id.clone(),
-                    summary: None,
-                    replacement_history: None,
                 };
                 if let Some(summary) = summary {
                     upsert_compaction_summary_after_marker(
@@ -262,11 +252,8 @@ impl ThreadHistoryBuilder {
 
         let id = self.next_item_id();
         let turn = self.ensure_turn();
-        turn.items.push(ThreadItem::ContextCompaction {
-            id: id.clone(),
-            summary: None,
-            replacement_history: None,
-        });
+        turn.items
+            .push(ThreadItem::ContextCompaction { id: id.clone() });
         if let Some(summary) = summary {
             turn.items.push(compaction_summary_item(&id, summary));
         }

@@ -93,8 +93,6 @@ mod tests {
             id: "compaction-1".to_string(),
             items: vec![ThreadItem::ContextCompaction {
                 id: "compact-1".to_string(),
-                summary: Some("summary".to_string()),
-                replacement_history: None,
             }],
             items_view: TurnItemsView::Full,
             error: None,

@@ -514,11 +514,7 @@ mod restore_persisted_injected_context_turns_tests {
     }
 
     fn context_compaction_item(id: &str) -> ThreadItem {
-        ThreadItem::ContextCompaction {
-            id: id.to_string(),
-            summary: None,
-            replacement_history: None,
-        }
+        ThreadItem::ContextCompaction { id: id.to_string() }
     }
 
     fn schedule_subscribe_item(id: &str, subscription_id: &str, label: &str) -> ThreadItem {

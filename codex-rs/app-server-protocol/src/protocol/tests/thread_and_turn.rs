@@ -199,8 +199,6 @@ fn thread_turns_items_list_round_trips() {
             },
             ThreadItem::ContextCompaction {
                 id: "item_2".to_string(),
-                summary: None,
-                replacement_history: None,
             },
         ],
         next_cursor: None,
@@ -261,38 +259,16 @@ fn thread_provider_capabilities_serializes_fork_thread_as_camel_case() {
 }
 
 #[test]
-fn context_compaction_serializes_replacement_history() {
+fn context_compaction_serializes_marker_only() {
     let item = ThreadItem::ContextCompaction {
         id: "item_3".to_string(),
-        summary: Some("compact summary".to_string()),
-        replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
-            id: "recent-user".to_string(),
-            content: vec![UserInput::Text {
-                text: "recent request".to_string(),
-                text_elements: Vec::new(),
-            }],
-        }]),
     };
 
     assert_eq!(
         serde_json::to_value(&item).expect("serialize context compaction"),
         json!({
             "type": "contextCompaction",
-            "id": "item_3",
-            "summary": "compact summary",
-            "replacementHistory": [
-                {
-                    "type": "userMessage",
-                    "id": "recent-user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "recent request",
-                            "text_elements": []
-                        }
-                    ]
-                }
-            ]
+            "id": "item_3"
         })
     );
 }

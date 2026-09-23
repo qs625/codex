@@ -587,9 +587,6 @@ test("compact rows do not render archived artifacts inline", () => {
         text: "Context compacted",
         timestamp: "09:43",
         attachments: [],
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 0,
-        replacementHistoryEntries: [],
         archivedEntryCount: 1,
         archivedCells: [
           {
@@ -598,7 +595,6 @@ test("compact rows do not render archived artifacts inline", () => {
             entries: [artifactEntry()],
           },
         ],
-        replacementHistoryCells: [],
       }}
     />,
   );
@@ -672,9 +668,6 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
         text: "Context compacted",
         timestamp: "09:43",
         attachments: [],
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 1,
-        replacementHistoryEntries: [],
         archivedEntryCount: 1,
         archivedCells: [
           {
@@ -697,7 +690,6 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
             ],
           },
         ],
-        replacementHistoryCells: [],
       }}
     />,
   );
@@ -1257,26 +1249,6 @@ test("compact rows render only the marker without grouped history body", () => {
         timestamp: "09:43",
         attachments: [],
         compactSummary: "Compacted summary remains visible in the chat.",
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 2,
-        replacementHistoryEntries: [],
-        replacementHistoryCells: [
-          {
-            id: "replacement-message",
-            kind: "message",
-            entries: [
-              {
-                id: "replacement-message",
-                kind: "message",
-                author: "You",
-                role: "user",
-                text: "recent request",
-                timestamp: "09:42",
-                attachments: [],
-              },
-            ],
-          },
-        ],
       }}
     />,
   );
@@ -1285,8 +1257,6 @@ test("compact rows render only the marker without grouped history body", () => {
   assert.doesNotMatch(markup, /Compacted summary remains visible in the chat/);
   assert.match(markup, /09:43/);
   assert.doesNotMatch(markup, /button/);
-  assert.doesNotMatch(markup, /2 replacement items/);
-  assert.doesNotMatch(markup, /replacement history/);
   assert.doesNotMatch(markup, /load the archived conversation/);
   assert.doesNotMatch(markup, /recent request/);
   assert.doesNotMatch(markup, /functions\/exec_command/);
@@ -1304,9 +1274,6 @@ test("compact rows do not render compact summary text inline", () => {
         timestamp: "09:43",
         attachments: [],
         compactSummary: "## Current Goal\n\n- Preserve compact summary",
-        replacementHistoryStatus: "missing",
-        replacementHistoryCount: null,
-        replacementHistoryEntries: null,
       }}
     />,
   );
@@ -1316,8 +1283,6 @@ test("compact rows do not render compact summary text inline", () => {
   assert.doesNotMatch(markup, /Summary available/);
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
   assert.doesNotMatch(markup, /<summary>View summary<\/summary>/);
-  assert.doesNotMatch(markup, /replacement history unavailable/);
-  assert.doesNotMatch(markup, /Replacement history is unavailable/);
 });
 
 test("compact rows omit fallback text when summary is missing", () => {
@@ -1332,9 +1297,6 @@ test("compact rows omit fallback text when summary is missing", () => {
         timestamp: "09:43",
         attachments: [],
         compactSummary: null,
-        replacementHistoryStatus: "missing",
-        replacementHistoryCount: null,
-        replacementHistoryEntries: null,
       }}
     />,
   );
@@ -1358,9 +1320,6 @@ test("compact row does not render large compact summary previews", () => {
         timestamp: "09:43",
         attachments: [],
         compactSummary: longSummary,
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 0,
-        replacementHistoryEntries: [],
       }}
     />,
   );
@@ -1384,10 +1343,6 @@ test("compact rows do not render grouped history body when expanded", () => {
         text: "Previous conversation was archived; compacted model context continues below.",
         timestamp: "09:43",
         attachments: [],
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 1,
-        replacementHistoryEntries: [],
-        replacementHistoryCells: [],
         archivedEntryCount: 1,
         archivedCells: [
           {
@@ -1422,26 +1377,6 @@ test("compact rows do not render grouped history body when expanded", () => {
         text: "Previous conversation was archived; compacted model context continues below.",
         timestamp: "09:43",
         attachments: [],
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 1,
-        replacementHistoryEntries: [],
-        replacementHistoryCells: [
-          {
-            id: "replacement-message",
-            kind: "message",
-            entries: [
-              {
-                id: "replacement-message",
-                kind: "message",
-                author: "You",
-                role: "user",
-                text: "recent request",
-                timestamp: "09:42",
-                attachments: [],
-              },
-            ],
-          },
-        ],
         archivedEntryCount: 1,
         archivedCells: [
           {
@@ -1482,10 +1417,6 @@ test("expanded compact rows do not render nested compact groups from archived hi
         text: "Previous conversation was archived; compacted model context continues below.",
         timestamp: "09:43",
         attachments: [],
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 1,
-        replacementHistoryEntries: [],
-        replacementHistoryCells: [],
         archivedEntryCount: 3,
         archivedCells: [
           {
@@ -1500,26 +1431,6 @@ test("expanded compact rows do not render nested compact groups from archived hi
                 text: "Previous conversation was archived; compacted model context continues below.",
                 timestamp: "09:41",
                 attachments: [],
-                replacementHistoryStatus: "available",
-                replacementHistoryCount: 1,
-                replacementHistoryEntries: [],
-                replacementHistoryCells: [
-                  {
-                    id: "replacement-message",
-                    kind: "message",
-                    entries: [
-                      {
-                        id: "replacement-message",
-                        kind: "message",
-                        author: "You",
-                        role: "user",
-                        text: "first replacement",
-                        timestamp: "09:40",
-                        attachments: [],
-                      },
-                    ],
-                  },
-                ],
                 archivedEntryCount: 1,
                 archivedCells: [
                   {
