@@ -2299,9 +2299,12 @@ test("shows structured follow-up text and image refs in outgoing inter-agent ite
   );
   assert.match(
     entries[0]?.toolDetails ?? "",
-    /Prompt\nplease compare this\n\[image:image-1\]/,
+    /content\nplease compare this\n\[image:image-1\]/,
   );
-  assert.match(entries[0]?.toolDetails ?? "", /Receivers\n\/root\/worker/);
+  assert.match(entries[0]?.toolDetails ?? "", /target\n\/root\/worker/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Sender/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Receivers/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Prompt/);
   assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Agent States/);
   assert.doesNotMatch(
     entries[0]?.toolDetails ?? "",
@@ -2439,10 +2442,15 @@ test("shows typed list_agents collab tool calls", () => {
     [["multiAgent", "list agents", "listed 1 agents"]],
   );
   assert.match(entries[0]?.toolDetails ?? "", /Tool\nlist_agents/);
+  assert.match(entries[0]?.toolDetails ?? "", /path_prefix\n\/root/);
   assert.match(
     entries[0]?.toolDetails ?? "",
-    /Agent States\n\/root\/worker • completed • done/,
+    /Result\n\/root\/worker • completed • done/,
   );
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Sender/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Receivers/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Prompt/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Agent States/);
 });
 
 test("labels external code agent providers in collab tool details", () => {
@@ -2480,12 +2488,47 @@ test("labels external code agent providers in collab tool details", () => {
   );
   assert.match(
     entries[0]?.toolDetails ?? "",
-    /Receivers\nCodex CLI \/root\/external/,
+    /message\nwork on this/,
   );
+  assert.match(entries[0]?.toolDetails ?? "", /model\ngpt-5\.5/);
+  assert.match(entries[0]?.toolDetails ?? "", /reasoning_effort\nmedium/);
   assert.match(
     entries[0]?.toolDetails ?? "",
-    /Agent States\nCodex CLI \/root\/external • active • running/,
+    /Result\nCodex CLI \/root\/external • active • running/,
   );
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Receivers/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Prompt/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Agent States/);
+});
+
+test("does not invent missing spawn_agent parameters from result state", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "spawn-started",
+        tool: "spawnAgent",
+        status: "inProgress",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: [],
+        receiverPaths: [],
+        timeoutMs: null,
+        prompt: "start the worker",
+        model: "gpt-5.6",
+        reasoningEffort: "low",
+        agentsStates: {},
+      },
+    ]),
+  );
+
+  assert.match(entries[0]?.toolDetails ?? "", /Tool\nspawn_agent/);
+  assert.match(entries[0]?.toolDetails ?? "", /Status\ninProgress/);
+  assert.match(entries[0]?.toolDetails ?? "", /message\nstart the worker/);
+  assert.match(entries[0]?.toolDetails ?? "", /model\ngpt-5\.6/);
+  assert.match(entries[0]?.toolDetails ?? "", /reasoning_effort\nlow/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /agent_type/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Result/);
 });
 
 test("summarizes mixed native and external list_agents provider states", () => {
@@ -2923,7 +2966,7 @@ test("summarizes wait_agent with receiver path and timeout", () => {
       [
         "wait for agent",
         "wait on /root/worker for 30s",
-        "Tool\nwait_agent\n\nSender\n/root\n\nReceivers\n/root/worker\n\nTimeout\n30s",
+        "Tool\nwait_agent\n\nStatus\ncompleted\n\ntarget\n/root/worker\n\ntimeout_ms\n30000",
       ],
     ],
   );

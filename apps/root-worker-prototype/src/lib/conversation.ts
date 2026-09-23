@@ -1770,71 +1770,111 @@ function formatCollabAgentToolTitle(
 function formatCollabAgentToolDetails(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
-  const stateByPath = collabAgentStatesByPath(item);
-  const sections = [
-    `Tool\n${formatCollabAgentToolName(item.tool)}`,
-    `Sender\n${stringOrFallback(item.senderPath, "unknown")}`,
+  const sections: Array<[string, unknown]> = [
+    ["Tool", formatCollabAgentToolName(item.tool)],
+    ["Status", item.status],
   ];
 
-  if (item.receiverPaths.length > 0) {
-    sections.push(
-      `Receivers\n${item.receiverPaths
-        .map((path) =>
-          formatCollabAgentLabel(
-            stringOrFallback(path, "unknown"),
-            stateByPath.get(path),
-          ),
-        )
-        .join("\n")}`,
-    );
+  switch (item.tool) {
+    case "spawnAgent":
+      sections.push(
+        ["message", item.prompt?.trim()],
+        ["model", item.model],
+        ["reasoning_effort", item.reasoningEffort],
+        ["Result", formatCollabAgentToolResult(item)],
+      );
+      break;
+    case "sendInput":
+      sections.push(
+        [
+          formatCollabAgentTargetLabel(item.receiverPaths),
+          formatCollabAgentTargets(item),
+        ],
+        ["content", item.prompt?.trim()],
+      );
+      break;
+    case "resumeAgent":
+      sections.push([
+        formatCollabAgentTargetLabel(item.receiverPaths),
+        formatCollabAgentTargets(item),
+      ]);
+      break;
+    case "wait":
+      sections.push(
+        [
+          formatCollabAgentTargetLabel(item.receiverPaths),
+          formatCollabAgentTargets(item),
+        ],
+        ["timeout_ms", item.timeoutMs],
+        ["Result", formatCollabAgentToolResult(item)],
+      );
+      break;
+    case "listAgents":
+    case "list_agents":
+      sections.push(
+        ["path_prefix", item.prompt?.trim()],
+        ["Result", formatCollabAgentToolResult(item)],
+      );
+      break;
+    case "closeAgent":
+      sections.push(
+        [
+          formatCollabAgentTargetLabel(item.receiverPaths),
+          formatCollabAgentTargets(item),
+        ],
+        ["Result", formatCollabAgentToolResult(item)],
+      );
+      break;
+    default:
+      sections.push(
+        [
+          formatCollabAgentTargetLabel(item.receiverPaths),
+          formatCollabAgentTargets(item),
+        ],
+        ["content", item.prompt?.trim()],
+        ["timeout_ms", item.timeoutMs],
+        ["model", item.model],
+        ["reasoning_effort", item.reasoningEffort],
+        ["Result", formatCollabAgentToolResult(item)],
+      );
   }
 
-  if (item.timeoutMs !== null && item.timeoutMs !== undefined) {
-    sections.push(`Timeout\n${formatWaitTimeout(item.timeoutMs)}`);
-  }
-
-  if (item.prompt?.trim()) {
-    sections.push(`Prompt\n${item.prompt.trim()}`);
-  }
-
-  if (item.model) {
-    sections.push(`Model\n${item.model}`);
-  }
-
-  if (item.reasoningEffort) {
-    sections.push(`Reasoning\n${item.reasoningEffort}`);
-  }
-
-  const agentStates = Object.entries(item.agentsStates ?? {});
-  if (shouldShowCollabAgentStateDetails(item) && agentStates.length > 0) {
-    sections.push(
-      `Agent States\n${agentStates
-        .map(([threadId, state]) =>
-          [
-            formatCollabAgentLabel(
-              stringOrNull(state.path) ?? trimThreadId(threadId),
-              state,
-            ),
-            formatLifecycleStatus(state.lifecycleStatus),
-            stringOrNull(state.message),
-          ]
-            .filter((value) => value && value.length > 0)
-            .join(" • "),
-        )
-        .join("\n")}`,
-    );
-  }
-
-  return sections.join("\n\n");
+  return formatResponseItemDetails(sections);
 }
 
-function shouldShowCollabAgentStateDetails(
+function formatCollabAgentToolResult(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
+  const agentStates = Object.entries(item.agentsStates ?? {});
+  if (!shouldShowCollabAgentResult(item) || agentStates.length === 0) {
+    return null;
+  }
+
+  return agentStates
+    .map(([threadId, state]) =>
+      [
+        formatCollabAgentLabel(
+          stringOrNull(state.path) ?? trimThreadId(threadId),
+          state,
+        ),
+        formatLifecycleStatus(state.lifecycleStatus),
+        stringOrNull(state.message),
+      ]
+        .filter((value) => value && value.length > 0)
+        .join(" • "),
+    )
+    .join("\n");
+}
+
+function shouldShowCollabAgentResult(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
   switch (item.tool) {
     case "spawnAgent":
     case "listAgents":
     case "list_agents":
+    case "wait":
+    case "closeAgent":
       return true;
     case "sendInput":
     case "resumeAgent":
@@ -1842,6 +1882,21 @@ function shouldShowCollabAgentStateDetails(
     default:
       return false;
   }
+}
+
+function formatCollabAgentTargets(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
+  if (item.receiverPaths.length === 0) {
+    return null;
+  }
+  return item.receiverPaths
+    .map((path) => stringOrFallback(path, "unknown"))
+    .join("\n");
+}
+
+function formatCollabAgentTargetLabel(receiverPaths: string[]) {
+  return receiverPaths.length > 1 ? "targets" : "target";
 }
 
 function formatWaitTimeout(timeoutMs: number) {
