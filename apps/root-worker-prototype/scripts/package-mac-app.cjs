@@ -101,6 +101,12 @@ function buildMacAppPackagePlan({
     nativeResourceDir: path.join(resourceStagingDir, "native"),
     outerInfoPlistSourcePath: path.join(cwd, "electron", "Info.plist"),
     payloadBundlePath,
+    payloadIconResourcePath: path.join(
+      payloadBundlePath,
+      "Contents",
+      "Resources",
+      APP_ICON_FILE_NAME,
+    ),
     payloadStagingDir,
     repoRoot,
     resourceStagingDir,
@@ -157,6 +163,14 @@ function prepareMacAppResources(
     fsOps,
     runCommand,
   });
+}
+
+function installPayloadAppIcon(plan, { fsOps = fs } = {}) {
+  fsOps.mkdirSync(path.dirname(plan.payloadIconResourcePath), {
+    recursive: true,
+    mode: 0o755,
+  });
+  fsOps.copyFileSync(plan.appIconSourcePath, plan.payloadIconResourcePath);
 }
 
 function prepareSeedCapsule(
@@ -342,6 +356,7 @@ function packageMacRuntimeCapsule(
     ],
     { cwd: plan.sourceAppDir },
   );
+  installPayloadAppIcon(plan, { fsOps });
   const sourceCommit = captureCommand("git", ["rev-parse", "HEAD"], {
     cwd: plan.repoRoot,
   }).trim();

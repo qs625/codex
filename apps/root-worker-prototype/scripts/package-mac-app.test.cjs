@@ -34,6 +34,7 @@ test("package plan separates outer app, payload staging, and Seed Capsule", () =
   assert.match(plan.launcherExecutablePath, /Contents\/MacOS\/MorpheusLauncher$/);
   assert.match(plan.appIconSourcePath, /assets\/morpheus-icon\.icns$/);
   assert.match(plan.appIconResourcePath, /Contents\/Resources\/morpheus-icon\.icns$/);
+  assert.match(plan.payloadIconResourcePath, /Contents\/Resources\/morpheus-icon\.icns$/);
   assert.match(plan.nativeResourceDir, /dist-package-resources\/native$/);
   assert.match(
     plan.computerUseHelperResourceDir,
@@ -97,14 +98,24 @@ test("Launcher build uses the generic Cargo bin and embeds the Seed release", ()
 test("full mac packaging reuses the Runtime Capsule stage before Launcher packaging", () => {
   const source = fs.readFileSync(path.join(__dirname, "package-mac-app.cjs"), "utf8");
   const fullPackageStart = source.indexOf("function packageMacApp");
+  const runtimePackageStart = source.indexOf("function packageMacRuntimeCapsule");
   const capsuleCall = source.indexOf("packageMacRuntimeCapsule(plan)", fullPackageStart);
   const launcherCall = source.indexOf("buildLauncher(plan, manifest.releaseId)", fullPackageStart);
   const dmgReference = source.indexOf("create-mac-dmg", fullPackageStart);
+  const packagerCall = source.indexOf("@electron/packager", runtimePackageStart);
+  const iconInstallCall = source.indexOf("installPayloadAppIcon(plan", runtimePackageStart);
+  const seedPrepareCall = source.indexOf("prepareSeedCapsule(plan", runtimePackageStart);
 
   assert.notEqual(fullPackageStart, -1);
+  assert.notEqual(runtimePackageStart, -1);
   assert.notEqual(capsuleCall, -1);
   assert.notEqual(launcherCall, -1);
+  assert.notEqual(packagerCall, -1);
+  assert.notEqual(iconInstallCall, -1);
+  assert.notEqual(seedPrepareCall, -1);
   assert.ok(capsuleCall < launcherCall);
+  assert.ok(packagerCall < iconInstallCall);
+  assert.ok(iconInstallCall < seedPrepareCall);
   assert.equal(dmgReference, -1);
   assert.equal(typeof packageMacRuntimeCapsule, "function");
 });
