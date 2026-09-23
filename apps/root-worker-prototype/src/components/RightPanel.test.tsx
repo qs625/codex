@@ -326,6 +326,8 @@ test("right panel keeps file terminal and browser entry points by default", () =
   assert.match(markup, /aria-label="Thread Analysis"/);
   assert.match(markup, /aria-label="Git Changes"/);
   assert.match(markup, /aria-label="Workflow"/);
+  assert.doesNotMatch(markup, /aria-label="Search"/);
+  assert.doesNotMatch(markup, /aria-label="Artifacts"/);
 });
 
 test("renders browser panel and rail button", () => {
