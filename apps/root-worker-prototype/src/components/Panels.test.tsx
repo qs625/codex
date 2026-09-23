@@ -327,6 +327,36 @@ test("SidebarPanel exposes the settings action", () => {
   assert.match(markup, /Settings/);
 });
 
+test("sidebar project lists avoid internal separators while preserving panel resizers", () => {
+  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.match(
+    css,
+    /UI polish: source sidebars use fill, spacing, and type instead of hard internal separators\./,
+  );
+  assert.match(
+    css,
+    /\.sidebar-section-header,[\s\S]*\.sidebar-footer \{[\s\S]*border-top: 0;[\s\S]*border-bottom: 0;/,
+  );
+  assert.match(css, /\.tree-node::before \{[\s\S]*display: none;/);
+  assert.match(css, /\.panel-resizer \{[\s\S]*background: transparent;/);
+  assert.match(css, /\.panel-resizer::before \{[\s\S]*inset: 0;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
+  assert.match(
+    css,
+    /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.18\);/,
+  );
+});
+
+test("workspace keeps 4px resizers outside sidebar project-list polish", () => {
+  const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const PANEL_RESIZER_WIDTH = 4/);
+  assert.match(
+    source,
+    /gridTemplateColumns: `\$\{sidebarWidth\}px \$\{PANEL_RESIZER_WIDTH\}px minmax\(0, 1fr\) \$\{PANEL_RESIZER_WIDTH\}px/,
+  );
+});
+
 test("SidebarPanel indents project subagents relative to the project header", () => {
   const owner = makeNode(
     makeSubagentThread("owner-alpha", "/work/alpha", "owner_dev", "root-alpha"),

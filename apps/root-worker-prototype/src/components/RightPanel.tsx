@@ -43,6 +43,12 @@ import {
 import { filePreviewOpenInBrowserActionVisible } from "../lib/filePreviewBrowser";
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
+import {
+  WORKSPACE_OBJECT_DRAG_TYPE,
+  writeWorkspaceObjectDragData,
+  type WorkspaceOpenableRightPanelObject,
+  type WorkspaceObjectDragPayload,
+} from "../lib/workspaceObjectDrag";
 import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
 import type { TerminalCommandFocusRequest } from "../lib/terminalCommandFocus";
 import {
@@ -74,18 +80,6 @@ import type {
 } from "../types";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
-export type WorkspaceOpenableRightPanelObject = "file" | "browser" | "terminal";
-
-export const WORKSPACE_OBJECT_DRAG_TYPE =
-  "application/x-morpheus-workspace-object-tab";
-
-export function writeWorkspaceObjectDragData(
-  dataTransfer: Pick<DataTransfer, "effectAllowed" | "setData">,
-  kind: WorkspaceOpenableRightPanelObject,
-) {
-  dataTransfer.effectAllowed = "move";
-  dataTransfer.setData(WORKSPACE_OBJECT_DRAG_TYPE, kind);
-}
 
 type BrowserViewBounds = {
   x: number;
@@ -113,6 +107,11 @@ type BrowserPanelTabState = {
   canGoForward: boolean;
   error: string | null;
 };
+
+export type BrowserWorkspaceTabDescriptor = Extract<
+  WorkspaceObjectDragPayload,
+  { kind: "browser" }
+>;
 
 type BrowserPanelActiveState = Omit<BrowserPanelTabState, "id">;
 
@@ -260,6 +259,8 @@ export function RightPanel({
   onOpenPreviewExternally,
   onOpenPreviewInBrowser,
   onOpenTreeFile,
+  onOpenBrowserTabInWorkspace,
+  onOpenTerminalTabInWorkspace,
   onOpenWorkspaceObject,
   onPreviewUpdated,
   onSetActiveView,
@@ -304,6 +305,10 @@ export function RightPanel({
   onOpenPreviewExternally: () => void;
   onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
+  onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
+  onOpenTerminalTabInWorkspace?: (
+    tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
+  ) => void;
   onOpenWorkspaceObject?: (kind: WorkspaceOpenableRightPanelObject) => void;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetActiveView: (value: RightPanelView) => void;
@@ -549,12 +554,14 @@ export function RightPanel({
                 resizing={browserPanelResizing}
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
+                onOpenBrowserTabInWorkspace={onOpenBrowserTabInWorkspace}
               />
             ) : effectiveActiveView === "terminal" ? (
               <TerminalPanel
                 thread={thread}
                 focusCommandRequest={terminalCommandFocusRequest}
                 focusPanelRequestToken={terminalPanelFocusRequestToken}
+                onOpenTerminalTabInWorkspace={onOpenTerminalTabInWorkspace}
               />
             ) : effectiveActiveView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
@@ -924,12 +931,16 @@ export function BrowserPanel({
   resizing,
   navigationRequest,
   onNavigationRequestHandled,
+  onOpenBrowserTabInWorkspace,
+  activeBrowserTabId,
 }: {
   active?: boolean;
   nativeOverlayActive: boolean;
   resizing: boolean;
   navigationRequest: { url: string; token: number } | null;
   onNavigationRequestHandled?: (token: number) => void;
+  onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
+  activeBrowserTabId?: string | null;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const boundsSequenceRef = useRef(0);
@@ -1006,6 +1017,25 @@ export function BrowserPanel({
       applyBrowserState(nextState);
     })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   }, [navigationRequest, onNavigationRequestHandled]);
+
+  useEffect(() => {
+    if (
+      !active ||
+      !activeBrowserTabId ||
+      activeBrowserTabId === state.activeTabId ||
+      !tabs.some((tab) => tab.id === activeBrowserTabId)
+    ) {
+      return;
+    }
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      return;
+    }
+    runCommand(
+      (api) => api.selectBrowserTab(activeBrowserTabId),
+      "Could not switch tabs.",
+    );
+  }, [active, activeBrowserTabId, state.activeTabId, tabs]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1137,6 +1167,15 @@ export function BrowserPanel({
     );
   };
 
+  const browserTabDragPayload = (
+    tab: BrowserPanelTabState,
+  ): BrowserWorkspaceTabDescriptor => ({
+    kind: "browser",
+    browserTabId: tab.id,
+    title: browserTabLabel(tab),
+    url: tab.url,
+  });
+
   return (
     <div className="preview-panel browser-panel">
       <header className="panel-content-header browser-header">
@@ -1175,10 +1214,20 @@ export function BrowserPanel({
                 <button
                   type="button"
                   className="browser-tab"
+                  draggable={onOpenBrowserTabInWorkspace != null}
                   role="tab"
                   aria-selected={isActive}
                   title={browserTabLabel(tab)}
                   onClick={() => selectTab(tab.id)}
+                  onDoubleClick={() =>
+                    onOpenBrowserTabInWorkspace?.(browserTabDragPayload(tab))
+                  }
+                  onDragStart={(event) =>
+                    writeWorkspaceObjectDragData(
+                      event.dataTransfer,
+                      browserTabDragPayload(tab),
+                    )
+                  }
                 >
                   <span className={`browser-tab-dot ${tab.loading ? "loading" : ""}`} />
                   <span className="browser-tab-title">{browserTabLabel(tab)}</span>

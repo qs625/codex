@@ -13,6 +13,11 @@ export type WorkspaceObjectTab = {
   rootId?: string | null;
   path?: string | null;
   url?: string | null;
+  browserTabId?: string | null;
+  terminalTabId?: string | null;
+  terminalSessionId?: string | null;
+  cwd?: string | null;
+  status?: string | null;
 };
 
 export type WorkspaceTabDropPlacement = "before" | "after";

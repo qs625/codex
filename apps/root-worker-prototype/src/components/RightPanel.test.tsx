@@ -59,8 +59,12 @@ const {
   shouldClearGitDiffPreviewForFilePreviewChange,
   syncFilePreviewEditState,
   updateFilePreviewDraft,
-  writeWorkspaceObjectDragData,
 } = await import("./RightPanel");
+const {
+  WORKSPACE_OBJECT_DRAG_TYPE,
+  readWorkspaceObjectDragData,
+  writeWorkspaceObjectDragData,
+} = await import("../lib/workspaceObjectDrag");
 
 const FEATURE_DEV_WORKFLOW: WorkflowSummary = {
   id: "feature-dev",
@@ -396,9 +400,60 @@ test("browser and terminal rail entries are real workspace drag sources", () => 
 
   writeWorkspaceObjectDragData(dataTransfer, "browser");
   assert.equal(dataTransfer.effectAllowed, "move");
-  assert.deepEqual(writes, [
-    ["application/x-morpheus-workspace-object-tab", "browser"],
-  ]);
+  assert.equal(writes[0]?.[0], WORKSPACE_OBJECT_DRAG_TYPE);
+  assert.deepEqual(JSON.parse(writes[0]?.[1] ?? "{}"), { kind: "browser" });
+  assert.deepEqual(
+    readWorkspaceObjectDragData({
+      getData: (type: string) => (type === WORKSPACE_OBJECT_DRAG_TYPE ? "browser" : ""),
+    }),
+    { kind: "browser" },
+  );
+});
+
+test("workspace object drag data carries concrete browser and terminal tab identity", () => {
+  const writes: Array<[string, string]> = [];
+  const dataTransfer = {
+    effectAllowed: "none",
+    setData(type: string, value: string) {
+      writes.push([type, value]);
+    },
+  };
+
+  writeWorkspaceObjectDragData(dataTransfer, {
+    kind: "browser",
+    browserTabId: "browser-tab-2",
+    title: "Docs",
+    url: "https://example.test/docs",
+  });
+  writeWorkspaceObjectDragData(dataTransfer, {
+    kind: "terminal",
+    terminalTabId: "terminal-tab-7",
+    sessionId: "session-7",
+    threadId: "thread-1",
+    title: "pnpm build",
+    cwd: "/repo",
+    commandItemId: "command-1",
+    command: "pnpm build",
+    status: "running",
+  });
+
+  assert.deepEqual(JSON.parse(writes[0]?.[1] ?? "{}"), {
+    kind: "browser",
+    browserTabId: "browser-tab-2",
+    title: "Docs",
+    url: "https://example.test/docs",
+  });
+  assert.deepEqual(JSON.parse(writes[1]?.[1] ?? "{}"), {
+    kind: "terminal",
+    terminalTabId: "terminal-tab-7",
+    sessionId: "session-7",
+    threadId: "thread-1",
+    title: "pnpm build",
+    cwd: "/repo",
+    commandItemId: "command-1",
+    command: "pnpm build",
+    status: "running",
+  });
 });
 
 test("browserBoundsFromElement measures the visible viewport rect with sequence", () => {
@@ -973,6 +1028,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /workspaceTabForFile/);
   assert.match(appSource, /workspaceTabForBrowser/);
   assert.match(appSource, /workspaceTabForTerminal/);
+  assert.match(appSource, /browserWorkspaceTabId\(tab\?\.browserTabId/);
+  assert.match(appSource, /terminalWorkspaceTabId\(tab\?\.terminalTabId/);
+  assert.match(appSource, /browserTabId: tab\?\.browserTabId/);
+  assert.match(appSource, /terminalTabId: tab\?\.terminalTabId/);
+  assert.match(appSource, /readWorkspaceObjectDragData\(event\.dataTransfer\)/);
   assert.match(appSource, /aria-label="Workspace object tabs"/);
   assert.match(appSource, /getWorkspaceTabThread/);
   assert.match(appSource, /getRootThreadConversationTitle\(thread\)/);
@@ -1002,6 +1062,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /const result = await loadFilePreview\(target, \{ preserveRightPanel: true \}\)/);
   assert.match(appSource, /workspaceTabForFile\(result\.preview, result\.rootId\)/);
   assert.doesNotMatch(appSource, /workspaceTabForFile\(preview, selectedTreeRootIdRef\.current\)/);
+  assert.match(appSource, /filePanelView="preview"/);
+  assert.match(appSource, /\[target\]: payload\.entries/);
+  assert.match(appSource, /\[payload\.path\]: payload\.entries/);
   assert.match(appSource, /function handleOpenTreeFile\(target: string\) \{[\s\S]*openFilePathInWorkspace\(target\)/);
   assert.match(appSource, /if \(rightPanelView === "preview"\) \{[\s\S]*setRightPanelView\("skills"\)/);
   assert.match(appSource, /activeWorkspaceTab\?\.kind !== "file"/);
@@ -1014,7 +1077,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(appSource, /revealThreadInSidebarState\(\{/);
   assert.match(appSource, /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/);
-  assert.match(rightPanelSource, /WorkspaceOpenableRightPanelObject = "file" \| "browser" \| "terminal"/);
+  assert.match(rightPanelSource, /type WorkspaceOpenableRightPanelObject/);
   assert.doesNotMatch(rightPanelSource, /panel-eyebrow/);
   assert.doesNotMatch(rightPanelSource, /preview-mode-toggle/);
   assert.doesNotMatch(rightPanelSource, /Context mix/);
@@ -1025,6 +1088,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /writeWorkspaceObjectDragData\(event\.dataTransfer, kind\)/);
   assert.match(rightPanelSource, /onOpenWorkspaceObject\?\.\(kind\)/);
   assert.match(rightPanelSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
+  assert.match(rightPanelSource, /browserTabDragPayload/);
+  assert.match(rightPanelSource, /browserTabId: tab\.id/);
+  assert.match(rightPanelSource, /onOpenBrowserTabInWorkspace/);
   assert.match(rightPanelSource, /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/);
   assert.match(rightPanelSource, /filePanelView=\{fileSourcePanelView\}/);
   assert.match(panelsSource, /data-thread-id/);
@@ -1038,6 +1104,22 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px \$\{PANEL_RESIZER_WIDTH\}px minmax\(0, 1fr\) \$\{PANEL_RESIZER_WIDTH\}px/);
   assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel/);
   assert.match(stylesSource, /width: 100%;/);
+  assert.match(stylesSource, /\.workspace-tab-strip \{[\s\S]*border-bottom: 0;/);
+  assert.match(
+    stylesSource,
+    /UI polish: right panel content keeps structure without extra 1px separator lines\./,
+  );
+  assert.match(
+    stylesSource,
+    /\.right-panel \.panel-rail,[\s\S]*\.right-panel \.terminal-viewport-shell \{[\s\S]*border-top: 0;[\s\S]*border-bottom: 0;/,
+  );
+  assert.match(stylesSource, /\.right-panel \.panel-rail \{[\s\S]*border-left: 0;/);
+  assert.match(
+    stylesSource,
+    /\.right-panel \.overview-metric,[\s\S]*\.right-panel \.workflow-status-pill \{[\s\S]*border: 0;/,
+  );
+  assert.match(stylesSource, /\.panel-rail-button\.active \{[\s\S]*background: rgba\(28, 25, 23, 0\.05\);/);
+  assert.match(stylesSource, /\.panel-rail-button\.active::after \{[\s\S]*background: #d97706;/);
   assert.match(
     stylesSource,
     /\.workspace-tab-panel > \.conversation-panel,\s*\.conversation-panel,\s*\.conversation-scroll \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/,
@@ -1046,6 +1128,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(stylesSource, /\.panel-resizer::before \{[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
   assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.12\);/);
   assert.match(stylesSource, /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.18\);/);
+  assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(stylesSource, /\.panel-content-header \{[\s\S]*min-height: 34px;[\s\S]*padding: 6px 10px;/);
   assert.doesNotMatch(stylesSource, /\.file-object-toolbar/);
   assert.doesNotMatch(stylesSource, /\.panel-eyebrow/);
@@ -1092,6 +1175,10 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.doesNotMatch(
     stylesSource,
     /\.workspace-tab-panel\s*\{[^}]*box-shadow:/,
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.workspace-tab-strip\s*\{[^}]*border-bottom:(?![ \t]*0[ \t]*;)/,
   );
   assert.doesNotMatch(stylesSource, /\.workspace-main \{[^}]*border-right:/);
   assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*border-top:/);
@@ -1480,8 +1567,9 @@ test("keeps plan and monitor activity on compact right panel layout rules", () =
   assert.match(css, /\.plan-status-label\.blocked/);
   assert.match(
     css,
-    /\.monitor-section\s*\{[\s\S]*border-top: 1px solid rgba\(16, 24, 40, 0\.06\);[\s\S]*padding-top: 10px;/,
+    /\.monitor-section\s*\{[\s\S]*padding-top: 10px;/,
   );
+  assert.match(css, /\.right-panel \.monitor-section,[\s\S]*border-top: 0;/);
   assert.match(css, /\.monitor-kind-dot\.command,\s*\.monitor-kind-dot\.process/);
   assert.doesNotMatch(css, /\.monitor-empty\s*\{[^}]*border-top:/);
 });
