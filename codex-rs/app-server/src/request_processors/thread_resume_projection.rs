@@ -1,5 +1,6 @@
 use super::context_usage_replay;
 use super::context_usage_replay::ThreadUsageSource;
+use super::thread_processor::build_display_turns_from_rollout_items;
 use super::thread_processor::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
 use super::token_usage_replay;
 use super::*;
@@ -92,7 +93,7 @@ pub(crate) fn populate_thread_turns_from_history(
     active_turn: Option<&Turn>,
 ) {
     apply_thread_stats_from_rollout_items(thread, items);
-    let mut turns = build_api_turns_from_rollout_items(items);
+    let mut turns = build_display_turns_from_rollout_items(items);
     prune_turns_to_latest_compaction_boundary(&mut turns);
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn.clone());
@@ -227,9 +228,12 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
     let preserve_persisted_status = matches!(status, ThreadLifecycleStatus::NotLoaded)
         && should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(thread);
     let preserve_completed_from_stale_active = !has_live_in_progress_turn
-        && matches!(thread.lifecycle_status, ThreadLifecycleStatus::Final {
-            result: app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. },
-        })
+        && matches!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. },
+            }
+        )
         && matches!(status, ThreadLifecycleStatus::Active { .. });
     let effective_status = if preserve_persisted_status {
         thread.lifecycle_status.clone()

@@ -401,6 +401,7 @@ use std::result::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+#[cfg(test)]
 use thread_history::ThreadHistoryBuilder;
 use thread_service::ForkSnapshot;
 use thread_service::NativeThreadCreationRuntime;
@@ -557,6 +558,7 @@ pub(crate) use self::thread_summary::read_summary_from_rollout;
 #[cfg(test)]
 pub(crate) use self::thread_summary::summary_to_thread;
 
+#[cfg(test)]
 pub(crate) fn build_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Turn> {
     let mut builder = ThreadHistoryBuilder::new();
     for item in items {

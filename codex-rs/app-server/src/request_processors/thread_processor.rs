@@ -34,6 +34,7 @@ pub(crate) use self::support::stored_thread_session_source_with_agent_metadata;
 pub(crate) use self::support::thread_from_stored_thread;
 pub(crate) use self::support::thread_store_resume_read_error;
 use self::support::*;
+pub(crate) use self::thread_read_activity_projection::build_display_turns_from_rollout_items;
 pub(crate) use self::thread_read_activity_projection::restore_persisted_display_turns_from_rollout_items;
 use self::thread_read_activity_projection::*;
 use self::thread_read_projection::*;

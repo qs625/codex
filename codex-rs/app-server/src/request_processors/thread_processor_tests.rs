@@ -74,6 +74,8 @@ mod thread_processor_behavior_tests {
     use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
     use protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
     use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+    use protocol::models::ContentItem;
+    use protocol::models::ResponseItem;
     use protocol::openai_models::ReasoningEffort;
     use protocol::permissions::FileSystemAccessMode;
     use protocol::permissions::FileSystemPath;
@@ -83,6 +85,7 @@ mod thread_processor_behavior_tests {
     use protocol::protocol::AskForApproval;
     use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
+    use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::SandboxPolicy;
     use protocol::protocol::SessionSource;
     use protocol::protocol::SubAgentSource;
@@ -1533,6 +1536,42 @@ mod thread_processor_behavior_tests {
         items
     }
 
+    fn compacted_replacement_display_history_items() -> Vec<RolloutItem> {
+        let mut items = compacted_display_history_items();
+        items[5] = RolloutItem::Compacted(CompactedItem {
+            message: "summary".to_string(),
+            replacement_history: Some(vec![ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "compact summary body".to_string(),
+                }],
+                phase: None,
+            }]),
+            visible_replacement_history_len: None,
+        });
+        items.insert(
+            6,
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "compact-turn".to_string(),
+                item: protocol::items::TurnItem::InjectedContext(
+                    protocol::items::InjectedContextItem {
+                        id: "ctx-1".to_string(),
+                        title: "Init Context".to_string(),
+                        preview: "Init Context".to_string(),
+                        sections: vec![protocol::items::InjectedContextSection {
+                            label: "User Preferences".to_string(),
+                            text: "# User Preferences\n\nProject body".to_string(),
+                        }],
+                    },
+                ),
+                completed_at_ms: 4,
+            })),
+        );
+        items
+    }
+
     #[test]
     fn populate_thread_turns_from_history_prunes_compact_prefix() {
         let mut thread = Thread {
@@ -1593,6 +1632,135 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn populate_thread_turns_from_history_expands_compaction_replacement_display_items() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+
+        populate_thread_turns_from_history(
+            &mut thread,
+            &compacted_replacement_display_history_items(),
+            None,
+        );
+
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-3", "replacement-0", "ctx-1", "item-4"]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[1],
+            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[2],
+            ThreadItem::InjectedContext { sections, .. }
+                if sections
+                    .iter()
+                    .any(|section| section.text.contains("Project body"))
+        ));
+    }
+
+    #[test]
+    fn populate_thread_turns_for_persisted_read_expands_compaction_replacement_display_items() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+
+        populate_thread_turns_for_persisted_read(
+            &mut thread,
+            &compacted_replacement_display_history_items(),
+        );
+
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-3", "replacement-0", "ctx-1", "item-4"]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[1],
+            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[2],
+            ThreadItem::InjectedContext { sections, .. }
+                if sections
+                    .iter()
+                    .any(|section| section.text.contains("Project body"))
+        ));
+    }
+
+    #[test]
     fn populate_thread_turns_from_history_counts_same_turn_compactions_before_pruning() {
         let mut thread = Thread {
             id: "thread-1".to_string(),
@@ -1641,6 +1809,43 @@ mod thread_processor_behavior_tests {
                 .collect::<Vec<_>>(),
             vec!["item-3", "item-4", "item-5"]
         );
+    }
+
+    #[test]
+    fn thread_turns_list_reconstruction_expands_compaction_replacement_display_items() {
+        let turns = reconstruct_thread_turns_for_turns_list(
+            &compacted_replacement_display_history_items(),
+            ThreadLifecycleStatus::completed(None),
+            /*has_live_running_thread*/ false,
+            None,
+        );
+
+        assert_eq!(
+            turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-3", "replacement-0", "ctx-1", "item-4"]
+        );
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &turns[0].items[1],
+            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+        ));
+        assert!(matches!(
+            &turns[0].items[2],
+            ThreadItem::InjectedContext { sections, .. }
+                if sections
+                    .iter()
+                    .any(|section| section.text.contains("Project body"))
+        ));
     }
 
     #[test]
@@ -1952,10 +2157,7 @@ mod thread_processor_behavior_tests {
         )
         .expect_err("invalid persisted agent path should fail");
 
-        assert_eq!(
-            err.code,
-            crate::error_code::INVALID_REQUEST_ERROR_CODE
-        );
+        assert_eq!(err.code, crate::error_code::INVALID_REQUEST_ERROR_CODE);
         assert!(
             err.message.contains("invalid persisted agent_path"),
             "unexpected error: {:?}",

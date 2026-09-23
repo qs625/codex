@@ -425,10 +425,9 @@ async fn fresh_compact_initial_context_reloads_project_instruction_files_for_cur
     let codex_home = temp.path().join("home");
     let project_root = temp.path().join("project");
     let project_morpheus = project_root.join(".morpheus");
-    let project_instructions = project_root.join("instructions");
+    let project_instructions = project_morpheus.join("instructions");
     let home_instructions = codex_home.join("instructions");
     let runtime_instruction = temp.path().join("runtime-instruction.md");
-    std::fs::create_dir_all(&project_morpheus).expect("create project config dir");
     std::fs::create_dir_all(&project_instructions).expect("create project instructions");
     std::fs::create_dir_all(&home_instructions).expect("create home instructions");
     std::fs::write(project_root.join(".git"), "gitdir: here").expect("write git marker");
@@ -513,6 +512,12 @@ instruction_files = [
             && initial_context_text.contains("Project compact understanding body."),
         "{initial_context_text}"
     );
+    let user_instructions = snapshot
+        .user_instructions
+        .as_deref()
+        .expect("expected compact user instructions");
+    assert!(user_instructions.contains("Project compact preference body."));
+    assert!(user_instructions.contains("Project compact understanding body."));
 
     let TurnItem::InjectedContext(injected_context) =
         codex_turn_items::injected_context_item_from_response_items(&snapshot.response_items)
@@ -528,6 +533,14 @@ instruction_files = [
         .join("\n");
     assert!(injected_context_text.contains("Project compact preference body."));
     assert!(injected_context_text.contains("Project compact understanding body."));
+    let baseline_snapshot = snapshot
+        .reference_context_item
+        .init_context_snapshot
+        .as_ref()
+        .expect("expected compact reference baseline snapshot");
+    let baseline_user_text = baseline_snapshot.contextual_user_sections.join("\n");
+    assert!(baseline_user_text.contains("Project compact preference body."));
+    assert!(baseline_user_text.contains("Project compact understanding body."));
 
     let replacement_history = snapshot.response_items.clone();
     let TurnItem::InjectedContext(replacement_injected_context) =
