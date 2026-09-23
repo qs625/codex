@@ -8,77 +8,51 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Current installed Runtime Capsule is `sha256:c66acb51dec2412d16855c3e2732ddba8eae584e828dc4deefc37ad051bda928`, selected/externalCurrent/activeLaunch in runtime-launcher control state, installed by recovered restart request `call_2iNOxNhAaM4ukEFkHw0xji1n` (do not repeat the same restart request). Artifact manifest metadata sourceCommit is `20e8e3b8f62d945984a409ef100213f096efd8fc`. Previous Runtime Capsule is `sha256:1cc50bd796e0267b5f5d877c9fa35bc66a8f38206ee83a49d4a2486e473475a1`. Self-debug attached to CDP `127.0.0.1:9223`: listener process is `Root Worker Runtime`, renderer URL points to `c66acb51.../app.asar/dist/index.html`, readyState complete, Electron `37.10.3` UA confirmed, console 0 errors/warnings. Runtime control state shows payload pid `25510` running under launch instance `50557-1789832945626`. `update_plan` accepted `blocked` and multiple non-completed plan states in-turn; current renderer DOM had no RightPanel plan elements visible for label/class assertion. Computer Use direct tool exposure still needs a fresh new-turn model tool-surface check because the restart occurred mid-turn.
+Fix compact fresh Init Context so project-level `instruction_files` from the current workspace `.morpheus/config.toml` are included after compact, not only home-level `MORPHEUS_HOME/instructions` files. Current main HEAD is `9d8f24efd50e42bee94cea69819783e401a1b1c6` after merging the followup-tool-item display fix; installed Runtime Capsule is still `sha256:16f2fe9c704e42d438f2604afc904e60f05c4017a56f212df8a96915e2d02562`. Restart request `call_EvYNHCj9ESFHGrDc4zOyyTqd` has already recovered and must not be repeated for the same delivery.
 
 ## Active Work
-- id: plan-tool-minimal-status-model
+- id: compact-project-instruction-files
+  status: dispatched
   owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
-  branch: fix/plan-tool-rich-status
-  task_type: runtime/tool schema + frontend display bugfix
-  depends_on: user feedback that plan tool cannot express PM multi-task state; simplified design decision to avoid many PM-specific statuses
-  files: codex-rs/protocol/src/plan_tool.rs; codex-rs/protocol/src/prompts/base_instructions/default.md; codex-rs/thread-service prompt mirrors if applicable; apps/root-worker-prototype/src/types.ts; apps/root-worker-prototype/src/components/RightPanel.tsx/tests; apps/root-worker-prototype/src/styles.css
-  base_commit: 00939bf8485343e31b1d320b70848b12c93dd3c7
-  status: installed_effective
-  next_action: none; if desired, verify RightPanel plan label rendering in a future turn/window where Current Plan is visible.
-  validation: owner/reviewer approved; `cargo fmt ...` pass with existing nightly rustfmt warning; `cargo test --manifest-path codex-rs/Cargo.toml -p protocol plan_tool -- --nocapture` 2/2; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server test_handle_turn_plan_update_emits_notification_for_v2 -- --nocapture` pass; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx` 59/59; owner `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass; PM merge build `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass in 61.57s after real feature merge; `git diff --check` pass; old exactly-one/three-state prompt constraints rg-clean. Installed via Runtime Capsule `sha256:c66acb51...` from sourceCommit `20e8e3b8`; self-debug confirmed renderer on new release, console 0 errors/warnings, and `update_plan` accepted `blocked` plus multiple non-completed plan states. `codex-tool-service` focused lib test still has pre-existing test mock/import baseline compile issue outside this task.
-  commit: owner `687e0bcd2`; merge `418d78e25`
+  branch: owner to choose
+  task_type: runtime_context_bugfix
+  depends_on: none
+  files: likely `codex-rs/thread-service/src/session/*`, `codex-rs/config/src/*`, focused compact/init-context tests
+  base_commit: `fb9d8813c1ce5a49820071ee55cea000266cb832`
+  next_action: owner should reproduce why compact turn config lacks project `instruction_files`, implement minimal fix, review, and return commit + validation.
+  validation: pending
+  commit: pending
+  notes: Main checkout currently has user/PM local dirt (`.morpheus/instructions/project-understanding.md`, user edits in `events_history.rs` and tests, `.codex/pm-progress.md`, generated `dist-seed-capsule/`). Do not overwrite these; merge back via git when owner completes.
 
-- id: compact-retained-init-context-visible
-  owner: /self/owner_dev
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev
-  branch: fix/compact-retained-init-context
-  task_type: UI/display correction
-  depends_on: compact summary inline and Init Context section-item projection
-  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts
-  base_commit: 9f0f257a96862401c26f8b816c6bcd2bac4a2afb
-  status: installed_effective
-  next_action: none.
-  validation: owner/reviewer approved; PM design验收 passed; main `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/conversationVirtualization.test.ts` 126/126; `git diff --check` pass. Installed via Runtime Capsule `sha256:c66acb51...`; self-debug confirmed renderer on new release and console 0 errors/warnings.
-  commit: owner `2d5fe2e4b`; merge `2ce7ed63e`
-
-- id: init-context-specific-category-labels
-  owner: /self/owner_dev
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev
-  branch: fix/init-context-specific-labels
-  task_type: UI/display typed source classification
-  depends_on: installed `split-init-context-into-items`
-  files: codex-rs/turn-items/src/lib.rs; codex-rs/turn-items/src/tests.rs
-  base_commit: eadb296a83047d44c5072c12369368d60db69e7c
-  status: installed_effective
-  next_action: none.
-  validation: owner/reviewer approved; PM design验收 passed; main `cargo test --manifest-path codex-rs/Cargo.toml -p codex-turn-items injected_context -- --nocapture` 2/2; root-worker focused tests 125/125; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass with linker/future-incompat warnings; `git diff --check` pass. Installed via Runtime Capsule `sha256:c66acb51...`; self-debug confirmed renderer on new release and console 0 errors/warnings.
-  commit: owner `65cc5b03c`; merge `6c7682735`
-
-- id: compact-summary-inline-visible
-  owner: /self/owner_dev_3
-  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
-  branch: fix/compact-summary-inline-visible
-  task_type: UI/display correction
-  depends_on: installed `compact-marker-non-expandable-ui`
-  files: apps/root-worker-prototype/src/components/Conversation.tsx; apps/root-worker-prototype/src/lib/conversationFormatting.ts; apps/root-worker-prototype/src/lib/conversationVirtualization.ts; apps/root-worker-prototype/src/styles.css; focused Conversation tests
-  base_commit: eadb296a83047d44c5072c12369368d60db69e7c
-  status: installed_effective
-  next_action: none.
-  validation: owner/reviewer approved; PM design验收 passed; main root-worker focused tests 125/125; app-server debug build pass with linker/future-incompat warnings; `git diff --check` pass. Installed via Runtime Capsule `sha256:c66acb51...`; self-debug confirmed renderer on new release and console 0 errors/warnings.
-  commit: owner `8d185ac92`; merge `9f0f257a`
-
-- id: computer-use-mcp-tool-exposure
+- id: followup-tool-item-hide-stale-agent-state
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
-  branch: fix/computer-use-mcp-tool-exposure
-  task_type: runtime/MCP tool exposure bugfix
-  depends_on: installed Computer Use helper/MCP packaging; dev-2 stale dirty formatting/import stash triaged and dropped as not useful
-  files: codex-rs/mcp-service/src/tool_exposure.rs; codex-rs/mcp-types/src/lib.rs; codex-rs/mcp-types/src/mcp_config.rs
-  base_commit: eadb296a83047d44c5072c12369368d60db69e7c
-  status: installed_effective_pending_new_turn_surface_check
-  next_action: on next fresh user/model turn, confirm Computer Use MCP tools are directly visible in the model tool surface rather than only discoverable through tool search.
-  validation: owner/reviewer approved; PM design验收 passed; main `cargo test --manifest-path codex-rs/Cargo.toml -p mcp-service directly_exposes_computer_use_when_large_tool_sets_are_searchable -- --nocapture` 1/1; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` pass with existing warnings; `git diff --check` pass. Installed via Runtime Capsule `sha256:c66acb51...`; self-debug confirmed renderer on new release and console 0 errors/warnings. Fresh-turn direct tool-surface verification remains pending because this restart occurred mid-turn.
-  commit: owner `6d61a7e7c`; merge `b0e9744b3`
-
-Current checkout allocation: `source_workspace-dev`, `source_workspace-dev-2`, and `source_workspace-dev-3` are idle and synced to the latest main baseline at the last PM synchronization.
+  branch: fix/init-context-baseline-missing-root-cause
+  task_type: ui_display_bugfix
+  depends_on: none
+  files: likely `apps/root-worker-prototype/src/lib/conversation*`, thread item/tool presentation tests, possibly app-server-protocol projection only if the stale state is server-provided
+  base_commit: `fb9d8813c1ce5a49820071ee55cea000266cb832`
+  next_action: deliver via next Runtime Capsule after compact instruction_files fix is also resolved, unless user asks for immediate UI-only delivery.
+  validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 84 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved; PM diff/design验收 passed.
+  commit: owner `a51d80a8fd9413c96f1e8338fe5b412866162563`; merged to main via `9d8f24efd50e42bee94cea69819783e401a1b1c6`
+  notes: Tool item now hides stale `Agent States` details for `sendInput`/`resumeAgent` while retaining spawn/list agent state display and current call audit facts. Pending capsule delivery because this changes root-worker frontend runtime code.
 
 ## Recent Completed
+- id: browser-cdp-direct-target-creation
+  status: installed_effective
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/browser-cdp-direct-target-creation
+  commit: merged through `fb9d8813c1ce5a49820071ee55cea000266cb832`
+  summary: Browser CDP compatibility proxy now supports direct target creation for `/json/new` and browser-level websocket `Target.createTarget` without hanging, and the follow-up native BrowserView lifecycle fix prevents direct-created tabs from forcing Browser panel attach/raise or full-window overlay while another right panel is active.
+  validation: focused owner/reviewer tests passed before merge; installed Runtime Capsule `sha256:16f2fe9c704e42d438f2604afc904e60f05c4017a56f212df8a96915e2d02562` is running from main `fb9d8813c1ce5a49820071ee55cea000266cb832` after restart request `call_EvYNHCj9ESFHGrDc4zOyyTqd`. Installed CDP validation: `/json/new` returned 200 target info for `https://example.org/?morpheus_json_new_installed=1` with target id `A7913E23359466A9AAA9338478FED399`; browser websocket `Target.createTarget` returned target id `738288D2225E78DBD367E65521350C36` for `https://example.net/?morpheus_create_target_installed=1`; visible Browser content was bounded to the right panel (Browser content/control x `1049..1474`, rail x `1474..1520`, app width `1520`); with Terminal active, direct `Target.createTarget` returned target id `34CAEC8CCB703CD0889E7FF2BD9D2464` for `https://example.com/?morpheus_hidden_panel_installed=1` while Terminal stayed active, Browser stayed inactive, and main renderer DOM did not show Example Domain or the hidden URL. Cleanup closed matching test targets; remaining `morpheus_(json_new|create_target|hidden_panel)_installed=1` targets are `[]`. OS screenshot proof unavailable because `computer_use.observe` failed with macOS `screencapture ... could not create image from display`; Playwright/CDP/DOM evidence was used instead.
+  workspace: tracked working tree clean after PM stash isolation; unrelated tracked dirt remains preserved in `stash@{Tue Sep 22 18:35:13 2026}: On main: pm isolate dirty tracked files before runtime capsule 2026-09-22`; generated `apps/root-worker-prototype/dist-seed-capsule/` remains untracked and must not be committed.
+
 - id: readme-codex-build-benchmark
   status: merged_no_capsule_required
   owner: /self/owner_dev_3
@@ -150,5 +124,5 @@ Current checkout allocation: `source_workspace-dev`, `source_workspace-dev-2`, a
 
 ## Known Issues
 - 2026-09-19 Computer Use stable helper no-rewrite keeps `Contents/Resources/payload-electron-path` unchanged by design to avoid touching the stable helper bundle. After the `bb7f0bab...` delivery, MCP server diagnostics still show `execPath` from previous artifact `c1ea6473...` while the main Runtime is `bb7f0bab...`. This is currently safe because `c1ea6473...` is externalPrevious, but future artifact GC could break the stable helper MCP server if the referenced previous payload is removed. Need a follow-up design for a stable current-runtime indirection or non-TCC-breaking payload pointer update.
-- 2026-09-19 `.morpheus/config.toml` remains dirty from user/runtime config changes and must not be committed accidentally.
+- 2026-09-22 PM isolated unrelated tracked dirt into `stash@{Tue Sep 22 18:35:13 2026}: On main: pm isolate dirty tracked files before runtime capsule 2026-09-22`; do not blindly pop it because it contains mixed non-Browser changes. `apps/root-worker-prototype/dist-seed-capsule/` is generated output and remains untracked; do not commit it.
 - Older completed entries and stale known issues are archived in [PM Progress Archive](pm-progress-archive/index.md).

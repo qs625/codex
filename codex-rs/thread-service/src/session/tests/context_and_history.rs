@@ -635,7 +635,7 @@ async fn persisted_resume_metadata_agent_role_refresh_preserves_baseline_for_ord
 }
 
 #[tokio::test]
-async fn ordinary_context_update_emits_skill_instruction_diff_without_full_init_context() {
+async fn ordinary_context_update_does_not_reload_available_skill_body() {
     let skill_dir = tempfile::tempdir().expect("skill tempdir");
     let skill_path = skill_dir.path().join("SKILL.md");
     std::fs::write(
@@ -674,22 +674,15 @@ async fn ordinary_context_update_emits_skill_instruction_diff_without_full_init_
         .await;
 
     let history = session.clone_history().await;
-    assert_ne!(
-        history.raw_items(),
-        session
-            .build_initial_context_for_external_agent_tools(&turn_context)
-            .await,
-        "ordinary skill diff must not append full Init Context"
-    );
     let text = response_input_text(history.raw_items());
-    assert!(text.contains("<skill>"), "{text}");
-    assert!(text.contains("ordinary-skill"), "{text}");
-    assert!(text.contains("skill body v2"), "{text}");
+    assert!(!text.contains("<skill>"), "{text}");
+    assert!(!text.contains("ordinary-skill"), "{text}");
     assert!(!text.contains("skill body v1"), "{text}");
+    assert!(!text.contains("skill body v2"), "{text}");
 }
 
 #[tokio::test]
-async fn fresh_compact_initial_context_reloads_skill_instruction_snapshot() {
+async fn fresh_compact_initial_context_keeps_skills_as_metadata_only() {
     let skill_dir = tempfile::tempdir().expect("skill tempdir");
     let skill_path = skill_dir.path().join("SKILL.md");
     std::fs::write(
@@ -729,15 +722,17 @@ async fn fresh_compact_initial_context_reloads_skill_instruction_snapshot() {
         .expect("fresh compact initial context");
 
     let initial_context_text = response_input_text(&snapshot.response_items);
-    assert!(initial_context_text.contains("compact skill body v2"));
+    assert!(initial_context_text.contains("compact-skill"));
     assert!(!initial_context_text.contains("compact skill body v1"));
+    assert!(!initial_context_text.contains("compact skill body v2"));
     let baseline_snapshot = snapshot
         .reference_context_item
         .init_context_snapshot
         .expect("expected compact baseline snapshot");
     let developer_snapshot = baseline_snapshot.developer_sections.join("\n");
-    assert!(developer_snapshot.contains("compact skill body v2"));
+    assert!(developer_snapshot.contains("compact-skill"));
     assert!(!developer_snapshot.contains("compact skill body v1"));
+    assert!(!developer_snapshot.contains("compact skill body v2"));
 }
 
 #[tokio::test]

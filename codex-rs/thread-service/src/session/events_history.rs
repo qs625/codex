@@ -282,11 +282,6 @@ impl Session {
         {
             developer_sections.push(skills_section);
         }
-        developer_sections.extend(
-            self.render_skill_instruction_file_sections(turn_context)
-                .await,
-        );
-
         let user_instructions = match user_instructions_override {
             Some(user_instructions) => user_instructions.clone(),
             None => {
@@ -318,36 +313,6 @@ impl Session {
             SkillRenderSideEffects::None,
         )?;
         Some(AvailableSkillsInstructions::from(available_skills).render())
-    }
-
-    async fn render_skill_instruction_file_sections(
-        &self,
-        turn_context: &TurnContext,
-    ) -> Vec<String> {
-        if !turn_context.config.include_skill_instructions {
-            return Vec::new();
-        }
-        let mut sections = Vec::new();
-        for skill in turn_context
-            .turn_skills
-            .outcome
-            .allowed_skills_for_implicit_invocation()
-        {
-            let path = skill.path_to_skills_md.as_path();
-            let Ok(contents) = tokio::fs::read_to_string(path).await else {
-                continue;
-            };
-            if contents.trim().is_empty() {
-                continue;
-            }
-            sections.push(format!(
-                "<skill>\n<name>{}</name>\n<path>{}</path>\n{}\n</skill>",
-                skill.name,
-                path.display(),
-                contents.trim()
-            ));
-        }
-        sections
     }
 
     async fn current_agent_role_developer_instructions(
@@ -1985,10 +1950,6 @@ impl Session {
                 }
                 developer_sections.push(skills_instructions.render());
             }
-            developer_sections.extend(
-                self.render_skill_instruction_file_sections(turn_context)
-                    .await,
-            );
         }
         let workflow_registry = self.init_context_workflow_registry(turn_context);
         if let Some(workflow_instructions) =
