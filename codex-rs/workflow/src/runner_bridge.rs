@@ -401,19 +401,12 @@ export interface WorkflowRuntime {
 export interface WorkflowPollEventResult {
   timedOut?: boolean;
   sourceHint?: string | null;
-  event?: WorkflowPollEvent | null;
-  events?: WorkflowPollEvent[];
+  sourceCategory?: "command" | "subagent" | "user_input" | "queued_input" | "async_input" | null;
   waitedMs?: number;
   initialTimeoutMs?: number;
   currentTimeoutMs?: number;
   hardCapTimeoutMs?: number;
 }
-
-export type WorkflowPollEvent =
-  | {
-      type: "inter_agent_communication";
-      communication: unknown;
-    };
 
 export interface WorkflowAgentOptions {
   parent?: string;
@@ -446,11 +439,17 @@ export interface WorkflowAgentWaitResult {
   text?: string | null;
   message?: string | null;
   content?: string;
-  event?: WorkflowPollEvent | null;
-  events?: WorkflowPollEvent[];
+  event?: WorkflowAgentWaitEvent | null;
+  events?: WorkflowAgentWaitEvent[];
   sourceHint?: string | null;
   timedOut?: false;
 }
+
+export type WorkflowAgentWaitEvent =
+  | {
+      type: "inter_agent_communication";
+      communication: unknown;
+    };
 
 export interface WorkflowAgentBinding {
   agentId: string;

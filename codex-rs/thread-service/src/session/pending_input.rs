@@ -506,12 +506,14 @@ impl Session {
         let watcher = thread_wait.begin_wait();
         let pending_events =
             PendingThreadPollEventsSnapshot::new(self.pending_thread_poll_event_snapshots().await);
-        if let Some(source_hint) = pending_events.first_source_hint() {
+        if let Some(source) = pending_events.first_source() {
+            let source_hint = source.source_hint.as_str();
             let source_events = pending_events.events_for_source(source_hint);
             let events = pending_events.events();
             thread_wait.reset_after_event().await;
             return Ok(poll_event_result(
                 Some(source_hint.to_string()),
+                Some(source.source_category.clone()),
                 source_events
                     .first()
                     .cloned()
@@ -528,6 +530,7 @@ impl Session {
                 waited_ms,
             } => {
                 let source_hint = snapshot.source.map(thread_wait_source_hint);
+                let source_category = snapshot.source.map(thread_wait_source_category);
                 let pending_events = PendingThreadPollEventsSnapshot::new(
                     self.pending_thread_poll_event_snapshots().await,
                 );
@@ -538,6 +541,7 @@ impl Session {
                 let events = pending_events.events();
                 Ok(poll_event_result(
                     source_hint,
+                    source_category,
                     source_events
                         .first()
                         .cloned()
@@ -607,6 +611,10 @@ fn thread_wait_source_hint(source: ThreadWaitSource) -> String {
     source.source_hint()
 }
 
+fn thread_wait_source_category(source: ThreadWaitSource) -> String {
+    source.source_category()
+}
+
 fn thread_wait_source_for_communication(
     communication: &InterAgentCommunication,
 ) -> ThreadWaitSource {
@@ -655,9 +663,16 @@ fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<
     ))
 }
 
+fn thread_wait_source_category_for_pending_input(item: &PendingInputItem) -> Option<String> {
+    Some(thread_wait_source_category(
+        thread_wait_source_for_pending_input_item(item),
+    ))
+}
+
 #[derive(Debug)]
 pub(crate) struct PendingThreadPollEventSnapshot {
     pub(crate) source_hint: String,
+    pub(crate) source_category: String,
     event: Option<thread_service_api::ThreadPollEvent>,
 }
 
@@ -670,10 +685,8 @@ impl PendingThreadPollEventsSnapshot {
         Self { snapshots }
     }
 
-    fn first_source_hint(&self) -> Option<&str> {
-        self.snapshots
-            .first()
-            .map(|snapshot| snapshot.source_hint.as_str())
+    fn first_source(&self) -> Option<&PendingThreadPollEventSnapshot> {
+        self.snapshots.first()
     }
 
     fn events(&self) -> Vec<thread_service_api::ThreadPollEvent> {
@@ -690,6 +703,7 @@ fn pending_thread_poll_event_snapshot(
 ) -> Option<PendingThreadPollEventSnapshot> {
     Some(PendingThreadPollEventSnapshot {
         source_hint: thread_wait_source_hint_for_pending_input(item)?,
+        source_category: thread_wait_source_category_for_pending_input(item)?,
         event: thread_poll_event_for_pending_input(item),
     })
 }

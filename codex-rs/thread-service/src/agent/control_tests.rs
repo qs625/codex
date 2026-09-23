@@ -2830,24 +2830,9 @@ async fn external_tool_call_poll_external_event_wakes_for_inter_agent_input() {
     let result_json = result.result.expect("poll result");
     assert_eq!(result_json["timedOut"], false);
     assert_eq!(result_json["sourceHint"], "inter_agent");
-    assert_eq!(result_json["event"]["type"], "inter_agent_communication");
-    assert_eq!(
-        result_json["event"]["communication"]["content"],
-        "please continue"
-    );
-    assert_eq!(
-        result_json["event"]["communication"]["operation"],
-        "followupTask"
-    );
-    assert_eq!(
-        result_json["event"]["communication"]["sender_thread_id"],
-        root_thread_id.to_string()
-    );
-    assert_eq!(
-        result_json["event"]["communication"]["recipient_thread_id"],
-        external_thread_id.to_string()
-    );
-    assert_eq!(result_json["events"].as_array().expect("events").len(), 1);
+    assert_eq!(result_json["sourceCategory"], "subagent");
+    assert!(result_json.get("event").is_none());
+    assert!(result_json.get("events").is_none());
     assert_eq!(result_json["initialTimeoutMs"], 200);
     assert_eq!(result_json["currentTimeoutMs"], 200);
     assert_eq!(result_json["hardCapTimeoutMs"], 200);
@@ -2900,8 +2885,9 @@ async fn external_tool_call_poll_external_event_wakes_for_root_user_input() {
     let result_json = result.result.expect("poll result");
     assert_eq!(result_json["timedOut"], false);
     assert_eq!(result_json["sourceHint"], "user_input");
-    assert_eq!(result_json["event"], serde_json::Value::Null);
-    assert_eq!(result_json["events"], serde_json::Value::Null);
+    assert_eq!(result_json["sourceCategory"], "user_input");
+    assert!(result_json.get("event").is_none());
+    assert!(result_json.get("events").is_none());
 }
 
 #[tokio::test]
@@ -2964,26 +2950,15 @@ async fn external_tool_call_poll_external_event_wakes_for_child_completion() {
         .await;
 
     let queued = input_rx.recv().await.expect("external input");
-    assert!(queued.content.contains("/root/child"));
+    assert_eq!(queued.content, "done");
     let result = poll_task.await.expect("poll task");
     assert!(result.ok, "poll failed: {:?}", result.error);
     let result_json = result.result.expect("poll result");
     assert_eq!(result_json["timedOut"], false);
     assert_eq!(result_json["sourceHint"], "child_completion");
-    assert_eq!(result_json["event"]["type"], "inter_agent_communication");
-    let communication = &result_json["event"]["communication"];
-    assert_eq!(communication["content"], queued.content);
-    assert_eq!(communication["operation"], "childCompletion");
-    assert_eq!(
-        communication["sender_thread_id"],
-        child_thread_id.to_string()
-    );
-    assert_eq!(
-        communication["recipient_thread_id"],
-        parent_thread_id.to_string()
-    );
-    assert_eq!(communication["status"]["completed"], "done");
-    assert_eq!(result_json["events"].as_array().expect("events").len(), 1);
+    assert_eq!(result_json["sourceCategory"], "subagent");
+    assert!(result_json.get("event").is_none());
+    assert!(result_json.get("events").is_none());
 }
 
 #[tokio::test]
@@ -3616,8 +3591,9 @@ async fn external_tool_call_poll_external_event_times_out_without_event() {
     let result_json = result.result.expect("poll result");
     assert_eq!(result_json["timedOut"], true);
     assert_eq!(result_json["sourceHint"], serde_json::Value::Null);
-    assert_eq!(result_json["event"], serde_json::Value::Null);
-    assert_eq!(result_json["events"], serde_json::Value::Null);
+    assert_eq!(result_json["sourceCategory"], serde_json::Value::Null);
+    assert!(result_json.get("event").is_none());
+    assert!(result_json.get("events").is_none());
     assert_eq!(result_json["initialTimeoutMs"], 5);
     assert_eq!(result_json["currentTimeoutMs"], 5);
     assert_eq!(result_json["hardCapTimeoutMs"], 5);

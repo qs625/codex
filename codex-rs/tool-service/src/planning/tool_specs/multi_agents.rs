@@ -111,8 +111,9 @@ pub fn create_spawn_external_agent_tool() -> ToolSpec {
 }
 
 pub fn create_followup_external_task_tool() -> ToolSpec {
-    let properties =
-        followup_task_properties("External or native agent id/canonical task name to receive follow-up.");
+    let properties = followup_task_properties(
+        "External or native agent id/canonical task name to receive follow-up.",
+    );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "followup_external_task".to_string(),
@@ -175,7 +176,7 @@ fn followup_task_properties(target_description: &str) -> BTreeMap<String, JsonSc
 pub fn create_poll_external_event_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "poll_external_event".to_string(),
-        description: "Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns wake or timeout metadata plus a best-effort source hint and typed event payload when one is available.".to_string(),
+        description: "Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns wake or timeout metadata plus bounded source category and hint; full event content arrives through normal pending input/history paths.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
@@ -234,7 +235,7 @@ pub fn create_followup_task_tool() -> ToolSpec {
 pub fn create_poll_event_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "poll_event".to_string(),
-        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns wake or timeout metadata plus a best-effort source hint. When a typed event is available, command output/exit wakeups include the concrete command notification payload.".to_string(),
+        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns wake or timeout metadata plus bounded source category and hint; full event content arrives through normal pending input/history paths.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
@@ -292,7 +293,6 @@ fn agent_role_load_output_schema() -> Value {
 }
 
 fn poll_event_output_schema() -> serde_json::Value {
-    let poll_event_item_schema = poll_event_item_output_schema();
     json!({
         "type": "object",
         "properties": {
@@ -304,17 +304,17 @@ fn poll_event_output_schema() -> serde_json::Value {
                 "type": ["string", "null"],
                 "description": "Best-effort hint for the source that woke the wait, such as user_input, child_completion, inter_agent, command_output, command_exit, queued_input, or async_input."
             },
-            "event": {
-                "anyOf": [
-                    poll_event_item_schema.clone(),
-                    { "type": "null" }
+            "sourceCategory": {
+                "type": ["string", "null"],
+                "enum": [
+                    "command",
+                    "subagent",
+                    "user_input",
+                    "queued_input",
+                    "async_input",
+                    null
                 ],
-                "description": "Typed payload for the pending event when available. Command output/exit wakeups include the concrete command notification payload here."
-            },
-            "events": {
-                "type": "array",
-                "items": poll_event_item_schema,
-                "description": "All typed pending event payloads currently visible to the active turn runtime, including command output/exit payloads."
+                "description": "Coarse source category for the wake signal. Full event payloads are not returned by poll_event."
             },
             "waitedMs": {
                 "type": "number",
@@ -336,76 +336,13 @@ fn poll_event_output_schema() -> serde_json::Value {
         "required": [
             "timedOut",
             "sourceHint",
+            "sourceCategory",
             "waitedMs",
             "initialTimeoutMs",
             "currentTimeoutMs",
             "hardCapTimeoutMs"
         ],
         "additionalProperties": false
-    })
-}
-
-fn poll_event_item_output_schema() -> serde_json::Value {
-    json!({
-        "anyOf": [
-            {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "const": "inter_agent_communication"
-                    },
-                    "communication": {
-                        "type": "object",
-                        "description": "Typed inter-agent communication payload. Child completion events carry the child final status in communication.status and the completion text in communication.content."
-                    }
-                },
-                "required": ["type", "communication"],
-                "additionalProperties": false
-            },
-            {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "const": "command_execution_notification"
-                    },
-                    "commandItemId": {
-                        "type": "string",
-                        "description": "Command execution item id associated with a command output or exit notification."
-                    },
-                    "kind": {
-                        "type": "string",
-                        "enum": ["output", "exit"],
-                        "description": "Whether the command notification reports new output or process exit."
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Human-readable command notification message."
-                    },
-                    "output": {
-                        "type": ["string", "null"],
-                        "description": "Bounded command output included with the notification when available."
-                    },
-                    "exitCode": {
-                        "type": ["number", "null"],
-                        "description": "Command process exit code for exit notifications when available."
-                    },
-                    "createdAtMs": {
-                        "type": "number",
-                        "description": "Notification creation timestamp in milliseconds."
-                    }
-                },
-                "required": [
-                    "type",
-                    "commandItemId",
-                    "kind",
-                    "message",
-                    "createdAtMs"
-                ],
-                "additionalProperties": false
-            }
-        ]
     })
 }
 

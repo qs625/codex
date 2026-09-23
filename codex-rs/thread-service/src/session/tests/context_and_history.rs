@@ -3671,6 +3671,14 @@ async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_in
     );
 }
 
+fn assert_poll_event_result_json_omits_payload(
+    result: &thread_service_api::ThreadPollEventResult,
+) {
+    let serialized = serde_json::to_value(result).expect("serialize poll_event result");
+    assert!(serialized.get("event").is_none());
+    assert!(serialized.get("events").is_none());
+}
+
 #[tokio::test]
 async fn poll_event_wakes_for_user_input() {
     let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
@@ -3714,6 +3722,8 @@ async fn poll_event_wakes_for_user_input() {
         .expect("poll_event task");
     assert!(!result.timed_out);
     assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+    assert_eq!(result.source_category.as_deref(), Some("user_input"));
+    assert_poll_event_result_json_omits_payload(&result);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -3754,6 +3764,8 @@ async fn poll_event_returns_immediately_for_existing_pending_command_output() {
     assert!(!result.timed_out);
     assert_eq!(result.waited_ms, 0);
     assert_eq!(result.source_hint.as_deref(), Some("command_output"));
+    assert_eq!(result.source_category.as_deref(), Some("command"));
+    assert_poll_event_result_json_omits_payload(&result);
     match result.event {
         Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
             command_item_id,
@@ -3829,6 +3841,8 @@ async fn poll_event_existing_pending_events_keep_first_source_event_and_all_even
     assert!(!result.timed_out);
     assert_eq!(result.waited_ms, 0);
     assert_eq!(result.source_hint.as_deref(), Some("command_output"));
+    assert_eq!(result.source_category.as_deref(), Some("command"));
+    assert_poll_event_result_json_omits_payload(&result);
     assert!(matches!(
         result.event,
         Some(
@@ -3904,6 +3918,8 @@ async fn poll_event_user_input_source_does_not_hide_pending_command_event() {
     assert!(!result.timed_out);
     assert_eq!(result.waited_ms, 0);
     assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+    assert_eq!(result.source_category.as_deref(), Some("user_input"));
+    assert_poll_event_result_json_omits_payload(&result);
     match result.event {
         Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
             command_item_id,
@@ -3994,6 +4010,8 @@ async fn poll_event_user_input_wake_includes_mailbox_command_event() {
         "poll_event should be satisfied by the wait branch"
     );
     assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+    assert_eq!(result.source_category.as_deref(), Some("user_input"));
+    assert_poll_event_result_json_omits_payload(&result);
     match result.event {
         Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
             command_item_id,
@@ -4064,6 +4082,8 @@ async fn poll_event_wakes_for_child_completion() {
         .expect("poll_event task");
     assert!(!result.timed_out);
     assert_eq!(result.source_hint.as_deref(), Some("child_completion"));
+    assert_eq!(result.source_category.as_deref(), Some("subagent"));
+    assert_poll_event_result_json_omits_payload(&result);
     match result.event {
         Some(thread_service_api::ThreadPollEvent::InterAgentCommunication { communication }) => {
             assert_eq!(communication.content, "wake");
@@ -4116,6 +4136,8 @@ async fn poll_event_lists_later_child_completion_while_older_completion_is_pendi
         })
         .await
         .expect("first poll_event should succeed");
+    assert_eq!(first.source_category.as_deref(), Some("subagent"));
+    assert_poll_event_result_json_omits_payload(&first);
     assert_eq!(first.events.len(), 1);
 
     sess.enqueue_mailbox_communication(
@@ -4140,6 +4162,8 @@ async fn poll_event_lists_later_child_completion_while_older_completion_is_pendi
         })
         .await
         .expect("second poll_event should succeed");
+    assert_eq!(second.source_category.as_deref(), Some("subagent"));
+    assert_poll_event_result_json_omits_payload(&second);
     let authors = second
         .events
         .iter()
@@ -4200,6 +4224,8 @@ async fn poll_event_wakes_for_command_exit_notification() {
         .expect("poll_event task");
     assert!(!result.timed_out);
     assert_eq!(result.source_hint.as_deref(), Some("command_exit"));
+    assert_eq!(result.source_category.as_deref(), Some("command"));
+    assert_poll_event_result_json_omits_payload(&result);
     match result.event {
         Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
             command_item_id,
@@ -4288,6 +4314,8 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
         .expect("poll_event should wake");
     assert!(!poll_result.timed_out);
     assert_eq!(poll_result.source_hint.as_deref(), Some("command_exit"));
+    assert_eq!(poll_result.source_category.as_deref(), Some("command"));
+    assert_poll_event_result_json_omits_payload(&poll_result);
     assert!(matches!(
         poll_result.event,
         Some(
@@ -4508,6 +4536,8 @@ async fn pending_event_driven_tool_display_waits_for_request_construction_consum
         .expect("poll_event should wake");
     assert!(!poll_result.timed_out);
     assert_eq!(poll_result.source_hint.as_deref(), Some("async_input"));
+    assert_eq!(poll_result.source_category.as_deref(), Some("async_input"));
+    assert_poll_event_result_json_omits_payload(&poll_result);
 
     while let Ok(event) = rx.try_recv() {
         assert!(
@@ -4559,6 +4589,8 @@ async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
         .expect("first poll_event should succeed");
     assert!(first.timed_out);
     assert_eq!(first.event, None);
+    assert_eq!(first.source_category, None);
+    assert_poll_event_result_json_omits_payload(&first);
     assert_eq!(first.current_timeout_ms, 20);
 
     let second = sess
@@ -4583,6 +4615,8 @@ async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
         .expect("wake poll_event should succeed");
     assert!(!wake.timed_out);
     assert_eq!(wake.source_hint.as_deref(), Some("async_input"));
+    assert_eq!(wake.source_category.as_deref(), Some("async_input"));
+    assert_poll_event_result_json_omits_payload(&wake);
     let _ = sess.get_pending_input().await;
 
     let after_reset = sess

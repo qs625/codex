@@ -679,6 +679,7 @@ impl ThreadWorkflowRuntimeBridge {
         Some(ThreadPollEventResult {
             timed_out: false,
             source_hint: Some("workflow_cached_event".to_string()),
+            source_category: Some("subagent".to_string()),
             event: events.first().cloned(),
             events,
             waited_ms: 0,

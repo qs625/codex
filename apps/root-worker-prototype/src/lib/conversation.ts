@@ -1010,6 +1010,7 @@ function summarizeBuiltinToolCall(
     const output = objectOrNull(item.output);
     const error = stringOrNull(output?.error);
     const sourceHint = stringOrNull(output?.sourceHint);
+    const sourceCategory = stringOrNull(output?.sourceCategory);
     if (item.status === "failed" || error) {
       return error ? `poll_event • failed: ${error}` : "poll_event • failed";
     }
@@ -1019,6 +1020,9 @@ function summarizeBuiltinToolCall(
     }
     if (output?.timedOut === true) {
       return "poll_event • timeout";
+    }
+    if (sourceCategory) {
+      return `poll_event • ${sourceCategory}`;
     }
     if (sourceHint) {
       return `poll_event • ${sourceHint}`;

@@ -289,9 +289,14 @@ pub struct ThreadPollEventRequest {
 pub struct ThreadPollEventResult {
     pub timed_out: bool,
     pub source_hint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub source_category: Option<String>,
+    // Internal event payloads are retained for runtime consumers such as workflow
+    // agent waits, but must not be duplicated into the model-visible poll_event
+    // tool result.
+    #[serde(default, skip)]
     pub event: Option<ThreadPollEvent>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip)]
     pub events: Vec<ThreadPollEvent>,
     pub waited_ms: i64,
     pub initial_timeout_ms: i64,

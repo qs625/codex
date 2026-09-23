@@ -219,10 +219,22 @@ impl ThreadWaitSource {
         }
         .to_string()
     }
+
+    pub(crate) fn source_category(self) -> String {
+        match self {
+            ThreadWaitSource::UserInput => "user_input",
+            ThreadWaitSource::InterAgent | ThreadWaitSource::ChildCompletion => "subagent",
+            ThreadWaitSource::QueuedInput => "queued_input",
+            ThreadWaitSource::AsyncInput => "async_input",
+            ThreadWaitSource::CommandOutput | ThreadWaitSource::CommandExit => "command",
+        }
+        .to_string()
+    }
 }
 
 pub(crate) fn poll_event_result(
     source_hint: Option<String>,
+    source_category: Option<String>,
     event: Option<ThreadPollEvent>,
     events: Vec<ThreadPollEvent>,
     waited_ms: i64,
@@ -231,6 +243,7 @@ pub(crate) fn poll_event_result(
     ThreadPollEventResult {
         timed_out: false,
         source_hint,
+        source_category,
         event,
         events,
         waited_ms,
@@ -247,6 +260,7 @@ pub(crate) fn poll_event_timeout_result(
     ThreadPollEventResult {
         timed_out: true,
         source_hint: None,
+        source_category: None,
         event: None,
         events: Vec::new(),
         waited_ms,

@@ -349,6 +349,7 @@ impl ExternalAgentRegistry {
                 let events = snapshot.events;
                 Ok(poll_event_result(
                     snapshot.source.map(ThreadWaitSource::source_hint),
+                    snapshot.source.map(ThreadWaitSource::source_category),
                     events.first().cloned(),
                     events,
                     waited_ms,
@@ -703,7 +704,7 @@ Available external tools:
 - followup_external_task: arguments {{ "target": string, "content": [{{ "type": "text", "text": string }} | {{ "type": "image_ref", "attachment_id": string }}] }}. Use text parts for text and image_ref parts for images; image_ref requires an attachment_id visible in this thread. Use this to send work, corrections, extra context, status requests, or decisions to another agent. If a parent or another existing agent asks you to report status, progress, interim findings, blockers, or decision needs to them, emit a followup_external_task JSON tool call targeting that agent; do not answer only in this external session. A normal final answer completes this external session and does not deliver a typed inter-agent update to the requested target. Examples: report progress to your parent; send a blocker to the PM; ask a reviewer to re-review; pass new requirements to a worker.
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - read_external_agent: arguments {{ "target": string }}. Use after list_external_agents to inspect last task and result details for one agent.
-- poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint and typed event payload when available.
+- poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus bounded source category and hint; full event content arrives through normal pending input/history paths.
 - close_external_agent: arguments {{ "target": string }}
 
 Emit one JSON object per line for tool calls:
