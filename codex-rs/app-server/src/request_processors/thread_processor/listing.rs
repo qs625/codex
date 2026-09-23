@@ -442,13 +442,8 @@ impl ThreadRequestProcessor {
                     }
                     Err(err) => return Err(err),
                 };
-                self.load_live_thread_view(
-                    thread_id,
-                    include_turns,
-                    live_snapshot,
-                    runtime_thread,
-                )
-                .await?
+                self.load_live_thread_view(thread_id, include_turns, live_snapshot, runtime_thread)
+                    .await?
             } else if let Some(thread) = self
                 .load_persisted_thread_for_read(thread_id, include_turns)
                 .await?
@@ -473,8 +468,10 @@ impl ThreadRequestProcessor {
                     .await?
                     .unwrap_or_else(|| build_thread_from_live_snapshot(thread_id, live_snapshot))
             };
-            let has_live_in_progress_turn =
-                self.active_in_progress_turn_snapshot(thread_id).await.is_some();
+            let has_live_in_progress_turn = self
+                .active_in_progress_turn_snapshot(thread_id)
+                .await
+                .is_some();
             (thread, has_live_in_progress_turn)
         } else if let Some(thread) = self
             .load_persisted_thread_for_read(thread_id, include_turns)
@@ -632,9 +629,7 @@ impl ThreadRequestProcessor {
                 let (mut thread, history) =
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
                 if include_turns && let Some(history) = history {
-                    thread.turns = build_api_turns_from_rollout_items(&history.items);
-                    apply_runtime_activity_items_from_persisted_turns(&mut thread);
-                    prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+                    populate_thread_turns_for_persisted_read(&mut thread, &history.items);
                 }
                 Ok(Some(thread))
             }
@@ -664,9 +659,7 @@ impl ThreadRequestProcessor {
         match self
             .live_thread_history
             .read_live_thread(
-                thread_id,
-                /*include_archived*/ true,
-                /*include_history*/ true,
+                thread_id, /*include_archived*/ true, /*include_history*/ true,
             )
             .await
         {
@@ -674,9 +667,7 @@ impl ThreadRequestProcessor {
                 let (mut thread, history) =
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
                 if include_turns && let Some(history) = history {
-                    thread.turns = build_api_turns_from_rollout_items(&history.items);
-                    apply_runtime_activity_items_from_persisted_turns(&mut thread);
-                    prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+                    populate_thread_turns_for_persisted_read(&mut thread, &history.items);
                 }
                 Ok(Some(thread))
             }
@@ -903,7 +894,8 @@ impl ThreadRequestProcessor {
             .await
             .ok();
         let active_turn = if live_agent_status.is_some() || runtime_status.is_some() {
-            self.live_current_turn_snapshot(thread_uuid, runtime_status).await
+            self.live_current_turn_snapshot(thread_uuid, runtime_status)
+                .await
         } else {
             None
         };

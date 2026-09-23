@@ -1100,7 +1100,7 @@ impl ThreadRequestProcessor {
                         "failed to read initial thread history for thread id {thread_id}: {err}"
                     ))
                 })?;
-            thread.turns = build_api_turns_from_rollout_items(&history_items);
+            thread.turns = build_display_turns_from_rollout_items(&history_items);
         }
 
         let sandbox = thread_response_sandbox_policy(
@@ -1288,7 +1288,7 @@ impl ThreadRequestProcessor {
                     )));
                 }
             };
-            thread.turns = build_api_turns_from_rollout_items(&history_items);
+            thread.turns = build_display_turns_from_rollout_items(&history_items);
         }
 
         let sandbox = thread_response_sandbox_policy(

@@ -155,13 +155,19 @@ pub(super) fn reconstruct_thread_turns_for_turns_list(
         || active_turn
             .as_ref()
             .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
-    let mut turns = build_api_turns_from_rollout_items(items);
+    let mut turns = build_display_turns_from_rollout_items(items);
     normalize_thread_turns_status(&mut turns, loaded_status, has_live_in_progress_turn);
     prune_turns_to_latest_compaction_boundary(&mut turns);
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn);
     }
     turns
+}
+
+pub(super) fn populate_thread_turns_for_persisted_read(thread: &mut Thread, items: &[RolloutItem]) {
+    thread.turns = build_display_turns_from_rollout_items(items);
+    apply_runtime_activity_items_from_persisted_turns(thread);
+    prune_turns_to_latest_compaction_boundary(&mut thread.turns);
 }
 
 pub(super) async fn read_thread_history_items(
