@@ -74,12 +74,13 @@ function buildConversationCellsForSegment(
       const compactTurnCells = collectCompactTurnCellsBeforeCompact(
         cells,
         entry.turnId,
+        entry,
       );
       if (localArchivedCells.length > 0 || compactTurnCells.length > 0) {
         const visibleCells = cells.filter(
           (cell) =>
             !shouldArchiveCellForCompact(cell, entry.turnId) &&
-            !shouldDiscardCellBeforeCompact(cell, entry.turnId),
+            !shouldDiscardCellBeforeCompact(cell, entry.turnId, entry),
         );
         cells.length = 0;
         cells.push(...visibleCells);
@@ -228,6 +229,12 @@ function shouldMergeConversationEntry(
     nextEntry.role === "agent"
   ) {
     if (
+      isPotentialCompactSummaryResultEntry(previousEntry) ||
+      isPotentialCompactSummaryResultEntry(nextEntry)
+    ) {
+      return false;
+    }
+    if (
       previousEntry.turnId === undefined ||
       nextEntry.turnId === undefined ||
       previousEntry.turnId !== nextEntry.turnId
@@ -272,9 +279,10 @@ function collectArchivedCellsForCompact(
 function collectCompactTurnCellsBeforeCompact(
   cells: ConversationCell[],
   compactTurnId: string | undefined,
+  compactEntry: ConversationEntry,
 ) {
   return cells.filter((cell) =>
-    shouldDiscardCellBeforeCompact(cell, compactTurnId),
+    shouldDiscardCellBeforeCompact(cell, compactTurnId, compactEntry),
   );
 }
 
@@ -292,10 +300,46 @@ function shouldArchiveCellForCompact(
 function shouldDiscardCellBeforeCompact(
   cell: ConversationCell,
   compactTurnId: string | undefined,
+  compactEntry: ConversationEntry,
 ) {
   if (!compactTurnId) {
     return false;
   }
   const cellTurnId = cell.entries.find((entry) => entry.turnId)?.turnId;
-  return cellTurnId === compactTurnId;
+  return (
+    cellTurnId === compactTurnId &&
+    !isCompactSummaryResultCell(cell, compactEntry)
+  );
+}
+
+function isCompactSummaryResultCell(
+  cell: ConversationCell,
+  compactEntry: ConversationEntry,
+) {
+  return (
+    cell.kind === "message" &&
+    cell.entries.length > 0 &&
+    cell.entries.every((entry) =>
+      isCompactSummaryResultEntry(entry, compactEntry.id),
+    )
+  );
+}
+
+function isCompactSummaryResultEntry(
+  entry: ConversationEntry,
+  compactEntryId: string,
+) {
+  return (
+    entry.kind === "message" &&
+    entry.role === "agent" &&
+    (entry.id === `${compactEntryId}:summary` || entry.id === "compact-summary")
+  );
+}
+
+function isPotentialCompactSummaryResultEntry(entry: ConversationEntry) {
+  return (
+    entry.kind === "message" &&
+    entry.role === "agent" &&
+    (entry.id === "compact-summary" || entry.id.endsWith(":summary"))
+  );
 }

@@ -3218,7 +3218,7 @@ test("pruned compact rows omit archived cells until lazy-loaded details are read
   );
 });
 
-test("hides compact turn entries while preserving later visible items", () => {
+test("keeps compact summary messages visible while preserving later visible items", () => {
   const state = buildConversationState(
     makeThreadWithTurns([
       {
@@ -3272,12 +3272,15 @@ test("hides compact turn entries while preserving later visible items", () => {
   assert.deepEqual(
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
+      ["compact-summary", "message"],
       ["compact-1", "compact"],
       ["after-compact", "message"],
     ],
   );
-  const compactEntry = state.cells[0]?.entries[0];
+  assert.equal(state.cells[0]?.entries[0]?.text, "Summarizing previous context.");
+  const compactEntry = state.cells[1]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
+  assert.equal(compactEntry?.compactSummary, null);
   assert.equal(compactEntry?.archivedEntryCount, 1);
   assert.deepEqual(
     compactEntry?.archivedCells?.flatMap((cell) =>
@@ -3411,6 +3414,13 @@ test("multiple compactions keep only entries after the latest hidden compact bou
         id: "turn-3",
         items: [
           {
+            type: "agentMessage",
+            id: "compact-2:summary",
+            text: "summary before second compact",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
             type: "contextCompaction",
             id: "compact-2",
           },
@@ -3435,11 +3445,13 @@ test("multiple compactions keep only entries after the latest hidden compact bou
   assert.deepEqual(
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
+      ["compact-2:summary", "message"],
       ["compact-2", "compact"],
       ["after-second-compact", "message"],
     ],
   );
-  const compactEntry = state.cells[0]?.entries[0];
+  assert.equal(state.cells[0]?.entries[0]?.text, "summary before second compact");
+  const compactEntry = state.cells[1]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
   assert.equal(compactEntry?.archivedEntryCount, 3);
   assert.deepEqual(
