@@ -1,6 +1,7 @@
 import {
   type ChangeEvent,
   type ClipboardEvent,
+  type DragEvent,
   type PointerEvent,
   useEffect,
   useLayoutEffect,
@@ -15,7 +16,13 @@ import {
   SidebarPanel,
   TreeContextMenu,
 } from "./components/Panels";
-import { RightPanel } from "./components/RightPanel";
+import {
+  BrowserPanel,
+  FilePreviewPanel,
+  RightPanel,
+  resolveThreadAnalysisCommandFocus,
+  type GitDiffPreviewState,
+} from "./components/RightPanel";
 import {
   isSelfCommandShortcut,
   normalizeSelfCommandText,
@@ -23,6 +30,7 @@ import {
   type SelfCommandProject,
 } from "./components/SelfCommandDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { TerminalPanel } from "./components/TerminalPanel";
 import {
   clearComposerDraft,
   getComposerDraft,
@@ -71,6 +79,7 @@ import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import { maybeNotifyProjectThreadCompleted } from "./lib/systemNotification";
 import { isChatCompatCwd } from "./lib/chatCompat";
+import type { TerminalCommandFocusRequest } from "./lib/terminalCommandFocus";
 import {
   decideThreadSelectionAction,
   isSelectedThreadLoading,
@@ -129,6 +138,13 @@ import {
   type ActiveVoiceSession,
 } from "./lib/voiceCaptureState";
 import {
+  readStoredWorkspaceTabOrder,
+  reorderWorkspaceTabs,
+  storeWorkspaceTabOrder,
+  type WorkspaceTabDropPlacement,
+  type WorkspaceTabId,
+} from "./lib/workspaceTabs";
+import {
   approvalRequestKey,
   buildApprovalResponse,
   normalizeApprovalRequest,
@@ -176,6 +192,17 @@ const RIGHT_PANEL_MAX_RATIO = 0.46;
 const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
 const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 10 * 60 * 1000;
 const SELECTED_THREAD_STORAGE_KEY = "morpheus.rootWorker.selectedThreadId";
+const WORKSPACE_TAB_LABELS: Record<WorkspaceTabId, string> = {
+  conversation: "Conversation",
+  files: "Files",
+  terminal: "Terminal",
+  browser: "Browser",
+};
+const EMPTY_GIT_DIFF_PREVIEW: GitDiffPreviewState = {
+  loading: false,
+  diff: null,
+  error: null,
+};
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 
@@ -236,6 +263,13 @@ function App() {
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
   );
+  const [activeWorkspaceTab, setActiveWorkspaceTab] =
+    useState<WorkspaceTabId>("conversation");
+  const [workspaceTabOrder, setWorkspaceTabOrder] = useState<WorkspaceTabId[]>(
+    readStoredWorkspaceTabOrder,
+  );
+  const [draggedWorkspaceTab, setDraggedWorkspaceTab] =
+    useState<WorkspaceTabId | null>(null);
   const [runtimeRestartProgress, setRuntimeRestartProgress] =
     useState<RuntimeRestartProgress | null>(null);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
@@ -244,7 +278,14 @@ function App() {
     url: string;
     token: number;
   } | null>(null);
+  const [terminalCommandFocusRequest, setTerminalCommandFocusRequest] =
+    useState<TerminalCommandFocusRequest | null>(null);
+  const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken] =
+    useState(0);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [gitDiffPreview, setGitDiffPreview] = useState<GitDiffPreviewState>(
+    EMPTY_GIT_DIFF_PREVIEW,
+  );
   const [filePreviewByRootId, setFilePreviewByRootId] =
     useState<FilePreviewMemoryByRootId>({});
   const [filePanelView, setFilePanelView] = useState<FilePanelView>("preview");
@@ -329,6 +370,10 @@ function App() {
   useEffect(() => {
     storeRightPanelView(rightPanelView);
   }, [rightPanelView]);
+
+  useEffect(() => {
+    storeWorkspaceTabOrder(workspaceTabOrder);
+  }, [workspaceTabOrder]);
 
   const selectedComposerDraft = getComposerDraft(
     composerDraftsByThreadId,
@@ -862,10 +907,16 @@ function App() {
     symbolBackStackRef.current = [];
     symbolForwardStackRef.current = [];
     setIsLoadingPreview(false);
+    setGitDiffPreview(EMPTY_GIT_DIFF_PREVIEW);
   }, [selectedTreeRootId]);
 
   useEffect(() => {
-    if (!shouldRestoreProjectFilePreview(rightPanelView, filePanelView)) {
+    const shouldRestoreWorkspaceFilePreview =
+      activeWorkspaceTab === "files" && filePanelView === "preview";
+    if (
+      !shouldRestoreWorkspaceFilePreview &&
+      !shouldRestoreProjectFilePreview(rightPanelView, filePanelView)
+    ) {
       return;
     }
     if (isLoadingPreview) {
@@ -876,6 +927,7 @@ function App() {
     setPreviewError(null);
     setIsLoadingPreview(false);
   }, [
+    activeWorkspaceTab,
     filePanelView,
     filePreviewByRootId,
     isLoadingPreview,
@@ -2759,7 +2811,7 @@ function App() {
     const requestRootId = selectedTreeRootId;
     const requestToken = filePreviewRequestTokenRef.current + 1;
     filePreviewRequestTokenRef.current = requestToken;
-    setRightPanelView("preview");
+    setActiveWorkspaceTab("files");
     setFilePanelView("preview");
     setIsLoadingPreview(true);
     setPreviewError(null);
@@ -2806,8 +2858,7 @@ function App() {
       url,
       token: (current?.token ?? 0) + 1,
     }));
-    setRightPanelView("browser");
-    setIsRightPanelCollapsed(false);
+    setActiveWorkspaceTab("browser");
   }
 
   function handleBrowserNavigationRequestHandled(token: number) {
@@ -3016,6 +3067,80 @@ function App() {
     setTreeMenu(null);
   }
 
+  function selectWorkspaceTab(tab: WorkspaceTabId) {
+    setActiveWorkspaceTab(tab);
+    if (tab === "terminal") {
+      setTerminalPanelFocusRequestToken((current) => current + 1);
+    }
+  }
+
+  function handleWorkspaceTabDragStart(
+    event: DragEvent<HTMLButtonElement>,
+    tab: WorkspaceTabId,
+  ) {
+    setDraggedWorkspaceTab(tab);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", tab);
+  }
+
+  function handleWorkspaceTabDragOver(
+    event: DragEvent<HTMLButtonElement>,
+    targetTab: WorkspaceTabId,
+  ) {
+    if (!draggedWorkspaceTab || draggedWorkspaceTab === targetTab) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const placement = getWorkspaceTabDropPlacement(event);
+    setWorkspaceTabOrder((current) =>
+      reorderWorkspaceTabs(current, draggedWorkspaceTab, targetTab, placement),
+    );
+  }
+
+  function handleWorkspaceTabDrop(
+    event: DragEvent<HTMLButtonElement>,
+    targetTab: WorkspaceTabId,
+  ) {
+    event.preventDefault();
+    const draggedTab =
+      draggedWorkspaceTab ?? event.dataTransfer.getData("text/plain");
+    const placement = getWorkspaceTabDropPlacement(event);
+    if (
+      draggedTab === "conversation" ||
+      draggedTab === "files" ||
+      draggedTab === "terminal" ||
+      draggedTab === "browser"
+    ) {
+      setWorkspaceTabOrder((current) =>
+        reorderWorkspaceTabs(current, draggedTab, targetTab, placement),
+      );
+    }
+    setDraggedWorkspaceTab(null);
+  }
+
+  function getWorkspaceTabDropPlacement(
+    event: DragEvent<HTMLButtonElement>,
+  ): WorkspaceTabDropPlacement {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientX > bounds.left + bounds.width / 2 ? "after" : "before";
+  }
+
+  function handleThreadAnalysisCommandFocus(
+    monitor: Parameters<typeof resolveThreadAnalysisCommandFocus>[1],
+  ) {
+    const target = resolveThreadAnalysisCommandFocus(selectedThread, monitor);
+    if (!target) {
+      return;
+    }
+    setTerminalCommandFocusRequest((current) => ({
+      ...target,
+      token: (current?.token ?? 0) + 1,
+    }));
+    setTerminalPanelFocusRequestToken((current) => current + 1);
+    setActiveWorkspaceTab("terminal");
+  }
+
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
       {error ? <div className="error-banner">{error}</div> : null}
@@ -3062,50 +3187,143 @@ function App() {
             )
           }
         />
-        <ConversationPanel
-          availableSkills={availableSkills}
-          availableWorkflows={availableWorkflows}
-          approvalRequests={selectedApprovalRequests}
-          conversationCells={conversationCells}
-          conversationScrollRef={conversationScrollRef}
-          draft={draft}
-          draftImages={draftImages}
-          draftSkills={draftSkills}
-          focusedConversationItem={null}
-          imageInputRef={imageInputRef}
-          isLoadingThread={isLoadingThread}
-          isSending={isSending}
-          isStoppingTurn={isStoppingTurn}
-          goal={selectedThreadGoal}
-          goalAction={selectedThreadGoalAction}
-          goalActionError={selectedThreadGoalError}
-          onAddDraftSkill={addDraftSkill}
-          onCancelGoal={clearCurrentThreadGoalFromUi}
-          onConversationScroll={handleConversationScroll}
-          onDraftChange={handleDraftChange}
-          onHandleComposerPaste={(event) => void handleComposerPaste(event)}
-          onHandleImageSelection={(event) => void handleImageSelection(event)}
-          onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
-          onOpenArtifactUrl={handleOpenArtifactUrl}
-          onPauseGoal={pauseCurrentThreadGoal}
-          onRemoveDraftImage={removeDraftImage}
-          onRemoveDraftSkill={removeDraftSkill}
-          onRespondApproval={(request, decision) =>
-            void respondToApprovalRequest(request, decision)
-          }
-          onResumeGoal={resumeCurrentThreadGoal}
-          onRunSlashCommand={runComposerSlashCommand}
-          onUpdateRunConfig={(selection) =>
-            void updateSelectedThreadRunConfig(selection)
-          }
-          onSendMessage={() => void sendMessage()}
-          onStopTurn={() => void interruptCurrentTurn()}
-          onToggleVoiceCapture={toggleVoiceCapture}
-          selectedThread={selectedThread}
-          selectedThreadId={selectedThreadId}
-          voiceCaptureMessage={voiceCaptureMessage}
-          voiceCaptureStatus={voiceCaptureStatus}
-        />
+        <section className="workspace-main" aria-label="Workspace">
+          <div
+            className="workspace-tab-strip"
+            role="tablist"
+            aria-label="Workspace tabs"
+          >
+            {workspaceTabOrder.map((tab) => {
+              const active = tab === activeWorkspaceTab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  className={`workspace-tab ${active ? "active" : ""} ${
+                    draggedWorkspaceTab === tab ? "dragging" : ""
+                  }`}
+                  role="tab"
+                  aria-selected={active}
+                  draggable
+                  onClick={() => selectWorkspaceTab(tab)}
+                  onDragEnd={() => setDraggedWorkspaceTab(null)}
+                  onDragOver={(event) => handleWorkspaceTabDragOver(event, tab)}
+                  onDragStart={(event) =>
+                    handleWorkspaceTabDragStart(event, tab)
+                  }
+                  onDrop={(event) => handleWorkspaceTabDrop(event, tab)}
+                >
+                  <span className={`workspace-tab-dot ${tab}`} />
+                  <span>{WORKSPACE_TAB_LABELS[tab]}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="workspace-tab-content">
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab !== "conversation"}
+            >
+              <ConversationPanel
+                availableSkills={availableSkills}
+                availableWorkflows={availableWorkflows}
+                approvalRequests={selectedApprovalRequests}
+                conversationCells={conversationCells}
+                conversationScrollRef={conversationScrollRef}
+                draft={draft}
+                draftImages={draftImages}
+                draftSkills={draftSkills}
+                focusedConversationItem={null}
+                imageInputRef={imageInputRef}
+                isLoadingThread={isLoadingThread}
+                isSending={isSending}
+                isStoppingTurn={isStoppingTurn}
+                goal={selectedThreadGoal}
+                goalAction={selectedThreadGoalAction}
+                goalActionError={selectedThreadGoalError}
+                onAddDraftSkill={addDraftSkill}
+                onCancelGoal={clearCurrentThreadGoalFromUi}
+                onConversationScroll={handleConversationScroll}
+                onDraftChange={handleDraftChange}
+                onHandleComposerPaste={(event) => void handleComposerPaste(event)}
+                onHandleImageSelection={(event) => void handleImageSelection(event)}
+                onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
+                onOpenArtifactUrl={handleOpenArtifactUrl}
+                onPauseGoal={pauseCurrentThreadGoal}
+                onRemoveDraftImage={removeDraftImage}
+                onRemoveDraftSkill={removeDraftSkill}
+                onRespondApproval={(request, decision) =>
+                  void respondToApprovalRequest(request, decision)
+                }
+                onResumeGoal={resumeCurrentThreadGoal}
+                onRunSlashCommand={runComposerSlashCommand}
+                onUpdateRunConfig={(selection) =>
+                  void updateSelectedThreadRunConfig(selection)
+                }
+                onSendMessage={() => void sendMessage()}
+                onStopTurn={() => void interruptCurrentTurn()}
+                onToggleVoiceCapture={toggleVoiceCapture}
+                selectedThread={selectedThread}
+                selectedThreadId={selectedThreadId}
+                voiceCaptureMessage={voiceCaptureMessage}
+                voiceCaptureStatus={voiceCaptureStatus}
+              />
+            </div>
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab !== "files"}
+            >
+              <FilePreviewPanel
+                expandedTreeDirectories={expandedTreeDirectories}
+                filePanelView={filePanelView}
+                fileTreeEntriesByPath={fileTreeEntriesByPath}
+                fileTreeErrorsByPath={fileTreeErrorsByPath}
+                fileTreeLoadingPath={fileTreeLoadingPath}
+                gitDiffPreview={gitDiffPreview.diff}
+                gitDiffPreviewError={gitDiffPreview.error}
+                gitDiffPreviewLoading={gitDiffPreview.loading}
+                onNavigateToSymbol={handleNavigateToSymbol}
+                onOpenPreviewExternally={() => void openPreviewExternally()}
+                onOpenPreviewInBrowser={openPreviewInBrowser}
+                onOpenTreeFile={handleOpenTreeFile}
+                onPreviewUpdated={updateFilePreviewAfterSave}
+                onSetFilePanelView={handleSetFilePanelView}
+                onToggleTreeDirectory={handleToggleTreeDirectory}
+                preview={filePreview}
+                previewError={previewError}
+                previewLoading={isLoadingPreview}
+                previewRootId={selectedTreeRootId}
+                thread={selectedThread}
+              />
+            </div>
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab !== "terminal"}
+            >
+              {activeWorkspaceTab === "terminal" ? (
+                <TerminalPanel
+                  thread={selectedThread}
+                  focusCommandRequest={terminalCommandFocusRequest}
+                  focusPanelRequestToken={terminalPanelFocusRequestToken}
+                />
+              ) : null}
+            </div>
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab !== "browser"}
+            >
+              <BrowserPanel
+                active={activeWorkspaceTab === "browser"}
+                nativeOverlayActive={
+                  isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+                }
+                resizing={isRightPanelResizing}
+                navigationRequest={browserNavigationRequest}
+                onNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+              />
+            </div>
+          </div>
+        </section>
         <div
           className="panel-resizer"
           role="separator"
@@ -3130,6 +3348,10 @@ function App() {
           browserPanelResizing={isRightPanelResizing}
           browserNavigationRequest={browserNavigationRequest}
           onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+          workspaceTabsEnabled
+          onFocusCommandMonitor={handleThreadAnalysisCommandFocus}
+          onOpenWorkspaceFiles={() => setActiveWorkspaceTab("files")}
+          onGitDiffPreviewChange={setGitDiffPreview}
           availableSkillCount={availableSkills.length}
           availableWorkflows={availableWorkflows}
           isCollapsed={isRightPanelCollapsed}

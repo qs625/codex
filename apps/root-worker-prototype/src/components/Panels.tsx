@@ -25,14 +25,11 @@ import {
 import { toErrorMessage } from "../lib/shared";
 import {
   ChevronDownIcon,
-  CodeIcon,
   GearIcon,
   GridIcon,
   ImageIcon,
   MicrophoneIcon,
-  MoreIcon,
   OpenIcon,
-  PaperclipIcon,
   PlusIcon,
   SearchIcon,
   SendIcon,
@@ -1545,88 +1542,6 @@ export function ConversationPanel({
 
   return (
     <section className="conversation-panel">
-      <header className="conversation-header">
-        <div className="conversation-heading">
-          <div className="conversation-title-row">
-            <h1>
-              {selectedThread
-                ? isRootThread(selectedThread)
-                  ? getRootThreadConversationTitle(selectedThread)
-                  : getThreadPath(selectedThread)
-                : "Select a project"}
-            </h1>
-            <span
-              className={`status-dot ${threadDisplayStatusClass(selectedThread)}`}
-            />
-            <span>
-              {selectedThread
-                ? getAgentRoleLabel(selectedThread)
-                : "No thread selected"}
-            </span>
-            <span className="subtitle-separator">•</span>
-            <span>{getThreadPresenceLabel(selectedThread)}</span>
-            <span className="subtitle-separator">•</span>
-            <RunConfigPicker
-              disabled={isSending || activeTurnId != null}
-              onApply={onUpdateRunConfig}
-              selectedThread={selectedThread}
-            />
-            {selectedThread?.cwd.trim() ? (
-              <span
-                className="thread-chip thread-chip-cwd"
-                title={selectedThread.cwd}
-              >
-                cwd: {trimPath(selectedThread.cwd)}
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <div className="conversation-actions">
-          {conversationSearchOpen ? (
-            <ConversationSearchControls
-              activeResult={activeSearchResult}
-              disabled={!selectedThread}
-              inputRef={conversationSearchInputRef}
-              onClear={clearConversationSearch}
-              onKeyDown={handleConversationSearchKeyDown}
-              onMoveNext={() => moveConversationSearchResult(1)}
-              onMovePrevious={() => moveConversationSearchResult(-1)}
-              onQueryChange={(value) => {
-                setConversationSearchQuery(value);
-                setActiveSearchIndex(0);
-              }}
-              query={conversationSearchQuery}
-              resultCount={conversationSearchResults.length}
-              resultIndex={safeActiveSearchIndex}
-            />
-          ) : (
-            <button
-              type="button"
-              className="icon-button subtle"
-              aria-label="Search conversation"
-              disabled={!selectedThread}
-              onClick={openConversationSearch}
-            >
-              <SearchIcon />
-            </button>
-          )}
-          <button
-            type="button"
-            className="icon-button subtle"
-            aria-label="Open thread details"
-          >
-            <OpenIcon />
-          </button>
-          <button
-            type="button"
-            className="icon-button subtle"
-            aria-label="More thread actions"
-          >
-            <MoreIcon />
-          </button>
-        </div>
-      </header>
-
       <GoalStrip
         goal={goal}
         action={goalAction}
@@ -1678,6 +1593,70 @@ export function ConversationPanel({
 
       <footer className="composer-shell">
         <div className="composer-input-shell">
+          <div className="composer-metadata-row">
+            <div className="composer-thread-meta">
+              <span className="composer-thread-title">
+                {selectedThread
+                  ? isRootThread(selectedThread)
+                    ? getRootThreadConversationTitle(selectedThread)
+                    : getThreadPath(selectedThread)
+                  : "Select a project"}
+              </span>
+              <span
+                className={`status-dot ${threadDisplayStatusClass(selectedThread)}`}
+              />
+              <span>
+                {selectedThread
+                  ? getAgentRoleLabel(selectedThread)
+                  : "No thread selected"}
+              </span>
+              <span className="subtitle-separator">•</span>
+              <span>{getThreadPresenceLabel(selectedThread)}</span>
+              <RunConfigPicker
+                disabled={isSending || activeTurnId != null}
+                onApply={onUpdateRunConfig}
+                selectedThread={selectedThread}
+              />
+              {selectedThread?.cwd.trim() ? (
+                <span
+                  className="thread-chip thread-chip-cwd"
+                  title={selectedThread.cwd}
+                >
+                  cwd: {trimPath(selectedThread.cwd)}
+                </span>
+              ) : null}
+            </div>
+            <div className="composer-search-slot">
+              {conversationSearchOpen ? (
+                <ConversationSearchControls
+                  activeResult={activeSearchResult}
+                  disabled={!selectedThread}
+                  inputRef={conversationSearchInputRef}
+                  onClear={clearConversationSearch}
+                  onKeyDown={handleConversationSearchKeyDown}
+                  onMoveNext={() => moveConversationSearchResult(1)}
+                  onMovePrevious={() => moveConversationSearchResult(-1)}
+                  onQueryChange={(value) => {
+                    setConversationSearchQuery(value);
+                    setActiveSearchIndex(0);
+                  }}
+                  query={conversationSearchQuery}
+                  resultCount={conversationSearchResults.length}
+                  resultIndex={safeActiveSearchIndex}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="icon-button subtle"
+                  aria-label="Search conversation"
+                  disabled={!selectedThread}
+                  onClick={openConversationSearch}
+                >
+                  <SearchIcon />
+                </button>
+              )}
+            </div>
+          </div>
           <input
             ref={imageInputRef}
             type="file"
@@ -1831,20 +1810,6 @@ export function ConversationPanel({
           ) : null}
           <div className="composer-toolbar">
             <div className="composer-tools">
-              <button
-                type="button"
-                className="tool-button"
-                aria-label="Attach file"
-              >
-                <PaperclipIcon />
-              </button>
-              <button
-                type="button"
-                className="tool-button"
-                aria-label="Insert code"
-              >
-                <CodeIcon />
-              </button>
               <button
                 type="button"
                 className="tool-button"

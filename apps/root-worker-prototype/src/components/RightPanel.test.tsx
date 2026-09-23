@@ -149,6 +149,7 @@ function renderRightPanel(
     previewLoading?: boolean;
     runtimeRestartProgress?: RuntimeRestartProgress | null;
     todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
+    workspaceTabsEnabled?: boolean;
   },
 ) {
   return renderToStaticMarkup(
@@ -156,6 +157,7 @@ function renderRightPanel(
       activeView={activeView}
       availableSkillCount={0}
       availableWorkflows={[FEATURE_DEV_WORKFLOW]}
+      workspaceTabsEnabled={options?.workspaceTabsEnabled ?? false}
       isCollapsed={options?.isCollapsed ?? false}
       expandedTreeDirectories={options?.expandedTreeDirectories ?? []}
       filePanelView={options?.filePanelView ?? "preview"}
@@ -313,6 +315,22 @@ test("renders thread analysis title and monitor empty states", () => {
   assert.match(markup, /No scheduled listeners\./);
 });
 
+test("tabbed workspace mode hides duplicated primary surface rail buttons", () => {
+  const markup = renderRightPanel(makeThread([]), "skills", null, {
+    workspaceTabsEnabled: true,
+    preview: makePreview(),
+  });
+
+  assert.doesNotMatch(markup, /aria-label="File Preview"/);
+  assert.doesNotMatch(markup, /aria-label="Terminal"/);
+  assert.doesNotMatch(markup, /aria-label="Browser"/);
+  assert.doesNotMatch(markup, /aria-label="Search"/);
+  assert.doesNotMatch(markup, /aria-label="Artifacts"/);
+  assert.match(markup, /aria-label="Thread Analysis"/);
+  assert.match(markup, /aria-label="Git Changes"/);
+  assert.match(markup, /aria-label="Workflow"/);
+});
+
 test("renders browser panel and rail button", () => {
   const markup = renderRightPanel(makeThread([]), "browser");
 
@@ -384,7 +402,7 @@ test("browser native view hides under app overlays and restores with measured bo
 
   assert.match(
     rightPanelSource,
-    /const shouldHideNativeView = nativeOverlayActive \|\| resizing/,
+    /const shouldHideNativeView = !active \|\| nativeOverlayActive \|\| resizing/,
   );
   assert.match(
     rightPanelSource,
@@ -884,6 +902,36 @@ test("rejects stale terminal focus requests from another thread", () => {
   );
 });
 
+test("workspace files tab restores project previews without the right panel preview view", () => {
+  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    appSource,
+    /const shouldRestoreWorkspaceFilePreview =\s*activeWorkspaceTab === "files" && filePanelView === "preview"/,
+  );
+  assert.match(
+    appSource,
+    /!shouldRestoreWorkspaceFilePreview &&\s*!shouldRestoreProjectFilePreview\(rightPanelView, filePanelView\)/,
+  );
+  assert.match(appSource, /setGitDiffPreview\(EMPTY_GIT_DIFF_PREVIEW\)/);
+});
+
+test("workspace terminal tab mounts TerminalPanel only while active", () => {
+  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  const terminalPanelIndex = appSource.indexOf("<TerminalPanel");
+  const activeGateIndex = appSource.lastIndexOf(
+    'activeWorkspaceTab === "terminal" ?',
+    terminalPanelIndex,
+  );
+
+  assert.notEqual(terminalPanelIndex, -1);
+  assert.notEqual(activeGateIndex, -1);
+  assert.ok(
+    activeGateIndex < terminalPanelIndex,
+    "TerminalPanel should not mount inside a hidden workspace tab",
+  );
+});
+
 test("right panel terminal rail click is the explicit terminal panel focus source", () => {
   const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
   const tokenStateIndex = source.indexOf(
@@ -893,18 +941,17 @@ test("right panel terminal rail click is the explicit terminal panel focus sourc
     "focusPanelRequestToken={terminalPanelFocusRequestToken}",
   );
   const railClickIndex = source.indexOf("if (item.view === \"terminal\") {");
-  const incrementIndex = source.indexOf(
-    "setTerminalPanelFocusRequestToken((current) => current + 1);",
+  const railClickSource = source.slice(
     railClickIndex,
+    source.indexOf("onSetActiveView(next.nextView);", railClickIndex),
   );
 
   assert.notEqual(tokenStateIndex, -1);
   assert.notEqual(propIndex, -1);
   assert.notEqual(railClickIndex, -1);
-  assert.notEqual(incrementIndex, -1);
-  assert.ok(
-    incrementIndex < source.indexOf("onSetActiveView(next.nextView);", railClickIndex),
-    "TerminalPanel should receive the focus token as part of the explicit open action",
+  assert.match(
+    railClickSource,
+    /setTerminalPanelFocusRequestToken\(\s*\(current\) => current \+ 1,\s*\);/,
   );
 });
 

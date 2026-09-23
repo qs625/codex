@@ -136,8 +136,8 @@ type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGit
 type GitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitFileDiff"]>>;
 type GitCommitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFileDiff"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
-type GitDiffPreviewSnapshot = GitFileDiffSnapshot | GitCommitFileDiffSnapshot;
-type GitDiffPreviewState = {
+export type GitDiffPreviewSnapshot = GitFileDiffSnapshot | GitCommitFileDiffSnapshot;
+export type GitDiffPreviewState = {
   loading: boolean;
   diff: GitDiffPreviewSnapshot | null;
   error: string | null;
@@ -231,6 +231,10 @@ export function RightPanel({
   browserPanelResizing = false,
   browserNavigationRequest,
   onBrowserNavigationRequestHandled,
+  workspaceTabsEnabled = false,
+  onFocusCommandMonitor,
+  onOpenWorkspaceFiles,
+  onGitDiffPreviewChange,
   availableSkillCount,
   availableWorkflows,
   isCollapsed,
@@ -270,6 +274,10 @@ export function RightPanel({
   browserPanelResizing?: boolean;
   browserNavigationRequest?: { url: string; token: number } | null;
   onBrowserNavigationRequestHandled?: (token: number) => void;
+  workspaceTabsEnabled?: boolean;
+  onFocusCommandMonitor?: (monitor: MonitorSummary) => void;
+  onOpenWorkspaceFiles?: () => void;
+  onGitDiffPreviewChange?: (state: GitDiffPreviewState) => void;
   availableSkillCount: number;
   availableWorkflows: WorkflowSummary[];
   isCollapsed: boolean;
@@ -324,7 +332,16 @@ export function RightPanel({
   const gitDiffRequestScope = useRef(0);
   const gitDiffBasePreviewKey = useRef<string | null>(null);
 
+  function updateGitDiffPreview(state: GitDiffPreviewState) {
+    setGitDiffPreview(state);
+    onGitDiffPreviewChange?.(state);
+  }
+
   const focusCommandMonitor = (monitor: MonitorSummary) => {
+    if (onFocusCommandMonitor) {
+      onFocusCommandMonitor(monitor);
+      return;
+    }
     const target = resolveThreadAnalysisCommandFocus(thread, monitor);
     if (!target) {
       return;
@@ -336,11 +353,18 @@ export function RightPanel({
     onSetActiveView("terminal");
     onSetCollapsed(false);
   };
+  const effectiveActiveView =
+    workspaceTabsEnabled &&
+    (activeView === "preview" ||
+      activeView === "browser" ||
+      activeView === "terminal")
+      ? "skills"
+      : activeView;
 
   function clearGitDiffPreview() {
     gitDiffRequestScope.current += 1;
     gitDiffBasePreviewKey.current = null;
-    setGitDiffPreview({ loading: false, diff: null, error: null });
+    updateGitDiffPreview({ loading: false, diff: null, error: null });
   }
 
   function openTreeFileFromPreview(path: string) {
@@ -358,9 +382,13 @@ export function RightPanel({
     const scope = gitDiffRequestScope.current + 1;
     gitDiffRequestScope.current = scope;
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
-    setGitDiffPreview({ loading: true, diff: null, error: null });
+    updateGitDiffPreview({ loading: true, diff: null, error: null });
     onSetFilePanelView("preview");
-    onSetActiveView("preview");
+    if (workspaceTabsEnabled) {
+      onOpenWorkspaceFiles?.();
+    } else {
+      onSetActiveView("preview");
+    }
 
     window.codexDesktop
       .readGitFileDiff(thread.cwd, {
@@ -370,12 +398,12 @@ export function RightPanel({
       })
       .then((diff) => {
         if (gitDiffRequestScope.current === scope) {
-          setGitDiffPreview({ loading: false, diff, error: diff.error });
+          updateGitDiffPreview({ loading: false, diff, error: diff.error });
         }
       })
       .catch((error) => {
         if (gitDiffRequestScope.current === scope) {
-          setGitDiffPreview({
+          updateGitDiffPreview({
             loading: false,
             diff: null,
             error: error instanceof Error ? error.message : "Failed to read Git diff.",
@@ -391,9 +419,13 @@ export function RightPanel({
     const scope = gitDiffRequestScope.current + 1;
     gitDiffRequestScope.current = scope;
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
-    setGitDiffPreview({ loading: true, diff: null, error: null });
+    updateGitDiffPreview({ loading: true, diff: null, error: null });
     onSetFilePanelView("preview");
-    onSetActiveView("preview");
+    if (workspaceTabsEnabled) {
+      onOpenWorkspaceFiles?.();
+    } else {
+      onSetActiveView("preview");
+    }
 
     window.codexDesktop
       .readGitCommitFileDiff(thread.cwd, {
@@ -404,12 +436,12 @@ export function RightPanel({
       })
       .then((diff) => {
         if (gitDiffRequestScope.current === scope) {
-          setGitDiffPreview({ loading: false, diff, error: diff.error });
+          updateGitDiffPreview({ loading: false, diff, error: diff.error });
         }
       })
       .catch((error) => {
         if (gitDiffRequestScope.current === scope) {
-          setGitDiffPreview({
+          updateGitDiffPreview({
             loading: false,
             diff: null,
             error: error instanceof Error ? error.message : "Failed to read Git commit diff.",
@@ -447,7 +479,7 @@ export function RightPanel({
       <div className="right-panel-body">
         {!isCollapsed ? (
           <div className="right-panel-content">
-            {activeView === "skills" ? (
+            {effectiveActiveView === "skills" ? (
               <ThreadAnalysisPanel
                 analysis={threadAnalysis}
                 goal={goal}
@@ -460,27 +492,28 @@ export function RightPanel({
                 planUpdate={planUpdate}
                 runtimeRestartProgress={runtimeRestartProgress}
               />
-            ) : activeView === "git" ? (
+            ) : effectiveActiveView === "git" ? (
               <GitPanel
                 changedFiles={threadAnalysis.changedFiles}
                 onOpenCommitFileDiff={openGitCommitFileDiff}
                 onOpenDiff={openGitFileDiff}
                 thread={thread}
               />
-            ) : activeView === "browser" ? (
+            ) : effectiveActiveView === "browser" ? (
               <BrowserPanel
+                active
                 nativeOverlayActive={browserNativeOverlayActive}
                 resizing={browserPanelResizing}
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
               />
-            ) : activeView === "terminal" ? (
+            ) : effectiveActiveView === "terminal" ? (
               <TerminalPanel
                 thread={thread}
                 focusCommandRequest={terminalCommandFocusRequest}
                 focusPanelRequestToken={terminalPanelFocusRequestToken}
               />
-            ) : activeView === "workflow" ? (
+            ) : effectiveActiveView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
             ) : (
               <FilePreviewPanel
@@ -581,32 +614,47 @@ export function RightPanel({
               icon: ReactNode;
               badge: string;
             }>
-          ).map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              className={`panel-rail-button ${item.view === activeView ? "active" : ""}`}
-              aria-label={item.label}
-              disabled={item.view == null}
-              onClick={() => {
-                if (item.view) {
-                  const next = resolveRightPanelTabClick({
-                    activeView,
-                    clickedView: item.view,
-                    isCollapsed,
-                  });
-                  if (item.view === "terminal") {
-                    setTerminalPanelFocusRequestToken((current) => current + 1);
+          )
+            .filter(
+              (item) =>
+                !workspaceTabsEnabled ||
+                (item.view !== "preview" &&
+                  item.view !== "browser" &&
+                  item.view !== "terminal" &&
+                  item.view !== null),
+            )
+            .map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                className={`panel-rail-button ${
+                  item.view === effectiveActiveView ? "active" : ""
+                }`}
+                aria-label={item.label}
+                disabled={item.view == null}
+                onClick={() => {
+                  if (item.view) {
+                    const next = resolveRightPanelTabClick({
+                      activeView: effectiveActiveView,
+                      clickedView: item.view,
+                      isCollapsed,
+                    });
+                    if (item.view === "terminal") {
+                      setTerminalPanelFocusRequestToken(
+                        (current) => current + 1,
+                      );
+                    }
+                    onSetActiveView(next.nextView);
+                    onSetCollapsed(next.nextCollapsed);
                   }
-                  onSetActiveView(next.nextView);
-                  onSetCollapsed(next.nextCollapsed);
-                }
-              }}
-            >
-              <span className="panel-rail-icon">{item.icon}</span>
-              {item.badge ? <span className="panel-rail-badge">{item.badge}</span> : null}
-            </button>
-          ))}
+                }}
+              >
+                <span className="panel-rail-icon">{item.icon}</span>
+                {item.badge ? (
+                  <span className="panel-rail-badge">{item.badge}</span>
+                ) : null}
+              </button>
+            ))}
         </nav>
       </div>
     </aside>
@@ -848,12 +896,14 @@ function formatWorkflowStageStatus(status: WorkflowStageView["status"]) {
   }
 }
 
-function BrowserPanel({
+export function BrowserPanel({
+  active = true,
   nativeOverlayActive,
   resizing,
   navigationRequest,
   onNavigationRequestHandled,
 }: {
+  active?: boolean;
   nativeOverlayActive: boolean;
   resizing: boolean;
   navigationRequest: { url: string; token: number } | null;
@@ -944,7 +994,7 @@ function BrowserPanel({
 
     let boundsUpdateFrame: number | null = null;
     let lastSentBounds: BrowserViewBounds | null = null;
-    const shouldHideNativeView = nativeOverlayActive || resizing;
+    const shouldHideNativeView = !active || nativeOverlayActive || resizing;
     const measureBounds = () =>
       browserBoundsFromElement(
         viewport,
@@ -1005,7 +1055,7 @@ function BrowserPanel({
       window.removeEventListener("resize", scheduleBoundsUpdate);
       void browserApi.hideBrowserView();
     };
-  }, [nativeOverlayActive, resizing]);
+  }, [active, nativeOverlayActive, resizing]);
 
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
@@ -3223,7 +3273,7 @@ export function openCwdTreeFilePreview({
   openTreeFile(path);
 }
 
-function FilePreviewPanel({
+export function FilePreviewPanel({
   expandedTreeDirectories,
   filePanelView,
   fileTreeEntriesByPath,
@@ -3250,7 +3300,7 @@ function FilePreviewPanel({
   fileTreeEntriesByPath: Record<string, FileTreeEntry[]>;
   fileTreeErrorsByPath: Record<string, string>;
   fileTreeLoadingPath: string | null;
-  gitDiffPreview: GitFileDiffSnapshot | null;
+  gitDiffPreview: GitDiffPreviewSnapshot | null;
   gitDiffPreviewError: string | null;
   gitDiffPreviewLoading: boolean;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
