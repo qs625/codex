@@ -355,6 +355,34 @@ test("TerminalPanel terminal tabs are concrete workspace drag sources", () => {
   assert.match(source, /selectTerminalTab\(activeTerminalTabId\)/);
 });
 
+test("TerminalPanel workspace variant renders only the detached session content surface", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const managerStart = source.indexOf("{isManagerVariant ? (");
+  const viewportIndex = source.indexOf('className="terminal-viewport-shell"', managerStart);
+  const managerSource = source.slice(managerStart, viewportIndex);
+
+  assert.match(source, /variant = "manager"/);
+  assert.match(source, /variant\?: "manager" \| "workspace"/);
+  assert.match(
+    source,
+    /isManagerVariant \? "terminal-panel-manager" : "terminal-panel-workspace"/,
+  );
+  assert.notEqual(managerStart, -1);
+  assert.notEqual(viewportIndex, -1);
+  assert.match(managerSource, /panel-content-header terminal-header/);
+  assert.match(managerSource, /aria-label="Live Commands"/);
+  assert.match(managerSource, /aria-label="Terminal tabs"/);
+  assert.match(managerSource, /aria-label="New shell terminal"/);
+  assert.match(managerSource, /aria-label="Terminal display settings"/);
+  assert.match(managerSource, /aria-label="Terminate active terminal"/);
+  assert.match(source, /className="terminal-viewport-shell"/);
+  assert.match(
+    source,
+    /isManagerVariant[\s\S]*Open a sandboxed shell or wait for a model PTY to become attachable\.[\s\S]*Terminal session is not available\./,
+  );
+}
+);
+
 test("TerminalPanel does not render a duplicate visible running status row below tabs", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const tabStripIndex = source.indexOf('aria-label="Terminal tabs"');

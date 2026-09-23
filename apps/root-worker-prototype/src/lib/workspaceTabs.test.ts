@@ -100,11 +100,12 @@ test("sanitizeWorkspaceTabs drops invalid and duplicate object tabs", () => {
   assert.deepEqual(
     sanitizeWorkspaceTabs([
       tab("conversation:root", "conversation"),
+      tab("diff:worktree:unstaged:package.json", "diff"),
       tab("conversation:root", "conversation"),
       { id: "", kind: "file", title: "bad" } as WorkspaceObjectTab,
       { id: "surface:files", kind: "files", title: "Files" } as never,
     ]).map((item) => item.id),
-    ["conversation:root"],
+    ["conversation:root", "diff:worktree:unstaged:package.json"],
   );
 });
 

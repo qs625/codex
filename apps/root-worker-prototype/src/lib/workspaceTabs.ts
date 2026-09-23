@@ -1,6 +1,7 @@
 export type WorkspaceObjectTabKind =
   | "conversation"
   | "file"
+  | "diff"
   | "terminal"
   | "browser";
 
@@ -13,6 +14,7 @@ export type WorkspaceObjectTab = {
   rootId?: string | null;
   path?: string | null;
   url?: string | null;
+  gitDiffTargetId?: string | null;
   browserTabId?: string | null;
   terminalTabId?: string | null;
   terminalSessionId?: string | null;
@@ -175,6 +177,7 @@ function isWorkspaceObjectTab(value: unknown): value is WorkspaceObjectTab {
     tab.title.length > 0 &&
     (tab.kind === "conversation" ||
       tab.kind === "file" ||
+      tab.kind === "diff" ||
       tab.kind === "terminal" ||
       tab.kind === "browser")
   );
