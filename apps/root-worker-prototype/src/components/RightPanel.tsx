@@ -16,7 +16,6 @@ import {
   PlusIcon,
   RefreshIcon,
   SaveIcon,
-  SearchIcon,
   StopIcon,
   TerminalIcon,
   XIcon,
@@ -596,20 +595,8 @@ export function RightPanel({
                       ? String(workflowPanel.runs.length)
                       : "",
               },
-              {
-                view: null,
-                label: "Search",
-                icon: <SearchIcon />,
-                badge: "",
-              },
-              {
-                view: null,
-                label: "Artifacts",
-                icon: <GridIcon />,
-                badge: "",
-              },
             ] satisfies Array<{
-              view: RightPanelView | null;
+              view: RightPanelView;
               label: string;
               icon: ReactNode;
               badge: string;
@@ -620,8 +607,7 @@ export function RightPanel({
                 !workspaceTabsEnabled ||
                 (item.view !== "preview" &&
                   item.view !== "browser" &&
-                  item.view !== "terminal" &&
-                  item.view !== null),
+                  item.view !== "terminal"),
             )
             .map((item) => (
               <button
@@ -631,22 +617,19 @@ export function RightPanel({
                   item.view === effectiveActiveView ? "active" : ""
                 }`}
                 aria-label={item.label}
-                disabled={item.view == null}
                 onClick={() => {
-                  if (item.view) {
-                    const next = resolveRightPanelTabClick({
-                      activeView: effectiveActiveView,
-                      clickedView: item.view,
-                      isCollapsed,
-                    });
-                    if (item.view === "terminal") {
-                      setTerminalPanelFocusRequestToken(
-                        (current) => current + 1,
-                      );
-                    }
-                    onSetActiveView(next.nextView);
-                    onSetCollapsed(next.nextCollapsed);
+                  const next = resolveRightPanelTabClick({
+                    activeView: effectiveActiveView,
+                    clickedView: item.view,
+                    isCollapsed,
+                  });
+                  if (item.view === "terminal") {
+                    setTerminalPanelFocusRequestToken(
+                      (current) => current + 1,
+                    );
                   }
+                  onSetActiveView(next.nextView);
+                  onSetCollapsed(next.nextCollapsed);
                 }}
               >
                 <span className="panel-rail-icon">{item.icon}</span>
