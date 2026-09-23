@@ -8,11 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Compact fresh Init Context project instruction_files and compact replacement Init Context restore are installed in Runtime Capsule `sha256:f68752167e7c8cce3c9cb1cd57cba7c40886c6bd942b91c2fd48821b8ea6696a` from sourceCommit `4f7ec4861ceb9376ff7aa21c2337292a6fa5d996`; restart request `call_Q4jwcbu7yd4Qf24Msf8k0lr4` recovered and completed. User confirmed Telebot Init Context now appears, but compact summary is still missing. User then clarified the desired design: compact display should be flattened into independent items (`ContextCompaction` marker, compact summary message, Init Context, etc.) rather than storing/showing many things through nested `replacement_history`; do not preserve complicated backward-compatibility code for nested replacement history. The flattened display/API fix has been merged, built, and installed in Runtime Capsule `sha256:92094a3cc9038a3c22551873332eeb9f3d535b0e2f038e9b157f39a88b760e92` from sourceCommit `3b3394cbb627f37bdd3998fa7b6711b59db067fc`; restart request `call_7VJnjb3EsYMNPorGiv1livKE` recovered and completed. PM verified installed release identity and console health. Per user direction, do not add complex compatibility for old compact segments; validate compact summary display on the next new compact instead. Do not repeat restart `call_7VJnjb3EsYMNPorGiv1livKE` or old restart `call_Q4jwcbu7yd4Qf24Msf8k0lr4`.
+Deliver the current UI/runtime tranche together: Context Window should show all split tool buckets including zero-value categories, `poll_event` / `poll_external_event` should expose only bounded wake category metadata to models, and the root-worker main workspace should use first-slice tabs for Conversation / Files / Terminal / Browser with duplicate/no-op buttons removed. Context Window and poll_event changes are already merged in main and intentionally not installed via intermediate Runtime Capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49`; after the UI shell merge, build a fresh capsule from canonical main, request one complete restart, and perform installed self-debug validation.
 
 ## Active Work
+- id: workspace-tabbed-shell-ui
+  status: pm_validated_pending_merge
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feat/workspace-tabbed-shell
+  task_type: frontend_ui_shell_feature
+  depends_on: main `8f6afc3472482b0c8b0cf85c80890c562686d28b`; intermediate built capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49` intentionally not installed
+  files: `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/TerminalPanel.tsx`, `apps/root-worker-prototype/src/styles.css`, frontend tests
+  base_commit: `8f6afc3472482b0c8b0cf85c80890c562686d28b`
+  next_action: PM should merge owner commit `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d` into canonical main, then build and install a fresh Runtime Capsule covering this UI tranche plus the previously merged Context Window and poll_event changes.
+  validation: Owner implemented first-slice workspace tabs and fixed reviewer findings. PM design/diff validation passed: Conversation/File/Terminal/Browser are same-level workspace tabs; Conversation app-internal header was removed and thread metadata/run config/cwd/search moved into the composer area; Files/Terminal/Browser reuse real existing panels; Browser native view is hidden while Browser is inactive or overlays/resizing are active; Terminal is only mounted while the Terminal workspace tab is active; RightPanel is reduced to auxiliary Thread Analysis/Git/Workflow surfaces in tabbed mode; no close/new workspace-tab buttons or placeholder/no-op Conversation buttons remain. Owner and PM both ran `pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts src/lib/rightPanelView.test.ts src/lib/filePreviewMemory.test.ts src/lib/conversation.test.ts` with 190 passed. Owner `pnpm --dir apps/root-worker-prototype build` passed with existing Vite chunk/xterm dynamic import warnings. PM `git diff --check f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d^ f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d` passed.
+  commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; merge pending
+
 - id: poll-event-category-only-result
-  status: merged_pending_capsule_delivery
+  status: capsule_built_not_installed_superseded_by_ui_tranche
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -21,12 +35,12 @@ Compact fresh Init Context project instruction_files and compact replacement Ini
   depends_on: main `c87b288a26bb6eedfa04541ae48cf7b5c92c5021`
   files: `codex-rs/thread-service/src/session/pending_input.rs`, `codex-rs/thread-service/src/session/thread_wait.rs`, `codex-rs/tool-service/src/planning/tool_specs/multi_agents.rs`, poll_event tests in `codex-rs/thread-service`, `codex-rs/tool-service`, and app-server display tests as needed
   base_commit: `c87b288a26bb6eedfa04541ae48cf7b5c92c5021`
-  next_action: Build/install Runtime Capsule together with `context-window-show-zero-categories`, then self-debug installed behavior.
+  next_action: Runtime Capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49` was built from sourceCommit `8f6afc3472482b0c8b0cf85c80890c562686d28b`, but user immediately requested a larger UI shell/tab redesign before restart. Do not install this intermediate capsule unless explicitly needed; build a fresh capsule after the UI tranche and install that.
   validation: Owner/reviewer completed. Owner reports `ThreadPollEventResult` now exposes `sourceCategory` and skips serializing internal `event/events`; native/external poll paths fill coarse categories (`command`, `subagent`, `user_input`, `queued_input`, `async_input`); schema/description remove payload contract; workflow `agent.wait()` keeps internal completion payload; frontend poll_event summary prefers category. Owner and PM validation: `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service poll_event` 10 passed; `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service external_tool_call_poll_external_event` 4 passed; `cargo test --manifest-path codex-rs/Cargo.toml -p codex-workflow poll_event` 1 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 76 passed; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed with existing linker/future-incompat warnings; `git diff --check` passed. Owner `rustfmt --check` on touched Rust files passed. `codex-tool-service poll_event` lib test remains blocked by existing test harness compile debt.
   commit: owner `ae49b164e01a50c24b1ffb4146b37e6cc394a5a3`; merge `35ef113dc`
 
 - id: context-window-show-zero-categories
-  status: merged_pending_capsule_delivery
+  status: capsule_built_not_installed_superseded_by_ui_tranche
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -35,7 +49,7 @@ Compact fresh Init Context project instruction_files and compact replacement Ini
   depends_on: main `c87b288a26bb6eedfa04541ae48cf7b5c92c5021`
   files: `apps/root-worker-prototype/src/lib/contextUsage.ts`, `apps/root-worker-prototype/src/lib/contextUsage.test.ts`, `apps/root-worker-prototype/src/components/RightPanel.test.tsx`
   base_commit: `c87b288a26bb6eedfa04541ae48cf7b5c92c5021`
-  next_action: Deliver together with pending `poll_event` runtime tool surface change to avoid repeated Runtime Capsule restarts.
+  next_action: Runtime Capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49` includes this change but was not installed because user immediately requested a larger UI shell/tab redesign before restart. Deliver in a fresh capsule after the UI tranche.
   validation: Owner/reviewer completed. Owner and PM both ran `pnpm --dir apps/root-worker-prototype test src/lib/contextUsage.test.ts src/components/RightPanel.test.tsx` passed 73 tests; PM `git diff --check` passed. Implementation keeps backend accounting unchanged, shows all split tool buckets including zero-value `Inter-Agent`, keeps aggregate `Tool Inputs & Results` hidden in split mode, and preserves fallback when breakdown/toolCalls cannot be split.
   commit: owner `8cd14123ad4f`; merge `f2f6060f8`
 
