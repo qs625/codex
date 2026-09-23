@@ -315,17 +315,14 @@ test("renders thread analysis title and monitor empty states", () => {
   assert.match(markup, /No scheduled listeners\./);
 });
 
-test("tabbed workspace mode hides duplicated primary surface rail buttons", () => {
+test("right panel keeps file terminal and browser entry points by default", () => {
   const markup = renderRightPanel(makeThread([]), "skills", null, {
-    workspaceTabsEnabled: true,
     preview: makePreview(),
   });
 
-  assert.doesNotMatch(markup, /aria-label="File Preview"/);
-  assert.doesNotMatch(markup, /aria-label="Terminal"/);
-  assert.doesNotMatch(markup, /aria-label="Browser"/);
-  assert.doesNotMatch(markup, /aria-label="Search"/);
-  assert.doesNotMatch(markup, /aria-label="Artifacts"/);
+  assert.match(markup, /aria-label="File Preview"/);
+  assert.match(markup, /aria-label="Terminal"/);
+  assert.match(markup, /aria-label="Browser"/);
   assert.match(markup, /aria-label="Thread Analysis"/);
   assert.match(markup, /aria-label="Git Changes"/);
   assert.match(markup, /aria-label="Workflow"/);
@@ -902,34 +899,48 @@ test("rejects stale terminal focus requests from another thread", () => {
   );
 });
 
-test("workspace files tab restores project previews without the right panel preview view", () => {
+test("workspace conversation tabs use concrete thread labels and preserve layout affordances", () => {
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
-  assert.match(
-    appSource,
-    /const shouldRestoreWorkspaceFilePreview =\s*activeWorkspaceTab === "files" && filePanelView === "preview"/,
+  assert.match(appSource, /workspaceTabForThread/);
+  assert.match(appSource, /getRootThreadConversationTitle\(thread\)/);
+  assert.match(appSource, /getThreadPath\(thread\)/);
+  assert.match(appSource, /storedWorkspaceTabOrderRef/);
+  assert.match(appSource, /applyStoredWorkspaceTabOrder\([\s\S]*storedWorkspaceTabOrderRef\.current/);
+  assert.doesNotMatch(appSource, /storeWorkspaceTabOrder\(workspaceTabs/);
+  assert.match(appSource, /storedWorkspaceTabOrderRef\.current = storeWorkspaceTabOrder/);
+  assert.match(appSource, /current\.flatMap\(\(tab\) =>/);
+  assert.match(appSource, /return thread \? \[workspaceTabForThread\(thread\)\] : \[\]/);
+  assert.match(appSource, /workspaceTabs\.some\(\(tab\) => tab\.id === current\)/);
+  assert.match(appSource, /threads\.some\(\(thread\) => thread\.id === tab\.threadId\)/);
+  assert.doesNotMatch(appSource, /WORKSPACE_TAB_LABELS/);
+  assert.doesNotMatch(appSource, /<FilePreviewPanel/);
+  assert.doesNotMatch(appSource, /<TerminalPanel/);
+  assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px 6px minmax\(0, 1fr\) 6px/);
+  assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel/);
+  assert.match(stylesSource, /width: 100%;/);
+  assert.match(stylesSource, /\.panel-resizer \{[\s\S]*background: transparent;/);
+  assert.doesNotMatch(stylesSource, /\.conversation-header/);
+  assert.doesNotMatch(
+    stylesSource,
+    /\.conversation-panel[^{]*\{[^}]*border-right:/,
   );
-  assert.match(
-    appSource,
-    /!shouldRestoreWorkspaceFilePreview &&\s*!shouldRestoreProjectFilePreview\(rightPanelView, filePanelView\)/,
+  assert.doesNotMatch(
+    stylesSource,
+    /\.conversation-panel[^{]*\{[^}]*box-shadow:/,
   );
-  assert.match(appSource, /setGitDiffPreview\(EMPTY_GIT_DIFF_PREVIEW\)/);
-});
-
-test("workspace terminal tab mounts TerminalPanel only while active", () => {
-  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const terminalPanelIndex = appSource.indexOf("<TerminalPanel");
-  const activeGateIndex = appSource.lastIndexOf(
-    'activeWorkspaceTab === "terminal" ?',
-    terminalPanelIndex,
+  assert.doesNotMatch(
+    stylesSource,
+    /\.workspace-tab-panel[^{]*\{[^}]*border-right:/,
   );
-
-  assert.notEqual(terminalPanelIndex, -1);
-  assert.notEqual(activeGateIndex, -1);
-  assert.ok(
-    activeGateIndex < terminalPanelIndex,
-    "TerminalPanel should not mount inside a hidden workspace tab",
+  assert.doesNotMatch(
+    stylesSource,
+    /\.workspace-tab-panel[^{]*\{[^}]*box-shadow:/,
   );
+  assert.doesNotMatch(stylesSource, /\.workspace-main \{[^}]*border-right:/);
+  assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*border-top:/);
+  assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*box-shadow:/);
 });
 
 test("right panel terminal rail click is the explicit terminal panel focus source", () => {

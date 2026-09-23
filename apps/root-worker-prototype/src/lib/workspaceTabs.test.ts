@@ -2,9 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyStoredWorkspaceTabOrder,
+  mergeWorkspaceTabOrder,
   readStoredWorkspaceTabOrder,
   reorderWorkspaceTabs,
+  sanitizeWorkspaceTabs,
   storeWorkspaceTabOrder,
+  upsertWorkspaceTab,
+  type WorkspaceObjectTab,
 } from "./workspaceTabs";
 
 function makeStorage(initialValue: string | null = null) {
@@ -18,63 +23,120 @@ function makeStorage(initialValue: string | null = null) {
   };
 }
 
-test("reorderWorkspaceTabs moves a dragged tab before the target", () => {
+function tab(id: string, kind: WorkspaceObjectTab["kind"]): WorkspaceObjectTab {
+  return {
+    id,
+    kind,
+    title: id,
+  };
+}
+
+test("reorderWorkspaceTabs moves object tabs before or after the target", () => {
+  const tabs = [
+    tab("conversation:root", "conversation"),
+    tab("file:root:/tmp/a.ts", "file"),
+    tab("file:root:/tmp/b.ts", "file"),
+  ];
+
+  assert.deepEqual(
+    reorderWorkspaceTabs(tabs, "file:root:/tmp/b.ts", "file:root:/tmp/a.ts")
+      .map((item) => item.id),
+    ["conversation:root", "file:root:/tmp/b.ts", "file:root:/tmp/a.ts"],
+  );
   assert.deepEqual(
     reorderWorkspaceTabs(
-      ["conversation", "files", "terminal", "browser"],
-      "browser",
-      "files",
-    ),
-    ["conversation", "browser", "files", "terminal"],
+      tabs,
+      "file:root:/tmp/a.ts",
+      "file:root:/tmp/b.ts",
+      "after",
+    ).map((item) => item.id),
+    ["conversation:root", "file:root:/tmp/b.ts", "file:root:/tmp/a.ts"],
   );
 });
 
-test("reorderWorkspaceTabs moves a dragged tab after the target", () => {
-  assert.deepEqual(
-    reorderWorkspaceTabs(
-      ["conversation", "files", "terminal", "browser"],
-      "files",
-      "terminal",
-      "after",
-    ),
-    ["conversation", "terminal", "files", "browser"],
-  );
-  assert.deepEqual(
-    reorderWorkspaceTabs(
-      ["conversation", "files", "terminal", "browser"],
-      "terminal",
-      "browser",
-      "after",
-    ),
-    ["conversation", "files", "browser", "terminal"],
-  );
-});
-
-test("stored workspace tab order is sanitized and completed", () => {
-  const storage = makeStorage(
-    JSON.stringify(["browser", "unknown", "browser", "conversation"]),
+test("upsertWorkspaceTab updates an existing object tab without duplicating it", () => {
+  const tabs = upsertWorkspaceTab(
+    [tab("conversation:root", "conversation")],
+    {
+      id: "conversation:root",
+      kind: "conversation",
+      title: "/root",
+      subtitle: "Complete",
+      threadId: "root",
+    },
   );
 
-  assert.deepEqual(readStoredWorkspaceTabOrder(storage), [
-    "browser",
-    "conversation",
-    "files",
-    "terminal",
+  assert.deepEqual(tabs, [
+    {
+      id: "conversation:root",
+      kind: "conversation",
+      title: "/root",
+      subtitle: "Complete",
+      threadId: "root",
+    },
   ]);
 });
 
-test("workspace tab order storage is best effort", () => {
-  const storage = makeStorage();
+test("sanitizeWorkspaceTabs drops invalid and duplicate object tabs", () => {
+  assert.deepEqual(
+    sanitizeWorkspaceTabs([
+      tab("conversation:root", "conversation"),
+      tab("conversation:root", "conversation"),
+      { id: "", kind: "file", title: "bad" } as WorkspaceObjectTab,
+      { id: "surface:files", kind: "files", title: "Files" } as never,
+    ]).map((item) => item.id),
+    ["conversation:root"],
+  );
+});
 
-  storeWorkspaceTabOrder(
-    ["terminal", "conversation", "files", "browser"],
-    storage,
+test("stored workspace object tab order is best effort", () => {
+  const storage = makeStorage(
+    JSON.stringify(["file:root:/tmp/b.ts", 1, "conversation:root"]),
   );
 
+  assert.deepEqual(readStoredWorkspaceTabOrder(storage), [
+    "file:root:/tmp/b.ts",
+    "conversation:root",
+  ]);
+
+  const ordered = applyStoredWorkspaceTabOrder(
+    [
+      tab("conversation:root", "conversation"),
+      tab("file:root:/tmp/a.ts", "file"),
+      tab("file:root:/tmp/b.ts", "file"),
+    ],
+    readStoredWorkspaceTabOrder(storage),
+  );
+  assert.deepEqual(ordered.map((item) => item.id), [
+    "file:root:/tmp/b.ts",
+    "conversation:root",
+    "file:root:/tmp/a.ts",
+  ]);
+
+  storeWorkspaceTabOrder(ordered, storage);
+
   assert.deepEqual(JSON.parse(storage.read() ?? "[]"), [
-    "terminal",
-    "conversation",
-    "files",
-    "browser",
+    "file:root:/tmp/b.ts",
+    "conversation:root",
+    "file:root:/tmp/a.ts",
+  ]);
+});
+
+test("workspace tab order storage preserves ids that are not live yet", () => {
+  const storage = makeStorage();
+  const liveTabs = [tab("conversation:a", "conversation")];
+  const previousOrder = ["conversation:b", "conversation:a"];
+
+  assert.deepEqual(mergeWorkspaceTabOrder(liveTabs, previousOrder), [
+    "conversation:b",
+    "conversation:a",
+  ]);
+  assert.deepEqual(storeWorkspaceTabOrder(liveTabs, storage, previousOrder), [
+    "conversation:b",
+    "conversation:a",
+  ]);
+  assert.deepEqual(JSON.parse(storage.read() ?? "[]"), [
+    "conversation:b",
+    "conversation:a",
   ]);
 });

@@ -17,11 +17,8 @@ import {
   TreeContextMenu,
 } from "./components/Panels";
 import {
-  BrowserPanel,
-  FilePreviewPanel,
   RightPanel,
   resolveThreadAnalysisCommandFocus,
-  type GitDiffPreviewState,
 } from "./components/RightPanel";
 import {
   isSelfCommandShortcut,
@@ -30,7 +27,6 @@ import {
   type SelfCommandProject,
 } from "./components/SelfCommandDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { TerminalPanel } from "./components/TerminalPanel";
 import {
   clearComposerDraft,
   getComposerDraft,
@@ -102,6 +98,9 @@ import {
   getTreeRootThreadId,
   getThreadDepth,
   getInterruptibleTurn,
+  getRootThreadConversationTitle,
+  getThreadPath,
+  getThreadPresenceLabel,
   isCompletedFinalLifecycleStatus,
   isActiveTurnMismatchError,
   isRootThread,
@@ -117,6 +116,7 @@ import {
   preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
   rootAgentPathFromTaskName,
+  threadDisplayStatusClass,
   updateThreadItem,
   updateThreadLifecycleStatusFromNotification,
   updateThreadSkills,
@@ -138,11 +138,13 @@ import {
   type ActiveVoiceSession,
 } from "./lib/voiceCaptureState";
 import {
+  applyStoredWorkspaceTabOrder,
   readStoredWorkspaceTabOrder,
   reorderWorkspaceTabs,
   storeWorkspaceTabOrder,
+  upsertWorkspaceTab,
+  type WorkspaceObjectTab,
   type WorkspaceTabDropPlacement,
-  type WorkspaceTabId,
 } from "./lib/workspaceTabs";
 import {
   approvalRequestKey,
@@ -192,22 +194,28 @@ const RIGHT_PANEL_MAX_RATIO = 0.46;
 const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
 const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 10 * 60 * 1000;
 const SELECTED_THREAD_STORAGE_KEY = "morpheus.rootWorker.selectedThreadId";
-const WORKSPACE_TAB_LABELS: Record<WorkspaceTabId, string> = {
-  conversation: "Conversation",
-  files: "Files",
-  terminal: "Terminal",
-  browser: "Browser",
-};
-const EMPTY_GIT_DIFF_PREVIEW: GitDiffPreviewState = {
-  loading: false,
-  diff: null,
-  error: null,
-};
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 
 function getViewportWidth() {
   return window.innerWidth;
+}
+
+function conversationWorkspaceTabId(threadId: string) {
+  return `conversation:${threadId}`;
+}
+
+function workspaceTabForThread(thread: Thread): WorkspaceObjectTab {
+  const title = isRootThread(thread)
+    ? getRootThreadConversationTitle(thread)
+    : getThreadPath(thread);
+  return {
+    id: conversationWorkspaceTabId(thread.id),
+    kind: "conversation",
+    title,
+    subtitle: getThreadPresenceLabel(thread),
+    threadId: thread.id,
+  };
 }
 
 function App() {
@@ -263,13 +271,14 @@ function App() {
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
   );
-  const [activeWorkspaceTab, setActiveWorkspaceTab] =
-    useState<WorkspaceTabId>("conversation");
-  const [workspaceTabOrder, setWorkspaceTabOrder] = useState<WorkspaceTabId[]>(
-    readStoredWorkspaceTabOrder,
-  );
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState<
+    string | null
+  >(null);
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceObjectTab[]>([]);
   const [draggedWorkspaceTab, setDraggedWorkspaceTab] =
-    useState<WorkspaceTabId | null>(null);
+    useState<string | null>(null);
+  const workspaceTabsRef = useRef<WorkspaceObjectTab[]>([]);
+  const storedWorkspaceTabOrderRef = useRef(readStoredWorkspaceTabOrder());
   const [runtimeRestartProgress, setRuntimeRestartProgress] =
     useState<RuntimeRestartProgress | null>(null);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
@@ -283,9 +292,6 @@ function App() {
   const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken] =
     useState(0);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
-  const [gitDiffPreview, setGitDiffPreview] = useState<GitDiffPreviewState>(
-    EMPTY_GIT_DIFF_PREVIEW,
-  );
   const [filePreviewByRootId, setFilePreviewByRootId] =
     useState<FilePreviewMemoryByRootId>({});
   const [filePanelView, setFilePanelView] = useState<FilePanelView>("preview");
@@ -362,6 +368,7 @@ function App() {
     pointerId: number;
   } | null>(null);
   threadsRef.current = threads;
+  workspaceTabsRef.current = workspaceTabs;
 
   useEffect(() => {
     void loadBootstrap();
@@ -370,10 +377,6 @@ function App() {
   useEffect(() => {
     storeRightPanelView(rightPanelView);
   }, [rightPanelView]);
-
-  useEffect(() => {
-    storeWorkspaceTabOrder(workspaceTabOrder);
-  }, [workspaceTabOrder]);
 
   const selectedComposerDraft = getComposerDraft(
     composerDraftsByThreadId,
@@ -398,6 +401,50 @@ function App() {
   const draft = selectedComposerDraft.text;
   const draftSkills = selectedComposerDraft.skills;
   const draftImages = selectedComposerDraft.images;
+
+  useEffect(() => {
+    if (!selectedThread) {
+      return;
+    }
+    const tab = workspaceTabForThread(selectedThread);
+    setWorkspaceTabs((current) =>
+      applyStoredWorkspaceTabOrder(
+        upsertWorkspaceTab(current, tab),
+        storedWorkspaceTabOrderRef.current,
+      ),
+    );
+    setActiveWorkspaceTabId(tab.id);
+  }, [selectedThread]);
+
+  useEffect(() => {
+    const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
+    setWorkspaceTabs((current) =>
+      current.flatMap((tab) => {
+        if (tab.kind !== "conversation" || !tab.threadId) {
+          return [tab];
+        }
+        const thread = threadsById.get(tab.threadId);
+        return thread ? [workspaceTabForThread(thread)] : [];
+      }),
+    );
+  }, [threads]);
+
+  useEffect(() => {
+    setActiveWorkspaceTabId((current) => {
+      if (!current || workspaceTabs.some((tab) => tab.id === current)) {
+        return current;
+      }
+      if (
+        selectedThread &&
+        workspaceTabs.some(
+          (tab) => tab.id === conversationWorkspaceTabId(selectedThread.id),
+        )
+      ) {
+        return conversationWorkspaceTabId(selectedThread.id);
+      }
+      return workspaceTabs[0]?.id ?? null;
+    });
+  }, [selectedThread, workspaceTabs]);
 
   useEffect(() => {
     composerDraftsRef.current = composerDraftsByThreadId;
@@ -907,16 +954,10 @@ function App() {
     symbolBackStackRef.current = [];
     symbolForwardStackRef.current = [];
     setIsLoadingPreview(false);
-    setGitDiffPreview(EMPTY_GIT_DIFF_PREVIEW);
   }, [selectedTreeRootId]);
 
   useEffect(() => {
-    const shouldRestoreWorkspaceFilePreview =
-      activeWorkspaceTab === "files" && filePanelView === "preview";
-    if (
-      !shouldRestoreWorkspaceFilePreview &&
-      !shouldRestoreProjectFilePreview(rightPanelView, filePanelView)
-    ) {
+    if (!shouldRestoreProjectFilePreview(rightPanelView, filePanelView)) {
       return;
     }
     if (isLoadingPreview) {
@@ -927,7 +968,6 @@ function App() {
     setPreviewError(null);
     setIsLoadingPreview(false);
   }, [
-    activeWorkspaceTab,
     filePanelView,
     filePreviewByRootId,
     isLoadingPreview,
@@ -2811,7 +2851,8 @@ function App() {
     const requestRootId = selectedTreeRootId;
     const requestToken = filePreviewRequestTokenRef.current + 1;
     filePreviewRequestTokenRef.current = requestToken;
-    setActiveWorkspaceTab("files");
+    setRightPanelView("preview");
+    setIsRightPanelCollapsed(false);
     setFilePanelView("preview");
     setIsLoadingPreview(true);
     setPreviewError(null);
@@ -2858,7 +2899,8 @@ function App() {
       url,
       token: (current?.token ?? 0) + 1,
     }));
-    setActiveWorkspaceTab("browser");
+    setRightPanelView("browser");
+    setIsRightPanelCollapsed(false);
   }
 
   function handleBrowserNavigationRequestHandled(token: number) {
@@ -3067,55 +3109,75 @@ function App() {
     setTreeMenu(null);
   }
 
-  function selectWorkspaceTab(tab: WorkspaceTabId) {
-    setActiveWorkspaceTab(tab);
-    if (tab === "terminal") {
-      setTerminalPanelFocusRequestToken((current) => current + 1);
+  function selectWorkspaceTab(tabId: string) {
+    const tab = workspaceTabs.find((item) => item.id === tabId);
+    if (!tab) {
+      return;
     }
+    if (tab.kind === "conversation" && tab.threadId) {
+      if (!threads.some((thread) => thread.id === tab.threadId)) {
+        return;
+      }
+      selectThread(tab.threadId);
+    }
+    setActiveWorkspaceTabId(tab.id);
   }
 
   function handleWorkspaceTabDragStart(
     event: DragEvent<HTMLButtonElement>,
-    tab: WorkspaceTabId,
+    tabId: string,
   ) {
-    setDraggedWorkspaceTab(tab);
+    setDraggedWorkspaceTab(tabId);
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", tab);
+    event.dataTransfer.setData("text/plain", tabId);
   }
 
   function handleWorkspaceTabDragOver(
     event: DragEvent<HTMLButtonElement>,
-    targetTab: WorkspaceTabId,
+    targetTabId: string,
   ) {
-    if (!draggedWorkspaceTab || draggedWorkspaceTab === targetTab) {
+    if (!draggedWorkspaceTab || draggedWorkspaceTab === targetTabId) {
       return;
     }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     const placement = getWorkspaceTabDropPlacement(event);
-    setWorkspaceTabOrder((current) =>
-      reorderWorkspaceTabs(current, draggedWorkspaceTab, targetTab, placement),
+    const next = reorderWorkspaceTabs(
+      workspaceTabsRef.current,
+      draggedWorkspaceTab,
+      targetTabId,
+      placement,
+    );
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
     );
   }
 
   function handleWorkspaceTabDrop(
     event: DragEvent<HTMLButtonElement>,
-    targetTab: WorkspaceTabId,
+    targetTabId: string,
   ) {
     event.preventDefault();
     const draggedTab =
       draggedWorkspaceTab ?? event.dataTransfer.getData("text/plain");
     const placement = getWorkspaceTabDropPlacement(event);
-    if (
-      draggedTab === "conversation" ||
-      draggedTab === "files" ||
-      draggedTab === "terminal" ||
-      draggedTab === "browser"
-    ) {
-      setWorkspaceTabOrder((current) =>
-        reorderWorkspaceTabs(current, draggedTab, targetTab, placement),
-      );
-    }
+    const next = reorderWorkspaceTabs(
+      workspaceTabsRef.current,
+      draggedTab,
+      targetTabId,
+      placement,
+    );
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
     setDraggedWorkspaceTab(null);
   }
 
@@ -3138,7 +3200,8 @@ function App() {
       token: (current?.token ?? 0) + 1,
     }));
     setTerminalPanelFocusRequestToken((current) => current + 1);
-    setActiveWorkspaceTab("terminal");
+    setRightPanelView("terminal");
+    setIsRightPanelCollapsed(false);
   }
 
   return (
@@ -3148,7 +3211,7 @@ function App() {
       <main
         className="workspace"
         style={{
-          gridTemplateColumns: `${sidebarWidth}px 1px minmax(0, 1fr) 1px ${
+          gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr) 6px ${
             isRightPanelCollapsed ? RIGHT_PANEL_COLLAPSED_WIDTH : rightPanelWidth
           }px`,
         }}
@@ -3191,39 +3254,50 @@ function App() {
           <div
             className="workspace-tab-strip"
             role="tablist"
-            aria-label="Workspace tabs"
+            aria-label="Conversation tabs"
           >
-            {workspaceTabOrder.map((tab) => {
-              const active = tab === activeWorkspaceTab;
+            {workspaceTabs.map((tab) => {
+              const active = tab.id === activeWorkspaceTabId;
               return (
                 <button
-                  key={tab}
+                  key={tab.id}
                   type="button"
                   className={`workspace-tab ${active ? "active" : ""} ${
-                    draggedWorkspaceTab === tab ? "dragging" : ""
+                    draggedWorkspaceTab === tab.id ? "dragging" : ""
                   }`}
                   role="tab"
                   aria-selected={active}
                   draggable
-                  onClick={() => selectWorkspaceTab(tab)}
+                  title={`${tab.title}${tab.subtitle ? ` · ${tab.subtitle}` : ""}`}
+                  onClick={() => selectWorkspaceTab(tab.id)}
                   onDragEnd={() => setDraggedWorkspaceTab(null)}
-                  onDragOver={(event) => handleWorkspaceTabDragOver(event, tab)}
-                  onDragStart={(event) =>
-                    handleWorkspaceTabDragStart(event, tab)
+                  onDragOver={(event) =>
+                    handleWorkspaceTabDragOver(event, tab.id)
                   }
-                  onDrop={(event) => handleWorkspaceTabDrop(event, tab)}
+                  onDragStart={(event) =>
+                    handleWorkspaceTabDragStart(event, tab.id)
+                  }
+                  onDrop={(event) => handleWorkspaceTabDrop(event, tab.id)}
                 >
-                  <span className={`workspace-tab-dot ${tab}`} />
-                  <span>{WORKSPACE_TAB_LABELS[tab]}</span>
+                  <span
+                    className={`workspace-tab-dot ${tab.kind} ${threadDisplayStatusClass(
+                      tab.kind === "conversation" && tab.threadId
+                        ? (threads.find(
+                            (thread) => thread.id === tab.threadId,
+                          ) ?? null)
+                        : null,
+                    )}`}
+                  />
+                  <span className="workspace-tab-label">{tab.title}</span>
+                  {tab.subtitle ? (
+                    <span className="workspace-tab-subtitle">{tab.subtitle}</span>
+                  ) : null}
                 </button>
               );
             })}
           </div>
           <div className="workspace-tab-content">
-            <div
-              className="workspace-tab-panel"
-              hidden={activeWorkspaceTab !== "conversation"}
-            >
+            <div className="workspace-tab-panel">
               <ConversationPanel
                 availableSkills={availableSkills}
                 availableWorkflows={availableWorkflows}
@@ -3269,59 +3343,6 @@ function App() {
                 voiceCaptureStatus={voiceCaptureStatus}
               />
             </div>
-            <div
-              className="workspace-tab-panel"
-              hidden={activeWorkspaceTab !== "files"}
-            >
-              <FilePreviewPanel
-                expandedTreeDirectories={expandedTreeDirectories}
-                filePanelView={filePanelView}
-                fileTreeEntriesByPath={fileTreeEntriesByPath}
-                fileTreeErrorsByPath={fileTreeErrorsByPath}
-                fileTreeLoadingPath={fileTreeLoadingPath}
-                gitDiffPreview={gitDiffPreview.diff}
-                gitDiffPreviewError={gitDiffPreview.error}
-                gitDiffPreviewLoading={gitDiffPreview.loading}
-                onNavigateToSymbol={handleNavigateToSymbol}
-                onOpenPreviewExternally={() => void openPreviewExternally()}
-                onOpenPreviewInBrowser={openPreviewInBrowser}
-                onOpenTreeFile={handleOpenTreeFile}
-                onPreviewUpdated={updateFilePreviewAfterSave}
-                onSetFilePanelView={handleSetFilePanelView}
-                onToggleTreeDirectory={handleToggleTreeDirectory}
-                preview={filePreview}
-                previewError={previewError}
-                previewLoading={isLoadingPreview}
-                previewRootId={selectedTreeRootId}
-                thread={selectedThread}
-              />
-            </div>
-            <div
-              className="workspace-tab-panel"
-              hidden={activeWorkspaceTab !== "terminal"}
-            >
-              {activeWorkspaceTab === "terminal" ? (
-                <TerminalPanel
-                  thread={selectedThread}
-                  focusCommandRequest={terminalCommandFocusRequest}
-                  focusPanelRequestToken={terminalPanelFocusRequestToken}
-                />
-              ) : null}
-            </div>
-            <div
-              className="workspace-tab-panel"
-              hidden={activeWorkspaceTab !== "browser"}
-            >
-              <BrowserPanel
-                active={activeWorkspaceTab === "browser"}
-                nativeOverlayActive={
-                  isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
-                }
-                resizing={isRightPanelResizing}
-                navigationRequest={browserNavigationRequest}
-                onNavigationRequestHandled={handleBrowserNavigationRequestHandled}
-              />
-            </div>
           </div>
         </section>
         <div
@@ -3348,10 +3369,7 @@ function App() {
           browserPanelResizing={isRightPanelResizing}
           browserNavigationRequest={browserNavigationRequest}
           onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
-          workspaceTabsEnabled
           onFocusCommandMonitor={handleThreadAnalysisCommandFocus}
-          onOpenWorkspaceFiles={() => setActiveWorkspaceTab("files")}
-          onGitDiffPreviewChange={setGitDiffPreview}
           availableSkillCount={availableSkills.length}
           availableWorkflows={availableWorkflows}
           isCollapsed={isRightPanelCollapsed}

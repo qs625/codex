@@ -90,8 +90,7 @@ svg {
   min-height: 0;
 }
 
-.sidebar,
-.conversation-panel {
+.sidebar {
   border-right: 1px solid rgba(16, 24, 40, 0.08);
 }
 
@@ -101,29 +100,30 @@ svg {
   min-width: 0;
   min-height: 0;
   background: rgba(255, 255, 255, 0.62);
-  border-right: 1px solid rgba(16, 24, 40, 0.08);
 }
 
 .workspace-tab-strip {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 42px;
-  padding: 6px 10px;
+  gap: 2px;
+  min-height: 34px;
+  padding: 4px 8px 0;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  background: rgba(252, 251, 249, 0.76);
+  background: rgba(255, 255, 255, 0.72);
   overflow-x: auto;
 }
 
 .workspace-tab {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   flex: 0 0 auto;
-  min-height: 30px;
-  padding: 0 10px;
+  max-width: min(260px, 60vw);
+  min-height: 29px;
+  padding: 0 9px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
   background: transparent;
   color: #57534e;
   font-size: 12px;
@@ -131,14 +131,29 @@ svg {
   cursor: grab;
 }
 
+.workspace-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab-subtitle {
+  color: #78716c;
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspace-tab:active {
   cursor: grabbing;
 }
 
 .workspace-tab.active {
-  border-color: rgba(14, 116, 144, 0.18);
-  background: rgba(236, 254, 255, 0.9);
-  color: #155e75;
+  border-color: rgba(16, 24, 40, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  color: #292524;
 }
 
 .workspace-tab.dragging {
@@ -152,20 +167,23 @@ svg {
   background: #a8a29e;
 }
 
-.workspace-tab-dot.conversation {
-  background: #2563eb;
+.workspace-tab-dot.todo {
+  background: #a8a29e;
 }
 
-.workspace-tab-dot.files {
+.workspace-tab-dot.active,
+.workspace-tab-dot.waiting,
+.workspace-tab-dot.running {
   background: #0f766e;
 }
 
-.workspace-tab-dot.terminal {
-  background: #a16207;
+.workspace-tab-dot.failed {
+  background: #dc2626;
 }
 
-.workspace-tab-dot.browser {
-  background: #7c3aed;
+.workspace-tab-dot.completed,
+.workspace-tab-dot.complete {
+  background: #64748b;
 }
 
 .workspace-tab-content {
@@ -178,8 +196,18 @@ svg {
 .workspace-tab-panel {
   display: flex;
   flex: 1;
+  width: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+.workspace-tab-panel > .conversation-panel,
+.workspace-tab-panel > .preview-panel,
+.workspace-tab-panel > .terminal-panel,
+.workspace-tab-panel > .browser-panel {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .workspace-tab-panel[hidden] {
@@ -189,7 +217,7 @@ svg {
 .panel-resizer {
   position: relative;
   cursor: col-resize;
-  background: rgba(16, 24, 40, 0.08);
+  background: transparent;
 }
 
 .panel-resizer::before {
@@ -201,7 +229,7 @@ svg {
 }
 
 .panel-resizer:hover::before {
-  background: rgba(217, 119, 6, 0.1);
+  background: rgba(217, 119, 6, 0.08);
 }
 
 .is-resizing-panels,
@@ -211,7 +239,6 @@ svg {
 }
 
 .sidebar-section-header,
-.conversation-header,
 .todo-header {
   display: flex;
   align-items: center;
@@ -1160,16 +1187,6 @@ svg {
   font-size: 11px;
 }
 
-.conversation-header {
-  min-height: 44px;
-  padding: 6px 14px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-}
-
-.conversation-heading {
-  min-width: 0;
-}
-
 .conversation-title-row {
   display: flex;
   align-items: center;
@@ -1178,14 +1195,6 @@ svg {
   min-width: 0;
   color: #78716c;
   font-size: 11px;
-}
-
-.conversation-header h1 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #18181b;
-  margin-right: 8px;
 }
 
 .conversation-subtitle {
@@ -3937,7 +3946,6 @@ svg {
 
 .composer-shell {
   padding: 10px 14px 14px;
-  border-top: 1px solid rgba(16, 24, 40, 0.08);
 }
 
 .composer-input-shell {
