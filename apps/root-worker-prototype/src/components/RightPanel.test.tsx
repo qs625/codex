@@ -53,6 +53,7 @@ const {
   normalizeBrowserPanelState,
   nextBrowserBoundsSequence,
   openCwdTreeFilePreview,
+  resolveBrowserPanelTabSelection,
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
@@ -375,9 +376,54 @@ test("renders browser panel and rail button", () => {
   assert.match(markup, /New tab/);
   assert.match(markup, /browser-new-tab-button/);
   assert.match(markup, /aria-label="New browser tab"/);
-  assert.match(markup, /Browser URL/);
-  assert.match(markup, /class="browser-go-button" disabled=""/);
+  assert.doesNotMatch(markup, /Browser URL/);
+  assert.doesNotMatch(markup, /class="browser-go-button" disabled=""/);
   assert.match(markup, /Open a page in the right panel/);
+});
+
+test("BrowserPanel manager selection ignores workspace-owned tabs", () => {
+  const tabs = [
+    {
+      id: "browser-a",
+      title: "A",
+      url: "https://detached.example",
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    },
+    {
+      id: "browser-b",
+      title: "B",
+      url: "https://visible.example",
+      loading: false,
+      canGoBack: true,
+      canGoForward: false,
+      error: null,
+    },
+  ];
+
+  const onlyDetached = resolveBrowserPanelTabSelection({
+    tabs: [tabs[0]],
+    activeTabId: "browser-a",
+    isManagerVariant: true,
+    detachedBrowserTabIds: ["browser-a"],
+  });
+  assert.equal(onlyDetached.activeTab, null);
+  assert.deepEqual(onlyDetached.renderedTabs, []);
+  assert.equal(onlyDetached.managerActiveTabDetached, true);
+
+  const withVisibleFallback = resolveBrowserPanelTabSelection({
+    tabs,
+    activeTabId: "browser-a",
+    isManagerVariant: true,
+    detachedBrowserTabIds: ["browser-a"],
+  });
+  assert.equal(withVisibleFallback.activeTab?.id, "browser-b");
+  assert.deepEqual(
+    withVisibleFallback.renderedTabs.map((tab) => tab.id),
+    ["browser-b"],
+  );
 });
 
 test("BrowserPanel workspace variant renders a minimal URL toolbar without manager chrome", () => {
@@ -513,13 +559,14 @@ test("detached workspace objects are hidden from the right panel until their wor
   );
   assert.match(
     rightPanelSource,
-    /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/,
+    /resolveBrowserPanelTabSelection\(\{[\s\S]*detachedBrowserTabIds/,
   );
   assert.match(
     terminalPanelSource,
     /state\.tabs\.filter\(\(tab\) => !detachedTerminalTabIdSet\.has\(tab\.id\)\)/,
   );
   assert.match(rightPanelSource, /managerNativeViewBlocked/);
+  assert.match(rightPanelSource, /activeBrowserViewSurfaceToken/);
   assert.match(rightPanelSource, /Browser content is open in workspace\./);
   assert.match(terminalPanelSource, /Terminal session is open in workspace\./);
 });
@@ -575,12 +622,12 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
   assert.match(rightPanelSource, /focusBrowserTabRequest\?: \{ tabId: string; token: number \} \| null/);
   assert.match(
     rightPanelSource,
-    /!tabs\.some\(\(tab\) => tab\.id === focusBrowserTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusBrowserTabRequest\.tabId === state\.activeTabId[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*currentBrowserPanelApi\(\)[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*selectBrowserTab\(focusBrowserTabRequest\.tabId\)/,
+    /!renderedTabs\.some\(\(tab\) => tab\.id === focusBrowserTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusBrowserTabRequest\.tabId === state\.activeTabId[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*currentBrowserPanelApi\(\)[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*selectBrowserTab\(focusBrowserTabRequest\.tabId\)/,
   );
   assert.match(terminalPanelSource, /focusTerminalTabRequest\?: \{ tabId: string; token: number \} \| null/);
   assert.match(
     terminalPanelSource,
-    /!state\.tabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusTerminalTabRequest\.tabId === state\.activeTabId[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*selectTerminalTab\(focusTerminalTabRequest\.tabId\)/,
+    /!visibleTabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusTerminalTabRequest\.tabId === state\.activeTabId[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*selectTerminalTab\(focusTerminalTabRequest\.tabId\)/,
   );
 });
 
@@ -1254,6 +1301,12 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     appSource,
     /activeWorkspaceTab\?\.kind !== "file"[\s\S]*<FilePreviewPanel[\s\S]*variant="workspace"[\s\S]*gitDiffPreview=\{null\}/,
   );
+  const workspaceBrowserPanelSource = appSource.slice(
+    appSource.indexOf('activeWorkspaceTab?.kind === "browser"'),
+    appSource.indexOf('activeWorkspaceTab?.kind === "terminal"'),
+  );
+  assert.doesNotMatch(workspaceBrowserPanelSource, /rightPanelView/);
+  assert.doesNotMatch(workspaceBrowserPanelSource, /effectiveActiveView/);
   assert.doesNotMatch(
     appSource,
     /function openBrowserInWorkspace[\s\S]*setRightPanelView\("skills"\)/,
@@ -1269,6 +1322,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/);
   assert.match(appSource, /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/);
   assert.match(appSource, /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/);
+  assert.match(appSource, /browserNativeViewSuppressed=\{activeWorkspaceTab\?\.kind === "browser"\}/);
   assert.match(appSource, /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/);
   assert.match(
     appSource,
@@ -1283,6 +1337,10 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(appSource, /revealThreadInSidebarState\(\{/);
   assert.match(appSource, /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/);
+  assert.match(
+    appSource,
+    /const conversationCells = useMemo\(\(\) => \{[\s\S]*buildConversationState\([\s\S]*selectedThread[\s\S]*filterConversationCellsForDisplay\(nextConversationState\.cells\);[\s\S]*\}, \[selectedThread\]\);/,
+  );
   assert.match(rightPanelSource, /type WorkspaceOpenableRightPanelObject/);
   assert.doesNotMatch(rightPanelSource, /panel-eyebrow/);
   assert.doesNotMatch(rightPanelSource, /preview-mode-toggle/);
@@ -1302,35 +1360,91 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /onReturnWorkspaceObject\?: \(payload: WorkspaceObjectDragPayload\) => void/);
   assert.match(rightPanelSource, /activeBrowserTabId\?: string \| null/);
   assert.match(rightPanelSource, /browserTabFocusRequest\?: \{ tabId: string; token: number \} \| null/);
+  assert.match(rightPanelSource, /browserNativeViewSuppressed\?: boolean/);
+  assert.match(rightPanelSource, /suppressNativeView=\{browserNativeViewSuppressed\}/);
   assert.match(rightPanelSource, /terminalTabFocusRequest\?: \{ tabId: string; token: number \} \| null/);
   assert.match(terminalPanelSource, /activeTerminalTabId\?: string \| null/);
   assert.match(rightPanelSource, /detachedBrowserTabIds=\{detachedBrowserTabIds\}/);
   assert.match(rightPanelSource, /detachedTerminalTabIds=\{detachedTerminalTabIds\}/);
   assert.match(rightPanelSource, /variant = "manager"/);
   assert.match(rightPanelSource, /variant\?: "manager" \| "workspace"/);
-  assert.match(rightPanelSource, /const detachedBrowserTabIdSet = useMemo\([\s\S]*new Set\(detachedBrowserTabIds\)/);
-  assert.match(rightPanelSource, /const managerVisibleTabs =[\s\S]*tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/);
-  assert.match(rightPanelSource, /const managerNativeViewBlocked =[\s\S]*managerActiveTabDetached[\s\S]*managerHasDetachedTabs && activeTab == null/);
+  const browserPanelSource = rightPanelSource.slice(
+    rightPanelSource.indexOf("export function BrowserPanel"),
+    rightPanelSource.indexOf("export function normalizeBrowserPanelState"),
+  );
+  const browserSelectionSource = rightPanelSource.slice(
+    rightPanelSource.indexOf("export function resolveBrowserPanelTabSelection"),
+    rightPanelSource.indexOf("function formatByteSize"),
+  );
+  const selectForSurfaceSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("const selectBrowserTabForSurfaceIfNeeded"),
+    browserPanelSource.indexOf("useEffect(() => {", browserPanelSource.indexOf("const selectBrowserTabForSurfaceIfNeeded")),
+  );
+  const navigationRequestSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("if (!navigationRequest)"),
+    browserPanelSource.indexOf("}, [", browserPanelSource.indexOf("if (!navigationRequest)")),
+  );
+  const focusBrowserRequestSource = browserPanelSource.slice(
+    browserPanelSource.lastIndexOf("useEffect(() => {", browserPanelSource.indexOf("!focusBrowserTabRequest")),
+    browserPanelSource.indexOf("}, [", browserPanelSource.indexOf("!focusBrowserTabRequest")),
+  );
+  const navigateSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("const navigate = () => {"),
+    browserPanelSource.indexOf("const runCommand = ("),
+  );
+  const runCommandSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("const runCommand = ("),
+    browserPanelSource.indexOf("const createTab = () => {"),
+  );
+  const surfaceApplySource = browserPanelSource.slice(
+    browserPanelSource.indexOf("const applyBrowserState ="),
+    browserPanelSource.indexOf("const showNativeBrowserView ="),
+  );
+  const managerChromeSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("{isManagerVariant ? ("),
+    browserPanelSource.indexOf("{!isManagerVariant ? ("),
+  );
+  assert.match(rightPanelSource, /function resolveBrowserPanelTabSelection/);
+  assert.match(browserSelectionSource, /const detachedBrowserTabIdSet = new Set\(detachedBrowserTabIds\)/);
+  assert.match(browserSelectionSource, /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/);
+  assert.match(browserPanelSource, /resolveBrowserPanelTabSelection\(\{/);
+  assert.match(browserPanelSource, /activeTabId: state\.activeTabId/);
+  assert.match(rightPanelSource, /const nativeViewSuppressed = isManagerVariant && suppressNativeView/);
+  assert.match(browserPanelSource, /const managerNativeViewBlocked =\s*nativeViewSuppressed \|\|/);
+  assert.match(browserPanelSource, /managerHasDetachedTabs && activeTab == null/);
+  assert.match(selectForSurfaceSource, /if \(nativeViewSuppressed\)/);
+  assert.match(selectForSurfaceSource, /selectBrowserTab\(targetTabId\)/);
+  assert.ok(focusBrowserRequestSource.includes("nativeViewSuppressed"));
+  assert.ok(focusBrowserRequestSource.indexOf("nativeViewSuppressed") < focusBrowserRequestSource.indexOf("lastBrowserTabFocusRequestTokenRef.current = focusBrowserTabRequest.token"));
   assert.match(
     rightPanelSource,
     /if \(isManagerVariant && managerHasDetachedTabs && !activeTab\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
   );
-  assert.match(
-    rightPanelSource,
-    /const navigate = \(\) => \{[\s\S]*setAddress\(normalized\.url\);[\s\S]*setLocalError\(null\);[\s\S]*if \(isManagerVariant && managerHasDetachedTabs && !activeTab\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
-  );
+  assert.ok(navigationRequestSource.indexOf("if (nativeViewSuppressed)") < navigationRequestSource.indexOf("onNavigationRequestHandled?.(navigationRequest.token)"));
+  assert.ok(navigateSource.includes("if (nativeViewSuppressed)"));
+  assert.ok(navigateSource.indexOf("if (nativeViewSuppressed)") < navigateSource.indexOf('if (isManagerVariant && managerHasDetachedTabs && !activeTab)'));
+  assert.ok(runCommandSource.includes("if (nativeViewSuppressed)"));
+  assert.ok(runCommandSource.indexOf("if (nativeViewSuppressed)") < runCommandSource.indexOf("const browserApi = currentBrowserPanelApi();"));
+  assert.match(browserPanelSource, /disabled=\{!hasBrowserApi \|\| nativeViewSuppressed\}/);
   assert.match(rightPanelSource, /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/);
+  assert.match(rightPanelSource, /let activeBrowserViewSurfaceToken: symbol \| null = null/);
+  assert.match(rightPanelSource, /const browserSurfaceTokenRef = useRef\(Symbol\("browser-panel-surface"\)\)/);
+  assert.match(rightPanelSource, /if \(activeBrowserViewSurfaceToken === surfaceToken\) \{[\s\S]*browserApi\.hideBrowserView\(\)/);
   assert.match(rightPanelSource, /Browser content is open in workspace\./);
-  assert.match(rightPanelSource, /const selectBrowserTabForSurfaceIfNeeded = async[\s\S]*const targetTabId =[\s\S]*isManagerVariant \? activeTab\?\.id : \(activeBrowserTabId \?\? null\)/);
-  assert.match(rightPanelSource, /const browserSurfaceRef = useRef\(\{ activeBrowserTabId, isManagerVariant: variant === "manager" \}\)/);
-  assert.match(rightPanelSource, /browserSurfaceRef\.current = \{ activeBrowserTabId, isManagerVariant \}/);
-  assert.match(
-    rightPanelSource,
-    /const surface = browserSurfaceRef\.current;[\s\S]*const surfaceActiveTab =[\s\S]*!surface\.isManagerVariant && surface\.activeBrowserTabId[\s\S]*normalizedState\.tabs\.find\(\(tab\) => tab\.id === surface\.activeBrowserTabId\)[\s\S]*setAddress\(surfaceActiveTab\?\.url \?\? ""\)/,
-  );
-  assert.match(rightPanelSource, /await selectBrowserTabForSurfaceIfNeeded\(browserApi\);[\s\S]*await showNativeBrowserView\(browserApi\);[\s\S]*navigateBrowserView\(normalized\.url\)/);
+  assert.match(selectForSurfaceSource, /isManagerVariant \? activeTab\?\.id : \(activeBrowserTabId \?\? null\)/);
+  assert.match(browserPanelSource, /const browserSurfaceRef = useRef\(\{/);
+  assert.match(browserPanelSource, /detachedBrowserTabIds/);
+  assert.match(surfaceApplySource, /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/);
+  assert.match(surfaceApplySource, /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/);
+  assert.match(surfaceApplySource, /setAddress\(surfaceActiveTab\?\.url \?\? ""\)/);
+  assert.match(navigateSource, /await selectBrowserTabForSurfaceIfNeeded\(browserApi\)/);
+  assert.match(navigateSource, /if \(!nativeViewSuppressed\)/);
+  assert.match(navigateSource, /navigateBrowserView\(normalized\.url\)/);
   assert.match(rightPanelSource, /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/);
-  assert.match(rightPanelSource, /isManagerVariant \? \([\s\S]*browser-tab-strip[\s\S]*browser-toolbar[\s\S]*browser-status-row[\s\S]*\) : null/);
+  assert.match(managerChromeSource, /browser-tab-strip/);
+  assert.match(managerChromeSource, /\{activeTab \? \(/);
+  assert.match(managerChromeSource, /browser-toolbar/);
+  assert.match(managerChromeSource, /browser-status-row/);
   assert.match(rightPanelSource, /!isManagerVariant \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/);
   assert.match(rightPanelSource, /<div ref=\{viewportRef\} className="browser-native-viewport">/);
   assert.match(rightPanelSource, /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/);
