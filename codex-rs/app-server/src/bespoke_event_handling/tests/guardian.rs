@@ -1,5 +1,4 @@
 use super::*;
-use thread_service_api::ThreadLifecycleRuntime;
 
     #[test]
     fn guardian_assessment_started_uses_event_turn_id_fallback() {
