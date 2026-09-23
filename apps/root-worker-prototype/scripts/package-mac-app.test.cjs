@@ -32,6 +32,8 @@ test("package plan separates outer app, payload staging, and Seed Capsule", () =
     /target\/release\/runtime-capsule-launcher$/,
   );
   assert.match(plan.launcherExecutablePath, /Contents\/MacOS\/MorpheusLauncher$/);
+  assert.match(plan.appIconSourcePath, /assets\/morpheus-icon\.icns$/);
+  assert.match(plan.appIconResourcePath, /Contents\/Resources\/morpheus-icon\.icns$/);
   assert.match(plan.nativeResourceDir, /dist-package-resources\/native$/);
   assert.match(
     plan.computerUseHelperResourceDir,
@@ -50,6 +52,7 @@ test("Electron packager creates the complete inner Runtime app", () => {
   });
   assert.deepEqual(args.slice(0, 2), [".", "Root Worker Runtime"]);
   assert.ok(args.includes("--extend-info=electron/PayloadInfo.plist"));
+  assert.ok(args.includes("--icon=assets/morpheus-icon"));
   assert.ok(args.includes("--asar"));
   for (const generated of [
     "dist-app",
@@ -126,6 +129,8 @@ test("Seed Capsule contains the signed complete payload and outer app contains o
       recursive: true,
     });
     fs.writeFileSync(plan.outerInfoPlistSourcePath, "<plist/>");
+    fs.mkdirSync(path.dirname(plan.appIconSourcePath), { recursive: true });
+    fs.writeFileSync(plan.appIconSourcePath, "icon");
     const commands = [];
     const manifest = prepareSeedCapsule(plan, {
       sourceCommit: "deadbeef",
@@ -149,6 +154,7 @@ test("Seed Capsule contains the signed complete payload and outer app contains o
 test("outer signing does not recursively mutate the sealed Seed Capsule", () => {
   const commands = [];
   const plan = {
+    appIconResourcePath: "/tmp/Outer.app/Contents/Resources/morpheus-icon.icns",
     appBundleInfoPlistPath: "/tmp/Outer.app/Contents/Info.plist",
     appBundlePath: "/tmp/Outer.app",
     launcherExecutablePath: "/tmp/Outer.app/Contents/MacOS/MorpheusLauncher",

@@ -58,6 +58,7 @@ test("platform packager args include runtime resources without source snapshot",
 
   assert.ok(args.includes("--platform=linux"));
   assert.ok(args.includes("--arch=x64"));
+  assert.ok(args.includes("--icon=assets/morpheus-icon"));
   assert.ok(args.includes("--extra-resource=dist-package-resources/bin"));
   assert.ok(
     args.includes("--extra-resource=dist-package-resources/default-config"),

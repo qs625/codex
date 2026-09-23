@@ -9,6 +9,8 @@
   <string>Root Worker Prototype</string>
   <key>CFBundleExecutable</key>
   <string>MorpheusLauncher</string>
+  <key>CFBundleIconFile</key>
+  <string>morpheus-icon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

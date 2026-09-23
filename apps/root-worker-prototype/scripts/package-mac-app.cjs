@@ -25,6 +25,8 @@ const PAYLOAD_STAGING_DIR_NAME = "dist-capsule-payload";
 const SEED_STAGING_DIR_NAME = "dist-seed-capsule";
 const SEED_CAPSULE_DIR_NAME = "seed-capsule";
 const OUTER_BUNDLE_IDENTIFIER = "com.openai.root-worker-prototype.dev";
+const APP_ICON_BASE_PATH = "assets/morpheus-icon";
+const APP_ICON_FILE_NAME = "morpheus-icon.icns";
 
 function buildMacAppPackagePlan({
   cwd = process.cwd(),
@@ -89,6 +91,13 @@ function buildMacAppPackagePlan({
       "MacOS",
       LAUNCHER_EXECUTABLE_NAME,
     ),
+    appIconSourcePath: path.join(cwd, `${APP_ICON_BASE_PATH}.icns`),
+    appIconResourcePath: path.join(
+      appBundlePath,
+      "Contents",
+      "Resources",
+      APP_ICON_FILE_NAME,
+    ),
     nativeResourceDir: path.join(resourceStagingDir, "native"),
     outerInfoPlistSourcePath: path.join(cwd, "electron", "Info.plist"),
     payloadBundlePath,
@@ -125,6 +134,7 @@ function buildElectronPackagerArgs({
     "--app-bundle-id=com.openai.root-worker-prototype.runtime.dev",
     "--app-category-type=public.app-category.developer-tools",
     "--extend-info=electron/PayloadInfo.plist",
+    `--icon=${APP_ICON_BASE_PATH}`,
     "--asar",
     ...GENERATED_SOURCE_DIR_NAMES.map(
       (name) => `--ignore=^/${name}($|/)`,
@@ -218,10 +228,15 @@ function assembleOuterApp(plan, { fsOps = fs } = {}) {
     recursive: true,
     mode: 0o755,
   });
+  fsOps.mkdirSync(path.dirname(plan.appIconResourcePath), {
+    recursive: true,
+    mode: 0o755,
+  });
   fsOps.copyFileSync(
     plan.outerInfoPlistSourcePath,
     plan.appBundleInfoPlistPath,
   );
+  fsOps.copyFileSync(plan.appIconSourcePath, plan.appIconResourcePath);
   fsOps.writeFileSync(
     path.join(plan.appBundlePath, "Contents", "PkgInfo"),
     "APPL????",
@@ -240,6 +255,7 @@ function assertMacRuntimeLayout(plan, manifest, fsOps = fs) {
   for (const targetPath of [
     plan.launcherExecutablePath,
     plan.appBundleInfoPlistPath,
+    plan.appIconResourcePath,
     path.join(plan.seedCapsuleDir, "capsule.json"),
     path.join(
       plan.seedCapsuleDir,

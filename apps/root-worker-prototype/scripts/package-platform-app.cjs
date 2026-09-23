@@ -5,6 +5,7 @@ const { spawnSync } = require("node:child_process");
 const APP_NAME = "Root Worker Prototype";
 const DIST_DIR_NAME = "dist-app";
 const RESOURCE_STAGING_DIR_NAME = "dist-package-resources";
+const APP_ICON_BASE_PATH = "assets/morpheus-icon";
 
 const PLATFORM_CONFIGS = {
   linux: {
@@ -86,6 +87,7 @@ function buildElectronPackagerArgs({
     "--overwrite",
     "--ignore=^/dist-app($|/)",
     "--ignore=^/dist-package-resources($|/)",
+    `--icon=${APP_ICON_BASE_PATH}`,
     "--no-prune",
     `--extra-resource=${path.relative(cwd, binResourceDir)}`,
     `--extra-resource=${path.relative(cwd, defaultConfigResourceDir)}`,
