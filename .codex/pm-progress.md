@@ -8,55 +8,51 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Compact fresh Init Context project instruction_files and inter-agent tool item display fixes are merged. Current main HEAD is `d850cd0738d6a056755556512ce3d988e8d63ce7`; installed Runtime Capsule is still `sha256:16f2fe9c704e42d438f2604afc904e60f05c4017a56f212df8a96915e2d02562`. Restart request `call_EvYNHCj9ESFHGrDc4zOyyTqd` has already recovered and must not be repeated for that old delivery. Next action: build and install a new Runtime Capsule from current main.
+Compact fresh Init Context project instruction_files, skill-body init-context hygiene, and inter-agent tool item display fixes are installed effective. Current main HEAD is `e4d48c4143ecb79c165b0e0d0feb97bc628c79e9`; installed Runtime Capsule is `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43`. Restart request `call_qJve0JO8odiQ2vdSEe0isffw` recovered and completed; do not repeat that request.
 
 ## Active Work
+None.
+
+## Recent Completed
 - id: compact-project-instruction-files
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
   branch: fix/compact-project-instruction-files
-  task_type: runtime_context_bugfix
-  depends_on: none
-  files: likely `codex-rs/thread-service/src/session/*`, `codex-rs/config/src/*`, focused compact/init-context tests
-  base_commit: `fb9d8813c1ce5a49820071ee55cea000266cb832`
-  next_action: deliver via new Runtime Capsule from current main.
-  validation: owner `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service fresh_compact_initial_context` 5 passed; owner `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed; reviewer approved; PM verified no `render_skill_instruction_file_sections` reintroduced; PM `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service fresh_compact_initial_context -- --nocapture` 5 passed; PM `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service ordinary_context_update_does_not_reload_available_skill_body -- --nocapture` passed; PM `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed with existing linker/future-incompat warnings.
-  commit: owner `c12146ef52f0ba74206c2abe12d040954fad7446`; merged to main via `d850cd0738d6a056755556512ce3d988e8d63ce7`
-  notes: Compact fresh init context now reloads project-aware config for current cwd and merges refreshed project/user `instruction_files` into runtime config before rendering user instructions. Does not change project-level semantics to directory auto-scan and does not restore skill body injection.
+  commit: owner `c12146ef52f0ba74206c2abe12d040954fad7446`; merge `d850cd0738d6a056755556512ce3d988e8d63ce7`
+  summary: Compact fresh init context now reloads project-aware config for current cwd and merges refreshed project/user `instruction_files` into runtime config before rendering user instructions. Project-level instruction files remain explicit via `.morpheus/config.toml`; project instruction directories are not auto-scanned.
+  validation: owner `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service fresh_compact_initial_context` 5 passed and `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed; reviewer approved; PM `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service fresh_compact_initial_context -- --nocapture` 5 passed; PM `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service ordinary_context_update_does_not_reload_available_skill_body -- --nocapture` passed; PM `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed with existing linker/future-incompat warnings. Delivered in Runtime Capsule `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43` from sourceCommit `e4d48c4143ecb79c165b0e0d0feb97bc628c79e9`; restart request `call_qJve0JO8odiQ2vdSEe0isffw` completed. Installed verification: `runtime-launcher/control.json` externalCurrent/selected/activeLaunch all point to `2f319ed...`; payload pid `27553`; installed app-server pid `27563`; renderer URL points to `2f319ed.../app.asar/dist/index.html`; Electron console 0 errors / 0 warnings.
+
+- id: init-context-skill-body-hygiene
+  status: installed_effective
+  owner: /self/owner_main
+  reviewer: n/a
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  commit: `957ce05e91d1d2d4245fee0ccfe326a70f110eaa`
+  summary: Init Context, reference snapshots, and ordinary context diffs no longer read or inject available/implicit skills' `SKILL.md` bodies. Available skills remain visible as metadata; full skill bodies are reserved for explicit skill injection/trigger paths.
+  validation: PM removed the skill-body injection helper and updated regression tests; `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service ordinary_context_update_does_not_reload_available_skill_body -- --nocapture` passed; included in Runtime Capsule `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43` and installed verification above.
 
 - id: followup-tool-item-hide-stale-agent-state
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
   branch: fix/init-context-baseline-missing-root-cause
-  task_type: ui_display_bugfix
-  depends_on: none
-  files: likely `apps/root-worker-prototype/src/lib/conversation*`, thread item/tool presentation tests, possibly app-server-protocol projection only if the stale state is server-provided
-  base_commit: `fb9d8813c1ce5a49820071ee55cea000266cb832`
-  next_action: deliver via new Runtime Capsule from current main.
-  validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 84 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved; PM diff/design验收 passed.
-  commit: owner `a51d80a8fd9413c96f1e8338fe5b412866162563`; merged to main via `9d8f24efd50e42bee94cea69819783e401a1b1c6`
-  notes: Tool item now hides stale `Agent States` details for `sendInput`/`resumeAgent` while retaining spawn/list agent state display and current call audit facts. Pending capsule delivery because this changes root-worker frontend runtime code.
+  commit: owner `a51d80a8fd9413c96f1e8338fe5b412866162563`; merge `9d8f24efd50e42bee94cea69819783e401a1b1c6`
+  summary: Tool item details now hide stale `Agent States` details for `sendInput`/`resumeAgent` while retaining spawn/list/wait/close result display where current state is an actual tool result.
+  validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 84 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved; PM diff/design验收 passed. Delivered in Runtime Capsule `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43` and installed verification above.
 
 - id: inter-agent-tool-real-parameter-display
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
   branch: fix/followup-tool-item-stale-agent-state
-  task_type: ui_display_bugfix
-  depends_on: followup-tool-item-hide-stale-agent-state
-  files: likely `apps/root-worker-prototype/src/lib/conversation.ts`, `conversation.test.ts`, related presentation helpers
-  base_commit: `957ce05e91d1d2d4245fee0ccfe326a70f110eaa`
-  next_action: deliver via new Runtime Capsule from current main.
-  validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 85 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved after agent_type non-invention fix; PM diff/design验收 passed.
-  commit: owner `309bc733ed460c597cdef3a94f05c0d38f4e92af`; merged to main via `d5f911e6c8d51860eaf414e86ad9a46833aad88d`
-  notes: User explicitly wants tool item display to match the actual tool parameters. Keep current call auditability; do not show stale/cached prior agent state as call output. Initially mis-dispatched to owner_dev_3 due checkout availability, but user correctly pointed out owner_dev_2 just worked in this area; owner_dev_3 stopped after read-only inspection with no file changes, and task is reassigned to owner_dev_2 for locality.
+  commit: owner `309bc733ed460c597cdef3a94f05c0d38f4e92af`; merge `d5f911e6c8d51860eaf414e86ad9a46833aad88d`
+  summary: Inter-agent/collab tool items now show real, reconstructable tool parameters by tool kind, e.g. `target`/`content`, `message`/`model`/`reasoning_effort`, `timeout_ms`, and `path_prefix`; they no longer force everything into generic `Sender`/`Receivers`/`Prompt`/`Agent States`, and they do not invent parameters absent from the stored projection.
+  validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 85 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved after agent_type non-invention fix; PM diff/design验收 passed. Delivered in Runtime Capsule `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43` and installed verification above.
 
-## Recent Completed
 - id: browser-cdp-direct-target-creation
   status: installed_effective
   owner: /self/owner_dev_2
