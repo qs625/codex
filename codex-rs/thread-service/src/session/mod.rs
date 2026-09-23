@@ -204,14 +204,20 @@ use codex_context_manager::ContextManager;
 use codex_context_manager::PreviousTurnSettingsView;
 use codex_context_manager::SettingsUpdateInput;
 use config_service::CONFIG_TOML_FILE;
+use config_service::CloudRequirementsLoader;
 use config_service::Config;
 use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigLoadOptions;
 use config_service::ConfigOverrides;
 use config_service::Constrained;
 use config_service::ConstraintResult;
+use config_service::LocalConfigLayerLoader;
+use config_service::NoopThreadConfigLoader;
 use config_service::PermissionProfileState;
 use config_service::StartedNetworkProxy;
 use config_service::config_toml::ConfigToml;
+use config_service::loader::ConfigLayerLoadRequest;
+use config_service::loader::ConfigLayerLoader;
 use model_service_api::ModelProviderInfo;
 use protocol::config_types::ShellEnvironmentPolicy;
 use protocol::error::CodexErr;
@@ -2155,6 +2161,53 @@ impl Session {
             config_layer_stack,
         )
         .await
+    }
+
+    async fn reload_project_config_for_cwd(current_config: &Config) -> std::io::Result<Config> {
+        let loader = LocalConfigLayerLoader::default();
+        let config_layer_stack = loader
+            .load(ConfigLayerLoadRequest {
+                codex_home: current_config.codex_home.clone(),
+                cwd: Some(current_config.cwd.clone()),
+                cli_overrides: Vec::new(),
+                options: ConfigLoadOptions::default(),
+                cloud_requirements: CloudRequirementsLoader::default(),
+                thread_config_loader: Arc::new(NoopThreadConfigLoader),
+            })
+            .await?;
+        let cfg: ConfigToml = config_layer_stack
+            .effective_config()
+            .try_into()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let reloaded_config = Config::load_config_with_layer_stack(
+            LOCAL_FS.as_ref(),
+            cfg,
+            ConfigOverrides {
+                cwd: Some(current_config.cwd.to_path_buf()),
+                codex_self_exe: current_config.codex_self_exe.clone(),
+                codex_linux_sandbox_exe: current_config.codex_linux_sandbox_exe.clone(),
+                main_execve_wrapper_exe: current_config.main_execve_wrapper_exe.clone(),
+                zsh_path: current_config.zsh_path.clone(),
+                ..Default::default()
+            },
+            current_config.codex_home.clone(),
+            config_layer_stack,
+        )
+        .await?;
+
+        let mut merged_config = current_config.clone();
+        let mut seen = merged_config
+            .instruction_files
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        for instruction_file in reloaded_config.instruction_files {
+            if seen.insert(instruction_file.clone()) {
+                merged_config.instruction_files.push(instruction_file);
+            }
+        }
+        merged_config.config_layer_stack = reloaded_config.config_layer_stack;
+        Ok(merged_config)
     }
 
     fn emit_config_changed_contributors(
