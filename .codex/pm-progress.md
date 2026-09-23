@@ -26,7 +26,7 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
   commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; PM progress `8edc9bc57`; merge `120c8ee4df89efe74e02bf283ffa5a6771cabaf6`; progress/capsule source `a9bff923c6cc0437f3326fa94925a15e5c767804`; installed capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`; restart `call_jMq3DzKPxwulxHPb2JgpSxAV`; superseded by user clarification
 
 - id: workspace-editor-style-object-tabs
-  status: dispatching
+  status: pm_validated_pending_merge
   owner: /self/owner_dev_3
   reviewer: /self/owner_dev_3/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
@@ -35,9 +35,9 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
   depends_on: main `ceca6c329147cd019a7d35d502d9ef6069e1cd43`; supersedes fixed surface-tab UI installed in `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`
   files: `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/TerminalPanel.tsx`, `apps/root-worker-prototype/src/lib/*workspace*tab*`, `apps/root-worker-prototype/src/styles.css`, frontend tests
   base_commit: `ceca6c329147cd019a7d35d502d9ef6069e1cd43`
-  next_action: Owner should rework the workspace tab model from fixed surface tabs to editor-style concrete-object tabs, and fix the installed regression where Conversation / right-panel dragging/resizing is now wrong. The central tab strip should contain individual conversations, terminal sessions, file/preview tabs, and any browser/page tabs that can be represented with current frontend state without backend protocol changes. Owner must preserve the user's clarified semantic model and avoid reintroducing four fixed surface tabs as the primary tab model. Existing middle/right panel resizer behavior must continue to work.
-  validation: pending owner implementation/reviewer/tests/PM installed validation.
-  commit: pending
+  next_action: PM should merge owner commit `1fe8575dc086c39c093add24046120fde4779a0e` into canonical main, build a fresh Runtime Capsule, request one complete restart, and do installed self-debug validation.
+  validation: Owner implemented corrective tranche and reviewer approved after storage/stale-tab fixes. PM design/diff validation passed against user clarifications: fixed `Conversation / Files / Terminal / Browser` surface tabs removed; central tabs are concrete conversation/thread object tabs with status dot, title/path, subtitle/presence; File Preview / Terminal / Browser remain default right-panel entries; no fake drag-to-middle affordance for File/Terminal/Browser; Conversation fills active workspace panel; Conversation internal right border and composer top border removed so only real splitter/resizer expresses middle/right boundary; resizer hit target widened from 1px to 6px; macOS window uses `titleBarStyle: "hiddenInset"` and preserves native frame/traffic lights. PM validation: `node --import tsx --test apps/root-worker-prototype/src/components/Panels.test.tsx apps/root-worker-prototype/src/components/RightPanel.test.tsx apps/root-worker-prototype/src/components/TerminalPanel.test.tsx apps/root-worker-prototype/src/lib/workspaceTabs.test.ts apps/root-worker-prototype/src/lib/rightPanelView.test.ts apps/root-worker-prototype/src/lib/filePreviewMemory.test.ts apps/root-worker-prototype/src/lib/conversation.test.ts apps/root-worker-prototype/electron/windowChrome.test.cjs` passed 191 tests; `git diff --check 1fe8575dc0^ 1fe8575dc0` passed; `pnpm --dir apps/root-worker-prototype build` passed with existing Vite chunk/xterm warnings.
+  commit: owner `1fe8575dc086c39c093add24046120fde4779a0e`; merge pending
 
 - id: poll-event-category-only-result
   status: capsule_built_not_installed_superseded_by_ui_tranche
