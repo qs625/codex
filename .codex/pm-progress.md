@@ -26,7 +26,7 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
   commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; PM progress `8edc9bc57`; merge `120c8ee4df89efe74e02bf283ffa5a6771cabaf6`; progress/capsule source `a9bff923c6cc0437f3326fa94925a15e5c767804`; installed capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`; restart `call_jMq3DzKPxwulxHPb2JgpSxAV`; superseded by user clarification
 
 - id: workspace-editor-style-object-tabs
-  status: capsule_built_pending_restart
+  status: installed_effective_with_cleanup_pending_final_capsule
   owner: /self/owner_dev_3
   reviewer: /self/owner_dev_3/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
@@ -38,6 +38,20 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
   next_action: Request one complete Runtime Capsule restart to install `sha256:b04fa10407b42602d3978a0671d4e6fa4a3f0f3193b822dafdd01c42e83df80a`, then do installed self-debug validation.
   validation: Owner implemented corrective tranche and reviewer approved after storage/stale-tab fixes. PM design/diff validation passed against user clarifications: fixed `Conversation / Files / Terminal / Browser` surface tabs removed; central tabs are concrete conversation/thread object tabs with status dot, title/path, subtitle/presence; File Preview / Terminal / Browser remain default right-panel entries; no fake drag-to-middle affordance for File/Terminal/Browser; Conversation fills active workspace panel; Conversation internal right border and composer top border removed so only real splitter/resizer expresses middle/right boundary; resizer hit target widened from 1px to 6px; macOS window uses `titleBarStyle: "hiddenInset"` and preserves native frame/traffic lights. PM validation on dev and main: `node --import tsx --test apps/root-worker-prototype/src/components/Panels.test.tsx apps/root-worker-prototype/src/components/RightPanel.test.tsx apps/root-worker-prototype/src/components/TerminalPanel.test.tsx apps/root-worker-prototype/src/lib/workspaceTabs.test.ts apps/root-worker-prototype/src/lib/rightPanelView.test.ts apps/root-worker-prototype/src/lib/filePreviewMemory.test.ts apps/root-worker-prototype/src/lib/conversation.test.ts apps/root-worker-prototype/electron/windowChrome.test.cjs` passed 191 tests; `git diff --check` passed; `pnpm --dir apps/root-worker-prototype build` passed with existing Vite chunk/xterm warnings. Runtime Capsule build produced `sha256:b04fa10407b42602d3978a0671d4e6fa4a3f0f3193b822dafdd01c42e83df80a` from sourceCommit `64bd3bea19bf42fba68ca3245ef607dfd6975223`.
   commit: owner `1fe8575dc086c39c093add24046120fde4779a0e`; PM progress `23b7dc156`; merge `a34dc5336ce76f9c6029f3a27be48fb654a5c34b`; progress/capsule source `64bd3bea19bf42fba68ca3245ef607dfd6975223`; capsule `sha256:b04fa10407b42602d3978a0671d4e6fa4a3f0f3193b822dafdd01c42e83df80a`
+
+- id: workspace-right-rail-remove-disabled-placeholders
+  status: pm_validated_pending_merge
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feat/workspace-editor-object-tabs
+  task_type: frontend_ui_polish
+  depends_on: installed capsule `sha256:b04fa10407b42602d3978a0671d4e6fa4a3f0f3193b822dafdd01c42e83df80a`
+  files: `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/RightPanel.test.tsx`
+  base_commit: `1fe8575dc086c39c093add24046120fde4779a0e`
+  next_action: PM should merge owner commit `8b46644d58`, build a fresh capsule, restart, and verify right rail no longer shows disabled Search/Artifacts placeholders.
+  validation: PM installed self-debug of `sha256:b04fa104...` found core UI fixes working but disabled `Search` and `Artifacts` placeholders still visible in right rail. Owner removed those placeholders while preserving Thread Analysis, File Preview, Git Changes, Browser, Terminal, and Workflow. PM validation: `node --import tsx --test apps/root-worker-prototype/src/components/RightPanel.test.tsx` passed 62 tests; `git diff --check 8b46644d58^ 8b46644d58` passed.
+  commit: owner `8b46644d58`; merge pending
 
 - id: poll-event-category-only-result
   status: capsule_built_not_installed_superseded_by_ui_tranche
