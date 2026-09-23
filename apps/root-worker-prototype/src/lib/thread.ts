@@ -154,7 +154,7 @@ export function buildProjectAgentSidebar(
       return {
         id: projectNodeId(cwd, projectPath),
         label: projectLabel,
-        subtitle: cwd,
+        subtitle: getAgentRoleLabel(rootThread),
         cwd,
         statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
         updatedAt: Math.max(
@@ -555,20 +555,71 @@ export function getThreadAncestorIds(threads: Thread[], threadId: string) {
   return ancestorIds;
 }
 
+export function revealThreadInSidebarState({
+  collapsedProjectIds,
+  collapsedThreadIds,
+  projectSidebar,
+  threadId,
+  threads,
+}: {
+  collapsedProjectIds: readonly string[];
+  collapsedThreadIds: readonly string[];
+  projectSidebar: ProjectAgentSidebar;
+  threadId: string;
+  threads: Thread[];
+}) {
+  const ancestorIds = getThreadAncestorIds(threads, threadId);
+  const project = projectSidebar.projects.find((candidate) =>
+    treeContainsThread(candidate.tree, threadId),
+  );
+  const targetIsProjectRoot = project?.tree.threadId === threadId;
+  const ancestorIdSet = new Set(
+    project
+      ? ancestorIds.filter((ancestorId) => ancestorId !== project.tree.threadId)
+      : ancestorIds,
+  );
+
+  return {
+    collapsedThreadIds: targetIsProjectRoot
+      ? [...collapsedThreadIds]
+      : collapsedThreadIds.filter((value) => !ancestorIdSet.has(value)),
+    collapsedProjectIds:
+      project && !targetIsProjectRoot
+        ? collapsedProjectIds.filter((value) => value !== project.id)
+        : [...collapsedProjectIds],
+    expandedProjectId:
+      project && !targetIsProjectRoot && collapsedProjectIds.includes(project.id)
+        ? project.id
+        : null,
+  };
+}
+
+function treeContainsThread(node: TreeNode, threadId: string): boolean {
+  return (
+    node.threadId === threadId ||
+    node.children.some((child) => treeContainsThread(child, threadId))
+  );
+}
+
 export function getAgentRoleLabel(thread: Thread) {
+  const role = thread.agentRole?.trim();
+  if (role) {
+    return role;
+  }
   const source = thread.source;
   if (typeof source === "object" && "subAgent" in source) {
     return "Worker Agent";
   }
   if (isProjectRootThread(thread)) {
-    return getThreadPath(thread);
+    return "Default Agent";
   }
   return "Chat";
 }
 
 export function getRootThreadConversationTitle(thread: Thread) {
-  return isProjectRootThread(thread)
-    ? getThreadPath(thread)
+  const projectCwd = normalizeProjectCwd(thread.cwd);
+  return isProjectRootThread(thread) && projectCwd
+    ? thread.name ?? projectLabelFromCwd(projectCwd)
     : getThreadLabel(thread);
 }
 
@@ -3047,15 +3098,10 @@ function canonicalProjectRootPriority(lifecycleStatus: ThreadLifecycleStatus) {
 }
 
 function withProjectRootLabel(node: TreeNode, projectLabel: string): TreeNode {
-  const descendantCount = countDescendants(node);
   return {
     ...node,
     label: node.thread ? (node.thread.name ?? projectLabel) : node.label,
-    path:
-      node.thread?.preview ||
-      (descendantCount > 0
-        ? `${descendantCount} subagents`
-        : getThreadPresenceLabel(node.thread)),
+    path: node.thread ? getAgentRoleLabel(node.thread) : node.path,
   };
 }
 

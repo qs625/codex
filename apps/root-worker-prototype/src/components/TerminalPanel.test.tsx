@@ -7,6 +7,14 @@ import { dirname, join } from "node:path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+test("TerminalPanel header uses the compact single-title panel style", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+
+  assert.match(source, /className="panel-content-header terminal-header"/);
+  assert.doesNotMatch(source, /panel-eyebrow/);
+  assert.doesNotMatch(source, /<p title=\{activeTab\?\.cwd\}>/);
+});
+
 test("TerminalPanel attaches xterm input forwarding before replay writes", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const onDataIndex = source.indexOf("dataSubscription = terminal.onData");

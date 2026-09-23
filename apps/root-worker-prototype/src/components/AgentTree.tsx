@@ -55,6 +55,7 @@ export function AgentTreeNode({
       <button
         type="button"
         className={`tree-node-button ${node.threadId === selectedThreadId ? "selected" : ""}`}
+        data-thread-id={node.threadId}
         onContextMenu={openContextMenu}
         onClick={() => {
           if (!node.isPlaceholder) {

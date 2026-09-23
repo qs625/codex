@@ -38,14 +38,10 @@ import {
 } from "./icons";
 import {
   getThreadSubtreeIds,
-  getAgentRoleLabel,
-  getRootThreadConversationTitle,
-  getThreadPresenceLabel,
   getThreadPath,
+  isRootThread,
   isThreadThinking,
   getInterruptibleTurn,
-  isRootThread,
-  threadDisplayStatusClass,
   treeThreadLifecycleStatusClass,
   treeThreadLifecycleStatusLabel,
   trimPath,
@@ -131,6 +127,7 @@ export function SidebarPanel({
   workspacePath: string;
 }) {
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const projectCount = projectSidebar.projects.length;
   const chatCount = projectSidebar.chat.conversations.length;
   const projectPaths = projectSidebar.projects.map((project) => project.cwd);
@@ -138,6 +135,19 @@ export function SidebarPanel({
     setIsCreateMenuOpen(false);
     onSubmitNewThreadDraft(draft);
   };
+
+  useEffect(() => {
+    if (!selectedThreadId) {
+      return;
+    }
+    const selectedRows = treeScrollRef.current?.querySelectorAll<HTMLElement>(
+      "[data-thread-id]",
+    );
+    const selectedRow = [...(selectedRows ?? [])].find(
+      (row) => row.dataset.threadId === selectedThreadId,
+    );
+    selectedRow?.scrollIntoView({ block: "nearest" });
+  }, [selectedThreadId]);
 
   return (
     <aside className="sidebar">
@@ -170,7 +180,7 @@ export function SidebarPanel({
         </div>
       </div>
 
-      <div className="tree-scroll">
+      <div className="tree-scroll" ref={treeScrollRef}>
         {projectSidebar.projects.length > 0 ? (
           projectSidebar.projects.map((project) => (
             <ProjectSection
@@ -1059,6 +1069,7 @@ export function ProjectSection({
         <button
           type="button"
           className={buttonClassName}
+          data-thread-id={project.tree.threadId}
           aria-expanded={!isCollapsed}
           onClick={() => onSelectProject(project.id, project.tree.threadId)}
         >
@@ -1187,6 +1198,7 @@ function ChatSection({
                 <button
                   type="button"
                   className="chat-list-row"
+                  data-thread-id={node.threadId}
                   onClick={() => onSelectThread(node.threadId)}
                   title={node.label}
                 >
@@ -1595,23 +1607,6 @@ export function ConversationPanel({
         <div className="composer-input-shell">
           <div className="composer-metadata-row">
             <div className="composer-thread-meta">
-              <span className="composer-thread-title">
-                {selectedThread
-                  ? isRootThread(selectedThread)
-                    ? getRootThreadConversationTitle(selectedThread)
-                    : getThreadPath(selectedThread)
-                  : "Select a project"}
-              </span>
-              <span
-                className={`status-dot ${threadDisplayStatusClass(selectedThread)}`}
-              />
-              <span>
-                {selectedThread
-                  ? getAgentRoleLabel(selectedThread)
-                  : "No thread selected"}
-              </span>
-              <span className="subtitle-separator">•</span>
-              <span>{getThreadPresenceLabel(selectedThread)}</span>
               <RunConfigPicker
                 disabled={isSending || activeTurnId != null}
                 onApply={onUpdateRunConfig}

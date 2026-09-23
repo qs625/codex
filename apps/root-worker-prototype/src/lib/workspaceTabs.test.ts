@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyStoredWorkspaceTabOrder,
+  closeWorkspaceTabById,
   mergeWorkspaceTabOrder,
   readStoredWorkspaceTabOrder,
   reorderWorkspaceTabs,
@@ -75,6 +76,24 @@ test("upsertWorkspaceTab updates an existing object tab without duplicating it",
       threadId: "root",
     },
   ]);
+});
+
+test("closeWorkspaceTabById removes only the central workspace tab", () => {
+  const tabs = [
+    tab("conversation:root", "conversation"),
+    tab("file:root:/tmp/a.ts", "file"),
+    tab("browser:main", "browser"),
+    tab("terminal:root", "terminal"),
+  ];
+
+  assert.deepEqual(
+    closeWorkspaceTabById(tabs, "file:root:/tmp/a.ts").map((item) => item.id),
+    ["conversation:root", "browser:main", "terminal:root"],
+  );
+  assert.deepEqual(
+    closeWorkspaceTabById(tabs, "missing").map((item) => item.id),
+    tabs.map((item) => item.id),
+  );
 });
 
 test("sanitizeWorkspaceTabs drops invalid and duplicate object tabs", () => {

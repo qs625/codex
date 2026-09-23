@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import Editor, { DiffEditor } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -67,6 +74,7 @@ import type {
 } from "../types";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
+export type WorkspaceOpenableRightPanelObject = "file" | "browser" | "terminal";
 
 type BrowserViewBounds = {
   x: number;
@@ -241,6 +249,7 @@ export function RightPanel({
   onOpenPreviewExternally,
   onOpenPreviewInBrowser,
   onOpenTreeFile,
+  onOpenWorkspaceObject,
   onPreviewUpdated,
   onSetActiveView,
   onSetCollapsed,
@@ -284,6 +293,7 @@ export function RightPanel({
   onOpenPreviewExternally: () => void;
   onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
+  onOpenWorkspaceObject?: (kind: WorkspaceOpenableRightPanelObject) => void;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetCollapsed: (value: boolean) => void;
@@ -352,13 +362,7 @@ export function RightPanel({
     onSetActiveView("terminal");
     onSetCollapsed(false);
   };
-  const effectiveActiveView =
-    workspaceTabsEnabled &&
-    (activeView === "preview" ||
-      activeView === "browser" ||
-      activeView === "terminal")
-      ? "skills"
-      : activeView;
+  const effectiveActiveView = activeView;
 
   function clearGitDiffPreview() {
     gitDiffRequestScope.current += 1;
@@ -374,6 +378,37 @@ export function RightPanel({
     });
   }
 
+  function workspaceObjectKindForView(
+    view: RightPanelView,
+  ): WorkspaceOpenableRightPanelObject | null {
+    if (view === "preview") {
+      return preview ? "file" : null;
+    }
+    if (view === "browser") {
+      return "browser";
+    }
+    if (view === "terminal") {
+      return "terminal";
+    }
+    return null;
+  }
+
+  function handleWorkspaceObjectDragStart(
+    event: DragEvent<HTMLButtonElement>,
+    view: RightPanelView,
+  ) {
+    const kind = workspaceObjectKindForView(view);
+    if (!kind) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(
+      "application/x-morpheus-workspace-object-tab",
+      kind,
+    );
+  }
+
   function openGitFileDiff(change: GitChange, mode: "staged" | "unstaged") {
     if (!thread || isChatCompatCwd(thread.cwd)) {
       return;
@@ -383,10 +418,9 @@ export function RightPanel({
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
     updateGitDiffPreview({ loading: true, diff: null, error: null });
     onSetFilePanelView("preview");
+    onSetActiveView("preview");
     if (workspaceTabsEnabled) {
       onOpenWorkspaceFiles?.();
-    } else {
-      onSetActiveView("preview");
     }
 
     window.codexDesktop
@@ -420,10 +454,9 @@ export function RightPanel({
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
     updateGitDiffPreview({ loading: true, diff: null, error: null });
     onSetFilePanelView("preview");
+    onSetActiveView("preview");
     if (workspaceTabsEnabled) {
       onOpenWorkspaceFiles?.();
-    } else {
-      onSetActiveView("preview");
     }
 
     window.codexDesktop
@@ -601,22 +634,24 @@ export function RightPanel({
               icon: ReactNode;
               badge: string;
             }>
-          )
-            .filter(
-              (item) =>
-                !workspaceTabsEnabled ||
-                (item.view !== "preview" &&
-                  item.view !== "browser" &&
-                  item.view !== "terminal"),
-            )
-            .map((item) => (
+          ).map((item) => (
               <button
                 key={item.label}
                 type="button"
+                draggable={workspaceObjectKindForView(item.view) != null}
                 className={`panel-rail-button ${
                   item.view === effectiveActiveView ? "active" : ""
                 }`}
                 aria-label={item.label}
+                onDoubleClick={() => {
+                  const kind = workspaceObjectKindForView(item.view);
+                  if (kind) {
+                    onOpenWorkspaceObject?.(kind);
+                  }
+                }}
+                onDragStart={(event) =>
+                  handleWorkspaceObjectDragStart(event, item.view)
+                }
                 onClick={() => {
                   const next = resolveRightPanelTabClick({
                     activeView: effectiveActiveView,
@@ -675,13 +710,7 @@ function WorkflowPanel({
     <div className="skills-panel workflow-panel">
       <header className="panel-content-header">
         <div className="panel-content-copy">
-          <span className="panel-eyebrow">Workflow</span>
           <h2>{run ? run.workflowName : "Workflow"}</h2>
-          <p>
-            {run
-              ? `${run.runId} · ${run.statusLabel}`
-              : `${model.availableWorkflows.length} available workflow${model.availableWorkflows.length === 1 ? "" : "s"}`}
-          </p>
         </div>
         {run ? (
           <span className={`workflow-status-pill ${run.statusTone}`}>
@@ -1102,7 +1131,6 @@ export function BrowserPanel({
     <div className="preview-panel browser-panel">
       <header className="panel-content-header browser-header">
         <div className="panel-content-copy">
-          <span className="panel-eyebrow">Browser</span>
           <h2>{activeTitle}</h2>
         </div>
         <button
@@ -1559,9 +1587,7 @@ function ThreadAnalysisPanel({
     <div className="skills-panel context-usage-panel">
       <header className="panel-content-header">
         <div className="panel-content-copy">
-          <span className="panel-eyebrow">Thread Analysis</span>
           <h2>Thread Analysis</h2>
-          <p>Context mix, loaded skills, and live monitor activity.</p>
         </div>
       </header>
 
@@ -3489,7 +3515,6 @@ export function FilePreviewPanel({
     <div className="preview-panel">
       <header className="panel-content-header preview-header">
         <div className="panel-content-copy">
-          <span className="panel-eyebrow">File Preview</span>
           <h2>
             {filePanelView === "tree"
               ? (threadRootPath ? trimPath(threadRootPath) : "Workspace Browser")
@@ -3501,26 +3526,6 @@ export function FilePreviewPanel({
           </h2>
         </div>
         <div className="preview-header-actions">
-          <div className="preview-mode-toggle" role="tablist" aria-label="File panel mode">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={filePanelView === "preview"}
-              className={filePanelView === "preview" ? "active" : ""}
-              onClick={() => onSetFilePanelView("preview")}
-            >
-              Preview
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={filePanelView === "tree"}
-              className={filePanelView === "tree" ? "active" : ""}
-              onClick={() => onSetFilePanelView("tree")}
-            >
-              CWD Tree
-            </button>
-          </div>
           {previewHeaderEditActions}
           {showOpenPreviewInBrowserAction ? (
             <button
@@ -3544,6 +3549,27 @@ export function FilePreviewPanel({
           </button>
         </div>
       </header>
+
+      <div className="file-object-toolbar" role="toolbar" aria-label="File object source">
+        <button
+          type="button"
+          className={filePanelView === "preview" ? "active" : ""}
+          aria-label="Show current file"
+          aria-pressed={filePanelView === "preview"}
+          onClick={() => onSetFilePanelView("preview")}
+        >
+          <DocumentIcon />
+        </button>
+        <button
+          type="button"
+          className={filePanelView === "tree" ? "active" : ""}
+          aria-label="Show file tree"
+          aria-pressed={filePanelView === "tree"}
+          onClick={() => onSetFilePanelView("tree")}
+        >
+          <GridIcon />
+        </button>
+      </div>
 
       {filePanelView === "tree" ? (
         <CwdFileTreePanel
