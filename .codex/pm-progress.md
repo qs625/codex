@@ -8,11 +8,11 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Deliver the current UI/runtime tranche together: Context Window should show all split tool buckets including zero-value categories, `poll_event` / `poll_external_event` should expose only bounded wake category metadata to models, and the root-worker main workspace should use first-slice tabs for Conversation / Files / Terminal / Browser with duplicate/no-op buttons removed. Context Window and poll_event changes are already merged in main and intentionally not installed via intermediate Runtime Capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49`; a fresh capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749` has been built from sourceCommit `a9bff923c6cc0437f3326fa94925a15e5c767804` and now needs full restart plus installed self-debug validation.
+Deliver the current UI/runtime tranche together: Context Window should show all split tool buckets including zero-value categories, `poll_event` / `poll_external_event` should expose only bounded wake category metadata to models, and the root-worker main workspace should become an editor-style tab workspace where each concrete opened object/session is a tab (for example multiple conversations, terminal sessions, and files), not four fixed surface tabs for Conversation / Files / Terminal / Browser. Context Window and poll_event changes are already installed via Runtime Capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`; that same capsule also installed the now-superseded fixed surface-tab UI, which the user clarified is not the intended design. Do not call restart again for `call_jMq3DzKPxwulxHPb2JgpSxAV`; implement a corrective UI tranche and then build/install a fresh capsule.
 
 ## Active Work
 - id: workspace-tabbed-shell-ui
-  status: capsule_built_pending_restart
+  status: superseded_by_editor_style_tab_clarification
   owner: /self/owner_dev_3
   reviewer: /self/owner_dev_3/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
@@ -21,9 +21,23 @@ Deliver the current UI/runtime tranche together: Context Window should show all 
   depends_on: main `8f6afc3472482b0c8b0cf85c80890c562686d28b`; intermediate built capsule `sha256:f3951bda3b5e7d16dc4ef5f1813aee4a549944d61bd63caaf6c22a8e22ddbe49` intentionally not installed
   files: `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/Conversation.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/TerminalPanel.tsx`, `apps/root-worker-prototype/src/styles.css`, frontend tests
   base_commit: `8f6afc3472482b0c8b0cf85c80890c562686d28b`
-  next_action: Request one complete Runtime Capsule restart to install fresh capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`, then perform installed self-debug validation.
+  next_action: Do not continue validating this fixed surface-tab implementation as final. User clarified the desired UI is editor-style concrete-object tabs: each opened conversation, terminal session, file/preview, etc. should be its own central tab, similar to an editor with many open files. Dispatch corrective tranche to owner_dev_3.
   validation: Owner implemented first-slice workspace tabs and fixed reviewer findings. PM design/diff validation passed: Conversation/File/Terminal/Browser are same-level workspace tabs; Conversation app-internal header was removed and thread metadata/run config/cwd/search moved into the composer area; Files/Terminal/Browser reuse real existing panels; Browser native view is hidden while Browser is inactive or overlays/resizing are active; Terminal is only mounted while the Terminal workspace tab is active; RightPanel is reduced to auxiliary Thread Analysis/Git/Workflow surfaces in tabbed mode; no close/new workspace-tab buttons or placeholder/no-op Conversation buttons remain. Owner and PM both ran `pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts src/lib/rightPanelView.test.ts src/lib/filePreviewMemory.test.ts src/lib/conversation.test.ts` with 190 passed. Owner and PM `pnpm --dir apps/root-worker-prototype build` passed with existing Vite chunk/xterm dynamic import and chunk-size warnings. PM `git diff --check` passed before and after merge. Runtime Capsule build produced `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749` from sourceCommit `a9bff923c6cc0437f3326fa94925a15e5c767804`; build warnings were existing Vite chunk/xterm, app-server unused/dead-code, Rust future-incompat, and Swift deprecation/unused warnings.
-  commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; PM progress `8edc9bc57`; merge `120c8ee4df89efe74e02bf283ffa5a6771cabaf6`; progress/capsule source `a9bff923c6cc0437f3326fa94925a15e5c767804`; capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`
+  commit: owner `f0da7aad1340ffb56ad68e0de9d7f368d6bfb52d`; PM progress `8edc9bc57`; merge `120c8ee4df89efe74e02bf283ffa5a6771cabaf6`; progress/capsule source `a9bff923c6cc0437f3326fa94925a15e5c767804`; installed capsule `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`; restart `call_jMq3DzKPxwulxHPb2JgpSxAV`; superseded by user clarification
+
+- id: workspace-editor-style-object-tabs
+  status: dispatching
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: feat/workspace-editor-object-tabs
+  task_type: frontend_ui_shell_feature
+  depends_on: main `ceca6c329147cd019a7d35d502d9ef6069e1cd43`; supersedes fixed surface-tab UI installed in `sha256:23a8bdfe02712773a34a86bed8f7050c28817b628b14238f6781ec92e9115749`
+  files: `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/TerminalPanel.tsx`, `apps/root-worker-prototype/src/lib/*workspace*tab*`, `apps/root-worker-prototype/src/styles.css`, frontend tests
+  base_commit: `ceca6c329147cd019a7d35d502d9ef6069e1cd43`
+  next_action: Owner should rework the workspace tab model from fixed surface tabs to editor-style concrete-object tabs, and fix the installed regression where Conversation / right-panel dragging/resizing is now wrong. The central tab strip should contain individual conversations, terminal sessions, file/preview tabs, and any browser/page tabs that can be represented with current frontend state without backend protocol changes. Owner must preserve the user's clarified semantic model and avoid reintroducing four fixed surface tabs as the primary tab model. Existing middle/right panel resizer behavior must continue to work.
+  validation: pending owner implementation/reviewer/tests/PM installed validation.
+  commit: pending
 
 - id: poll-event-category-only-result
   status: capsule_built_not_installed_superseded_by_ui_tranche
