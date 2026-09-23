@@ -75,7 +75,8 @@ export function TerminalPanel({
   focusPanelRequestToken,
   onOpenTerminalTabInWorkspace,
   activeTerminalTabId,
-  detachedTerminalTabId,
+  focusTerminalTabRequest,
+  detachedTerminalTabIds = [],
 }: {
   variant?: "manager" | "workspace";
   thread: Thread | null;
@@ -85,7 +86,8 @@ export function TerminalPanel({
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
   ) => void;
   activeTerminalTabId?: string | null;
-  detachedTerminalTabId?: string | null;
+  focusTerminalTabRequest?: { tabId: string; token: number } | null;
+  detachedTerminalTabIds?: string[];
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
@@ -108,6 +110,7 @@ export function TerminalPanel({
   const pendingTerminalFocusRequestRef =
     useRef<PendingTerminalViewportFocusRequest | null>(null);
   const lastAppliedTerminalFocusTokenRef = useRef(0);
+  const lastTerminalTabFocusRequestTokenRef = useRef(0);
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const lastPreferredSizeRef = useRef<{
     threadId: string;
@@ -125,13 +128,19 @@ export function TerminalPanel({
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const [terminalFocusRequestToken, setTerminalFocusRequestToken] = useState(0);
   const isManagerVariant = variant === "manager";
+  const detachedTerminalTabIdSet = useMemo(
+    () => new Set(detachedTerminalTabIds),
+    [detachedTerminalTabIds],
+  );
   const visibleTabs = useMemo(
     () =>
-      isManagerVariant && detachedTerminalTabId
-        ? state.tabs.filter((tab) => tab.id !== detachedTerminalTabId)
+      isManagerVariant && detachedTerminalTabIdSet.size > 0
+        ? state.tabs.filter((tab) => !detachedTerminalTabIdSet.has(tab.id))
         : state.tabs,
-    [detachedTerminalTabId, isManagerVariant, state.tabs],
+    [detachedTerminalTabIdSet, isManagerVariant, state.tabs],
   );
+  const managerHasDetachedTabs =
+    isManagerVariant && detachedTerminalTabIdSet.size > 0;
   const activeTab = useMemo(
     () =>
       visibleTabs.find((tab) => tab.id === state.activeTabId) ??
@@ -299,6 +308,39 @@ export function TerminalPanel({
       .catch((error) => setLocalError(toTerminalError(error)));
   }, [
     activeTerminalTabId,
+    requestTerminalViewportFocus,
+    state.activeTabId,
+    state.tabs,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isManagerVariant ||
+      !focusTerminalTabRequest ||
+      focusTerminalTabRequest.token <=
+        lastTerminalTabFocusRequestTokenRef.current
+    ) {
+      return;
+    }
+    if (!state.tabs.some((tab) => tab.id === focusTerminalTabRequest.tabId)) {
+      return;
+    }
+    if (focusTerminalTabRequest.tabId === state.activeTabId) {
+      lastTerminalTabFocusRequestTokenRef.current = focusTerminalTabRequest.token;
+      return;
+    }
+    lastTerminalTabFocusRequestTokenRef.current = focusTerminalTabRequest.token;
+    void window.codexDesktop
+      .selectTerminalTab(focusTerminalTabRequest.tabId)
+      .then((nextState) => {
+        setState(nextState);
+        requestTerminalViewportFocus(focusTerminalTabRequest.tabId);
+        setLocalError(null);
+      })
+      .catch((error) => setLocalError(toTerminalError(error)));
+  }, [
+    focusTerminalTabRequest,
+    isManagerVariant,
     requestTerminalViewportFocus,
     state.activeTabId,
     state.tabs,
@@ -838,7 +880,7 @@ export function TerminalPanel({
           <div className="terminal-empty">
             <span>$</span>
             <p>
-              {isManagerVariant && detachedTerminalTabId
+              {managerHasDetachedTabs
                 ? "Terminal session is open in workspace."
                 : isManagerVariant
                   ? "Open a sandboxed shell or wait for a model PTY to become attachable."

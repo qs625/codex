@@ -3855,12 +3855,7 @@ body.macos-window-chrome
 .compact-row::before,
 .archive-row::before {
   content: "";
-  position: absolute;
-  left: 21px;
-  right: 0;
-  top: -9px;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(68, 64, 60, 0.16), transparent);
+  display: none;
 }
 
 .compact-icon {
@@ -5972,6 +5967,14 @@ body.macos-window-chrome
   background: rgba(255, 255, 255, 0.48);
 }
 
+.browser-toolbar-workspace {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+
 .browser-icon-button,
 .browser-go-button {
   display: inline-grid;
@@ -6067,7 +6070,7 @@ body.macos-window-chrome
 }
 
 .browser-panel-workspace .browser-native-viewport {
-  min-height: 100%;
+  min-height: 0;
 }
 
 .browser-empty {
