@@ -3882,6 +3882,7 @@ function App() {
           onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
           onReturnWorkspaceObject={handleReturnWorkspaceObjectToRightPanel}
           browserTabFocusRequest={rightPanelBrowserTabFocusRequest}
+          browserNativeViewSuppressed={activeWorkspaceTab?.kind === "browser"}
           terminalTabFocusRequest={rightPanelTerminalTabFocusRequest}
           detachedBrowserTabIds={detachedWorkspaceBrowserTabIds}
           detachedTerminalTabIds={detachedWorkspaceTerminalTabIds}

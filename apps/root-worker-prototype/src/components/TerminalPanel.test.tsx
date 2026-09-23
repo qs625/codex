@@ -393,6 +393,10 @@ test("TerminalPanel manager excludes the terminal session owned by workspace", (
     /const visibleTabs = useMemo\([\s\S]*state\.tabs\.filter\(\(tab\) => !detachedTerminalTabIdSet\.has\(tab\.id\)\)/,
   );
   assert.match(source, /\{visibleTabs\.map\(\(tab\) =>/);
+  assert.match(
+    source,
+    /!visibleTabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)/,
+  );
   assert.match(source, /Terminal session is open in workspace\./);
 });
 

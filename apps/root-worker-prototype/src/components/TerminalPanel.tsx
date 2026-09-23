@@ -322,7 +322,7 @@ export function TerminalPanel({
     ) {
       return;
     }
-    if (!state.tabs.some((tab) => tab.id === focusTerminalTabRequest.tabId)) {
+    if (!visibleTabs.some((tab) => tab.id === focusTerminalTabRequest.tabId)) {
       return;
     }
     if (focusTerminalTabRequest.tabId === state.activeTabId) {
@@ -344,6 +344,7 @@ export function TerminalPanel({
     requestTerminalViewportFocus,
     state.activeTabId,
     state.tabs,
+    visibleTabs,
   ]);
 
   useEffect(() => {
