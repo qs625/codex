@@ -7,7 +7,6 @@ use app_server_protocol::CommandExecutionNotificationKind;
 use app_server_protocol::CommandExecutionNotifyOn;
 use app_server_protocol::CommandExecutionSource;
 use app_server_protocol::CommandExecutionStatus;
-use app_server_protocol::ContextCompactionReplacementItem;
 use app_server_protocol::DynamicToolCallStatus;
 use app_server_protocol::InjectedContextSection;
 use app_server_protocol::McpToolCallError;

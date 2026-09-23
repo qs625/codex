@@ -1,7 +1,6 @@
 use super::*;
 use app_server_protocol::CommandExecutionNotificationKind;
 use app_server_protocol::CommandExecutionStatus;
-use app_server_protocol::ContextCompactionReplacementItem;
 use app_server_protocol::DynamicToolCallStatus;
 use protocol::subscriptions::PersistedSubscription;
 use rollout::EventPersistenceMode;
@@ -10,7 +9,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 pub(super) fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
-    restore_persisted_compaction_replacement_turns(thread, persisted_turns);
+    restore_persisted_flat_compaction_display_turns(thread, persisted_turns);
     restore_persisted_injected_context_turns(thread, persisted_turns);
     reconcile_command_execution_exit_notifications(thread);
 }
@@ -31,14 +30,60 @@ pub(crate) fn build_display_turns_from_rollout_items(rollout_items: &[RolloutIte
         .filter(|item| is_persisted_rollout_item(item, EventPersistenceMode::Limited))
         .cloned()
         .collect::<Vec<_>>();
-    let mut turns = thread_history::build_turns_from_rollout_items(&limited_items);
-    expand_persisted_compaction_replacement_turns(&mut turns);
-    turns
+    thread_history::build_turns_from_rollout_items(&limited_items)
 }
 
-pub(super) fn expand_persisted_compaction_replacement_turns(turns: &mut Vec<Turn>) {
-    let persisted_turns = turns.clone();
-    restore_persisted_compaction_replacement_turns_into(turns, &persisted_turns);
+fn restore_persisted_flat_compaction_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
+    for (persisted_index, persisted_turn) in persisted_turns.iter().enumerate() {
+        let compact_items = flat_compaction_display_items_for_turn(persisted_turn);
+        if compact_items.is_empty() {
+            continue;
+        }
+
+        if let Some(live_turn) = thread
+            .turns
+            .iter_mut()
+            .find(|turn| turn.id == persisted_turn.id)
+        {
+            let mut insert_index = live_turn
+                .items
+                .iter()
+                .position(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+                .unwrap_or(0);
+            insert_persisted_items(live_turn, &compact_items, &mut insert_index);
+            live_turn.items_view = TurnItemsView::Full;
+            continue;
+        }
+
+        let mut compact_turn = persisted_turn.clone();
+        compact_turn.items = compact_items;
+        compact_turn.items_view = TurnItemsView::Full;
+        thread
+            .turns
+            .insert(persisted_index.min(thread.turns.len()), compact_turn);
+    }
+}
+
+fn flat_compaction_display_items_for_turn(turn: &Turn) -> Vec<ThreadItem> {
+    let mut items = Vec::new();
+    let mut iter = turn.items.iter().peekable();
+    while let Some(item) = iter.next() {
+        let ThreadItem::ContextCompaction { id, .. } = item else {
+            continue;
+        };
+        items.push(item.clone());
+        if iter.peek().is_some_and(|next_item| {
+            matches!(
+                *next_item,
+                ThreadItem::AgentMessage { id: summary_id, .. }
+                    if summary_id == &format!("{id}:summary")
+            )
+        }) && let Some(summary_item) = iter.next()
+        {
+            items.push(summary_item.clone());
+        }
+    }
+    items
 }
 
 fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
@@ -58,7 +103,11 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
             .iter_mut()
             .find(|turn| turn.id == persisted_turn.id)
         {
-            restore_persisted_injected_context_items(live_turn, &persisted_injected_items);
+            restore_persisted_injected_context_items(
+                live_turn,
+                persisted_turn,
+                &persisted_injected_items,
+            );
             continue;
         }
 
@@ -70,115 +119,6 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
             injected_context_turn,
         );
     }
-}
-
-fn restore_persisted_compaction_replacement_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
-    restore_persisted_compaction_replacement_turns_into(&mut thread.turns, persisted_turns);
-}
-
-fn restore_persisted_compaction_replacement_turns_into(
-    turns: &mut Vec<Turn>,
-    persisted_turns: &[Turn],
-) {
-    for (persisted_index, persisted_turn) in persisted_turns.iter().enumerate() {
-        if !persisted_turn
-            .items
-            .iter()
-            .any(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
-        {
-            continue;
-        }
-
-        if let Some(live_turn) = turns.iter_mut().find(|turn| turn.id == persisted_turn.id) {
-            restore_persisted_compaction_replacement_items(live_turn, persisted_turn);
-            continue;
-        }
-
-        let restored_items = compact_replacement_display_items_for_turn(persisted_turn);
-        if restored_items.is_empty() {
-            continue;
-        }
-        let mut compact_turn = persisted_turn.clone();
-        compact_turn.items = restored_items;
-        compact_turn.items_view = TurnItemsView::Full;
-        turns.insert(persisted_index.min(turns.len()), compact_turn);
-    }
-}
-
-fn restore_persisted_compaction_replacement_items(live_turn: &mut Turn, persisted_turn: &Turn) {
-    let mut insert_index = live_turn.items.len();
-    for persisted_item in &persisted_turn.items {
-        let ThreadItem::ContextCompaction {
-            id,
-            summary,
-            replacement_history,
-        } = persisted_item
-        else {
-            continue;
-        };
-
-        let compact_item = ThreadItem::ContextCompaction {
-            id: id.clone(),
-            summary: summary.clone(),
-            replacement_history: None,
-        };
-        let compact_index = if let Some(existing_index) = live_turn
-            .items
-            .iter()
-            .position(|item| matches!(item, ThreadItem::ContextCompaction { id: existing_id, .. } if existing_id == id))
-        {
-            live_turn.items[existing_index] = compact_item;
-            existing_index
-        } else {
-            live_turn.items.insert(insert_index, compact_item);
-            let inserted_index = insert_index;
-            inserted_index
-        };
-
-        insert_index = compact_index + 1;
-        if let Some(replacement_history) = replacement_history.as_ref() {
-            let replacement_items = replacement_history
-                .iter()
-                .map(thread_item_from_compaction_replacement_item)
-                .collect::<Vec<_>>();
-            insert_persisted_items(live_turn, &replacement_items, &mut insert_index);
-        }
-    }
-
-    if live_turn
-        .items
-        .iter()
-        .any(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
-    {
-        live_turn.items_view = TurnItemsView::Full;
-    }
-}
-
-fn compact_replacement_display_items_for_turn(turn: &Turn) -> Vec<ThreadItem> {
-    let mut items = Vec::new();
-    for item in &turn.items {
-        let ThreadItem::ContextCompaction {
-            id,
-            summary,
-            replacement_history,
-        } = item
-        else {
-            continue;
-        };
-        items.push(ThreadItem::ContextCompaction {
-            id: id.clone(),
-            summary: summary.clone(),
-            replacement_history: None,
-        });
-        if let Some(replacement_history) = replacement_history.as_ref() {
-            items.extend(
-                replacement_history
-                    .iter()
-                    .map(thread_item_from_compaction_replacement_item),
-            );
-        }
-    }
-    items
 }
 
 fn insert_persisted_items(
@@ -201,56 +141,6 @@ fn insert_persisted_items(
                 .insert(*insert_index, persisted_item.clone());
             *insert_index += 1;
         }
-    }
-}
-
-fn thread_item_from_compaction_replacement_item(
-    item: &ContextCompactionReplacementItem,
-) -> ThreadItem {
-    match item {
-        ContextCompactionReplacementItem::InjectedContext {
-            id,
-            title,
-            preview,
-            sections,
-        } => ThreadItem::InjectedContext {
-            id: id.clone(),
-            title: title.clone(),
-            preview: preview.clone(),
-            sections: sections.clone(),
-        },
-        ContextCompactionReplacementItem::UserMessage { id, content } => ThreadItem::UserMessage {
-            id: id.clone(),
-            content: content.clone(),
-        },
-        ContextCompactionReplacementItem::AgentMessage {
-            id,
-            text,
-            phase,
-            memory_citation,
-        } => ThreadItem::AgentMessage {
-            id: id.clone(),
-            text: text.clone(),
-            phase: phase.clone(),
-            memory_citation: memory_citation.clone(),
-        },
-        ContextCompactionReplacementItem::ConversationArtifact {
-            id,
-            title,
-            source,
-            mime_type,
-            content,
-            language,
-            truncated,
-        } => ThreadItem::ConversationArtifact {
-            id: id.clone(),
-            title: title.clone(),
-            source: source.clone(),
-            mime_type: mime_type.clone(),
-            content: content.clone(),
-            language: language.clone(),
-            truncated: *truncated,
-        },
     }
 }
 
@@ -489,6 +379,7 @@ pub(super) fn is_active_commands_turn(turn: &Turn) -> bool {
 
 fn restore_persisted_injected_context_items(
     live_turn: &mut Turn,
+    persisted_turn: &Turn,
     persisted_injected_items: &[ThreadItem],
 ) {
     let mut injected_insert_index = live_turn
@@ -507,6 +398,11 @@ fn restore_persisted_injected_context_items(
             live_turn.items[existing_index] = persisted_item.clone();
             injected_insert_index = injected_insert_index.max(existing_index + 1);
         } else {
+            if let Some(relative_index) =
+                persisted_relative_insert_index(live_turn, persisted_turn, &persisted_id)
+            {
+                injected_insert_index = injected_insert_index.max(relative_index);
+            }
             live_turn
                 .items
                 .insert(injected_insert_index, persisted_item.clone());
@@ -523,6 +419,28 @@ fn restore_persisted_injected_context_items(
     }
 }
 
+fn persisted_relative_insert_index(
+    live_turn: &Turn,
+    persisted_turn: &Turn,
+    persisted_id: &str,
+) -> Option<usize> {
+    let persisted_index = persisted_turn
+        .items
+        .iter()
+        .position(|item| item.id() == persisted_id)?;
+
+    persisted_turn.items[..persisted_index]
+        .iter()
+        .rev()
+        .find_map(|prior_persisted_item| {
+            live_turn
+                .items
+                .iter()
+                .position(|live_item| live_item.id() == prior_persisted_item.id())
+                .map(|prior_live_index| prior_live_index + 1)
+        })
+}
+
 #[cfg(test)]
 mod restore_persisted_injected_context_turns_tests {
     use super::*;
@@ -530,8 +448,6 @@ mod restore_persisted_injected_context_turns_tests {
     use app_server_protocol::SessionSource;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use protocol::ThreadId;
-    use protocol::models::ContentItem;
-    use protocol::models::ResponseItem;
     use protocol::protocol::CompactedItem;
     use protocol::protocol::ContextCompactedEvent;
     use protocol::protocol::ErrorEvent;
@@ -597,15 +513,11 @@ mod restore_persisted_injected_context_turns_tests {
         }
     }
 
-    fn context_compaction_item(
-        id: &str,
-        summary: &str,
-        replacement_history: Option<Vec<ContextCompactionReplacementItem>>,
-    ) -> ThreadItem {
+    fn context_compaction_item(id: &str) -> ThreadItem {
         ThreadItem::ContextCompaction {
             id: id.to_string(),
-            summary: Some(summary.to_string()),
-            replacement_history,
+            summary: None,
+            replacement_history: None,
         }
     }
 
@@ -759,116 +671,12 @@ mod restore_persisted_injected_context_turns_tests {
     }
 
     #[test]
-    fn restore_persisted_display_turns_inserts_compaction_replacement_display_items() {
-        let mut thread = thread_with_turns(Vec::new());
-        let persisted_turns = vec![turn(
-            "compact-turn",
-            vec![context_compaction_item(
-                "compact-1",
-                "compact marker summary",
-                Some(vec![
-                    ContextCompactionReplacementItem::AgentMessage {
-                        id: "summary-1".to_string(),
-                        text: "compact summary body".to_string(),
-                        phase: None,
-                        memory_citation: None,
-                    },
-                    ContextCompactionReplacementItem::InjectedContext {
-                        id: "ctx-1".to_string(),
-                        title: "Init Context".to_string(),
-                        preview: "Init Context".to_string(),
-                        sections: vec![InjectedContextSection {
-                            label: "User Preferences".to_string(),
-                            text: "# User Preferences\n\nProject body".to_string(),
-                        }],
-                    },
-                ]),
-            )],
-        )];
-
-        restore_persisted_display_turns(&mut thread, &persisted_turns);
-
-        assert_eq!(thread.turns.len(), 1);
-        assert_eq!(
-            thread.turns[0].items,
-            vec![
-                context_compaction_item("compact-1", "compact marker summary", None),
-                agent_message_item("summary-1", "compact summary body"),
-                injected_context_item_with_label(
-                    "ctx-1",
-                    "User Preferences",
-                    "# User Preferences\n\nProject body"
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn restore_persisted_display_turns_restores_replacement_items_after_live_compaction_marker() {
-        let mut thread = thread_with_turns(vec![turn(
-            "compact-turn",
-            vec![
-                context_compaction_item("compact-1", "stale marker summary", None),
-                agent_message_item("suffix-1", "post compact suffix"),
-            ],
-        )]);
-        let persisted_turns = vec![turn(
-            "compact-turn",
-            vec![context_compaction_item(
-                "compact-1",
-                "compact marker summary",
-                Some(vec![
-                    ContextCompactionReplacementItem::AgentMessage {
-                        id: "summary-1".to_string(),
-                        text: "compact summary body".to_string(),
-                        phase: None,
-                        memory_citation: None,
-                    },
-                    ContextCompactionReplacementItem::InjectedContext {
-                        id: "ctx-1".to_string(),
-                        title: "Init Context".to_string(),
-                        preview: "Init Context".to_string(),
-                        sections: vec![InjectedContextSection {
-                            label: "Project Understanding".to_string(),
-                            text: "# Project Understanding\n\nProject body".to_string(),
-                        }],
-                    },
-                ]),
-            )],
-        )];
-
-        restore_persisted_display_turns(&mut thread, &persisted_turns);
-
-        assert_eq!(
-            thread.turns[0].items,
-            vec![
-                context_compaction_item("compact-1", "compact marker summary", None),
-                agent_message_item("summary-1", "compact summary body"),
-                injected_context_item_with_label(
-                    "ctx-1",
-                    "Project Understanding",
-                    "# Project Understanding\n\nProject body"
-                ),
-                agent_message_item("suffix-1", "post compact suffix"),
-            ]
-        );
-    }
-
-    #[test]
-    fn restore_persisted_display_turns_from_rollout_items_restores_compaction_replacement_display()
-    {
+    fn restore_persisted_display_turns_from_rollout_items_synthesizes_marker_summary() {
         let mut thread = thread_with_turns(Vec::new());
         let rollout_items = vec![
             RolloutItem::Compacted(CompactedItem {
-                message: "compact marker summary".to_string(),
-                replacement_history: Some(vec![ResponseItem::Message {
-                    id: None,
-                    role: "assistant".to_string(),
-                    content: vec![ContentItem::OutputText {
-                        text: "compact summary body".to_string(),
-                    }],
-                    phase: None,
-                }]),
+                message: "compact summary body".to_string(),
+                replacement_history: None,
                 visible_replacement_history_len: None,
             }),
             RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
@@ -896,8 +704,8 @@ mod restore_persisted_injected_context_turns_tests {
         assert_eq!(
             thread.turns[0].items,
             vec![
-                context_compaction_item("item-1", "compact marker summary", None),
-                agent_message_item("replacement-0", "compact summary body"),
+                context_compaction_item("item-1"),
+                agent_message_item("item-1:summary", "compact summary body"),
                 injected_context_item_with_label(
                     "ctx-1",
                     "User Preferences",

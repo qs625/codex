@@ -74,8 +74,6 @@ mod thread_processor_behavior_tests {
     use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
     use protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
     use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-    use protocol::models::ContentItem;
-    use protocol::models::ResponseItem;
     use protocol::openai_models::ReasoningEffort;
     use protocol::permissions::FileSystemAccessMode;
     use protocol::permissions::FileSystemPath;
@@ -1206,7 +1204,7 @@ mod thread_processor_behavior_tests {
         let persisted_items = vec![
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".to_string(),
-                replacement_history: Some(Vec::new()),
+                replacement_history: None,
                 visible_replacement_history_len: None,
             }),
             RolloutItem::EventMsg(EventMsg::TurnStarted(
@@ -1232,8 +1230,8 @@ mod thread_processor_behavior_tests {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".to_string(),
-                    summary: Some("summary".to_string()),
-                    replacement_history: Some(Vec::new()),
+                    summary: None,
+                    replacement_history: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "item-2".to_string(),
@@ -1255,7 +1253,10 @@ mod thread_processor_behavior_tests {
         assert_eq!(thread.turns.len(), 2);
         assert!(matches!(
             thread.turns[0].items.as_slice(),
-            [ThreadItem::ContextCompaction { .. }]
+            [
+                ThreadItem::ContextCompaction { .. },
+                ThreadItem::AgentMessage { text, .. },
+            ] if text == "summary"
         ));
         assert_eq!(thread.turns[1].id, "turn-1");
         assert_eq!(thread.turns[1].status, TurnStatus::InProgress);
@@ -1365,7 +1366,7 @@ mod thread_processor_behavior_tests {
         let persisted_items = vec![
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".to_string(),
-                replacement_history: Some(Vec::new()),
+                replacement_history: None,
                 visible_replacement_history_len: None,
             }),
             RolloutItem::EventMsg(EventMsg::TurnStarted(
@@ -1391,8 +1392,8 @@ mod thread_processor_behavior_tests {
             items: vec![
                 ThreadItem::ContextCompaction {
                     id: "item-1".to_string(),
-                    summary: Some("summary".to_string()),
-                    replacement_history: Some(Vec::new()),
+                    summary: None,
+                    replacement_history: None,
                 },
                 ThreadItem::AgentMessage {
                     id: "item-2".to_string(),
@@ -1421,7 +1422,10 @@ mod thread_processor_behavior_tests {
         assert_eq!(turns.len(), 2);
         assert!(matches!(
             turns[0].items.as_slice(),
-            [ThreadItem::ContextCompaction { .. }]
+            [
+                ThreadItem::ContextCompaction { .. },
+                ThreadItem::AgentMessage { text, .. },
+            ] if text == "summary"
         ));
         assert_eq!(
             turns[1]
@@ -1490,7 +1494,7 @@ mod thread_processor_behavior_tests {
             })),
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".to_string(),
-                replacement_history: Some(Vec::new()),
+                replacement_history: None,
                 visible_replacement_history_len: None,
             }),
             RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
@@ -1529,27 +1533,15 @@ mod thread_processor_behavior_tests {
             6,
             RolloutItem::Compacted(CompactedItem {
                 message: "retry summary".to_string(),
-                replacement_history: Some(Vec::new()),
+                replacement_history: None,
                 visible_replacement_history_len: None,
             }),
         );
         items
     }
 
-    fn compacted_replacement_display_history_items() -> Vec<RolloutItem> {
+    fn compacted_flat_context_display_history_items() -> Vec<RolloutItem> {
         let mut items = compacted_display_history_items();
-        items[5] = RolloutItem::Compacted(CompactedItem {
-            message: "summary".to_string(),
-            replacement_history: Some(vec![ResponseItem::Message {
-                id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "compact summary body".to_string(),
-                }],
-                phase: None,
-            }]),
-            visible_replacement_history_len: None,
-        });
         items.insert(
             6,
             RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
@@ -1619,7 +1611,7 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
                 .collect::<Vec<_>>(),
-            vec!["item-3", "item-4", "item-5"]
+            vec!["item-3", "item-3:summary", "item-4", "item-5"]
         );
         assert!(matches!(
             &thread.turns[0].items[0],
@@ -1632,7 +1624,7 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
-    fn populate_thread_turns_from_history_expands_compaction_replacement_display_items() {
+    fn populate_thread_turns_from_history_preserves_flat_compaction_display_items() {
         let mut thread = Thread {
             id: "thread-1".to_string(),
             session_id: "session-1".to_string(),
@@ -1664,7 +1656,7 @@ mod thread_processor_behavior_tests {
 
         populate_thread_turns_from_history(
             &mut thread,
-            &compacted_replacement_display_history_items(),
+            &compacted_flat_context_display_history_items(),
             None,
         );
 
@@ -1674,7 +1666,7 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .map(ThreadItem::id)
                 .collect::<Vec<_>>(),
-            vec!["item-3", "replacement-0", "ctx-1", "item-4"]
+            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
         );
         assert!(matches!(
             &thread.turns[0].items[0],
@@ -1685,7 +1677,7 @@ mod thread_processor_behavior_tests {
         ));
         assert!(matches!(
             &thread.turns[0].items[1],
-            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+            ThreadItem::AgentMessage { text, .. } if text == "summary"
         ));
         assert!(matches!(
             &thread.turns[0].items[2],
@@ -1697,7 +1689,7 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
-    fn populate_thread_turns_for_persisted_read_expands_compaction_replacement_display_items() {
+    fn populate_thread_turns_for_persisted_read_preserves_flat_compaction_display_items() {
         let mut thread = Thread {
             id: "thread-1".to_string(),
             session_id: "session-1".to_string(),
@@ -1729,7 +1721,7 @@ mod thread_processor_behavior_tests {
 
         populate_thread_turns_for_persisted_read(
             &mut thread,
-            &compacted_replacement_display_history_items(),
+            &compacted_flat_context_display_history_items(),
         );
 
         assert_eq!(
@@ -1738,7 +1730,7 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .map(ThreadItem::id)
                 .collect::<Vec<_>>(),
-            vec!["item-3", "replacement-0", "ctx-1", "item-4"]
+            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
         );
         assert!(matches!(
             &thread.turns[0].items[0],
@@ -1749,7 +1741,7 @@ mod thread_processor_behavior_tests {
         ));
         assert!(matches!(
             &thread.turns[0].items[1],
-            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+            ThreadItem::AgentMessage { text, .. } if text == "summary"
         ));
         assert!(matches!(
             &thread.turns[0].items[2],
@@ -1807,14 +1799,14 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
                 .collect::<Vec<_>>(),
-            vec!["item-3", "item-4", "item-5"]
+            vec!["item-3", "item-3:summary", "item-4", "item-5"]
         );
     }
 
     #[test]
-    fn thread_turns_list_reconstruction_expands_compaction_replacement_display_items() {
+    fn thread_turns_list_reconstruction_preserves_flat_compaction_display_items() {
         let turns = reconstruct_thread_turns_for_turns_list(
-            &compacted_replacement_display_history_items(),
+            &compacted_flat_context_display_history_items(),
             ThreadLifecycleStatus::completed(None),
             /*has_live_running_thread*/ false,
             None,
@@ -1826,7 +1818,7 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .map(ThreadItem::id)
                 .collect::<Vec<_>>(),
-            vec!["item-3", "replacement-0", "ctx-1", "item-4"]
+            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
         );
         assert!(matches!(
             &turns[0].items[0],
@@ -1837,7 +1829,7 @@ mod thread_processor_behavior_tests {
         ));
         assert!(matches!(
             &turns[0].items[1],
-            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+            ThreadItem::AgentMessage { text, .. } if text == "summary"
         ));
         assert!(matches!(
             &turns[0].items[2],
@@ -1869,7 +1861,7 @@ mod thread_processor_behavior_tests {
                 .iter()
                 .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
                 .collect::<Vec<_>>(),
-            vec!["item-3", "item-4", "item-5"]
+            vec!["item-3", "item-3:summary", "item-4", "item-5"]
         );
     }
 

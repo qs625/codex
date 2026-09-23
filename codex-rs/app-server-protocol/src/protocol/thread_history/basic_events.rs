@@ -1,7 +1,5 @@
 use super::PendingAgentMessageResponse;
 use super::ThreadHistoryBuilder;
-use crate::protocol::ContextCompactionReplacementItem;
-use crate::protocol::InjectedContextSection;
 use crate::protocol::ThreadItem;
 use crate::protocol::assistant_message_thread_item;
 use crate::protocol::event_item_projection::ProjectedEventItem;
@@ -9,7 +7,6 @@ use crate::protocol::event_item_projection::project_event_msg_item;
 use crate::protocol::response_item_projection::{
     is_legacy_structured_assistant_message_text, is_legacy_structured_user_inputs,
 };
-use protocol::items::InjectedContextItem;
 use protocol::models::MessagePhase;
 use protocol::protocol::AgentReasoningEvent;
 use protocol::protocol::AgentReasoningRawContentEvent;
@@ -188,10 +185,18 @@ impl ThreadHistoryBuilder {
             | protocol::items::TurnItem::ConversationArtifact(_) => {
                 self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
-            protocol::items::TurnItem::InjectedContext(context) => {
-                if !self.append_compaction_injected_context(context) {
-                    self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
+            protocol::items::TurnItem::InjectedContext(_) => {
+                if self
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.saw_compaction)
+                    && let Some(ProjectedEventItem::Completed { item, .. }) =
+                        project_event_msg_item(&EventMsg::ItemCompleted(payload.clone()))
+                {
+                    self.upsert_item_in_current_turn(item);
+                    return;
                 }
+                self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             protocol::items::TurnItem::AgentMessage(_) => {
                 if let Some(ProjectedEventItem::Completed { item, .. }) =
@@ -225,59 +230,4 @@ impl ThreadHistoryBuilder {
             | protocol::items::TurnItem::ContextCompaction(_) => {}
         }
     }
-
-    fn append_compaction_injected_context(&mut self, context: &InjectedContextItem) -> bool {
-        if let Some(turn) = self
-            .current_turn
-            .as_mut()
-            .filter(|turn| turn.saw_compaction)
-            && append_injected_context_to_compaction_items(&mut turn.items, context)
-        {
-            return true;
-        }
-
-        false
-    }
-}
-
-fn append_injected_context_to_compaction_items(
-    items: &mut [ThreadItem],
-    context: &InjectedContextItem,
-) -> bool {
-    let Some(ThreadItem::ContextCompaction {
-        replacement_history,
-        ..
-    }) = items
-        .iter_mut()
-        .rev()
-        .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
-    else {
-        return false;
-    };
-
-    let replacement_history = replacement_history.get_or_insert_with(Vec::new);
-    let replacement_item = ContextCompactionReplacementItem::InjectedContext {
-        id: context.id.clone(),
-        title: context.title.clone(),
-        preview: context.preview.clone(),
-        sections: context
-            .sections
-            .iter()
-            .map(|section| InjectedContextSection {
-                label: section.label.clone(),
-                text: section.text.clone(),
-            })
-            .collect(),
-    };
-    if let Some(existing_item) = replacement_history.iter_mut().find(|item| {
-        matches!(
-            item,
-            ContextCompactionReplacementItem::InjectedContext { id, .. } if id == &context.id
-        )
-    }) {
-        *existing_item = replacement_item;
-    } else {
-        replacement_history.push(replacement_item);
-    }
-    true
 }
