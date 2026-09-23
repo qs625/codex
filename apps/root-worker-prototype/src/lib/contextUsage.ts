@@ -451,19 +451,26 @@ function buildToolCategoryUnits(
   if (toolCallUnits <= 0) {
     return null;
   }
+  const unitsByCategory = rows.reduce<Partial<Record<ContextUsageCategoryId, number>>>(
+    (units, row) => {
+      units[row.categoryId] = 0;
+      return units;
+    },
+    {},
+  );
   const nonZeroRows = rows.filter((row) => row.totalUnits > 0);
   let allocatedUnits = 0;
   return nonZeroRows.reduce<Partial<Record<ContextUsageCategoryId, number>>>(
-    (unitsByCategory, row, index) => {
+    (units, row, index) => {
       const isLastRow = index === nonZeroRows.length - 1;
-      const units = isLastRow
+      const allocatedForRow = isLastRow
         ? Math.max(0, toolCallUnits - allocatedUnits)
         : Math.round((row.totalUnits / totalUnits) * toolCallUnits);
-      allocatedUnits += units;
-      unitsByCategory[row.categoryId] = units;
-      return unitsByCategory;
+      allocatedUnits += allocatedForRow;
+      units[row.categoryId] = allocatedForRow;
+      return units;
     },
-    {},
+    unitsByCategory,
   );
 }
 
@@ -504,7 +511,7 @@ function shouldIncludeCategory(
     return false;
   }
   if (isToolBucketCategory(categoryId)) {
-    return units > 0;
+    return hasToolBuckets;
   }
   return true;
 }
