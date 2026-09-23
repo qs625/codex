@@ -75,6 +75,7 @@ export function TerminalPanel({
   focusPanelRequestToken,
   onOpenTerminalTabInWorkspace,
   activeTerminalTabId,
+  detachedTerminalTabId,
 }: {
   variant?: "manager" | "workspace";
   thread: Thread | null;
@@ -84,6 +85,7 @@ export function TerminalPanel({
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
   ) => void;
   activeTerminalTabId?: string | null;
+  detachedTerminalTabId?: string | null;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
@@ -123,12 +125,19 @@ export function TerminalPanel({
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const [terminalFocusRequestToken, setTerminalFocusRequestToken] = useState(0);
   const isManagerVariant = variant === "manager";
+  const visibleTabs = useMemo(
+    () =>
+      isManagerVariant && detachedTerminalTabId
+        ? state.tabs.filter((tab) => tab.id !== detachedTerminalTabId)
+        : state.tabs,
+    [detachedTerminalTabId, isManagerVariant, state.tabs],
+  );
   const activeTab = useMemo(
     () =>
-      state.tabs.find((tab) => tab.id === state.activeTabId) ??
-      state.tabs[0] ??
+      visibleTabs.find((tab) => tab.id === state.activeTabId) ??
+      visibleTabs[0] ??
       null,
-    [state],
+    [state.activeTabId, visibleTabs],
   );
   activeTabIdRef.current = activeTab?.id ?? null;
   activeTabRuntimeRef.current = activeTab
@@ -736,7 +745,7 @@ export function TerminalPanel({
 
           <div className="browser-tab-strip terminal-tab-strip" role="tablist" aria-label="Terminal tabs">
             <div className="browser-tabs">
-              {state.tabs.map((tab) => {
+              {visibleTabs.map((tab) => {
                 const isActive = tab.id === activeTab?.id;
                 return (
                   <div
@@ -829,9 +838,11 @@ export function TerminalPanel({
           <div className="terminal-empty">
             <span>$</span>
             <p>
-              {isManagerVariant
-                ? "Open a sandboxed shell or wait for a model PTY to become attachable."
-                : "Terminal session is not available."}
+              {isManagerVariant && detachedTerminalTabId
+                ? "Terminal session is open in workspace."
+                : isManagerVariant
+                  ? "Open a sandboxed shell or wait for a model PTY to become attachable."
+                  : "Terminal session is not available."}
             </p>
             {isManagerVariant ? (
               <button type="button" onClick={createTerminal}>

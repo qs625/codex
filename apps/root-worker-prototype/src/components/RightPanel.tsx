@@ -265,6 +265,8 @@ export function RightPanel({
   onOpenBrowserTabInWorkspace,
   onOpenTerminalTabInWorkspace,
   onOpenWorkspaceObject,
+  detachedBrowserTabId,
+  detachedTerminalTabId,
   onPreviewUpdated,
   onSetActiveView,
   onSetCollapsed,
@@ -313,6 +315,8 @@ export function RightPanel({
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
   ) => void;
   onOpenWorkspaceObject?: (kind: WorkspaceOpenableRightPanelObject) => void;
+  detachedBrowserTabId?: string | null;
+  detachedTerminalTabId?: string | null;
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetCollapsed: (value: boolean) => void;
@@ -603,6 +607,7 @@ export function RightPanel({
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
                 onOpenBrowserTabInWorkspace={onOpenBrowserTabInWorkspace}
+                detachedBrowserTabId={detachedBrowserTabId}
               />
             ) : effectiveActiveView === "terminal" ? (
               <TerminalPanel
@@ -610,6 +615,7 @@ export function RightPanel({
                 focusCommandRequest={terminalCommandFocusRequest}
                 focusPanelRequestToken={terminalPanelFocusRequestToken}
                 onOpenTerminalTabInWorkspace={onOpenTerminalTabInWorkspace}
+                detachedTerminalTabId={detachedTerminalTabId}
               />
             ) : effectiveActiveView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
@@ -982,6 +988,7 @@ export function BrowserPanel({
   onNavigationRequestHandled,
   onOpenBrowserTabInWorkspace,
   activeBrowserTabId,
+  detachedBrowserTabId,
 }: {
   active?: boolean;
   variant?: "manager" | "workspace";
@@ -991,6 +998,7 @@ export function BrowserPanel({
   onNavigationRequestHandled?: (token: number) => void;
   onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
   activeBrowserTabId?: string | null;
+  detachedBrowserTabId?: string | null;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const boundsSequenceRef = useRef(0);
@@ -1001,8 +1009,16 @@ export function BrowserPanel({
   const hasBrowserApi = currentBrowserPanelApi() !== null;
   const isManagerVariant = variant === "manager";
   const tabs = state.tabs.length > 0 ? state.tabs : browserTabsFromActiveState(state);
+  const managerVisibleTabs =
+    isManagerVariant && detachedBrowserTabId
+      ? tabs.filter((tab) => tab.id !== detachedBrowserTabId)
+      : tabs;
+  const renderedTabs = isManagerVariant ? managerVisibleTabs : tabs;
+  const managerViewportDetached = isManagerVariant && Boolean(detachedBrowserTabId);
   const activeTab =
-    tabs.find((tab) => tab.id === state.activeTabId) ?? tabs[0] ?? null;
+    renderedTabs.find((tab) => tab.id === state.activeTabId) ??
+    renderedTabs[0] ??
+    null;
   const displayUrl = activeTab?.url ?? state.url ?? "";
   const error = localError ?? activeTab?.error ?? state.error;
   const activeTitle = activeTab?.title || state.title || "Browser";
@@ -1054,20 +1070,23 @@ export function BrowserPanel({
       setLocalError(normalized.reason);
       return;
     }
+    setAddress(normalized.url);
+    setLocalError(null);
+    if (managerViewportDetached) {
+      return;
+    }
     const browserApi = currentBrowserPanelApi();
     if (!browserApi) {
       setLocalError("In-app browser is unavailable in this environment.");
       return;
     }
-    setAddress(normalized.url);
-    setLocalError(null);
     void (async () => {
       await showNativeBrowserView(browserApi);
       setAddress(normalized.url);
       const nextState = await browserApi.navigateBrowserView(normalized.url);
       applyBrowserState(nextState);
     })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
-  }, [navigationRequest, onNavigationRequestHandled]);
+  }, [managerViewportDetached, navigationRequest, onNavigationRequestHandled]);
 
   useEffect(() => {
     if (
@@ -1097,7 +1116,8 @@ export function BrowserPanel({
 
     let boundsUpdateFrame: number | null = null;
     let lastSentBounds: BrowserViewBounds | null = null;
-    const shouldHideNativeView = !active || nativeOverlayActive || resizing;
+    const shouldHideNativeView =
+      !active || nativeOverlayActive || resizing || managerViewportDetached;
     const measureBounds = () =>
       browserBoundsFromElement(
         viewport,
@@ -1158,7 +1178,7 @@ export function BrowserPanel({
       window.removeEventListener("resize", scheduleBoundsUpdate);
       void browserApi.hideBrowserView();
     };
-  }, [active, nativeOverlayActive, resizing]);
+  }, [active, managerViewportDetached, nativeOverlayActive, resizing]);
 
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
@@ -1166,15 +1186,18 @@ export function BrowserPanel({
       setLocalError(normalized.reason);
       return;
     }
+    setAddress(normalized.url);
+    setLocalError(null);
+    if (managerViewportDetached) {
+      return;
+    }
     const browserApi = currentBrowserPanelApi();
     if (!browserApi) {
       setLocalError("In-app browser is unavailable in this environment.");
       return;
     }
-    setLocalError(null);
     void (async () => {
       await showNativeBrowserView(browserApi);
-      setAddress(normalized.url);
       const nextState = await browserApi.navigateBrowserView(normalized.url);
       applyBrowserState(nextState);
     })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
@@ -1261,7 +1284,7 @@ export function BrowserPanel({
 
           <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
             <div className="browser-tabs">
-              {tabs.map((tab) => {
+              {renderedTabs.map((tab) => {
                 const isActive = tab.id === (state.activeTabId ?? activeTab?.id);
                 return (
                   <div
@@ -1405,7 +1428,12 @@ export function BrowserPanel({
       ) : null}
 
       <div ref={viewportRef} className="browser-native-viewport">
-        {!displayUrl && isManagerVariant ? (
+        {managerViewportDetached ? (
+          <div className="browser-empty">
+            <BrowserIcon />
+            <span>Browser content is open in workspace.</span>
+          </div>
+        ) : !displayUrl && isManagerVariant ? (
           <div className="browser-empty">
             <BrowserIcon />
             <span>Open a page in the right panel.</span>

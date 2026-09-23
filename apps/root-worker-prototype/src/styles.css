@@ -118,7 +118,7 @@ a,
 }
 
 .sidebar {
-  border-right: 1px solid rgba(16, 24, 40, 0.08);
+  border-right: 0;
 }
 
 .workspace-main {
@@ -2715,13 +2715,8 @@ body.macos-window-chrome
 .conversation-scroll {
   flex: 1;
   padding: 10px 16px 16px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
-    radial-gradient(
-      circle at top center,
-      rgba(245, 245, 244, 0.65),
-      transparent 52%
-    );
+  background: #ffffff;
+  background-image: none;
 }
 
 .conversation-virtual-list {
