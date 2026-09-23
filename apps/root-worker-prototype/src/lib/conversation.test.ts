@@ -3514,6 +3514,7 @@ test("builds visible entries for poll_event builtin tools", () => {
         status: "completed",
         output: {
           timedOut: false,
+          sourceCategory: "command",
           sourceHint: "mailbox_message",
           waitedMs: 14,
           initialTimeoutMs: 50,
@@ -3536,7 +3537,7 @@ test("builds visible entries for poll_event builtin tools", () => {
       {
         id: "builtin-poll",
         kind: "tool",
-        text: "poll_event • mailbox_message",
+        text: "poll_event • command",
         toolName: "poll_event",
         toolCategory: "external",
       },

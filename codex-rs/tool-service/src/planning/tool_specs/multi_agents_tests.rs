@@ -336,6 +336,7 @@ fn poll_event_output_schema_matches_thread_poll_event_result_json_keys() {
     let serialized = serde_json::to_value(thread_service_api::ThreadPollEventResult {
         timed_out: false,
         source_hint: Some("inter_agent".to_string()),
+        source_category: Some("subagent".to_string()),
         event: None,
         events: Vec::new(),
         waited_ms: 1,
@@ -360,10 +361,12 @@ fn poll_event_output_schema_matches_thread_poll_event_result_json_keys() {
     serialized_keys.sort_unstable();
 
     assert_eq!(schema_keys, serialized_keys);
+    assert!(serialized.get("event").is_none());
+    assert!(serialized.get("events").is_none());
 }
 
 #[test]
-fn poll_event_command_notification_payload_serializes_with_schema_keys() {
+fn poll_event_output_schema_does_not_expose_event_payloads() {
     let serialized = serde_json::to_value(
         thread_service_api::ThreadPollEvent::CommandExecutionNotification {
             command_item_id: "cmd-1".to_string(),
@@ -386,18 +389,9 @@ fn poll_event_command_notification_payload_serializes_with_schema_keys() {
 
     let tool = function_tool(create_poll_event_tool(), "poll_event");
     let output_schema = tool.output_schema.expect("poll_event output schema");
-    let event_variants = output_schema["properties"]["event"]["anyOf"][0]["anyOf"]
-        .as_array()
-        .expect("event payload variants");
-    assert!(
-        event_variants.iter().any(|variant| {
-            variant["properties"]["type"]["const"] == "command_execution_notification"
-                && variant["properties"]["commandItemId"].is_object()
-                && variant["properties"]["exitCode"].is_object()
-                && variant["properties"]["createdAtMs"].is_object()
-        }),
-        "poll_event schema should document command notification payload"
-    );
+    assert!(output_schema["properties"].get("sourceCategory").is_some());
+    assert!(output_schema["properties"].get("event").is_none());
+    assert!(output_schema["properties"].get("events").is_none());
 }
 
 #[test]
@@ -559,7 +553,7 @@ fn followup_tools_use_structured_content_only() {
 }
 
 #[test]
-fn poll_event_tool_has_empty_object_params_and_optional_payload() {
+fn poll_event_tool_has_empty_object_params_and_bounded_wake_metadata() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,
         output_schema,
@@ -579,6 +573,7 @@ fn poll_event_tool_has_empty_object_params_and_optional_payload() {
         json!([
             "timedOut",
             "sourceHint",
+            "sourceCategory",
             "waitedMs",
             "initialTimeoutMs",
             "currentTimeoutMs",
@@ -586,13 +581,11 @@ fn poll_event_tool_has_empty_object_params_and_optional_payload() {
         ])
     );
     assert!(
-        output_schema["properties"]["event"].is_object(),
-        "poll_event should document its optional typed payload"
+        output_schema["properties"]["sourceCategory"].is_object(),
+        "poll_event should document its bounded source category"
     );
-    assert!(
-        output_schema["properties"]["events"].is_object(),
-        "poll_event should document the visible typed payload list"
-    );
+    assert!(output_schema["properties"].get("event").is_none());
+    assert!(output_schema["properties"].get("events").is_none());
 }
 
 #[test]
