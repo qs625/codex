@@ -8,23 +8,23 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix compact fresh Init Context so project-level `instruction_files` from the current workspace `.morpheus/config.toml` are included after compact, not only home-level `MORPHEUS_HOME/instructions` files. Current main HEAD is `9d8f24efd50e42bee94cea69819783e401a1b1c6` after merging the followup-tool-item display fix; installed Runtime Capsule is still `sha256:16f2fe9c704e42d438f2604afc904e60f05c4017a56f212df8a96915e2d02562`. Restart request `call_EvYNHCj9ESFHGrDc4zOyyTqd` has already recovered and must not be repeated for the same delivery.
+Compact fresh Init Context project instruction_files and inter-agent tool item display fixes are merged. Current main HEAD is `d850cd0738d6a056755556512ce3d988e8d63ce7`; installed Runtime Capsule is still `sha256:16f2fe9c704e42d438f2604afc904e60f05c4017a56f212df8a96915e2d02562`. Restart request `call_EvYNHCj9ESFHGrDc4zOyyTqd` has already recovered and must not be repeated for that old delivery. Next action: build and install a new Runtime Capsule from current main.
 
 ## Active Work
 - id: compact-project-instruction-files
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
-  branch: owner to choose
+  branch: fix/compact-project-instruction-files
   task_type: runtime_context_bugfix
   depends_on: none
   files: likely `codex-rs/thread-service/src/session/*`, `codex-rs/config/src/*`, focused compact/init-context tests
   base_commit: `fb9d8813c1ce5a49820071ee55cea000266cb832`
-  next_action: owner should reproduce why compact turn config lacks project `instruction_files`, implement minimal fix, review, and return commit + validation.
-  validation: pending
-  commit: pending
-  notes: Main checkout currently has user/PM local dirt (`.morpheus/instructions/project-understanding.md`, user edits in `events_history.rs` and tests, `.codex/pm-progress.md`, generated `dist-seed-capsule/`). Do not overwrite these; merge back via git when owner completes.
+  next_action: deliver via new Runtime Capsule from current main.
+  validation: owner `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service fresh_compact_initial_context` 5 passed; owner `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed; reviewer approved; PM verified no `render_skill_instruction_file_sections` reintroduced; PM `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service fresh_compact_initial_context -- --nocapture` 5 passed; PM `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service ordinary_context_update_does_not_reload_available_skill_body -- --nocapture` passed; PM `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed with existing linker/future-incompat warnings.
+  commit: owner `c12146ef52f0ba74206c2abe12d040954fad7446`; merged to main via `d850cd0738d6a056755556512ce3d988e8d63ce7`
+  notes: Compact fresh init context now reloads project-aware config for current cwd and merges refreshed project/user `instruction_files` into runtime config before rendering user instructions. Does not change project-level semantics to directory auto-scan and does not restore skill body injection.
 
 - id: followup-tool-item-hide-stale-agent-state
   status: merged_pending_capsule_delivery
@@ -36,10 +36,25 @@ Fix compact fresh Init Context so project-level `instruction_files` from the cur
   depends_on: none
   files: likely `apps/root-worker-prototype/src/lib/conversation*`, thread item/tool presentation tests, possibly app-server-protocol projection only if the stale state is server-provided
   base_commit: `fb9d8813c1ce5a49820071ee55cea000266cb832`
-  next_action: deliver via next Runtime Capsule after compact instruction_files fix is also resolved, unless user asks for immediate UI-only delivery.
+  next_action: deliver via new Runtime Capsule from current main.
   validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 84 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved; PM diff/design验收 passed.
   commit: owner `a51d80a8fd9413c96f1e8338fe5b412866162563`; merged to main via `9d8f24efd50e42bee94cea69819783e401a1b1c6`
   notes: Tool item now hides stale `Agent States` details for `sendInput`/`resumeAgent` while retaining spawn/list agent state display and current call audit facts. Pending capsule delivery because this changes root-worker frontend runtime code.
+
+- id: inter-agent-tool-real-parameter-display
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/followup-tool-item-stale-agent-state
+  task_type: ui_display_bugfix
+  depends_on: followup-tool-item-hide-stale-agent-state
+  files: likely `apps/root-worker-prototype/src/lib/conversation.ts`, `conversation.test.ts`, related presentation helpers
+  base_commit: `957ce05e91d1d2d4245fee0ccfe326a70f110eaa`
+  next_action: deliver via new Runtime Capsule from current main.
+  validation: owner `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 85 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversationPresentation.test.ts` 12 passed; `git diff --check` passed; reviewer approved after agent_type non-invention fix; PM diff/design验收 passed.
+  commit: owner `309bc733ed460c597cdef3a94f05c0d38f4e92af`; merged to main via `d5f911e6c8d51860eaf414e86ad9a46833aad88d`
+  notes: User explicitly wants tool item display to match the actual tool parameters. Keep current call auditability; do not show stale/cached prior agent state as call output. Initially mis-dispatched to owner_dev_3 due checkout availability, but user correctly pointed out owner_dev_2 just worked in this area; owner_dev_3 stopped after read-only inspection with no file changes, and task is reassigned to owner_dev_2 for locality.
 
 ## Recent Completed
 - id: browser-cdp-direct-target-creation

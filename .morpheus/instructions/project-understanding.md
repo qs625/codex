@@ -6,6 +6,7 @@
 - 产品代码的 merge 状态与安装生效状态必须分开记录。重大 bugfix、重大 feature、Launcher/runtime/安装升级恢复语义改动，以及依赖真实安装态完成验收的修改，应在 merge 后立即由 canonical main 产出 Launcher manifest 所声明的完整 Runtime Capsule，而不是复用旧 dist/target 或只替换零散文件；随后通过 exact `/self` 的 `request_runtime_restart(mode=full)` 重启，并以 control state、release identity、Launcher、payload、app-server 和 ready identity 证明新构建已生效。低风险小修复可以标记 `pending_capsule_delivery`，与后续修改批量构建重启，但必须保留待交付 main commit 与当前 installed release 的差距。纯文档/协作规则变更不需要该交付步骤。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
+- 后续 follow-up 任务如果明显延续同一文件区域、同一 UI/Runtime 语义链路或同一 owner 刚完成的修复，应优先续派给刚处理过该区域的 owner/checkout，以保留局部上下文；只有该 checkout 忙、依赖不满足、存在冲突或任务需要隔离并行时，才改派其他 owner，并在派发时说明理由。
 - 当前项目的 PM / owner / reviewer 协作规则以 `.morpheus/agents/project-pm.agent.md` 及对应 owner agent 定义为准。
 - `.codex/pm-progress.md` 是当前调度状态文件，只保留最近半个月左右的活跃/近期进度和当前约束；更早历史归档到 `.codex/pm-progress-archive/` 并通过 `index.md` 查找。
 - 我们自己的 agent/runtime 产品名定为 Morpheus；外部官方 Codex provider 仍称 `codex_cli` / external Codex CLI provider。
