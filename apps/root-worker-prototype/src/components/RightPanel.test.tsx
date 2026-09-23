@@ -318,6 +318,7 @@ test("renders thread analysis title and monitor empty states", () => {
 test("right panel keeps file terminal and browser entry points by default", () => {
   const markup = renderRightPanel(makeThread([]), "skills", null, {
     preview: makePreview(),
+    workspaceTabsEnabled: true,
   });
 
   assert.match(markup, /aria-label="File Preview"/);
@@ -639,7 +640,10 @@ test("renders workflow run summary, feature-dev graph fallback, and timeline", (
     "workflow",
   );
 
-  assert.match(markup, /wf_1 · Started/);
+  assert.match(markup, /Feature Development/);
+  assert.match(markup, /workflow-status-pill running">Started/);
+  assert.match(markup, /title="wf_1">wf_1/);
+  assert.match(markup, /title="Started">Started/);
   assert.match(markup, /runner_starting/);
   assert.match(markup, /Research/);
   assert.match(markup, /Implement/);
@@ -903,10 +907,20 @@ test("rejects stale terminal focus requests from another thread", () => {
 
 test("workspace conversation tabs use concrete thread labels and preserve layout affordances", () => {
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  const rightPanelSource = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const panelsSource = readFileSync(new URL("./Panels.tsx", import.meta.url), "utf8");
+  const agentTreeSource = readFileSync(new URL("./AgentTree.tsx", import.meta.url), "utf8");
   const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
   assert.match(appSource, /workspaceTabForThread/);
+  assert.match(appSource, /workspaceTabForFile/);
+  assert.match(appSource, /workspaceTabForBrowser/);
+  assert.match(appSource, /workspaceTabForTerminal/);
+  assert.match(appSource, /aria-label="Workspace object tabs"/);
+  assert.match(appSource, /getWorkspaceTabThread/);
   assert.match(appSource, /getRootThreadConversationTitle\(thread\)/);
+  assert.match(appSource, /getAgentRoleLabel\(thread\)/);
+  assert.match(appSource, /isRootThread\(thread\)[\s\S]*\? getAgentRoleLabel\(thread\)[\s\S]*: getThreadPresenceLabel\(thread\)/);
   assert.match(appSource, /getThreadPath\(thread\)/);
   assert.match(appSource, /storedWorkspaceTabOrderRef/);
   assert.match(appSource, /applyStoredWorkspaceTabOrder\([\s\S]*storedWorkspaceTabOrderRef\.current/);
@@ -914,15 +928,69 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /storedWorkspaceTabOrderRef\.current = storeWorkspaceTabOrder/);
   assert.match(appSource, /current\.flatMap\(\(tab\) =>/);
   assert.match(appSource, /return thread \? \[workspaceTabForThread\(thread\)\] : \[\]/);
+  assert.match(appSource, /current\.map\(\(item\) => \(item\.id === tab\.id \? tab : item\)\)/);
+  assert.match(appSource, /function openConversationWorkspaceTab\(threadId: string\)/);
+  assert.match(appSource, /openConversationWorkspaceTab\(threadId\);[\s\S]*setSelectedThreadId\(threadId\);/);
+  assert.match(appSource, /useEffect\(\(\) => \{\s*if \(selectedThreadId\)/);
+  assert.doesNotMatch(appSource, /setActiveWorkspaceTabId\(tab\.id\);\s*\}, \[selectedThread\]\)/);
   assert.match(appSource, /workspaceTabs\.some\(\(tab\) => tab\.id === current\)/);
   assert.match(appSource, /threads\.some\(\(thread\) => thread\.id === tab\.threadId\)/);
+  assert.match(appSource, /const tabThread = getWorkspaceTabThread\(tab, threads\)/);
+  assert.match(appSource, /workspace-tab-dot \$\{threadDisplayStatusClass\(tabThread\)\}/);
+  assert.doesNotMatch(appSource, /workspace-tab-dot \$\{tab\.kind\}/);
+  assert.match(appSource, /closeWorkspaceTabById\(currentTabs, tabId\)/);
+  assert.match(appSource, /event\.stopPropagation\(\);\s*closeWorkspaceTab\(tab\.id\)/);
+  assert.match(appSource, /activeWorkspaceTab\?\.kind !== "file"/);
+  assert.match(appSource, /activeWorkspaceTab\?\.kind !== "browser"/);
+  assert.match(appSource, /activeWorkspaceTab\?\.kind !== "terminal"/);
+  assert.match(appSource, /const activeTerminalThread =/);
+  assert.match(appSource, /thread=\{activeTerminalThread\}/);
+  assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
+  assert.match(appSource, /WORKSPACE_TAB_DRAG_TYPE/);
+  assert.match(appSource, /revealThreadInSidebarState\(\{/);
+  assert.match(appSource, /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/);
+  assert.match(rightPanelSource, /WorkspaceOpenableRightPanelObject = "file" \| "browser" \| "terminal"/);
+  assert.doesNotMatch(rightPanelSource, /panel-eyebrow/);
+  assert.doesNotMatch(rightPanelSource, /preview-mode-toggle/);
+  assert.doesNotMatch(rightPanelSource, /Context mix/);
+  assert.match(rightPanelSource, /aria-label="Show current file"/);
+  assert.match(rightPanelSource, /aria-label="Show file tree"/);
+  assert.match(rightPanelSource, /draggable=\{workspaceObjectKindForView\(item\.view\) != null\}/);
+  assert.match(rightPanelSource, /onOpenWorkspaceObject\?\.\(kind\)/);
+  assert.match(rightPanelSource, /application\/x-morpheus-workspace-object-tab/);
+  assert.match(panelsSource, /data-thread-id/);
+  assert.match(panelsSource, /className="chat-list-row"[\s\S]*data-thread-id=\{node\.threadId\}/);
+  assert.match(panelsSource, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  assert.match(agentTreeSource, /data-thread-id=\{node\.threadId\}/);
   assert.doesNotMatch(appSource, /WORKSPACE_TAB_LABELS/);
-  assert.doesNotMatch(appSource, /<FilePreviewPanel/);
-  assert.doesNotMatch(appSource, /<TerminalPanel/);
+  assert.match(appSource, /<FilePreviewPanel/);
+  assert.match(appSource, /<BrowserPanel/);
+  assert.match(appSource, /<TerminalPanel/);
   assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px 6px minmax\(0, 1fr\) 6px/);
   assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel/);
   assert.match(stylesSource, /width: 100%;/);
+  assert.match(
+    stylesSource,
+    /\.workspace-tab-panel > \.conversation-panel,\s*\.conversation-panel,\s*\.conversation-scroll \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/,
+  );
   assert.match(stylesSource, /\.panel-resizer \{[\s\S]*background: transparent;/);
+  assert.match(stylesSource, /\.panel-resizer::before \{[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
+  assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.12\);/);
+  assert.match(stylesSource, /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.18\);/);
+  assert.match(stylesSource, /\.panel-content-header \{[\s\S]*min-height: 34px;[\s\S]*padding: 6px 10px;/);
+  assert.match(stylesSource, /\.file-object-toolbar \{/);
+  assert.doesNotMatch(stylesSource, /\.panel-eyebrow/);
+  assert.doesNotMatch(stylesSource, /\.preview-mode-toggle/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.doing/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.waiting-subagent/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.waiting-eventtool/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.waiting-subscription/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.blocked/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.active/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.running/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.completed/);
+  assert.match(stylesSource, /\.workspace-tab-dot\.inactive/);
+  assert.match(stylesSource, /\.workspace-tab-close \{[\s\S]*-webkit-app-region: no-drag;/);
   assert.doesNotMatch(stylesSource, /\.conversation-header/);
   assert.doesNotMatch(
     stylesSource,
@@ -930,7 +998,19 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   );
   assert.doesNotMatch(
     stylesSource,
-    /\.conversation-panel[^{]*\{[^}]*box-shadow:/,
+    /\.conversation-panel[^{]*\{[^}]*border-top:(?![ \t]*0[ \t]*;)/,
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.conversation-panel[^{]*\{[^}]*box-shadow:(?![ \t]*none[ \t]*;)/,
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.conversation-scroll[^{]*\{[^}]*border-top:(?![ \t]*0[ \t]*;)/,
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.conversation-scroll[^{]*\{[^}]*box-shadow:(?![ \t]*none[ \t]*;)/,
   );
   assert.doesNotMatch(
     stylesSource,
@@ -938,7 +1018,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   );
   assert.doesNotMatch(
     stylesSource,
-    /\.workspace-tab-panel[^{]*\{[^}]*box-shadow:/,
+    /\.workspace-tab-panel\s*\{[^}]*border-top:/,
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.workspace-tab-panel\s*\{[^}]*box-shadow:/,
   );
   assert.doesNotMatch(stylesSource, /\.workspace-main \{[^}]*border-right:/);
   assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*border-top:/);
@@ -1747,7 +1831,9 @@ test("renders cwd tree inside the preview panel", () => {
     },
   });
 
-  assert.match(markup, /CWD Tree/);
+  assert.match(markup, /aria-label="Show current file"/);
+  assert.match(markup, /aria-label="Show file tree"/);
+  assert.doesNotMatch(markup, /CWD Tree/);
   assert.match(markup, /Thread cwd file tree/);
   assert.match(markup, /README\.md/);
   assert.match(markup, /App\.tsx/);
@@ -2242,7 +2328,8 @@ test("hides chat compat cwd from the preview tree", () => {
     },
   });
 
-  assert.match(markup, /CWD Tree/);
+  assert.match(markup, /aria-label="Show file tree"/);
+  assert.doesNotMatch(markup, /CWD Tree/);
   assert.match(markup, /This chat has no project cwd to browse\./);
   assert.doesNotMatch(markup, /Thread cwd file tree/);
   assert.doesNotMatch(markup, /scratch\.txt/);

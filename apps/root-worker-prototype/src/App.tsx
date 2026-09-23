@@ -17,7 +17,10 @@ import {
   TreeContextMenu,
 } from "./components/Panels";
 import {
+  BrowserPanel,
+  FilePreviewPanel,
   RightPanel,
+  type GitDiffPreviewState,
   resolveThreadAnalysisCommandFocus,
 } from "./components/RightPanel";
 import {
@@ -27,6 +30,8 @@ import {
   type SelfCommandProject,
 } from "./components/SelfCommandDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { TerminalPanel } from "./components/TerminalPanel";
+import { XIcon } from "./components/icons";
 import {
   clearComposerDraft,
   getComposerDraft,
@@ -90,7 +95,7 @@ import {
   buildCurrentThreadTodoItems,
   buildProjectAgentSidebar,
   findProjectByRootIdentity,
-  getThreadAncestorIds,
+  getAgentRoleLabel,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadSubtreeIds,
   getThreadSubtreeIdsChildrenFirst,
@@ -115,6 +120,7 @@ import {
   pickInitialThread,
   preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
+  revealThreadInSidebarState,
   rootAgentPathFromTaskName,
   threadDisplayStatusClass,
   updateThreadItem,
@@ -139,6 +145,7 @@ import {
 } from "./lib/voiceCaptureState";
 import {
   applyStoredWorkspaceTabOrder,
+  closeWorkspaceTabById,
   readStoredWorkspaceTabOrder,
   reorderWorkspaceTabs,
   storeWorkspaceTabOrder,
@@ -194,6 +201,12 @@ const RIGHT_PANEL_MAX_RATIO = 0.46;
 const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
 const THREAD_SUBSCRIPTION_IDLE_UNSUBSCRIBE_MS = 10 * 60 * 1000;
 const SELECTED_THREAD_STORAGE_KEY = "morpheus.rootWorker.selectedThreadId";
+const EMPTY_GIT_DIFF_PREVIEW: GitDiffPreviewState = {
+  loading: false,
+  diff: null,
+  error: null,
+};
+const WORKSPACE_TAB_DRAG_TYPE = "application/x-morpheus-workspace-object-tab";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 
@@ -205,6 +218,18 @@ function conversationWorkspaceTabId(threadId: string) {
   return `conversation:${threadId}`;
 }
 
+function fileWorkspaceTabId(rootId: string | null, path: string) {
+  return `file:${rootId ?? "workspace"}:${path}`;
+}
+
+function browserWorkspaceTabId() {
+  return "browser:main";
+}
+
+function terminalWorkspaceTabId(threadId: string | null) {
+  return `terminal:${threadId ?? "workspace"}`;
+}
+
 function workspaceTabForThread(thread: Thread): WorkspaceObjectTab {
   const title = isRootThread(thread)
     ? getRootThreadConversationTitle(thread)
@@ -213,9 +238,56 @@ function workspaceTabForThread(thread: Thread): WorkspaceObjectTab {
     id: conversationWorkspaceTabId(thread.id),
     kind: "conversation",
     title,
-    subtitle: getThreadPresenceLabel(thread),
+    subtitle: isRootThread(thread)
+      ? getAgentRoleLabel(thread)
+      : getThreadPresenceLabel(thread),
     threadId: thread.id,
   };
+}
+
+function workspaceTabForFile(
+  preview: FilePreview,
+  rootId: string | null,
+): WorkspaceObjectTab {
+  const displayPath = preview.displayPath || preview.path;
+  return {
+    id: fileWorkspaceTabId(rootId, preview.path),
+    kind: "file",
+    title: displayPath.split("/").filter(Boolean).at(-1) ?? displayPath,
+    subtitle: displayPath,
+    rootId,
+    path: preview.path,
+  };
+}
+
+function workspaceTabForBrowser(url: string | null = null): WorkspaceObjectTab {
+  return {
+    id: browserWorkspaceTabId(),
+    kind: "browser",
+    title: "Browser",
+    subtitle: url,
+    url,
+  };
+}
+
+function workspaceTabForTerminal(thread: Thread | null): WorkspaceObjectTab {
+  return {
+    id: terminalWorkspaceTabId(thread?.id ?? null),
+    kind: "terminal",
+    title: "Terminal",
+    subtitle: thread ? getThreadPath(thread) : null,
+    threadId: thread?.id ?? null,
+  };
+}
+
+function getWorkspaceTabThread(
+  tab: WorkspaceObjectTab,
+  threads: readonly Thread[],
+) {
+  if (tab.kind !== "conversation" || !tab.threadId) {
+    return null;
+  }
+  return threads.find((thread) => thread.id === tab.threadId) ?? null;
 }
 
 function App() {
@@ -292,6 +364,9 @@ function App() {
   const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken] =
     useState(0);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [gitDiffPreview] = useState<GitDiffPreviewState>(
+    EMPTY_GIT_DIFF_PREVIEW,
+  );
   const [filePreviewByRootId, setFilePreviewByRootId] =
     useState<FilePreviewMemoryByRootId>({});
   const [filePanelView, setFilePanelView] = useState<FilePanelView>("preview");
@@ -375,6 +450,14 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const isMac = navigator.platform.toLowerCase().includes("mac");
+    document.body.classList.toggle("macos-window-chrome", isMac);
+    return () => {
+      document.body.classList.remove("macos-window-chrome");
+    };
+  }, []);
+
+  useEffect(() => {
     storeRightPanelView(rightPanelView);
   }, [rightPanelView]);
 
@@ -408,13 +491,15 @@ function App() {
     }
     const tab = workspaceTabForThread(selectedThread);
     setWorkspaceTabs((current) =>
-      applyStoredWorkspaceTabOrder(
-        upsertWorkspaceTab(current, tab),
-        storedWorkspaceTabOrderRef.current,
-      ),
+      current.map((item) => (item.id === tab.id ? tab : item)),
     );
-    setActiveWorkspaceTabId(tab.id);
   }, [selectedThread]);
+
+  useEffect(() => {
+    if (selectedThreadId) {
+      openConversationWorkspaceTab(selectedThreadId);
+    }
+  }, [selectedThreadId]);
 
   useEffect(() => {
     const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
@@ -1027,18 +1112,6 @@ function App() {
       ),
     );
   }, [projectIds]);
-
-  useEffect(() => {
-    if (!selectedThreadId) {
-      return;
-    }
-    const selectedAncestorIds = new Set(
-      getThreadAncestorIds(threads, selectedThreadId),
-    );
-    setCollapsedPaths((current) =>
-      current.filter((threadId) => !selectedAncestorIds.has(threadId)),
-    );
-  }, [selectedThreadId, threads]);
 
   async function loadBootstrap() {
     try {
@@ -2313,27 +2386,28 @@ function App() {
   }
 
   function revealThreadInSidebar(threadId: string) {
-    const selectedAncestorIds = new Set(getThreadAncestorIds(threads, threadId));
-    setCollapsedPaths((current) =>
-      current.filter((value) => !selectedAncestorIds.has(value)),
-    );
-
-    const selectedProject = projectSidebar.projects.find((project) =>
-      getThreadSubtreeIds(threads, project.tree.threadId).has(threadId),
-    );
-    if (selectedProject) {
-      expandProjectSection(selectedProject.id);
-      return;
+    const next = revealThreadInSidebarState({
+      collapsedProjectIds,
+      collapsedThreadIds: collapsedPaths,
+      projectSidebar,
+      threadId,
+      threads,
+    });
+    if (next.expandedProjectId) {
+      touchedProjectCollapseIdsRef.current.add(next.expandedProjectId);
     }
-
+    setCollapsedPaths(next.collapsedThreadIds);
+    setCollapsedProjectIds(next.collapsedProjectIds);
   }
 
   function selectThread(threadId: string) {
     revealThreadInSidebar(threadId);
+    openConversationWorkspaceTab(threadId);
     setSelectedThreadId(threadId);
   }
 
   function selectProject(_projectId: string, threadId: string) {
+    openConversationWorkspaceTab(threadId);
     setSelectedThreadId(threadId);
   }
 
@@ -2847,12 +2921,17 @@ function App() {
     });
   }
 
-  async function loadFilePreview(target: string) {
+  async function loadFilePreview(
+    target: string,
+    options: { preserveRightPanel?: boolean } = {},
+  ) {
     const requestRootId = selectedTreeRootId;
     const requestToken = filePreviewRequestTokenRef.current + 1;
     filePreviewRequestTokenRef.current = requestToken;
-    setRightPanelView("preview");
-    setIsRightPanelCollapsed(false);
+    if (!options.preserveRightPanel) {
+      setRightPanelView("preview");
+      setIsRightPanelCollapsed(false);
+    }
     setFilePanelView("preview");
     setIsLoadingPreview(true);
     setPreviewError(null);
@@ -3114,13 +3193,166 @@ function App() {
     if (!tab) {
       return;
     }
+    activateWorkspaceTab(tab);
+  }
+
+  function activateWorkspaceTab(tab: WorkspaceObjectTab) {
     if (tab.kind === "conversation" && tab.threadId) {
       if (!threads.some((thread) => thread.id === tab.threadId)) {
         return;
       }
       selectThread(tab.threadId);
     }
+    if (tab.kind === "terminal") {
+      setTerminalPanelFocusRequestToken((current) => current + 1);
+    }
+    if (tab.kind === "file" && tab.path) {
+      setFilePanelView("preview");
+      if (filePreview?.path !== tab.path) {
+        void loadFilePreview(tab.path, { preserveRightPanel: true });
+      }
+    }
     setActiveWorkspaceTabId(tab.id);
+  }
+
+  function upsertWorkspaceObjectTab(
+    tab: WorkspaceObjectTab,
+    options: { activate?: boolean } = {},
+  ) {
+    const next = applyStoredWorkspaceTabOrder(
+      upsertWorkspaceTab(workspaceTabsRef.current, tab),
+      storedWorkspaceTabOrderRef.current,
+    );
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
+    if (options.activate ?? true) {
+      activateWorkspaceTab(tab);
+    }
+  }
+
+  function openConversationWorkspaceTab(threadId: string) {
+    const thread = threads.find((item) => item.id === threadId);
+    if (!thread) {
+      return;
+    }
+    const tab = workspaceTabForThread(thread);
+    upsertWorkspaceObjectTab(tab, { activate: false });
+    setActiveWorkspaceTabId(tab.id);
+  }
+
+  function openCurrentFileInWorkspace() {
+    if (!filePreview) {
+      return;
+    }
+    upsertWorkspaceObjectTab(
+      workspaceTabForFile(filePreview, selectedTreeRootIdRef.current),
+    );
+  }
+
+  function openBrowserInWorkspace() {
+    if (rightPanelView === "browser") {
+      setRightPanelView("skills");
+    }
+    upsertWorkspaceObjectTab(
+      workspaceTabForBrowser(browserNavigationRequest?.url ?? null),
+    );
+  }
+
+  function openTerminalInWorkspace() {
+    if (rightPanelView === "terminal") {
+      setRightPanelView("skills");
+    }
+    upsertWorkspaceObjectTab(workspaceTabForTerminal(selectedThread));
+  }
+
+  function openRightPanelObjectInWorkspace(
+    kind: "file" | "browser" | "terminal",
+  ) {
+    if (kind === "file") {
+      openCurrentFileInWorkspace();
+      return;
+    }
+    if (kind === "browser") {
+      openBrowserInWorkspace();
+      return;
+    }
+    openTerminalInWorkspace();
+  }
+
+  function activateFallbackWorkspaceTab(
+    excludedKinds: WorkspaceObjectTab["kind"][],
+  ) {
+    const fallback =
+      workspaceTabsRef.current.find((tab) => !excludedKinds.includes(tab.kind)) ??
+      null;
+    if (fallback) {
+      activateWorkspaceTab(fallback);
+      return;
+    }
+    setActiveWorkspaceTabId(null);
+  }
+
+  function handleSetRightPanelView(view: RightPanelView) {
+    setRightPanelView(view);
+    if (activeWorkspaceTab?.kind === "browser" && view === "browser") {
+      activateFallbackWorkspaceTab(["browser"]);
+    }
+    if (activeWorkspaceTab?.kind === "terminal" && view === "terminal") {
+      activateFallbackWorkspaceTab(["terminal"]);
+    }
+  }
+
+  function closeWorkspaceTab(tabId: string) {
+    const currentTabs = workspaceTabsRef.current;
+    const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+    if (closingIndex === -1) {
+      return;
+    }
+    const next = closeWorkspaceTabById(currentTabs, tabId);
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    storedWorkspaceTabOrderRef.current =
+      storedWorkspaceTabOrderRef.current.filter((id) => id !== tabId);
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
+    if (activeWorkspaceTabId !== tabId) {
+      return;
+    }
+    const fallback =
+      next[closingIndex] ?? next[closingIndex - 1] ?? next[0] ?? null;
+    if (fallback) {
+      activateWorkspaceTab(fallback);
+      return;
+    }
+    setActiveWorkspaceTabId(null);
+  }
+
+  function handleWorkspaceObjectDragOver(event: DragEvent<HTMLElement>) {
+    if (event.dataTransfer.types.includes(WORKSPACE_TAB_DRAG_TYPE)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    }
+  }
+
+  function handleWorkspaceObjectDrop(event: DragEvent<HTMLElement>) {
+    const tabKind = event.dataTransfer.getData(WORKSPACE_TAB_DRAG_TYPE);
+    if (
+      tabKind !== "file" &&
+      tabKind !== "browser" &&
+      tabKind !== "terminal"
+    ) {
+      return;
+    }
+    event.preventDefault();
+    openRightPanelObjectInWorkspace(tabKind);
   }
 
   function handleWorkspaceTabDragStart(
@@ -3161,7 +3393,14 @@ function App() {
     event: DragEvent<HTMLButtonElement>,
     targetTabId: string,
   ) {
+    if (
+      !draggedWorkspaceTab &&
+      event.dataTransfer.types.includes(WORKSPACE_TAB_DRAG_TYPE)
+    ) {
+      return;
+    }
     event.preventDefault();
+    event.stopPropagation();
     const draggedTab =
       draggedWorkspaceTab ?? event.dataTransfer.getData("text/plain");
     const placement = getWorkspaceTabDropPlacement(event);
@@ -3203,6 +3442,14 @@ function App() {
     setRightPanelView("terminal");
     setIsRightPanelCollapsed(false);
   }
+
+  const activeWorkspaceTab =
+    workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId) ?? null;
+  const activeTerminalThread =
+    activeWorkspaceTab?.kind === "terminal" && activeWorkspaceTab.threadId
+      ? (threads.find((thread) => thread.id === activeWorkspaceTab.threadId) ??
+        null)
+      : null;
 
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
@@ -3250,14 +3497,20 @@ function App() {
             )
           }
         />
-        <section className="workspace-main" aria-label="Workspace">
+        <section
+          className="workspace-main"
+          aria-label="Workspace"
+          onDragOver={handleWorkspaceObjectDragOver}
+          onDrop={handleWorkspaceObjectDrop}
+        >
           <div
             className="workspace-tab-strip"
             role="tablist"
-            aria-label="Conversation tabs"
+            aria-label="Workspace object tabs"
           >
             {workspaceTabs.map((tab) => {
               const active = tab.id === activeWorkspaceTabId;
+              const tabThread = getWorkspaceTabThread(tab, threads);
               return (
                 <button
                   key={tab.id}
@@ -3280,24 +3533,40 @@ function App() {
                   onDrop={(event) => handleWorkspaceTabDrop(event, tab.id)}
                 >
                   <span
-                    className={`workspace-tab-dot ${tab.kind} ${threadDisplayStatusClass(
-                      tab.kind === "conversation" && tab.threadId
-                        ? (threads.find(
-                            (thread) => thread.id === tab.threadId,
-                          ) ?? null)
-                        : null,
-                    )}`}
+                    className={`workspace-tab-dot ${threadDisplayStatusClass(tabThread)}`}
                   />
                   <span className="workspace-tab-label">{tab.title}</span>
                   {tab.subtitle ? (
                     <span className="workspace-tab-subtitle">{tab.subtitle}</span>
                   ) : null}
+                  <span
+                    aria-label={`Close ${tab.title}`}
+                    className="workspace-tab-close"
+                    role="button"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeWorkspaceTab(tab.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeWorkspaceTab(tab.id);
+                      }
+                    }}
+                  >
+                    <XIcon />
+                  </span>
                 </button>
               );
             })}
           </div>
           <div className="workspace-tab-content">
-            <div className="workspace-tab-panel">
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab?.kind !== "conversation"}
+            >
               <ConversationPanel
                 availableSkills={availableSkills}
                 availableWorkflows={availableWorkflows}
@@ -3343,6 +3612,61 @@ function App() {
                 voiceCaptureStatus={voiceCaptureStatus}
               />
             </div>
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab?.kind !== "file"}
+            >
+              <FilePreviewPanel
+                expandedTreeDirectories={expandedTreeDirectories}
+                filePanelView={filePanelView}
+                fileTreeEntriesByPath={fileTreeEntriesByPath}
+                fileTreeErrorsByPath={fileTreeErrorsByPath}
+                fileTreeLoadingPath={fileTreeLoadingPath}
+                gitDiffPreview={gitDiffPreview.diff}
+                gitDiffPreviewError={gitDiffPreview.error}
+                gitDiffPreviewLoading={gitDiffPreview.loading}
+                onNavigateToSymbol={handleNavigateToSymbol}
+                onOpenPreviewExternally={() => void openPreviewExternally()}
+                onOpenPreviewInBrowser={openPreviewInBrowser}
+                onOpenTreeFile={handleOpenTreeFile}
+                onPreviewUpdated={updateFilePreviewAfterSave}
+                onSetFilePanelView={handleSetFilePanelView}
+                onToggleTreeDirectory={handleToggleTreeDirectory}
+                preview={filePreview}
+                previewError={previewError}
+                previewLoading={isLoadingPreview}
+                previewRootId={selectedTreeRootId}
+                thread={selectedThread}
+              />
+            </div>
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab?.kind !== "browser"}
+            >
+              {activeWorkspaceTab?.kind === "browser" ? (
+                <BrowserPanel
+                  active
+                  nativeOverlayActive={
+                    isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+                  }
+                  resizing={isRightPanelResizing}
+                  navigationRequest={browserNavigationRequest}
+                  onNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+                />
+              ) : null}
+            </div>
+            <div
+              className="workspace-tab-panel"
+              hidden={activeWorkspaceTab?.kind !== "terminal"}
+            >
+              {activeWorkspaceTab?.kind === "terminal" ? (
+                <TerminalPanel
+                  thread={activeTerminalThread}
+                  focusCommandRequest={terminalCommandFocusRequest}
+                  focusPanelRequestToken={terminalPanelFocusRequestToken}
+                />
+              ) : null}
+            </div>
           </div>
         </section>
         <div
@@ -3383,10 +3707,11 @@ function App() {
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onOpenPreviewInBrowser={openPreviewInBrowser}
+          onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}
           previewRootId={selectedTreeRootId}
-          onSetActiveView={setRightPanelView}
+          onSetActiveView={handleSetRightPanelView}
           onSetCollapsed={setIsRightPanelCollapsed}
           onSetFilePanelView={handleSetFilePanelView}
           onToggleTreeDirectory={handleToggleTreeDirectory}

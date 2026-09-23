@@ -562,13 +562,7 @@ export function TerminalPanel({
     <div className="preview-panel terminal-panel">
       <header className="panel-content-header terminal-header">
         <div className="panel-content-copy">
-          <span className="panel-eyebrow">Terminal</span>
           <h2 title={activeTab?.title}>{activeTab?.title ?? "Terminal"}</h2>
-          <p title={activeTab?.cwd}>
-            {activeTab
-              ? `${activeTab.readOnlyOutput ? "Model output" : activeTab.origin === "model" ? "Model PTY" : "Shell"} · ${activeTab.cwd}`
-              : "Create a shell or attach to a live model PTY."}
-          </p>
         </div>
         <div className="terminal-header-actions">
           <button

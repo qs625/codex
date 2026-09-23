@@ -290,8 +290,11 @@ test("ConversationPanel keeps thread metadata in the composer without placeholde
 
   assert.doesNotMatch(markup, /conversation-header/);
   assert.match(markup, /composer-metadata-row/);
-  assert.match(markup, /\/root/);
+  assert.doesNotMatch(markup, /composer-thread-title/);
+  assert.doesNotMatch(markup, /status-dot/);
+  assert.doesNotMatch(markup, /Complete/);
   assert.match(markup, /cwd: .*alpha/);
+  assert.match(markup, /run-config-trigger/);
   assert.match(markup, /aria-label="Search conversation"/);
   assert.match(markup, /aria-label="Attach image"/);
   assert.match(markup, /aria-label="Start voice input"/);
@@ -923,5 +926,6 @@ test("SidebarPanel keeps chat as a flat list outside tree collapse", () => {
   assert.match(treeCollapsed, /Chat/);
   assert.match(treeCollapsed, /General Q&amp;A/);
   assert.match(selectedChat, /class="chat-list-row-shell selected"/);
+  assert.match(selectedChat, /data-thread-id="chat-1"/);
   assert.doesNotMatch(selectedChat, /tree-node-copy"><strong>General Q&amp;A/);
 });

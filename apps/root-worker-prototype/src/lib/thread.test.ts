@@ -41,6 +41,7 @@ import {
   pickInitialProjectThread,
   preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
+  revealThreadInSidebarState,
   rootAgentPathFromTaskName,
   threadDisplayStatusClass,
   threadStatusClass,
@@ -331,8 +332,11 @@ test("buildProjectAgentSidebar groups parentless project chat roots by cwd", () 
   const alpha = sidebar.projects.find(
     (project) => project.cwd === "/work/alpha",
   );
+  assert.equal(alpha?.subtitle, "Default Agent");
+  assert.notEqual(alpha?.subtitle, "/work/alpha");
   assert.equal(alpha?.tree.threadId, "project-a");
   assert.equal(alpha?.tree.label, "Alpha chat");
+  assert.equal(alpha?.tree.path, "Default Agent");
   assert.equal(alpha?.tree.children[0]?.threadId, "owner-a");
   assert.equal(alpha?.descendantCount, 1);
 });
@@ -660,6 +664,13 @@ test("root thread labels distinguish project roots from no-project chats", () =>
     name: "Project chat",
     cwd: "/work/project",
     agentPath: "/my_codex",
+    agentRole: "project-pm",
+  });
+  const defaultProject = makeSidebarThread({
+    id: "default-project",
+    name: "Default project",
+    cwd: "/work/default-project",
+    agentPath: "/default_project",
   });
   const chat = makeSidebarThread({
     id: "chat",
@@ -673,8 +684,10 @@ test("root thread labels distinguish project roots from no-project chats", () =>
     agentPath: "/my_codex",
   });
 
-  assert.equal(getRootThreadConversationTitle(project), "/my_codex");
-  assert.equal(getAgentRoleLabel(project), "/my_codex");
+  assert.equal(getRootThreadConversationTitle(project), "Project chat");
+  assert.equal(getAgentRoleLabel(project), "project-pm");
+  assert.equal(getRootThreadConversationTitle(defaultProject), "Default project");
+  assert.equal(getAgentRoleLabel(defaultProject), "Default Agent");
   assert.equal(getRootThreadConversationTitle(chat), "General Q&A");
   assert.equal(getAgentRoleLabel(chat), "Chat");
   assert.equal(
@@ -701,6 +714,71 @@ test("getThreadAncestorIds returns ancestors for selected Chat subagents", () =>
     getThreadAncestorIds([chat, helper, reviewer], "chat-reviewer"),
     ["chat-helper", "chat"],
   );
+});
+
+test("revealThreadInSidebarState keeps project root expanded state untouched", () => {
+  const root = makeSidebarThread({ id: "root", cwd: "/work/alpha" });
+  const child = makeSubagentThread("child", "root", "/root/child");
+  const sidebar = buildProjectAgentSidebar([root, child]);
+
+  const state = revealThreadInSidebarState({
+    collapsedProjectIds: ["project:/work/alpha"],
+    collapsedThreadIds: ["root", "custom"],
+    projectSidebar: sidebar,
+    threadId: "root",
+    threads: [root, child],
+  });
+
+  assert.deepEqual(state.collapsedProjectIds, ["project:/work/alpha"]);
+  assert.deepEqual(state.collapsedThreadIds, ["root", "custom"]);
+  assert.equal(state.expandedProjectId, null);
+});
+
+test("revealThreadInSidebarState keeps visible child expanded state untouched", () => {
+  const root = makeSidebarThread({ id: "root", cwd: "/work/alpha" });
+  const child = makeSubagentThread("child", "root", "/root/child");
+  const grandchild = makeSubagentThread(
+    "grandchild",
+    "child",
+    "/root/child/grandchild",
+  );
+  const sidebar = buildProjectAgentSidebar([root, child, grandchild]);
+
+  const state = revealThreadInSidebarState({
+    collapsedProjectIds: ["project:/work/beta"],
+    collapsedThreadIds: ["sibling"],
+    projectSidebar: sidebar,
+    threadId: "child",
+    threads: [root, child, grandchild],
+  });
+
+  assert.deepEqual(state.collapsedProjectIds, ["project:/work/beta"]);
+  assert.deepEqual(state.collapsedThreadIds, ["sibling"]);
+  assert.equal(state.expandedProjectId, null);
+});
+
+test("revealThreadInSidebarState expands only ancestors hiding a child", () => {
+  const root = makeSidebarThread({ id: "root", cwd: "/work/alpha" });
+  const child = makeSubagentThread("child", "root", "/root/child");
+  const grandchild = makeSubagentThread(
+    "grandchild",
+    "child",
+    "/root/child/grandchild",
+  );
+  const sibling = makeSubagentThread("sibling", "root", "/root/sibling");
+  const sidebar = buildProjectAgentSidebar([root, child, grandchild, sibling]);
+
+  const state = revealThreadInSidebarState({
+    collapsedProjectIds: ["project:/work/alpha", "project:/work/beta"],
+    collapsedThreadIds: ["root", "child", "sibling"],
+    projectSidebar: sidebar,
+    threadId: "grandchild",
+    threads: [root, child, grandchild, sibling],
+  });
+
+  assert.deepEqual(state.collapsedProjectIds, ["project:/work/beta"]);
+  assert.deepEqual(state.collapsedThreadIds, ["root", "sibling"]);
+  assert.equal(state.expandedProjectId, "project:/work/alpha");
 });
 
 test("buildProjectAgentSidebar keeps duplicate parentless roots visible in the same project", () => {

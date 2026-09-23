@@ -56,6 +56,13 @@ export function upsertWorkspaceTab(
   );
 }
 
+export function closeWorkspaceTabById<T extends { id: string }>(
+  tabs: readonly T[],
+  tabId: string,
+): T[] {
+  return tabs.filter((tab) => tab.id !== tabId);
+}
+
 export function sanitizeWorkspaceTabs(
   tabs: readonly WorkspaceObjectTab[],
 ): WorkspaceObjectTab[] {
