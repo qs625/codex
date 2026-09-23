@@ -338,3 +338,35 @@ test("TerminalPanel passive state refreshes do not request xterm focus", () => {
   assert.doesNotMatch(statusEffectSource, /requestTerminalViewportFocus/);
   assert.doesNotMatch(statusEffectSource, /terminal\.focus\(\)/);
 });
+
+test("TerminalPanel terminal tabs are concrete workspace drag sources", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+
+  assert.match(source, /terminalTabDragPayload/);
+  assert.match(source, /terminalTabId: tab\.id/);
+  assert.match(source, /sessionId: tab\.sessionId/);
+  assert.match(source, /threadId: tab\.threadId/);
+  assert.match(source, /cwd: tab\.cwd/);
+  assert.match(source, /commandItemId: tab\.commandItemId/);
+  assert.match(source, /command: tab\.title/);
+  assert.match(source, /draggable=\{onOpenTerminalTabInWorkspace != null\}/);
+  assert.match(source, /writeWorkspaceObjectDragData\([\s\S]*terminalTabDragPayload\(tab\)/);
+  assert.match(source, /activeTerminalTabId/);
+  assert.match(source, /selectTerminalTab\(activeTerminalTabId\)/);
+});
+
+test("TerminalPanel does not render a duplicate visible running status row below tabs", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const tabStripIndex = source.indexOf('aria-label="Terminal tabs"');
+  const viewportIndex = source.indexOf('className="terminal-viewport-shell"', tabStripIndex);
+  const betweenTabsAndViewport = source.slice(tabStripIndex, viewportIndex);
+
+  assert.notEqual(tabStripIndex, -1);
+  assert.notEqual(viewportIndex, -1);
+  assert.doesNotMatch(
+    betweenTabsAndViewport,
+    /\$\{activeTab\.status\}|\$\{activeTab\?\.status/,
+  );
+  assert.doesNotMatch(betweenTabsAndViewport, /No terminal tabs/);
+  assert.match(betweenTabsAndViewport, /localError \|\| state\.error/);
+});

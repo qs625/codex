@@ -20,7 +20,7 @@ import {
   BrowserPanel,
   FilePreviewPanel,
   RightPanel,
-  WORKSPACE_OBJECT_DRAG_TYPE,
+  type BrowserWorkspaceTabDescriptor,
   type GitDiffPreviewState,
   resolveThreadAnalysisCommandFocus,
 } from "./components/RightPanel";
@@ -67,6 +67,11 @@ import {
   readStoredRightPanelView,
   storeRightPanelView,
 } from "./lib/rightPanelView";
+import {
+  WORKSPACE_OBJECT_DRAG_TYPE,
+  readWorkspaceObjectDragData,
+  type WorkspaceObjectDragPayload,
+} from "./lib/workspaceObjectDrag";
 import {
   runtimeRestartProgressFromBootstrap,
   runtimeRestartProgressFromStatus,
@@ -223,12 +228,12 @@ function fileWorkspaceTabId(rootId: string | null, path: string) {
   return `file:${rootId ?? "workspace"}:${path}`;
 }
 
-function browserWorkspaceTabId() {
-  return "browser:main";
+function browserWorkspaceTabId(tabId: string | null = null) {
+  return `browser:${tabId ?? "active"}`;
 }
 
-function terminalWorkspaceTabId(threadId: string | null) {
-  return `terminal:${threadId ?? "workspace"}`;
+function terminalWorkspaceTabId(tabId: string | null = null) {
+  return `terminal:${tabId ?? "active"}`;
 }
 
 function workspaceTabForThread(thread: Thread): WorkspaceObjectTab {
@@ -261,23 +266,33 @@ function workspaceTabForFile(
   };
 }
 
-function workspaceTabForBrowser(url: string | null = null): WorkspaceObjectTab {
+function workspaceTabForBrowser(
+  tab: BrowserWorkspaceTabDescriptor | null = null,
+): WorkspaceObjectTab {
   return {
-    id: browserWorkspaceTabId(),
+    id: browserWorkspaceTabId(tab?.browserTabId ?? null),
     kind: "browser",
-    title: "Browser",
-    subtitle: url,
-    url,
+    title: tab?.title?.trim() || "Browser",
+    subtitle: tab?.url ?? null,
+    browserTabId: tab?.browserTabId ?? null,
+    url: tab?.url ?? null,
   };
 }
 
-function workspaceTabForTerminal(thread: Thread | null): WorkspaceObjectTab {
+function workspaceTabForTerminal(
+  tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }> | null,
+  thread: Thread | null,
+): WorkspaceObjectTab {
   return {
-    id: terminalWorkspaceTabId(thread?.id ?? null),
+    id: terminalWorkspaceTabId(tab?.terminalTabId ?? null),
     kind: "terminal",
-    title: "Terminal",
-    subtitle: thread ? getThreadPath(thread) : null,
-    threadId: thread?.id ?? null,
+    title: tab?.title?.trim() || "Terminal",
+    subtitle: tab?.cwd ?? (thread ? getThreadPath(thread) : null),
+    terminalTabId: tab?.terminalTabId ?? null,
+    terminalSessionId: tab?.sessionId ?? null,
+    threadId: tab?.threadId ?? thread?.id ?? null,
+    cwd: tab?.cwd ?? null,
+    status: tab?.status ?? null,
   };
 }
 
@@ -2932,8 +2947,8 @@ function App() {
     if (!options.preserveRightPanel) {
       setRightPanelView("preview");
       setIsRightPanelCollapsed(false);
+      setFilePanelView("preview");
     }
-    setFilePanelView("preview");
     setIsLoadingPreview(true);
     setPreviewError(null);
 
@@ -3019,6 +3034,7 @@ function App() {
       }
       setFileTreeEntriesByPath((current) => ({
         ...current,
+        [target]: payload.entries,
         [payload.path]: payload.entries,
       }));
     } catch (treeLoadError) {
@@ -3270,34 +3286,43 @@ function App() {
     );
   }
 
-  function openBrowserInWorkspace() {
+  function openBrowserInWorkspace(
+    tab: BrowserWorkspaceTabDescriptor | null = null,
+  ) {
     if (rightPanelView === "browser") {
       setRightPanelView("skills");
     }
-    upsertWorkspaceObjectTab(
-      workspaceTabForBrowser(browserNavigationRequest?.url ?? null),
-    );
+    upsertWorkspaceObjectTab(workspaceTabForBrowser(tab));
   }
 
-  function openTerminalInWorkspace() {
+  function openTerminalInWorkspace(
+    tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }> | null = null,
+  ) {
     if (rightPanelView === "terminal") {
       setRightPanelView("skills");
     }
-    upsertWorkspaceObjectTab(workspaceTabForTerminal(selectedThread));
+    upsertWorkspaceObjectTab(workspaceTabForTerminal(tab, selectedThread));
   }
 
   function openRightPanelObjectInWorkspace(
-    kind: "file" | "browser" | "terminal",
+    payload: WorkspaceObjectDragPayload | WorkspaceObjectDragPayload["kind"],
   ) {
+    const normalizedPayload =
+      typeof payload === "string" ? { kind: payload } : payload;
+    const kind = normalizedPayload.kind;
     if (kind === "file") {
       openCurrentFileInWorkspace();
       return;
     }
     if (kind === "browser") {
-      openBrowserInWorkspace();
+      openBrowserInWorkspace(
+        "browserTabId" in normalizedPayload ? normalizedPayload : null,
+      );
       return;
     }
-    openTerminalInWorkspace();
+    openTerminalInWorkspace(
+      "terminalTabId" in normalizedPayload ? normalizedPayload : null,
+    );
   }
 
   function activateFallbackWorkspaceTab(
@@ -3359,16 +3384,12 @@ function App() {
   }
 
   function handleWorkspaceObjectDrop(event: DragEvent<HTMLElement>) {
-    const tabKind = event.dataTransfer.getData(WORKSPACE_OBJECT_DRAG_TYPE);
-    if (
-      tabKind !== "file" &&
-      tabKind !== "browser" &&
-      tabKind !== "terminal"
-    ) {
+    const payload = readWorkspaceObjectDragData(event.dataTransfer);
+    if (!payload) {
       return;
     }
     event.preventDefault();
-    openRightPanelObjectInWorkspace(tabKind);
+    openRightPanelObjectInWorkspace(payload);
   }
 
   function handleWorkspaceTabDragStart(
@@ -3465,7 +3486,7 @@ function App() {
     activeWorkspaceTab?.kind === "terminal" && activeWorkspaceTab.threadId
       ? (threads.find((thread) => thread.id === activeWorkspaceTab.threadId) ??
         null)
-      : null;
+      : selectedThread;
 
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
@@ -3634,7 +3655,7 @@ function App() {
             >
               <FilePreviewPanel
                 expandedTreeDirectories={expandedTreeDirectories}
-                filePanelView={filePanelView}
+                filePanelView="preview"
                 fileTreeEntriesByPath={fileTreeEntriesByPath}
                 fileTreeErrorsByPath={fileTreeErrorsByPath}
                 fileTreeLoadingPath={fileTreeLoadingPath}
@@ -3667,6 +3688,8 @@ function App() {
                   resizing={isRightPanelResizing}
                   navigationRequest={browserNavigationRequest}
                   onNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+                  onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
+                  activeBrowserTabId={activeWorkspaceTab.browserTabId ?? null}
                 />
               ) : null}
             </div>
@@ -3679,6 +3702,8 @@ function App() {
                   thread={activeTerminalThread}
                   focusCommandRequest={terminalCommandFocusRequest}
                   focusPanelRequestToken={terminalPanelFocusRequestToken}
+                  onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
+                  activeTerminalTabId={activeWorkspaceTab.terminalTabId ?? null}
                 />
               ) : null}
             </div>
@@ -3722,6 +3747,8 @@ function App() {
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onOpenPreviewInBrowser={openPreviewInBrowser}
+          onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
+          onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
           onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}

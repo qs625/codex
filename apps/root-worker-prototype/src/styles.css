@@ -135,7 +135,7 @@ a,
   gap: 2px;
   min-height: 34px;
   padding: 4px 8px 0;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  border-bottom: 0;
   background: rgba(255, 255, 255, 0.72);
   overflow-x: auto;
   -webkit-app-region: drag;
@@ -6414,6 +6414,72 @@ body.macos-window-chrome
   color: #78716c;
   font-size: 11px;
   padding: 4px 12px 6px;
+}
+
+/* UI polish: source sidebars use fill, spacing, and type instead of hard internal separators. */
+.sidebar-section-header,
+.project-section + .project-section,
+.chat-section,
+.sidebar-footer {
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.tree-node::before {
+  display: none;
+}
+
+.tree-agent-icon {
+  border: 0;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+/* UI polish: right panel content keeps structure without extra 1px separator lines. */
+.right-panel .panel-content-header,
+.right-panel .panel-rail,
+.right-panel .todo-filters,
+.right-panel .browser-tab-strip,
+.right-panel .browser-toolbar,
+.right-panel .browser-status-row,
+.right-panel .terminal-live-commands,
+.right-panel .terminal-status-row,
+.right-panel .preview-utility-strip,
+.right-panel .git-graph-section,
+.right-panel .git-section-header,
+.right-panel .workflow-timeline-row,
+.right-panel .workflow-available-row,
+.right-panel .context-skill-row,
+.right-panel .schedule-agenda,
+.right-panel .schedule-agenda-row,
+.right-panel .monitor-section,
+.right-panel .monitor-row,
+.right-panel .terminal-viewport-shell {
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.right-panel .panel-rail {
+  border-left: 0;
+}
+
+.right-panel .overview-metric,
+.right-panel .context-budget-card,
+.right-panel .context-section-card,
+.right-panel .workflow-summary-card,
+.right-panel .skill-card,
+.right-panel .todo-card,
+.right-panel .monitor-status,
+.right-panel .workflow-status-pill {
+  border: 0;
+}
+
+.right-panel .git-commit-files,
+.right-panel .git-commit-files-state {
+  border-left: 0;
+}
+
+.right-panel .terminal-viewport-shell {
+  box-shadow: none;
 }
 
 .git-panel {

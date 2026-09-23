@@ -19,6 +19,10 @@ import {
   type TerminalCommandFocusRequest,
 } from "../lib/terminalCommandFocus";
 import { selectRunningActiveCommandItems } from "../lib/activeCommands";
+import {
+  writeWorkspaceObjectDragData,
+  type WorkspaceObjectDragPayload,
+} from "../lib/workspaceObjectDrag";
 import type { Thread } from "../types";
 
 type TerminalPanelState = Awaited<
@@ -68,10 +72,16 @@ export function TerminalPanel({
   thread,
   focusCommandRequest,
   focusPanelRequestToken,
+  onOpenTerminalTabInWorkspace,
+  activeTerminalTabId,
 }: {
   thread: Thread | null;
   focusCommandRequest?: TerminalCommandFocusRequest | null;
   focusPanelRequestToken?: number;
+  onOpenTerminalTabInWorkspace?: (
+    tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
+  ) => void;
+  activeTerminalTabId?: string | null;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
@@ -258,6 +268,29 @@ export function TerminalPanel({
     }
     requestTerminalViewportFocus();
   }, [focusPanelRequestToken, requestTerminalViewportFocus]);
+
+  useEffect(() => {
+    if (
+      !activeTerminalTabId ||
+      activeTerminalTabId === state.activeTabId ||
+      !state.tabs.some((tab) => tab.id === activeTerminalTabId)
+    ) {
+      return;
+    }
+    void window.codexDesktop
+      .selectTerminalTab(activeTerminalTabId)
+      .then((nextState) => {
+        setState(nextState);
+        requestTerminalViewportFocus(activeTerminalTabId);
+        setLocalError(null);
+      })
+      .catch((error) => setLocalError(toTerminalError(error)));
+  }, [
+    activeTerminalTabId,
+    requestTerminalViewportFocus,
+    state.activeTabId,
+    state.tabs,
+  ]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -558,6 +591,20 @@ export function TerminalPanel({
     setDisplayPreferences(resetTerminalDisplayPreferences());
   };
 
+  const terminalTabDragPayload = (
+    tab: TerminalPanelState["tabs"][number],
+  ): Extract<WorkspaceObjectDragPayload, { kind: "terminal" }> => ({
+    kind: "terminal",
+    terminalTabId: tab.id,
+    sessionId: tab.sessionId,
+    threadId: tab.threadId,
+    title: tab.title,
+    cwd: tab.cwd,
+    commandItemId: tab.commandItemId,
+    command: tab.title,
+    status: tab.status,
+  });
+
   return (
     <div className="preview-panel terminal-panel">
       <header className="panel-content-header terminal-header">
@@ -690,6 +737,7 @@ export function TerminalPanel({
                 <button
                   type="button"
                   className="browser-tab"
+                  draggable={onOpenTerminalTabInWorkspace != null}
                   role="tab"
                   aria-selected={isActive}
                   title={tab.title}
@@ -703,6 +751,15 @@ export function TerminalPanel({
                       })
                       .catch((error) => setLocalError(toTerminalError(error)));
                   }}
+                  onDoubleClick={() =>
+                    onOpenTerminalTabInWorkspace?.(terminalTabDragPayload(tab))
+                  }
+                  onDragStart={(event) =>
+                    writeWorkspaceObjectDragData(
+                      event.dataTransfer,
+                      terminalTabDragPayload(tab),
+                    )
+                  }
                 >
                   <span
                     className={`browser-tab-dot terminal-tab-dot ${tab.status} ${tab.backgroundActivity ? "activity" : ""}`}
@@ -745,16 +802,12 @@ export function TerminalPanel({
         ) : null}
       </div>
 
-      <div className="terminal-status-row" role="status">
-        <span className={`terminal-status-dot ${activeTab?.status ?? "idle"}`} />
-        <span>
-          {localError ??
-            state.error ??
-            (activeTab
-              ? `${activeTab.status}${activeTab.canResize ? "" : " · fixed size"}`
-              : "No terminal tabs")}
-        </span>
-      </div>
+      {localError || state.error ? (
+        <div className="terminal-status-row" role="status">
+          <span className="terminal-status-dot lost" />
+          <span>{localError ?? state.error}</span>
+        </div>
+      ) : null}
 
       <div className="terminal-viewport-shell">
         <div
