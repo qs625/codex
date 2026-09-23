@@ -300,6 +300,12 @@ async function createWindow() {
     minWidth: 1280,
     minHeight: 820,
     title: "Root Worker Prototype",
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 14, y: 14 },
+        }
+      : {}),
     backgroundColor: "#0c1117",
     webPreferences: {
       contextIsolation: true,
