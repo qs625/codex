@@ -386,10 +386,11 @@ test("TerminalPanel workspace variant renders only the detached session content 
 test("TerminalPanel manager excludes the terminal session owned by workspace", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
 
-  assert.match(source, /detachedTerminalTabId\?: string \| null/);
+  assert.match(source, /detachedTerminalTabIds\?: string\[\]/);
+  assert.match(source, /const detachedTerminalTabIdSet = useMemo\([\s\S]*new Set\(detachedTerminalTabIds\)/);
   assert.match(
     source,
-    /const visibleTabs = useMemo\([\s\S]*state\.tabs\.filter\(\(tab\) => tab\.id !== detachedTerminalTabId\)/,
+    /const visibleTabs = useMemo\([\s\S]*state\.tabs\.filter\(\(tab\) => !detachedTerminalTabIdSet\.has\(tab\.id\)\)/,
   );
   assert.match(source, /\{visibleTabs\.map\(\(tab\) =>/);
   assert.match(source, /Terminal session is open in workspace\./);

@@ -71,6 +71,7 @@ import {
 import {
   WORKSPACE_OBJECT_DRAG_TYPE,
   readWorkspaceObjectDragData,
+  writeWorkspaceObjectDragData,
   type WorkspaceObjectDragPayload,
 } from "./lib/workspaceObjectDrag";
 import {
@@ -319,6 +320,31 @@ function workspaceTabForGitDiff(state: GitDiffPreviewState): WorkspaceObjectTab 
   };
 }
 
+function workspaceObjectDragPayloadForTab(
+  tab: WorkspaceObjectTab,
+): WorkspaceObjectDragPayload | null {
+  if (tab.kind === "browser" && tab.browserTabId) {
+    return {
+      kind: "browser",
+      browserTabId: tab.browserTabId,
+      title: tab.title,
+      url: tab.url ?? tab.subtitle ?? null,
+    };
+  }
+  if (tab.kind === "terminal" && tab.terminalTabId) {
+    return {
+      kind: "terminal",
+      terminalTabId: tab.terminalTabId,
+      sessionId: tab.terminalSessionId ?? null,
+      threadId: tab.threadId ?? null,
+      title: tab.title,
+      cwd: tab.cwd ?? tab.subtitle ?? null,
+      status: tab.status ?? null,
+    };
+  }
+  return null;
+}
+
 function getWorkspaceTabThread(
   tab: WorkspaceObjectTab,
   threads: readonly Thread[],
@@ -388,6 +414,12 @@ function App() {
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceObjectTab[]>([]);
   const [draggedWorkspaceTab, setDraggedWorkspaceTab] =
     useState<string | null>(null);
+  const [rightPanelBrowserTabFocusRequest, setRightPanelBrowserTabFocusRequest] =
+    useState<{ tabId: string; token: number } | null>(null);
+  const [
+    rightPanelTerminalTabFocusRequest,
+    setRightPanelTerminalTabFocusRequest,
+  ] = useState<{ tabId: string; token: number } | null>(null);
   const workspaceTabsRef = useRef<WorkspaceObjectTab[]>([]);
   const storedWorkspaceTabOrderRef = useRef(readStoredWorkspaceTabOrder());
   const [runtimeRestartProgress, setRuntimeRestartProgress] =
@@ -3418,6 +3450,46 @@ function App() {
     openRightPanelObjectInWorkspace(payload);
   }
 
+  function handleReturnWorkspaceObjectToRightPanel(
+    payload: WorkspaceObjectDragPayload,
+  ) {
+    if (payload.kind === "browser") {
+      const tab = workspaceTabsRef.current.find(
+        (item) =>
+          item.kind === "browser" &&
+          item.browserTabId === payload.browserTabId,
+      );
+      if (!tab) {
+        return;
+      }
+      setRightPanelBrowserTabFocusRequest((current) => ({
+        tabId: payload.browserTabId,
+        token: (current?.token ?? 0) + 1,
+      }));
+      setRightPanelView("browser");
+      setIsRightPanelCollapsed(false);
+      closeWorkspaceTab(tab.id);
+      return;
+    }
+    if (payload.kind === "terminal") {
+      const tab = workspaceTabsRef.current.find(
+        (item) =>
+          item.kind === "terminal" &&
+          item.terminalTabId === payload.terminalTabId,
+      );
+      if (!tab) {
+        return;
+      }
+      setRightPanelTerminalTabFocusRequest((current) => ({
+        tabId: payload.terminalTabId,
+        token: (current?.token ?? 0) + 1,
+      }));
+      setRightPanelView("terminal");
+      setIsRightPanelCollapsed(false);
+      closeWorkspaceTab(tab.id);
+    }
+  }
+
   function handleWorkspaceTabDragStart(
     event: DragEvent<HTMLButtonElement>,
     tabId: string,
@@ -3425,6 +3497,11 @@ function App() {
     setDraggedWorkspaceTab(tabId);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", tabId);
+    const tab = workspaceTabsRef.current.find((item) => item.id === tabId);
+    const payload = tab ? workspaceObjectDragPayloadForTab(tab) : null;
+    if (payload) {
+      writeWorkspaceObjectDragData(event.dataTransfer, payload);
+    }
   }
 
   function handleWorkspaceTabDragOver(
@@ -3518,14 +3595,12 @@ function App() {
       ? (gitDiffWorkspaceStateById[activeWorkspaceTab.gitDiffTargetId] ??
         EMPTY_GIT_DIFF_PREVIEW)
       : EMPTY_GIT_DIFF_PREVIEW;
-  const activeWorkspaceBrowserTabId =
-    activeWorkspaceTab?.kind === "browser"
-      ? (activeWorkspaceTab.browserTabId ?? null)
-      : null;
-  const activeWorkspaceTerminalTabId =
-    activeWorkspaceTab?.kind === "terminal"
-      ? (activeWorkspaceTab.terminalTabId ?? null)
-      : null;
+  const detachedWorkspaceBrowserTabIds = workspaceTabs
+    .filter((tab) => tab.kind === "browser" && tab.browserTabId)
+    .map((tab) => tab.browserTabId as string);
+  const detachedWorkspaceTerminalTabIds = workspaceTabs
+    .filter((tab) => tab.kind === "terminal" && tab.terminalTabId)
+    .map((tab) => tab.terminalTabId as string);
 
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
@@ -3805,8 +3880,11 @@ function App() {
           onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
           onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
           onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
-          detachedBrowserTabId={activeWorkspaceBrowserTabId}
-          detachedTerminalTabId={activeWorkspaceTerminalTabId}
+          onReturnWorkspaceObject={handleReturnWorkspaceObjectToRightPanel}
+          browserTabFocusRequest={rightPanelBrowserTabFocusRequest}
+          terminalTabFocusRequest={rightPanelTerminalTabFocusRequest}
+          detachedBrowserTabIds={detachedWorkspaceBrowserTabIds}
+          detachedTerminalTabIds={detachedWorkspaceTerminalTabIds}
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}
           previewRootId={selectedTreeRootId}

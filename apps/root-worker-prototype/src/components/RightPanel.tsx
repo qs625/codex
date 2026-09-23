@@ -45,6 +45,7 @@ import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
 import {
   WORKSPACE_OBJECT_DRAG_TYPE,
+  readWorkspaceObjectDragData,
   writeWorkspaceObjectDragData,
   type WorkspaceOpenableRightPanelObject,
   type WorkspaceObjectDragPayload,
@@ -265,8 +266,11 @@ export function RightPanel({
   onOpenBrowserTabInWorkspace,
   onOpenTerminalTabInWorkspace,
   onOpenWorkspaceObject,
-  detachedBrowserTabId,
-  detachedTerminalTabId,
+  onReturnWorkspaceObject,
+  browserTabFocusRequest,
+  terminalTabFocusRequest,
+  detachedBrowserTabIds,
+  detachedTerminalTabIds,
   onPreviewUpdated,
   onSetActiveView,
   onSetCollapsed,
@@ -315,8 +319,11 @@ export function RightPanel({
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
   ) => void;
   onOpenWorkspaceObject?: (kind: WorkspaceOpenableRightPanelObject) => void;
-  detachedBrowserTabId?: string | null;
-  detachedTerminalTabId?: string | null;
+  onReturnWorkspaceObject?: (payload: WorkspaceObjectDragPayload) => void;
+  browserTabFocusRequest?: { tabId: string; token: number } | null;
+  terminalTabFocusRequest?: { tabId: string; token: number } | null;
+  detachedBrowserTabIds?: string[];
+  detachedTerminalTabIds?: string[];
   onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetCollapsed: (value: boolean) => void;
@@ -444,6 +451,47 @@ export function RightPanel({
       return;
     }
     writeWorkspaceObjectDragData(event.dataTransfer, kind);
+  }
+
+  function getReturnableWorkspaceObject(
+    event: DragEvent<HTMLElement>,
+    view: RightPanelView,
+  ): WorkspaceObjectDragPayload | null {
+    const kind = workspaceObjectKindForView(view);
+    if (kind !== "browser" && kind !== "terminal") {
+      return null;
+    }
+    const payload = readWorkspaceObjectDragData(event.dataTransfer);
+    if (!payload || payload.kind !== kind) {
+      return null;
+    }
+    return payload;
+  }
+
+  function handleWorkspaceObjectReturnDragOver(
+    event: DragEvent<HTMLElement>,
+    view: RightPanelView,
+  ) {
+    if (!getReturnableWorkspaceObject(event, view)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function handleWorkspaceObjectReturnDrop(
+    event: DragEvent<HTMLElement>,
+    view: RightPanelView,
+  ) {
+    const payload = getReturnableWorkspaceObject(event, view);
+    if (!payload) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    onSetActiveView(payload.kind === "browser" ? "browser" : "terminal");
+    onSetCollapsed(false);
+    onReturnWorkspaceObject?.(payload);
   }
 
   function openGitFileDiff(change: GitChange, mode: "staged" | "unstaged") {
@@ -578,7 +626,15 @@ export function RightPanel({
     <aside className={`right-panel ${isCollapsed ? "collapsed" : ""}`}>
       <div className="right-panel-body">
         {!isCollapsed ? (
-          <div className="right-panel-content">
+          <div
+            className="right-panel-content"
+            onDragOver={(event) =>
+              handleWorkspaceObjectReturnDragOver(event, effectiveActiveView)
+            }
+            onDrop={(event) =>
+              handleWorkspaceObjectReturnDrop(event, effectiveActiveView)
+            }
+          >
             {effectiveActiveView === "skills" ? (
               <ThreadAnalysisPanel
                 analysis={threadAnalysis}
@@ -607,7 +663,8 @@ export function RightPanel({
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
                 onOpenBrowserTabInWorkspace={onOpenBrowserTabInWorkspace}
-                detachedBrowserTabId={detachedBrowserTabId}
+                focusBrowserTabRequest={browserTabFocusRequest}
+                detachedBrowserTabIds={detachedBrowserTabIds}
               />
             ) : effectiveActiveView === "terminal" ? (
               <TerminalPanel
@@ -615,7 +672,8 @@ export function RightPanel({
                 focusCommandRequest={terminalCommandFocusRequest}
                 focusPanelRequestToken={terminalPanelFocusRequestToken}
                 onOpenTerminalTabInWorkspace={onOpenTerminalTabInWorkspace}
-                detachedTerminalTabId={detachedTerminalTabId}
+                focusTerminalTabRequest={terminalTabFocusRequest}
+                detachedTerminalTabIds={detachedTerminalTabIds}
               />
             ) : effectiveActiveView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
@@ -722,6 +780,12 @@ export function RightPanel({
                 }}
                 onDragStart={(event) =>
                   handleWorkspaceObjectDragStart(event, item.view)
+                }
+                onDragOver={(event) =>
+                  handleWorkspaceObjectReturnDragOver(event, item.view)
+                }
+                onDrop={(event) =>
+                  handleWorkspaceObjectReturnDrop(event, item.view)
                 }
                 onClick={() => {
                   const next = resolveRightPanelTabClick({
@@ -988,7 +1052,8 @@ export function BrowserPanel({
   onNavigationRequestHandled,
   onOpenBrowserTabInWorkspace,
   activeBrowserTabId,
-  detachedBrowserTabId,
+  focusBrowserTabRequest,
+  detachedBrowserTabIds = [],
 }: {
   active?: boolean;
   variant?: "manager" | "workspace";
@@ -998,27 +1063,44 @@ export function BrowserPanel({
   onNavigationRequestHandled?: (token: number) => void;
   onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
   activeBrowserTabId?: string | null;
-  detachedBrowserTabId?: string | null;
+  focusBrowserTabRequest?: { tabId: string; token: number } | null;
+  detachedBrowserTabIds?: string[];
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const boundsSequenceRef = useRef(0);
   const passiveBoundsCorrectionRef = useRef<(() => void) | null>(null);
+  const browserSurfaceRef = useRef({ activeBrowserTabId, isManagerVariant: variant === "manager" });
+  const lastBrowserTabFocusRequestTokenRef = useRef(0);
   const [address, setAddress] = useState("");
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
   const isManagerVariant = variant === "manager";
+  browserSurfaceRef.current = { activeBrowserTabId, isManagerVariant };
   const tabs = state.tabs.length > 0 ? state.tabs : browserTabsFromActiveState(state);
+  const detachedBrowserTabIdSet = useMemo(
+    () => new Set(detachedBrowserTabIds),
+    [detachedBrowserTabIds],
+  );
   const managerVisibleTabs =
-    isManagerVariant && detachedBrowserTabId
-      ? tabs.filter((tab) => tab.id !== detachedBrowserTabId)
+    isManagerVariant && detachedBrowserTabIdSet.size > 0
+      ? tabs.filter((tab) => !detachedBrowserTabIdSet.has(tab.id))
       : tabs;
   const renderedTabs = isManagerVariant ? managerVisibleTabs : tabs;
-  const managerViewportDetached = isManagerVariant && Boolean(detachedBrowserTabId);
+  const managerHasDetachedTabs =
+    isManagerVariant && detachedBrowserTabIdSet.size > 0;
+  const managerActiveTabDetached =
+    isManagerVariant &&
+    state.activeTabId != null &&
+    detachedBrowserTabIdSet.has(state.activeTabId);
+  const selectedBrowserTabId =
+    !isManagerVariant && activeBrowserTabId ? activeBrowserTabId : state.activeTabId;
   const activeTab =
-    renderedTabs.find((tab) => tab.id === state.activeTabId) ??
+    renderedTabs.find((tab) => tab.id === selectedBrowserTabId) ??
     renderedTabs[0] ??
     null;
+  const managerNativeViewBlocked =
+    managerActiveTabDetached || (managerHasDetachedTabs && activeTab == null);
   const displayUrl = activeTab?.url ?? state.url ?? "";
   const error = localError ?? activeTab?.error ?? state.error;
   const activeTitle = activeTab?.title || state.title || "Browser";
@@ -1030,7 +1112,13 @@ export function BrowserPanel({
       normalizedState.tabs.find(
         (tab) => tab.id === normalizedState.activeTabId,
       ) ?? normalizedState.tabs[0] ?? null;
-    setAddress(normalizedActiveTab?.url ?? "");
+    const surface = browserSurfaceRef.current;
+    const surfaceActiveTab =
+      !surface.isManagerVariant && surface.activeBrowserTabId
+        ? (normalizedState.tabs.find((tab) => tab.id === surface.activeBrowserTabId) ??
+          normalizedActiveTab)
+        : normalizedActiveTab;
+    setAddress(surfaceActiveTab?.url ?? "");
     if (shouldClearBrowserLocalError(normalizedState, normalizedActiveTab)) {
       setLocalError(null);
     }
@@ -1046,6 +1134,15 @@ export function BrowserPanel({
       nextBrowserBoundsSequence(boundsSequenceRef),
     );
     const nextState = await browserApi.showBrowserView(bounds);
+    applyBrowserState(nextState);
+  };
+  const selectBrowserTabForSurfaceIfNeeded = async (browserApi: BrowserPanelApi) => {
+    const targetTabId =
+      isManagerVariant ? activeTab?.id : (activeBrowserTabId ?? null);
+    if (!targetTabId || state.activeTabId === targetTabId) {
+      return;
+    }
+    const nextState = await browserApi.selectBrowserTab(targetTabId);
     applyBrowserState(nextState);
   };
 
@@ -1072,7 +1169,7 @@ export function BrowserPanel({
     }
     setAddress(normalized.url);
     setLocalError(null);
-    if (managerViewportDetached) {
+    if (isManagerVariant && managerHasDetachedTabs && !activeTab) {
       return;
     }
     const browserApi = currentBrowserPanelApi();
@@ -1081,12 +1178,19 @@ export function BrowserPanel({
       return;
     }
     void (async () => {
+      await selectBrowserTabForSurfaceIfNeeded(browserApi);
       await showNativeBrowserView(browserApi);
       setAddress(normalized.url);
       const nextState = await browserApi.navigateBrowserView(normalized.url);
       applyBrowserState(nextState);
     })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
-  }, [managerViewportDetached, navigationRequest, onNavigationRequestHandled]);
+  }, [
+    activeTab,
+    isManagerVariant,
+    managerHasDetachedTabs,
+    navigationRequest,
+    onNavigationRequestHandled,
+  ]);
 
   useEffect(() => {
     if (
@@ -1108,6 +1212,58 @@ export function BrowserPanel({
   }, [active, activeBrowserTabId, state.activeTabId, tabs]);
 
   useEffect(() => {
+    if (
+      !active ||
+      !isManagerVariant ||
+      !focusBrowserTabRequest ||
+      focusBrowserTabRequest.token <= lastBrowserTabFocusRequestTokenRef.current
+    ) {
+      return;
+    }
+    if (!tabs.some((tab) => tab.id === focusBrowserTabRequest.tabId)) {
+      return;
+    }
+    if (focusBrowserTabRequest.tabId === state.activeTabId) {
+      lastBrowserTabFocusRequestTokenRef.current = focusBrowserTabRequest.token;
+      return;
+    }
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      return;
+    }
+    lastBrowserTabFocusRequestTokenRef.current = focusBrowserTabRequest.token;
+    runCommand(
+      (api) => api.selectBrowserTab(focusBrowserTabRequest.tabId),
+      "Could not switch tabs.",
+    );
+  }, [
+    active,
+    focusBrowserTabRequest,
+    isManagerVariant,
+    state.activeTabId,
+    tabs,
+  ]);
+
+  useEffect(() => {
+    if (
+      !active ||
+      !isManagerVariant ||
+      !activeTab?.id ||
+      activeTab.id === state.activeTabId
+    ) {
+      return;
+    }
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      return;
+    }
+    runCommand(
+      (api) => api.selectBrowserTab(activeTab.id),
+      "Could not switch tabs.",
+    );
+  }, [active, activeTab?.id, isManagerVariant, state.activeTabId]);
+
+  useEffect(() => {
     const viewport = viewportRef.current;
     const browserApi = currentBrowserPanelApi();
     if (!viewport || !browserApi) {
@@ -1117,7 +1273,7 @@ export function BrowserPanel({
     let boundsUpdateFrame: number | null = null;
     let lastSentBounds: BrowserViewBounds | null = null;
     const shouldHideNativeView =
-      !active || nativeOverlayActive || resizing || managerViewportDetached;
+      !active || nativeOverlayActive || resizing || managerNativeViewBlocked;
     const measureBounds = () =>
       browserBoundsFromElement(
         viewport,
@@ -1178,7 +1334,7 @@ export function BrowserPanel({
       window.removeEventListener("resize", scheduleBoundsUpdate);
       void browserApi.hideBrowserView();
     };
-  }, [active, managerViewportDetached, nativeOverlayActive, resizing]);
+  }, [active, managerNativeViewBlocked, nativeOverlayActive, resizing]);
 
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
@@ -1188,7 +1344,7 @@ export function BrowserPanel({
     }
     setAddress(normalized.url);
     setLocalError(null);
-    if (managerViewportDetached) {
+    if (isManagerVariant && managerHasDetachedTabs && !activeTab) {
       return;
     }
     const browserApi = currentBrowserPanelApi();
@@ -1197,6 +1353,7 @@ export function BrowserPanel({
       return;
     }
     void (async () => {
+      await selectBrowserTabForSurfaceIfNeeded(browserApi);
       await showNativeBrowserView(browserApi);
       const nextState = await browserApi.navigateBrowserView(normalized.url);
       applyBrowserState(nextState);
@@ -1213,7 +1370,10 @@ export function BrowserPanel({
       return;
     }
     setLocalError(null);
-    void command(browserApi)
+    void (async () => {
+      await selectBrowserTabForSurfaceIfNeeded(browserApi);
+      return command(browserApi);
+    })()
       .then(applyBrowserState)
       .catch((commandError) =>
         setLocalError(toBrowserError(commandError) || fallbackError),
@@ -1426,9 +1586,80 @@ export function BrowserPanel({
           </div>
         </>
       ) : null}
+      {!isManagerVariant ? (
+        <form
+          className="browser-toolbar browser-toolbar-workspace"
+          onSubmit={(event) => {
+            event.preventDefault();
+            navigate();
+          }}
+        >
+          <button
+            type="button"
+            className="browser-icon-button"
+            aria-label="Go back"
+            title="Back"
+            disabled={!activeTab?.canGoBack || !hasBrowserApi}
+            onClick={() =>
+              runCommand(
+                (browserApi) => browserApi.browserGoBack(),
+                "Could not go back.",
+              )
+            }
+          >
+            <ArrowLeftIcon />
+          </button>
+          <button
+            type="button"
+            className="browser-icon-button"
+            aria-label="Go forward"
+            title="Forward"
+            disabled={!activeTab?.canGoForward || !hasBrowserApi}
+            onClick={() =>
+              runCommand(
+                (browserApi) => browserApi.browserGoForward(),
+                "Could not go forward.",
+              )
+            }
+          >
+            <ArrowRightIcon />
+          </button>
+          <button
+            type="button"
+            className="browser-icon-button"
+            aria-label={activeTab?.loading ? "Stop loading" : "Reload"}
+            title={activeTab?.loading ? "Stop" : "Reload"}
+            disabled={!hasBrowserApi}
+            onClick={() =>
+              runCommand(
+                (browserApi) =>
+                  activeTab?.loading
+                    ? browserApi.stopBrowserView()
+                    : browserApi.reloadBrowserView(),
+                "Could not update the page.",
+              )
+            }
+          >
+            {activeTab?.loading ? <StopIcon /> : <RefreshIcon />}
+          </button>
+          <input
+            aria-label="Workspace browser URL"
+            value={address}
+            placeholder={displayUrl || "https://example.com or localhost:5173"}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+          <button
+            type="submit"
+            className="browser-go-button"
+            disabled={!hasBrowserApi}
+          >
+            Go
+          </button>
+        </form>
+      ) : null}
 
       <div ref={viewportRef} className="browser-native-viewport">
-        {managerViewportDetached ? (
+        {managerNativeViewBlocked ? (
           <div className="browser-empty">
             <BrowserIcon />
             <span>Browser content is open in workspace.</span>
