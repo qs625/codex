@@ -338,6 +338,8 @@ test("sidebar project lists avoid internal separators while preserving panel res
     css,
     /\.sidebar-section-header,[\s\S]*\.sidebar-footer \{[\s\S]*border-top: 0;[\s\S]*border-bottom: 0;/,
   );
+  assert.match(css, /\.sidebar \{[\s\S]*border-right: 0;/);
+  assert.match(css, /\.conversation-scroll \{[\s\S]*background: #ffffff;[\s\S]*background-image: none;/);
   assert.match(css, /\.tree-node::before \{[\s\S]*display: none;/);
   assert.match(css, /\.panel-resizer \{[\s\S]*background: transparent;/);
   assert.match(css, /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);

@@ -514,7 +514,11 @@ test("browser native view hides under app overlays and restores with measured bo
 
   assert.match(
     rightPanelSource,
-    /const shouldHideNativeView = !active \|\| nativeOverlayActive \|\| resizing/,
+    /const shouldHideNativeView =[\s\S]*!active[\s\S]*nativeOverlayActive[\s\S]*resizing[\s\S]*managerViewportDetached/,
+  );
+  assert.match(
+    rightPanelSource,
+    /\}, \[active, managerViewportDetached, nativeOverlayActive, resizing\]\);/,
   );
   assert.match(
     rightPanelSource,
@@ -1121,38 +1125,26 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     appSource,
     /activeWorkspaceTab\?\.kind !== "file"[\s\S]*<FilePreviewPanel[\s\S]*variant="workspace"[\s\S]*gitDiffPreview=\{null\}/,
   );
+  assert.doesNotMatch(
+    appSource,
+    /function openBrowserInWorkspace[\s\S]*setRightPanelView\("skills"\)/,
+  );
+  assert.doesNotMatch(
+    appSource,
+    /function openTerminalInWorkspace[\s\S]*setRightPanelView\("skills"\)/,
+  );
+  assert.doesNotMatch(appSource, /setRightPanelViewWithWorkspaceFallback/);
+  assert.match(appSource, /const activeWorkspaceBrowserTabId =[\s\S]*activeWorkspaceTab\?\.kind === "browser"/);
+  assert.match(appSource, /const activeWorkspaceTerminalTabId =[\s\S]*activeWorkspaceTab\?\.kind === "terminal"/);
+  assert.match(appSource, /detachedBrowserTabId=\{activeWorkspaceBrowserTabId\}/);
+  assert.match(appSource, /detachedTerminalTabId=\{activeWorkspaceTerminalTabId\}/);
   assert.match(
     appSource,
-    /function openBrowserInWorkspace[\s\S]*if \(rightPanelView === "browser"\) \{[\s\S]*setRightPanelView\("skills"\)/,
+    /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelView\("browser"\)/,
   );
   assert.match(
     appSource,
-    /function openTerminalInWorkspace[\s\S]*if \(rightPanelView === "terminal"\) \{[\s\S]*setRightPanelView\("skills"\)/,
-  );
-  assert.match(
-    appSource,
-    /function activateWorkspaceTab\(tab: WorkspaceObjectTab\)[\s\S]*tab\.kind === "terminal"[\s\S]*rightPanelView === "terminal"[\s\S]*setRightPanelView\("skills"\)/,
-  );
-  assert.match(
-    appSource,
-    /function activateWorkspaceTab\(tab: WorkspaceObjectTab\)[\s\S]*tab\.kind === "browser" && rightPanelView === "browser"[\s\S]*setRightPanelView\("skills"\)/,
-  );
-  assert.match(appSource, /function setRightPanelViewWithWorkspaceFallback\(view: RightPanelView\)/);
-  assert.match(
-    appSource,
-    /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelViewWithWorkspaceFallback\("browser"\)/,
-  );
-  assert.match(
-    appSource,
-    /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelViewWithWorkspaceFallback\("terminal"\)/,
-  );
-  assert.match(
-    appSource,
-    /activeWorkspaceTab\?\.kind === "browser" && view === "browser"[\s\S]*activateFallbackWorkspaceTab\(\["browser"\]\)/,
-  );
-  assert.match(
-    appSource,
-    /activeWorkspaceTab\?\.kind === "terminal" && view === "terminal"[\s\S]*activateFallbackWorkspaceTab\(\["terminal"\]\)/,
+    /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelView\("terminal"\)/,
   );
   assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
   assert.match(appSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
@@ -1173,8 +1165,24 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /browserTabDragPayload/);
   assert.match(rightPanelSource, /browserTabId: tab\.id/);
   assert.match(rightPanelSource, /onOpenBrowserTabInWorkspace/);
+  assert.match(rightPanelSource, /detachedBrowserTabId\?: string \| null/);
+  assert.match(rightPanelSource, /detachedTerminalTabId\?: string \| null/);
+  assert.match(rightPanelSource, /detachedBrowserTabId=\{detachedBrowserTabId\}/);
+  assert.match(rightPanelSource, /detachedTerminalTabId=\{detachedTerminalTabId\}/);
   assert.match(rightPanelSource, /variant = "manager"/);
   assert.match(rightPanelSource, /variant\?: "manager" \| "workspace"/);
+  assert.match(rightPanelSource, /const managerVisibleTabs =[\s\S]*tabs\.filter\(\(tab\) => tab\.id !== detachedBrowserTabId\)/);
+  assert.match(rightPanelSource, /const managerViewportDetached = isManagerVariant && Boolean\(detachedBrowserTabId\)/);
+  assert.match(
+    rightPanelSource,
+    /if \(managerViewportDetached\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
+  );
+  assert.match(
+    rightPanelSource,
+    /const navigate = \(\) => \{[\s\S]*setAddress\(normalized\.url\);[\s\S]*setLocalError\(null\);[\s\S]*if \(managerViewportDetached\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
+  );
+  assert.match(rightPanelSource, /const shouldHideNativeView =[\s\S]*managerViewportDetached/);
+  assert.match(rightPanelSource, /Browser content is open in workspace\./);
   assert.match(rightPanelSource, /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/);
   assert.match(rightPanelSource, /isManagerVariant \? \([\s\S]*browser-tab-strip[\s\S]*browser-toolbar[\s\S]*browser-status-row[\s\S]*\) : null/);
   assert.match(rightPanelSource, /<div ref=\{viewportRef\} className="browser-native-viewport">/);
@@ -1252,6 +1260,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     stylesSource,
     /\.workspace-tab-panel > \.conversation-panel,\s*\.conversation-panel,\s*\.conversation-scroll \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/,
   );
+  assert.match(stylesSource, /\.sidebar \{[\s\S]*border-right: 0;/);
+  assert.match(stylesSource, /\.conversation-scroll \{[\s\S]*background: #ffffff;[\s\S]*background-image: none;/);
   assert.match(stylesSource, /\.panel-resizer \{[\s\S]*background: transparent;/);
   assert.match(stylesSource, /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
   assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.42\);/);
@@ -1311,6 +1321,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.doesNotMatch(stylesSource, /\.workspace-main \{[^}]*border-right:/);
   assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*border-top:/);
   assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*box-shadow:/);
+  assert.doesNotMatch(stylesSource, /scrollbar[^{}]*(?::focus|:focus-within|:active)[^{]*\{/);
+  assert.doesNotMatch(stylesSource, /(?::focus|:focus-within|:active)[^{]*::-[^{]*scrollbar/);
 });
 
 test("right panel terminal rail click is the explicit terminal panel focus source", () => {

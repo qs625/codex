@@ -3030,7 +3030,7 @@ function App() {
       url,
       token: (current?.token ?? 0) + 1,
     }));
-    setRightPanelViewWithWorkspaceFallback("browser");
+    setRightPanelView("browser");
     setIsRightPanelCollapsed(false);
   }
 
@@ -3257,13 +3257,7 @@ function App() {
       selectThread(tab.threadId);
     }
     if (tab.kind === "terminal") {
-      if (rightPanelView === "terminal") {
-        setRightPanelView("skills");
-      }
       setTerminalPanelFocusRequestToken((current) => current + 1);
-    }
-    if (tab.kind === "browser" && rightPanelView === "browser") {
-      setRightPanelView("skills");
     }
     if (tab.kind === "file" && tab.path) {
       setFilePanelView("preview");
@@ -3329,18 +3323,12 @@ function App() {
   function openBrowserInWorkspace(
     tab: BrowserWorkspaceTabDescriptor | null = null,
   ) {
-    if (rightPanelView === "browser") {
-      setRightPanelView("skills");
-    }
     upsertWorkspaceObjectTab(workspaceTabForBrowser(tab));
   }
 
   function openTerminalInWorkspace(
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }> | null = null,
   ) {
-    if (rightPanelView === "terminal") {
-      setRightPanelView("skills");
-    }
     upsertWorkspaceObjectTab(workspaceTabForTerminal(tab, selectedThread));
   }
 
@@ -3382,31 +3370,8 @@ function App() {
     );
   }
 
-  function activateFallbackWorkspaceTab(
-    excludedKinds: WorkspaceObjectTab["kind"][],
-  ) {
-    const fallback =
-      workspaceTabsRef.current.find((tab) => !excludedKinds.includes(tab.kind)) ??
-      null;
-    if (fallback) {
-      activateWorkspaceTab(fallback);
-      return;
-    }
-    setActiveWorkspaceTabId(null);
-  }
-
   function handleSetRightPanelView(view: RightPanelView) {
-    setRightPanelViewWithWorkspaceFallback(view);
-  }
-
-  function setRightPanelViewWithWorkspaceFallback(view: RightPanelView) {
     setRightPanelView(view);
-    if (activeWorkspaceTab?.kind === "browser" && view === "browser") {
-      activateFallbackWorkspaceTab(["browser"]);
-    }
-    if (activeWorkspaceTab?.kind === "terminal" && view === "terminal") {
-      activateFallbackWorkspaceTab(["terminal"]);
-    }
   }
 
   function closeWorkspaceTab(tabId: string) {
@@ -3537,7 +3502,7 @@ function App() {
       token: (current?.token ?? 0) + 1,
     }));
     setTerminalPanelFocusRequestToken((current) => current + 1);
-    setRightPanelViewWithWorkspaceFallback("terminal");
+    setRightPanelView("terminal");
     setIsRightPanelCollapsed(false);
   }
 
@@ -3553,6 +3518,14 @@ function App() {
       ? (gitDiffWorkspaceStateById[activeWorkspaceTab.gitDiffTargetId] ??
         EMPTY_GIT_DIFF_PREVIEW)
       : EMPTY_GIT_DIFF_PREVIEW;
+  const activeWorkspaceBrowserTabId =
+    activeWorkspaceTab?.kind === "browser"
+      ? (activeWorkspaceTab.browserTabId ?? null)
+      : null;
+  const activeWorkspaceTerminalTabId =
+    activeWorkspaceTab?.kind === "terminal"
+      ? (activeWorkspaceTab.terminalTabId ?? null)
+      : null;
 
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
@@ -3832,6 +3805,8 @@ function App() {
           onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
           onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
           onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
+          detachedBrowserTabId={activeWorkspaceBrowserTabId}
+          detachedTerminalTabId={activeWorkspaceTerminalTabId}
           onOpenTreeFile={handleOpenTreeFile}
           onPreviewUpdated={updateFilePreviewAfterSave}
           previewRootId={selectedTreeRootId}

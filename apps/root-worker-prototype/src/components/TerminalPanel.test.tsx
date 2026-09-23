@@ -383,6 +383,18 @@ test("TerminalPanel workspace variant renders only the detached session content 
 }
 );
 
+test("TerminalPanel manager excludes the terminal session owned by workspace", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+
+  assert.match(source, /detachedTerminalTabId\?: string \| null/);
+  assert.match(
+    source,
+    /const visibleTabs = useMemo\([\s\S]*state\.tabs\.filter\(\(tab\) => tab\.id !== detachedTerminalTabId\)/,
+  );
+  assert.match(source, /\{visibleTabs\.map\(\(tab\) =>/);
+  assert.match(source, /Terminal session is open in workspace\./);
+});
+
 test("TerminalPanel does not render a duplicate visible running status row below tabs", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const tabStripIndex = source.indexOf('aria-label="Terminal tabs"');
