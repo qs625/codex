@@ -340,10 +340,10 @@ test("sidebar project lists avoid internal separators while preserving panel res
   );
   assert.match(css, /\.tree-node::before \{[\s\S]*display: none;/);
   assert.match(css, /\.panel-resizer \{[\s\S]*background: transparent;/);
-  assert.match(css, /\.panel-resizer::before \{[\s\S]*inset: 0;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
+  assert.match(css, /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
   assert.match(
     css,
-    /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.18\);/,
+    /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.68\);/,
   );
 });
 

@@ -19,6 +19,7 @@ import {
 import {
   BrowserPanel,
   FilePreviewPanel,
+  GitDiffPreviewPanel,
   RightPanel,
   type BrowserWorkspaceTabDescriptor,
   type GitDiffPreviewState,
@@ -236,6 +237,10 @@ function terminalWorkspaceTabId(tabId: string | null = null) {
   return `terminal:${tabId ?? "active"}`;
 }
 
+function gitDiffWorkspaceTabId(targetId: string) {
+  return `diff:${targetId}`;
+}
+
 function workspaceTabForThread(thread: Thread): WorkspaceObjectTab {
   const title = isRootThread(thread)
     ? getRootThreadConversationTitle(thread)
@@ -286,13 +291,31 @@ function workspaceTabForTerminal(
   return {
     id: terminalWorkspaceTabId(tab?.terminalTabId ?? null),
     kind: "terminal",
-    title: tab?.title?.trim() || "Terminal",
+    title: "Terminal",
     subtitle: tab?.cwd ?? (thread ? getThreadPath(thread) : null),
     terminalTabId: tab?.terminalTabId ?? null,
     terminalSessionId: tab?.sessionId ?? null,
     threadId: tab?.threadId ?? thread?.id ?? null,
     cwd: tab?.cwd ?? null,
     status: tab?.status ?? null,
+  };
+}
+
+function workspaceTabForGitDiff(state: GitDiffPreviewState): WorkspaceObjectTab | null {
+  if (!state.targetId) {
+    return null;
+  }
+  const path = state.diff?.path ?? null;
+  const fallbackTitle =
+    path?.split("/").filter(Boolean).at(-1) ?? state.title ?? "Diff";
+  return {
+    id: gitDiffWorkspaceTabId(state.targetId),
+    kind: "diff",
+    title: (state.title ?? fallbackTitle).trim() || "Diff",
+    subtitle: state.subtitle ?? path ?? null,
+    gitDiffTargetId: state.targetId,
+    path,
+    status: state.diff?.status ?? null,
   };
 }
 
@@ -380,9 +403,12 @@ function App() {
   const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken] =
     useState(0);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
-  const [gitDiffPreview] = useState<GitDiffPreviewState>(
+  const [gitDiffPreview, setGitDiffPreview] = useState<GitDiffPreviewState>(
     EMPTY_GIT_DIFF_PREVIEW,
   );
+  const [gitDiffWorkspaceStateById, setGitDiffWorkspaceStateById] = useState<
+    Record<string, GitDiffPreviewState>
+  >({});
   const [filePreviewByRootId, setFilePreviewByRootId] =
     useState<FilePreviewMemoryByRootId>({});
   const [filePanelView, setFilePanelView] = useState<FilePanelView>("preview");
@@ -3004,7 +3030,7 @@ function App() {
       url,
       token: (current?.token ?? 0) + 1,
     }));
-    setRightPanelView("browser");
+    setRightPanelViewWithWorkspaceFallback("browser");
     setIsRightPanelCollapsed(false);
   }
 
@@ -3231,7 +3257,13 @@ function App() {
       selectThread(tab.threadId);
     }
     if (tab.kind === "terminal") {
+      if (rightPanelView === "terminal") {
+        setRightPanelView("skills");
+      }
       setTerminalPanelFocusRequestToken((current) => current + 1);
+    }
+    if (tab.kind === "browser" && rightPanelView === "browser") {
+      setRightPanelView("skills");
     }
     if (tab.kind === "file" && tab.path) {
       setFilePanelView("preview");
@@ -3312,6 +3344,23 @@ function App() {
     upsertWorkspaceObjectTab(workspaceTabForTerminal(tab, selectedThread));
   }
 
+  function handleGitDiffPreviewChange(state: GitDiffPreviewState) {
+    setGitDiffPreview(state);
+    if (!state.targetId) {
+      return;
+    }
+    setGitDiffWorkspaceStateById((current) => ({
+      ...current,
+      [state.targetId!]: state,
+    }));
+    const tab = workspaceTabForGitDiff(state);
+    if (tab) {
+      if (state.loading || workspaceTabsRef.current.some((item) => item.id === tab.id)) {
+        upsertWorkspaceObjectTab(tab, { activate: state.loading });
+      }
+    }
+  }
+
   function openRightPanelObjectInWorkspace(
     payload: WorkspaceObjectDragPayload | WorkspaceObjectDragPayload["kind"],
   ) {
@@ -3347,6 +3396,10 @@ function App() {
   }
 
   function handleSetRightPanelView(view: RightPanelView) {
+    setRightPanelViewWithWorkspaceFallback(view);
+  }
+
+  function setRightPanelViewWithWorkspaceFallback(view: RightPanelView) {
     setRightPanelView(view);
     if (activeWorkspaceTab?.kind === "browser" && view === "browser") {
       activateFallbackWorkspaceTab(["browser"]);
@@ -3484,7 +3537,7 @@ function App() {
       token: (current?.token ?? 0) + 1,
     }));
     setTerminalPanelFocusRequestToken((current) => current + 1);
-    setRightPanelView("terminal");
+    setRightPanelViewWithWorkspaceFallback("terminal");
     setIsRightPanelCollapsed(false);
   }
 
@@ -3495,6 +3548,11 @@ function App() {
       ? (threads.find((thread) => thread.id === activeWorkspaceTab.threadId) ??
         null)
       : selectedThread;
+  const activeWorkspaceDiffState =
+    activeWorkspaceTab?.kind === "diff" && activeWorkspaceTab.gitDiffTargetId
+      ? (gitDiffWorkspaceStateById[activeWorkspaceTab.gitDiffTargetId] ??
+        EMPTY_GIT_DIFF_PREVIEW)
+      : EMPTY_GIT_DIFF_PREVIEW;
 
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
@@ -3581,9 +3639,6 @@ function App() {
                     className={`workspace-tab-dot ${threadDisplayStatusClass(tabThread)}`}
                   />
                   <span className="workspace-tab-label">{tab.title}</span>
-                  {tab.subtitle ? (
-                    <span className="workspace-tab-subtitle">{tab.subtitle}</span>
-                  ) : null}
                   <span
                     aria-label={`Close ${tab.title}`}
                     className="workspace-tab-close"
@@ -3662,14 +3717,15 @@ function App() {
               hidden={activeWorkspaceTab?.kind !== "file"}
             >
               <FilePreviewPanel
+                variant="workspace"
                 expandedTreeDirectories={expandedTreeDirectories}
                 filePanelView="preview"
                 fileTreeEntriesByPath={fileTreeEntriesByPath}
                 fileTreeErrorsByPath={fileTreeErrorsByPath}
                 fileTreeLoadingPath={fileTreeLoadingPath}
-                gitDiffPreview={gitDiffPreview.diff}
-                gitDiffPreviewError={gitDiffPreview.error}
-                gitDiffPreviewLoading={gitDiffPreview.loading}
+                gitDiffPreview={null}
+                gitDiffPreviewError={null}
+                gitDiffPreviewLoading={false}
                 onNavigateToSymbol={handleNavigateToSymbol}
                 onOpenPreviewExternally={() => void openPreviewExternally()}
                 onOpenPreviewInBrowser={openPreviewInBrowser}
@@ -3685,11 +3741,26 @@ function App() {
             </div>
             <div
               className="workspace-tab-panel"
+              hidden={activeWorkspaceTab?.kind !== "diff"}
+            >
+              {activeWorkspaceTab?.kind === "diff" ? (
+                <div className="preview-panel diff-panel-workspace">
+                  <GitDiffPreviewPanel
+                    diff={activeWorkspaceDiffState.diff}
+                    error={activeWorkspaceDiffState.error}
+                    loading={activeWorkspaceDiffState.loading}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <div
+              className="workspace-tab-panel"
               hidden={activeWorkspaceTab?.kind !== "browser"}
             >
               {activeWorkspaceTab?.kind === "browser" ? (
                 <BrowserPanel
                   active
+                  variant="workspace"
                   nativeOverlayActive={
                     isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
                   }
@@ -3707,6 +3778,7 @@ function App() {
             >
               {activeWorkspaceTab?.kind === "terminal" ? (
                 <TerminalPanel
+                  variant="workspace"
                   thread={activeTerminalThread}
                   focusCommandRequest={terminalCommandFocusRequest}
                   focusPanelRequestToken={terminalPanelFocusRequestToken}
@@ -3741,6 +3813,8 @@ function App() {
           browserPanelResizing={isRightPanelResizing}
           browserNavigationRequest={browserNavigationRequest}
           onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+          workspaceTabsEnabled
+          onGitDiffPreviewChange={handleGitDiffPreviewChange}
           onFocusCommandMonitor={handleThreadAnalysisCommandFocus}
           availableSkillCount={availableSkills.length}
           availableWorkflows={availableWorkflows}

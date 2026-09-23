@@ -1023,6 +1023,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   const panelsSource = readFileSync(new URL("./Panels.tsx", import.meta.url), "utf8");
   const agentTreeSource = readFileSync(new URL("./AgentTree.tsx", import.meta.url), "utf8");
   const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const cssBlock = (selector: string, nextSelector: string) =>
+    stylesSource.slice(stylesSource.indexOf(selector), stylesSource.indexOf(nextSelector));
 
   assert.match(appSource, /workspaceTabForThread/);
   assert.match(appSource, /workspaceTabForFile/);
@@ -1062,6 +1064,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /const result = await loadFilePreview\(target, \{ preserveRightPanel: true \}\)/);
   assert.match(appSource, /workspaceTabForFile\(result\.preview, result\.rootId\)/);
   assert.doesNotMatch(appSource, /workspaceTabForFile\(preview, selectedTreeRootIdRef\.current\)/);
+  assert.match(appSource, /title: displayPath\.split\("\/"\)\.filter\(Boolean\)\.at\(-1\) \?\? displayPath/);
+  assert.match(appSource, /kind: "terminal",[\s\S]*title: "Terminal"/);
+  assert.doesNotMatch(appSource, /<span className="workspace-tab-subtitle">/);
   assert.match(appSource, /filePanelView="preview"/);
   assert.match(appSource, /\[target\]: payload\.entries/);
   assert.match(appSource, /\[payload\.path\]: payload\.entries/);
@@ -1091,6 +1096,64 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /activeWorkspaceTab\?\.kind !== "terminal"/);
   assert.match(appSource, /const activeTerminalThread =/);
   assert.match(appSource, /thread=\{activeTerminalThread\}/);
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === "browser"[\s\S]*<BrowserPanel[\s\S]*variant="workspace"[\s\S]*activeBrowserTabId=\{activeWorkspaceTab\.browserTabId \?\? null\}/,
+  );
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === "terminal"[\s\S]*<TerminalPanel[\s\S]*variant="workspace"[\s\S]*activeTerminalTabId=\{activeWorkspaceTab\.terminalTabId \?\? null\}/,
+  );
+  assert.match(appSource, /function gitDiffWorkspaceTabId\(targetId: string\)/);
+  assert.match(appSource, /function workspaceTabForGitDiff\(state: GitDiffPreviewState\)/);
+  assert.match(appSource, /kind: "diff"/);
+  assert.match(appSource, /gitDiffWorkspaceStateById/);
+  assert.match(appSource, /onGitDiffPreviewChange=\{handleGitDiffPreviewChange\}/);
+  assert.match(
+    appSource,
+    /if \(state\.loading \|\| workspaceTabsRef\.current\.some\(\(item\) => item\.id === tab\.id\)\) \{[\s\S]*upsertWorkspaceObjectTab\(tab, \{ activate: state\.loading \}\)/,
+  );
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === "diff"[\s\S]*<GitDiffPreviewPanel[\s\S]*diff=\{activeWorkspaceDiffState\.diff\}/,
+  );
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind !== "file"[\s\S]*<FilePreviewPanel[\s\S]*variant="workspace"[\s\S]*gitDiffPreview=\{null\}/,
+  );
+  assert.match(
+    appSource,
+    /function openBrowserInWorkspace[\s\S]*if \(rightPanelView === "browser"\) \{[\s\S]*setRightPanelView\("skills"\)/,
+  );
+  assert.match(
+    appSource,
+    /function openTerminalInWorkspace[\s\S]*if \(rightPanelView === "terminal"\) \{[\s\S]*setRightPanelView\("skills"\)/,
+  );
+  assert.match(
+    appSource,
+    /function activateWorkspaceTab\(tab: WorkspaceObjectTab\)[\s\S]*tab\.kind === "terminal"[\s\S]*rightPanelView === "terminal"[\s\S]*setRightPanelView\("skills"\)/,
+  );
+  assert.match(
+    appSource,
+    /function activateWorkspaceTab\(tab: WorkspaceObjectTab\)[\s\S]*tab\.kind === "browser" && rightPanelView === "browser"[\s\S]*setRightPanelView\("skills"\)/,
+  );
+  assert.match(appSource, /function setRightPanelViewWithWorkspaceFallback\(view: RightPanelView\)/);
+  assert.match(
+    appSource,
+    /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelViewWithWorkspaceFallback\("browser"\)/,
+  );
+  assert.match(
+    appSource,
+    /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelViewWithWorkspaceFallback\("terminal"\)/,
+  );
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === "browser" && view === "browser"[\s\S]*activateFallbackWorkspaceTab\(\["browser"\]\)/,
+  );
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === "terminal" && view === "terminal"[\s\S]*activateFallbackWorkspaceTab\(\["terminal"\]\)/,
+  );
   assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
   assert.match(appSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
@@ -1110,8 +1173,31 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /browserTabDragPayload/);
   assert.match(rightPanelSource, /browserTabId: tab\.id/);
   assert.match(rightPanelSource, /onOpenBrowserTabInWorkspace/);
+  assert.match(rightPanelSource, /variant = "manager"/);
+  assert.match(rightPanelSource, /variant\?: "manager" \| "workspace"/);
+  assert.match(rightPanelSource, /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/);
+  assert.match(rightPanelSource, /isManagerVariant \? \([\s\S]*browser-tab-strip[\s\S]*browser-toolbar[\s\S]*browser-status-row[\s\S]*\) : null/);
+  assert.match(rightPanelSource, /<div ref=\{viewportRef\} className="browser-native-viewport">/);
   assert.match(rightPanelSource, /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/);
+  assert.match(rightPanelSource, /!workspaceTabsEnabled &&[\s\S]*gitDiffPreview\.loading/);
+  assert.match(rightPanelSource, /gitDiffRequestScopeByTargetRef/);
+  assert.match(
+    rightPanelSource,
+    /function clearGitDiffPreview\(\) \{[\s\S]*if \(!workspaceTabsEnabled\) \{[\s\S]*gitDiffRequestScopeByTargetRef\.current\.clear\(\)/,
+  );
+  assert.match(rightPanelSource, /function beginGitDiffRequest\(targetId: string/);
+  assert.match(rightPanelSource, /function isCurrentGitDiffRequest\(targetId: string, scope: number\)/);
+  assert.match(rightPanelSource, /const targetId = `worktree:\$\{thread\.cwd\}:\$\{mode\}:\$\{change\.originalPath \?\? ""\}:\$\{change\.path\}`/);
+  assert.match(rightPanelSource, /const targetId = `commit:\$\{thread\.cwd\}:\$\{commit\.hash\}:\$\{file\.originalPath \?\? ""\}:\$\{file\.path\}`/);
+  assert.match(rightPanelSource, /beginGitDiffRequest\(targetId, \{ exclusive: !workspaceTabsEnabled \}\)/);
+  assert.match(rightPanelSource, /isCurrentGitDiffRequest\(targetId, scope\)/);
+  assert.match(rightPanelSource, /if \(!workspaceTabsEnabled\) \{[\s\S]*onSetActiveView\("preview"\)/);
+  assert.match(rightPanelSource, /gitDiffPreview=\{workspaceTabsEnabled \? null : gitDiffPreview\.diff\}/);
   assert.match(rightPanelSource, /filePanelView=\{fileSourcePanelView\}/);
+  assert.match(rightPanelSource, /variant = "manager"/);
+  assert.match(rightPanelSource, /variant\?: "manager" \| "workspace"/);
+  assert.match(rightPanelSource, /preview-workspace-status-bar/);
+  assert.match(rightPanelSource, /!isWorkspaceVariant \? \([\s\S]*panel-content-header preview-header/);
   assert.match(panelsSource, /data-thread-id/);
   assert.match(panelsSource, /className="chat-list-row"[\s\S]*data-thread-id=\{node\.threadId\}/);
   assert.match(panelsSource, /scrollIntoView\(\{ block: "nearest" \}\)/);
@@ -1123,6 +1209,29 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px \$\{PANEL_RESIZER_WIDTH\}px minmax\(0, 1fr\) \$\{PANEL_RESIZER_WIDTH\}px/);
   assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel/);
   assert.match(stylesSource, /width: 100%;/);
+  assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel,[\s\S]*\.workspace-tab-panel > \.browser-panel \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;[\s\S]*background-image: none;/);
+  assert.match(stylesSource, /\.workspace-tab-strip \{[\s\S]*gap: 6px;[\s\S]*border-bottom: 0;[\s\S]*box-shadow: none;/);
+  assert.match(stylesSource, /\.workspace-tab \{[\s\S]*border: 0;[\s\S]*border-radius: 999px;[\s\S]*background: rgba\(28, 25, 23, 0\.045\);/);
+  assert.match(stylesSource, /\.workspace-tab\.active \{[\s\S]*background: rgba\(15, 118, 110, 0\.12\);[\s\S]*box-shadow: inset 0 0 0 1px/);
+  assert.doesNotMatch(cssBlock(".workspace-tab {", ".workspace-tab:hover"), /cursor:/);
+  assert.doesNotMatch(cssBlock(".workspace-tab-close {", ".workspace-tab-close:hover"), /cursor:/);
+  assert.doesNotMatch(stylesSource, /\.workspace-tab:active \{[\s\S]*cursor:/);
+  assert.match(stylesSource, /\.browser-panel-workspace \{[\s\S]*background: #ffffff;/);
+  assert.match(stylesSource, /\.browser-panel-workspace \.browser-native-viewport \{[\s\S]*min-height: 100%;/);
+  assert.match(stylesSource, /\.terminal-panel-workspace \{[\s\S]*background: #f5f3f0;/);
+  assert.match(stylesSource, /\.terminal-panel-workspace \.terminal-viewport-shell \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/);
+  assert.match(stylesSource, /\.preview-workspace-status-bar \{[\s\S]*min-height: 34px;/);
+  assert.match(stylesSource, /\.preview-panel-workspace > \.preview-editor-shell > \.preview-utility-strip,[\s\S]*display: none;/);
+  assert.match(stylesSource, /\.git-panel \{[\s\S]*--git-surface: rgba\(252, 251, 249, 0\.58\);[\s\S]*background: var\(--git-surface\);/);
+  assert.match(stylesSource, /\.git-graph-section \{[\s\S]*background: var\(--git-surface\);/);
+  assert.match(stylesSource, /\.git-section-header \{[\s\S]*background: var\(--git-surface-raised\);/);
+  assert.match(stylesSource, /\.git-graph-row:hover \{[\s\S]*background: var\(--git-surface-hover\);/);
+  assert.doesNotMatch(cssBlock(".git-section-toggle {", ".git-section-toggle:hover"), /cursor:/);
+  assert.doesNotMatch(cssBlock(".git-icon-button {", ".git-icon-button:hover"), /cursor:/);
+  assert.doesNotMatch(cssBlock(".drag-scroll-region {", ".drag-scroll-region.is-dragging"), /cursor:/);
+  assert.doesNotMatch(cssBlock(".git-graph-row-main {", ".git-graph-lanes"), /cursor:/);
+  assert.doesNotMatch(cssBlock(".git-change-group-header {", ".git-change-group-header[aria-expanded"), /cursor:/);
+  assert.doesNotMatch(cssBlock(".git-change-row.clickable:hover", ".git-change-row.clickable:focus-visible"), /cursor:/);
   assert.match(stylesSource, /\.workspace-tab-strip \{[\s\S]*border-bottom: 0;/);
   assert.match(
     stylesSource,
@@ -1144,9 +1253,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /\.workspace-tab-panel > \.conversation-panel,\s*\.conversation-panel,\s*\.conversation-scroll \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/,
   );
   assert.match(stylesSource, /\.panel-resizer \{[\s\S]*background: transparent;/);
-  assert.match(stylesSource, /\.panel-resizer::before \{[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
-  assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.12\);/);
-  assert.match(stylesSource, /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.18\);/);
+  assert.match(stylesSource, /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
+  assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.42\);/);
+  assert.match(stylesSource, /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.68\);/);
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(stylesSource, /\.panel-content-header \{[\s\S]*min-height: 34px;[\s\S]*padding: 6px 10px;/);
   assert.doesNotMatch(stylesSource, /\.file-object-toolbar/);
@@ -1970,8 +2079,8 @@ test("git graph styles keep a light theme and full-size visible rail overlay", (
   const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
   const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
 
-  assert.match(css, /\.git-panel \{[\s\S]*background: #f8fafc;/);
-  assert.match(css, /\.git-graph-section \{[\s\S]*background: #f8fafc;/);
+  assert.match(css, /\.git-panel \{[\s\S]*--git-surface: rgba\(252, 251, 249, 0\.58\);[\s\S]*background: var\(--git-surface\);/);
+  assert.match(css, /\.git-graph-section \{[\s\S]*background: var\(--git-surface\);/);
   assert.doesNotMatch(css, /\.git-panel \{[\s\S]*background: #0f1419;/);
   assert.match(css, /\.git-graph-overlay \{[\s\S]*width: var\(--git-graph-visual-width, 58px\);/);
   assert.match(css, /\.git-graph-overlay \{[\s\S]*height: var\(--git-graph-visual-height, 42px\);/);
@@ -1985,7 +2094,7 @@ test("git graph styles keep a light theme and full-size visible rail overlay", (
   assert.match(css, /\.git-graph-copy \{[\s\S]*overflow: hidden;/);
   assert.match(css, /\.git-commit-file-row \{[\s\S]*grid-template-columns: 20px minmax\(0, 1fr\) 22px;/);
   assert.match(css, /\.git-change-row \{[\s\S]*grid-template-columns: 22px minmax\(0, 1fr\) 20px;/);
-  assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #f8fafc;[\s\S]*stroke-width: 3\.4;/);
+  assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #fbfaf8;[\s\S]*stroke-width: 3\.4;/);
   assert.match(css, /\.git-graph-dot\.branch \{[\s\S]*fill: currentColor;/);
   assert.match(css, /\.git-head-ref \{[\s\S]*background: #2563eb;/);
   assert.match(source, /"--git-graph-visual-height": `\$\{visualModel\.height\}px`/);

@@ -158,6 +158,9 @@ export type GitDiffPreviewState = {
   loading: boolean;
   diff: GitDiffPreviewSnapshot | null;
   error: string | null;
+  targetId?: string | null;
+  title?: string | null;
+  subtitle?: string | null;
 };
 type GitGraphVisualCommit = {
   commit: GitGraphCommit;
@@ -354,7 +357,8 @@ export function RightPanel({
     diff: null,
     error: null,
   });
-  const gitDiffRequestScope = useRef(0);
+  const gitDiffRequestSequenceRef = useRef(0);
+  const gitDiffRequestScopeByTargetRef = useRef<Map<string, number>>(new Map());
   const gitDiffBasePreviewKey = useRef<string | null>(null);
 
   function updateGitDiffPreview(state: GitDiffPreviewState) {
@@ -381,9 +385,26 @@ export function RightPanel({
   const effectiveActiveView = activeView;
 
   function clearGitDiffPreview() {
-    gitDiffRequestScope.current += 1;
+    gitDiffRequestSequenceRef.current += 1;
+    if (!workspaceTabsEnabled) {
+      gitDiffRequestScopeByTargetRef.current.clear();
+    }
     gitDiffBasePreviewKey.current = null;
     updateGitDiffPreview({ loading: false, diff: null, error: null });
+  }
+
+  function beginGitDiffRequest(targetId: string, options: { exclusive?: boolean } = {}) {
+    const scope = gitDiffRequestSequenceRef.current + 1;
+    gitDiffRequestSequenceRef.current = scope;
+    if (options.exclusive) {
+      gitDiffRequestScopeByTargetRef.current.clear();
+    }
+    gitDiffRequestScopeByTargetRef.current.set(targetId, scope);
+    return scope;
+  }
+
+  function isCurrentGitDiffRequest(targetId: string, scope: number) {
+    return gitDiffRequestScopeByTargetRef.current.get(targetId) === scope;
   }
 
   function openTreeFileFromPreview(path: string) {
@@ -425,13 +446,15 @@ export function RightPanel({
     if (!thread || isChatCompatCwd(thread.cwd)) {
       return;
     }
-    const scope = gitDiffRequestScope.current + 1;
-    gitDiffRequestScope.current = scope;
+    const targetId = `worktree:${thread.cwd}:${mode}:${change.originalPath ?? ""}:${change.path}`;
+    const title = change.path.split("/").filter(Boolean).at(-1) ?? change.path;
+    const subtitle = `${mode} diff · ${change.path}`;
+    const scope = beginGitDiffRequest(targetId, { exclusive: !workspaceTabsEnabled });
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
-    updateGitDiffPreview({ loading: true, diff: null, error: null });
-    onSetFilePanelView("preview");
-    onSetActiveView("preview");
-    if (workspaceTabsEnabled) {
+    updateGitDiffPreview({ loading: true, diff: null, error: null, targetId, title, subtitle });
+    if (!workspaceTabsEnabled) {
+      onSetFilePanelView("preview");
+      onSetActiveView("preview");
       onOpenWorkspaceFiles?.();
     }
 
@@ -442,16 +465,26 @@ export function RightPanel({
         staged: mode === "staged",
       })
       .then((diff) => {
-        if (gitDiffRequestScope.current === scope) {
-          updateGitDiffPreview({ loading: false, diff, error: diff.error });
+        if (isCurrentGitDiffRequest(targetId, scope)) {
+          updateGitDiffPreview({
+            loading: false,
+            diff,
+            error: diff.error,
+            targetId,
+            title,
+            subtitle,
+          });
         }
       })
       .catch((error) => {
-        if (gitDiffRequestScope.current === scope) {
+        if (isCurrentGitDiffRequest(targetId, scope)) {
           updateGitDiffPreview({
             loading: false,
             diff: null,
             error: error instanceof Error ? error.message : "Failed to read Git diff.",
+            targetId,
+            title,
+            subtitle,
           });
         }
       });
@@ -461,13 +494,17 @@ export function RightPanel({
     if (!thread || isChatCompatCwd(thread.cwd)) {
       return;
     }
-    const scope = gitDiffRequestScope.current + 1;
-    gitDiffRequestScope.current = scope;
+    const targetId = `commit:${thread.cwd}:${commit.hash}:${file.originalPath ?? ""}:${file.path}`;
+    const fileName = file.path.split("/").filter(Boolean).at(-1) ?? file.path;
+    const shortHash = commit.hash.slice(0, 7);
+    const title = `${fileName} diff`;
+    const subtitle = `${shortHash} · ${file.path}`;
+    const scope = beginGitDiffRequest(targetId, { exclusive: !workspaceTabsEnabled });
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
-    updateGitDiffPreview({ loading: true, diff: null, error: null });
-    onSetFilePanelView("preview");
-    onSetActiveView("preview");
-    if (workspaceTabsEnabled) {
+    updateGitDiffPreview({ loading: true, diff: null, error: null, targetId, title, subtitle });
+    if (!workspaceTabsEnabled) {
+      onSetFilePanelView("preview");
+      onSetActiveView("preview");
       onOpenWorkspaceFiles?.();
     }
 
@@ -479,16 +516,26 @@ export function RightPanel({
         status: file.status,
       })
       .then((diff) => {
-        if (gitDiffRequestScope.current === scope) {
-          updateGitDiffPreview({ loading: false, diff, error: diff.error });
+        if (isCurrentGitDiffRequest(targetId, scope)) {
+          updateGitDiffPreview({
+            loading: false,
+            diff,
+            error: diff.error,
+            targetId,
+            title,
+            subtitle,
+          });
         }
       })
       .catch((error) => {
-        if (gitDiffRequestScope.current === scope) {
+        if (isCurrentGitDiffRequest(targetId, scope)) {
           updateGitDiffPreview({
             loading: false,
             diff: null,
             error: error instanceof Error ? error.message : "Failed to read Git commit diff.",
+            targetId,
+            title,
+            subtitle,
           });
         }
       });
@@ -518,7 +565,8 @@ export function RightPanel({
     previewRootId,
   ]);
   const fileSourcePanelView: FilePanelView =
-    gitDiffPreview.loading || gitDiffPreview.diff || gitDiffPreview.error
+    !workspaceTabsEnabled &&
+    (gitDiffPreview.loading || gitDiffPreview.diff || gitDiffPreview.error)
       ? "preview"
       : "tree";
 
@@ -575,9 +623,9 @@ export function RightPanel({
                 onNavigateToSymbol={onNavigateToSymbol}
                 onOpenPreviewExternally={onOpenPreviewExternally}
                 onOpenPreviewInBrowser={onOpenPreviewInBrowser}
-                gitDiffPreview={gitDiffPreview.diff}
-                gitDiffPreviewError={gitDiffPreview.error}
-                gitDiffPreviewLoading={gitDiffPreview.loading}
+                gitDiffPreview={workspaceTabsEnabled ? null : gitDiffPreview.diff}
+                gitDiffPreviewError={workspaceTabsEnabled ? null : gitDiffPreview.error}
+                gitDiffPreviewLoading={workspaceTabsEnabled ? false : gitDiffPreview.loading}
                 onOpenTreeFile={openTreeFileFromPreview}
                 onPreviewUpdated={onPreviewUpdated}
                 onToggleTreeDirectory={onToggleTreeDirectory}
@@ -927,6 +975,7 @@ function formatWorkflowStageStatus(status: WorkflowStageView["status"]) {
 
 export function BrowserPanel({
   active = true,
+  variant = "manager",
   nativeOverlayActive,
   resizing,
   navigationRequest,
@@ -935,6 +984,7 @@ export function BrowserPanel({
   activeBrowserTabId,
 }: {
   active?: boolean;
+  variant?: "manager" | "workspace";
   nativeOverlayActive: boolean;
   resizing: boolean;
   navigationRequest: { url: string; token: number } | null;
@@ -949,6 +999,7 @@ export function BrowserPanel({
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
+  const isManagerVariant = variant === "manager";
   const tabs = state.tabs.length > 0 ? state.tabs : browserTabsFromActiveState(state);
   const activeTab =
     tabs.find((tab) => tab.id === state.activeTabId) ?? tabs[0] ?? null;
@@ -1177,176 +1228,184 @@ export function BrowserPanel({
   });
 
   return (
-    <div className="preview-panel browser-panel">
-      <header className="panel-content-header browser-header">
-        <div className="panel-content-copy">
-          <h2>{activeTitle}</h2>
-        </div>
-        <button
-          type="button"
-          className="panel-inline-action browser-open-external"
-          aria-label="Open browser page externally"
-          title="Open externally"
-          disabled={!displayUrl || !hasBrowserApi}
-          onClick={() => {
-            if (!displayUrl) {
-              return;
-            }
-            runCommand(
-              (browserApi) => browserApi.openLink(displayUrl).then(() => state),
-              "Could not open the page externally.",
-            );
-          }}
-        >
-          <OpenIcon />
-        </button>
-      </header>
+    <div
+      className={`preview-panel browser-panel ${
+        isManagerVariant ? "browser-panel-manager" : "browser-panel-workspace"
+      }`}
+    >
+      {isManagerVariant ? (
+        <>
+          <header className="panel-content-header browser-header">
+            <div className="panel-content-copy">
+              <h2>{activeTitle}</h2>
+            </div>
+            <button
+              type="button"
+              className="panel-inline-action browser-open-external"
+              aria-label="Open browser page externally"
+              title="Open externally"
+              disabled={!displayUrl || !hasBrowserApi}
+              onClick={() => {
+                if (!displayUrl) {
+                  return;
+                }
+                runCommand(
+                  (browserApi) => browserApi.openLink(displayUrl).then(() => state),
+                  "Could not open the page externally.",
+                );
+              }}
+            >
+              <OpenIcon />
+            </button>
+          </header>
 
-      <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
-        <div className="browser-tabs">
-          {tabs.map((tab) => {
-            const isActive = tab.id === (state.activeTabId ?? activeTab?.id);
-            return (
-              <div
-                key={tab.id}
-                className={`browser-tab-shell ${isActive ? "active" : ""}`}
-              >
-                <button
-                  type="button"
-                  className="browser-tab"
-                  draggable={onOpenBrowserTabInWorkspace != null}
-                  role="tab"
-                  aria-selected={isActive}
-                  title={browserTabLabel(tab)}
-                  onClick={() => selectTab(tab.id)}
-                  onDoubleClick={() =>
-                    onOpenBrowserTabInWorkspace?.(browserTabDragPayload(tab))
-                  }
-                  onDragStart={(event) =>
-                    writeWorkspaceObjectDragData(
-                      event.dataTransfer,
-                      browserTabDragPayload(tab),
-                    )
-                  }
-                >
-                  <span className={`browser-tab-dot ${tab.loading ? "loading" : ""}`} />
-                  <span className="browser-tab-title">{browserTabLabel(tab)}</span>
-                </button>
-                <button
-                  type="button"
-                  className="browser-tab-close"
-                  aria-label={`Close ${browserTabLabel(tab)}`}
-                  title="Close tab"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeTab(tab.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      closeTab(tab.id);
-                    }
-                  }}
-                >
-                  <XIcon />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          className="browser-icon-button browser-new-tab-button"
-          aria-label="New browser tab"
-          title="New tab"
-          disabled={!hasBrowserApi}
-          onClick={createTab}
-        >
-          <PlusIcon />
-        </button>
-      </div>
+          <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+            <div className="browser-tabs">
+              {tabs.map((tab) => {
+                const isActive = tab.id === (state.activeTabId ?? activeTab?.id);
+                return (
+                  <div
+                    key={tab.id}
+                    className={`browser-tab-shell ${isActive ? "active" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="browser-tab"
+                      draggable={onOpenBrowserTabInWorkspace != null}
+                      role="tab"
+                      aria-selected={isActive}
+                      title={browserTabLabel(tab)}
+                      onClick={() => selectTab(tab.id)}
+                      onDoubleClick={() =>
+                        onOpenBrowserTabInWorkspace?.(browserTabDragPayload(tab))
+                      }
+                      onDragStart={(event) =>
+                        writeWorkspaceObjectDragData(
+                          event.dataTransfer,
+                          browserTabDragPayload(tab),
+                        )
+                      }
+                    >
+                      <span className={`browser-tab-dot ${tab.loading ? "loading" : ""}`} />
+                      <span className="browser-tab-title">{browserTabLabel(tab)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="browser-tab-close"
+                      aria-label={`Close ${browserTabLabel(tab)}`}
+                      title="Close tab"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeTab(tab.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          closeTab(tab.id);
+                        }
+                      }}
+                    >
+                      <XIcon />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="browser-icon-button browser-new-tab-button"
+              aria-label="New browser tab"
+              title="New tab"
+              disabled={!hasBrowserApi}
+              onClick={createTab}
+            >
+              <PlusIcon />
+            </button>
+          </div>
 
-      <form
-        className="browser-toolbar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          navigate();
-        }}
-      >
-        <button
-          type="button"
-          className="browser-icon-button"
-          aria-label="Go back"
-          title="Back"
-          disabled={!activeTab?.canGoBack || !hasBrowserApi}
-          onClick={() =>
-            runCommand(
-              (browserApi) => browserApi.browserGoBack(),
-              "Could not go back.",
-            )
-          }
-        >
-          <ArrowLeftIcon />
-        </button>
-        <button
-          type="button"
-          className="browser-icon-button"
-          aria-label="Go forward"
-          title="Forward"
-          disabled={!activeTab?.canGoForward || !hasBrowserApi}
-          onClick={() =>
-            runCommand(
-              (browserApi) => browserApi.browserGoForward(),
-              "Could not go forward.",
-            )
-          }
-        >
-          <ArrowRightIcon />
-        </button>
-        <button
-          type="button"
-          className="browser-icon-button"
-          aria-label={activeTab?.loading ? "Stop loading" : "Reload"}
-          title={activeTab?.loading ? "Stop" : "Reload"}
-          disabled={!hasBrowserApi}
-          onClick={() =>
-            runCommand(
-              (browserApi) =>
-                activeTab?.loading
-                  ? browserApi.stopBrowserView()
-                  : browserApi.reloadBrowserView(),
-              "Could not update the page.",
-            )
-          }
-        >
-          {activeTab?.loading ? <StopIcon /> : <RefreshIcon />}
-        </button>
-        <input
-          aria-label="Browser URL"
-          value={address}
-          placeholder="https://example.com or localhost:5173"
-          onChange={(event) => setAddress(event.target.value)}
-        />
-        <button
-          type="submit"
-          className="browser-go-button"
-          disabled={!hasBrowserApi}
-        >
-          Go
-        </button>
-      </form>
+          <form
+            className="browser-toolbar"
+            onSubmit={(event) => {
+              event.preventDefault();
+              navigate();
+            }}
+          >
+            <button
+              type="button"
+              className="browser-icon-button"
+              aria-label="Go back"
+              title="Back"
+              disabled={!activeTab?.canGoBack || !hasBrowserApi}
+              onClick={() =>
+                runCommand(
+                  (browserApi) => browserApi.browserGoBack(),
+                  "Could not go back.",
+                )
+              }
+            >
+              <ArrowLeftIcon />
+            </button>
+            <button
+              type="button"
+              className="browser-icon-button"
+              aria-label="Go forward"
+              title="Forward"
+              disabled={!activeTab?.canGoForward || !hasBrowserApi}
+              onClick={() =>
+                runCommand(
+                  (browserApi) => browserApi.browserGoForward(),
+                  "Could not go forward.",
+                )
+              }
+            >
+              <ArrowRightIcon />
+            </button>
+            <button
+              type="button"
+              className="browser-icon-button"
+              aria-label={activeTab?.loading ? "Stop loading" : "Reload"}
+              title={activeTab?.loading ? "Stop" : "Reload"}
+              disabled={!hasBrowserApi}
+              onClick={() =>
+                runCommand(
+                  (browserApi) =>
+                    activeTab?.loading
+                      ? browserApi.stopBrowserView()
+                      : browserApi.reloadBrowserView(),
+                  "Could not update the page.",
+                )
+              }
+            >
+              {activeTab?.loading ? <StopIcon /> : <RefreshIcon />}
+            </button>
+            <input
+              aria-label="Browser URL"
+              value={address}
+              placeholder="https://example.com or localhost:5173"
+              onChange={(event) => setAddress(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="browser-go-button"
+              disabled={!hasBrowserApi}
+            >
+              Go
+            </button>
+          </form>
 
-      <div className="browser-status-row" role="status">
-        <span className={`browser-status-dot ${activeTab?.loading ? "loading" : "idle"}`} />
-        <span title={error ?? displayUrl}>
-          {error ?? (displayUrl || "Ready")}
-        </span>
-      </div>
+          <div className="browser-status-row" role="status">
+            <span className={`browser-status-dot ${activeTab?.loading ? "loading" : "idle"}`} />
+            <span title={error ?? displayUrl}>
+              {error ?? (displayUrl || "Ready")}
+            </span>
+          </div>
+        </>
+      ) : null}
 
       <div ref={viewportRef} className="browser-native-viewport">
-        {!displayUrl ? (
+        {!displayUrl && isManagerVariant ? (
           <div className="browser-empty">
             <BrowserIcon />
             <span>Open a page in the right panel.</span>
@@ -3342,6 +3401,7 @@ export function openCwdTreeFilePreview({
 }
 
 export function FilePreviewPanel({
+  variant = "manager",
   expandedTreeDirectories,
   filePanelView,
   fileTreeEntriesByPath,
@@ -3362,6 +3422,7 @@ export function FilePreviewPanel({
   previewRootId,
   thread,
 }: {
+  variant?: "manager" | "workspace";
   expandedTreeDirectories: string[];
   filePanelView: FilePanelView;
   fileTreeEntriesByPath: Record<string, FileTreeEntry[]>;
@@ -3567,9 +3628,57 @@ export function FilePreviewPanel({
         </div>
       )
     ) : null;
+  const isWorkspaceVariant = variant === "workspace";
+  const workspaceModeLabel =
+    previewRenderMode === "markdown"
+      ? "markdown"
+      : previewRenderMode === "image"
+        ? "image"
+        : previewRenderMode === "pdf"
+          ? "pdf"
+          : preview?.language || "plain";
+  const workspaceStatusBar =
+    isWorkspaceVariant && filePanelView === "preview" && !showingGitDiffPreview ? (
+      <div className="preview-workspace-status-bar">
+        <div className="preview-utility-primary">
+          <span className="preview-signal plain" />
+          <button type="button" className="preview-lsp-button plain" disabled>
+            {workspaceModeLabel.toUpperCase()}
+          </button>
+          {preview?.lsp.enabled ? <span>language server</span> : null}
+          {threadRootPath ? (
+            <span className="preview-utility-cwd">{trimPath(threadRootPath)}</span>
+          ) : null}
+        </div>
+        <div className="preview-header-actions">
+          {previewHeaderEditActions}
+          {showOpenPreviewInBrowserAction ? (
+            <button
+              type="button"
+              className="panel-inline-action preview-open-browser-button"
+              aria-label="Open preview in Browser"
+              title="Open in Browser"
+              onClick={onOpenPreviewInBrowser}
+            >
+              <BrowserIcon />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="panel-inline-action preview-open-button"
+            aria-label="Open preview in system editor"
+            onClick={onOpenPreviewExternally}
+            disabled={!preview}
+          >
+            <OpenIcon />
+          </button>
+        </div>
+      </div>
+    ) : null;
 
   return (
-    <div className="preview-panel">
+    <div className={`preview-panel ${isWorkspaceVariant ? "preview-panel-workspace" : ""}`}>
+      {!isWorkspaceVariant ? (
       <header className="panel-content-header preview-header">
         <div className="panel-content-copy">
           <h2>
@@ -3608,6 +3717,8 @@ export function FilePreviewPanel({
           ) : null}
         </div>
       </header>
+      ) : null}
+      {workspaceStatusBar}
 
       {filePanelView === "tree" ? (
         <CwdFileTreePanel

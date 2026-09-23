@@ -132,11 +132,12 @@ a,
 .workspace-tab-strip {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 34px;
-  padding: 4px 8px 0;
+  gap: 6px;
+  min-height: 38px;
+  padding: 5px 8px;
   border-bottom: 0;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: none;
   overflow-x: auto;
   -webkit-app-region: drag;
 }
@@ -147,16 +148,19 @@ a,
   gap: 6px;
   flex: 0 0 auto;
   max-width: min(260px, 60vw);
-  min-height: 29px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
-  background: transparent;
+  min-height: 28px;
+  padding: 0 8px 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(28, 25, 23, 0.045);
   color: #57534e;
   font-size: 12px;
   font-weight: 600;
-  cursor: grab;
+}
+
+.workspace-tab:hover {
+  background: rgba(28, 25, 23, 0.075);
+  color: #44403c;
 }
 
 .workspace-tab-label {
@@ -184,7 +188,6 @@ a,
   margin-left: 2px;
   border-radius: 5px;
   color: #a8a29e;
-  cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
@@ -199,14 +202,10 @@ a,
   height: 12px;
 }
 
-.workspace-tab:active {
-  cursor: grabbing;
-}
-
 .workspace-tab.active {
-  border-color: rgba(16, 24, 40, 0.1);
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(15, 118, 110, 0.12);
   color: #292524;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.16);
 }
 
 .workspace-tab.dragging {
@@ -280,6 +279,9 @@ a,
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
+  border-top: 0;
+  box-shadow: none;
+  background-image: none;
 }
 
 .workspace-tab-panel[hidden] {
@@ -295,17 +297,21 @@ a,
 .panel-resizer::before {
   content: "";
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
   background: rgba(16, 24, 40, 0.08);
+  transform: translateX(-50%);
   transition: background 120ms ease;
 }
 
 .panel-resizer:hover::before {
-  background: rgba(217, 119, 6, 0.12);
+  background: rgba(217, 119, 6, 0.42);
 }
 
 .is-resizing-panels .panel-resizer::before {
-  background: rgba(217, 119, 6, 0.18);
+  background: rgba(217, 119, 6, 0.68);
 }
 
 .is-resizing-panels,
@@ -5810,6 +5816,26 @@ body.macos-window-chrome
   min-width: 0;
 }
 
+.preview-workspace-status-bar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.06);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.preview-panel-workspace > .preview-editor-shell > .preview-utility-strip,
+.preview-panel-workspace > .preview-tree-shell > .preview-utility-strip {
+  display: none;
+}
+
+.diff-panel-workspace {
+  background: #ffffff;
+}
+
 .preview-empty {
   display: grid;
   place-items: center;
@@ -6041,6 +6067,14 @@ body.macos-window-chrome
   overflow: hidden;
 }
 
+.browser-panel-workspace {
+  background: #ffffff;
+}
+
+.browser-panel-workspace .browser-native-viewport {
+  min-height: 100%;
+}
+
 .browser-empty {
   position: absolute;
   inset: 0;
@@ -6061,6 +6095,15 @@ body.macos-window-chrome
 .terminal-panel {
   min-height: 0;
   background: rgba(252, 251, 249, 0.52);
+}
+
+.terminal-panel-workspace {
+  background: #f5f3f0;
+}
+
+.terminal-panel-workspace .terminal-viewport-shell {
+  border-top: 0;
+  box-shadow: none;
 }
 
 .terminal-header {
@@ -6483,16 +6526,20 @@ body.macos-window-chrome
 }
 
 .git-panel {
+  --git-surface: rgba(252, 251, 249, 0.58);
+  --git-surface-raised: rgba(255, 255, 255, 0.72);
+  --git-surface-hover: rgba(28, 25, 23, 0.045);
+  --git-surface-active: rgba(15, 118, 110, 0.1);
+  --git-border: rgba(16, 24, 40, 0.06);
   display: flex;
   flex: 1;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: #f8fafc;
+  background: var(--git-surface);
 }
 
 .git-panel.resizing-panes {
-  cursor: row-resize;
   user-select: none;
 }
 
@@ -6506,15 +6553,15 @@ body.macos-window-chrome
 .git-graph-section {
   flex: 1 1 64%;
   min-height: 128px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  background: #f8fafc;
+  border-bottom: 1px solid var(--git-border);
+  background: var(--git-surface);
 }
 
 .git-changes-section {
   flex: 0 1 36%;
   min-height: 112px;
   max-height: 44%;
-  background: #f7f6f2;
+  background: var(--git-surface);
 }
 
 .git-graph-section.changes-collapsed {
@@ -6534,8 +6581,8 @@ body.macos-window-chrome
   gap: 6px;
   min-height: 36px;
   padding: 0 8px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
-  background: rgba(255, 255, 255, 0.68);
+  border-bottom: 1px solid var(--git-border);
+  background: var(--git-surface-raised);
 }
 
 .git-section-header.graph-toolbar {
@@ -6543,8 +6590,8 @@ body.macos-window-chrome
 }
 
 .git-graph-section .git-section-header {
-  border-bottom-color: rgba(15, 23, 42, 0.1);
-  background: #f1f5f9;
+  border-bottom-color: var(--git-border);
+  background: var(--git-surface-raised);
 }
 
 .git-graph-section .git-section-title {
@@ -6611,7 +6658,6 @@ body.macos-window-chrome
   border-radius: 7px;
   background: transparent;
   color: #57534e;
-  cursor: pointer;
   transition: background 120ms ease, transform 120ms ease;
 }
 
@@ -6712,7 +6758,6 @@ body.macos-window-chrome
   border-radius: 7px;
   background: transparent;
   color: #57534e;
-  cursor: pointer;
 }
 
 .git-icon-button:hover:not(:disabled) {
@@ -6722,7 +6767,6 @@ body.macos-window-chrome
 
 .git-icon-button:disabled {
   opacity: 0.4;
-  cursor: default;
 }
 
 .git-graph-section .git-icon-button {
@@ -6741,7 +6785,7 @@ body.macos-window-chrome
 .git-pane-splitter {
   position: relative;
   flex: 0 0 8px;
-  background: #f1f5f9;
+  background: var(--git-surface);
   cursor: row-resize;
 }
 
@@ -6752,14 +6796,14 @@ body.macos-window-chrome
   width: 42px;
   height: 2px;
   border-radius: 999px;
-  background: rgba(100, 116, 139, 0.58);
+  background: rgba(120, 113, 108, 0.42);
   content: "";
   transform: translateX(-50%);
 }
 
 .git-pane-splitter:hover::before,
 .git-pane-splitter:focus-visible::before {
-  background: #60a5fa;
+  background: #0f766e;
 }
 
 .git-graph-list,
@@ -6774,17 +6818,11 @@ body.macos-window-chrome
 }
 
 .drag-scroll-region {
-  cursor: grab;
   user-select: text;
 }
 
 .drag-scroll-region.is-dragging {
-  cursor: grabbing;
   user-select: none;
-}
-
-.drag-scroll-region [data-drag-scroll-handle] {
-  cursor: grab;
 }
 
 .git-graph-list {
@@ -6792,7 +6830,7 @@ body.macos-window-chrome
   flex-direction: column;
   gap: 0;
   padding: 4px 0 8px 10px;
-  background: #f8fafc;
+  background: var(--git-surface);
 }
 
 .git-graph-visual-stack {
@@ -6821,21 +6859,21 @@ body.macos-window-chrome
   max-width: 100%;
   min-width: 100%;
   border-radius: 4px 0 0 4px;
-  color: #334155;
+  color: #44403c;
   outline: none;
 }
 
 .git-graph-row:hover {
-  background: rgba(226, 232, 240, 0.74);
+  background: var(--git-surface-hover);
 }
 
 .git-graph-row.selected {
-  background: rgba(219, 234, 254, 0.84);
-  box-shadow: inset 2px 0 0 rgba(96, 165, 250, 0.92);
+  background: var(--git-surface-active);
+  box-shadow: inset 2px 0 0 rgba(15, 118, 110, 0.64);
 }
 
 .git-graph-row:focus-visible {
-  box-shadow: inset 0 0 0 1px #60a5fa;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.42);
 }
 
 .git-graph-row.merge {
@@ -6843,7 +6881,7 @@ body.macos-window-chrome
 }
 
 .git-graph-row.selected.merge {
-  background: rgba(219, 234, 254, 0.92);
+  background: var(--git-surface-active);
 }
 
 .git-graph-row-main {
@@ -6854,7 +6892,6 @@ body.macos-window-chrome
   min-height: 42px;
   column-gap: 6px;
   padding: 0 6px 0 0;
-  cursor: pointer;
 }
 
 .git-graph-lanes {
@@ -6892,20 +6929,20 @@ body.macos-window-chrome
 
 .git-graph-dot {
   fill: currentColor;
-  stroke: #f8fafc;
+  stroke: #fbfaf8;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
 .git-graph-dot.main {
-  fill: #f8fafc;
+  fill: #fbfaf8;
   stroke: currentColor;
   stroke-width: 3.4;
 }
 
 .git-graph-dot.branch {
   fill: currentColor;
-  stroke: #f8fafc;
+  stroke: #fbfaf8;
   stroke-width: 2.2;
 }
 
@@ -7065,8 +7102,8 @@ body.macos-window-chrome
   max-width: calc(100% - var(--git-graph-visual-width, 58px) - 14px);
   margin: 0 8px 6px calc(var(--git-graph-visual-width, 58px) + 6px);
   overflow: hidden;
-  border-left: 1px solid rgba(96, 165, 250, 0.28);
-  background: rgba(255, 255, 255, 0.74);
+  border-left: 1px solid rgba(15, 118, 110, 0.18);
+  background: var(--git-surface-raised);
 }
 
 .git-commit-files-state {
@@ -7096,12 +7133,11 @@ body.macos-window-chrome
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
 .git-commit-file-row:hover,
 .git-commit-file-row:focus-visible {
-  background: rgba(59, 130, 246, 0.08);
+  background: var(--git-surface-hover);
   outline: none;
 }
 
@@ -7174,11 +7210,10 @@ body.macos-window-chrome
   padding: 0 8px;
   border: 0;
   border-radius: 7px;
-  background: rgba(41, 37, 36, 0.08);
+  background: var(--git-surface-hover);
   color: #292524;
   font-size: 14px;
   font-weight: 700;
-  cursor: pointer;
   text-align: left;
 }
 
@@ -7206,17 +7241,13 @@ body.macos-window-chrome
   padding: 0 8px;
 }
 
-.git-change-row.clickable {
-  cursor: pointer;
-}
-
 .git-change-row.clickable:hover,
 .git-change-row.clickable:focus-visible {
-  background: rgba(28, 25, 23, 0.05);
+  background: var(--git-surface-hover);
 }
 
 .git-change-row.clickable:focus-visible {
-  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline: 2px solid rgba(15, 118, 110, 0.3);
   outline-offset: -2px;
 }
 

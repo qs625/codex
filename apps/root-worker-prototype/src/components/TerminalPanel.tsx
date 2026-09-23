@@ -69,12 +69,14 @@ const EMPTY_STATE: TerminalPanelState = {
 };
 
 export function TerminalPanel({
+  variant = "manager",
   thread,
   focusCommandRequest,
   focusPanelRequestToken,
   onOpenTerminalTabInWorkspace,
   activeTerminalTabId,
 }: {
+  variant?: "manager" | "workspace";
   thread: Thread | null;
   focusCommandRequest?: TerminalCommandFocusRequest | null;
   focusPanelRequestToken?: number;
@@ -120,6 +122,7 @@ export function TerminalPanel({
   );
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const [terminalFocusRequestToken, setTerminalFocusRequestToken] = useState(0);
+  const isManagerVariant = variant === "manager";
   const activeTab = useMemo(
     () =>
       state.tabs.find((tab) => tab.id === state.activeTabId) ??
@@ -606,201 +609,209 @@ export function TerminalPanel({
   });
 
   return (
-    <div className="preview-panel terminal-panel">
-      <header className="panel-content-header terminal-header">
-        <div className="panel-content-copy">
-          <h2 title={activeTab?.title}>{activeTab?.title ?? "Terminal"}</h2>
-        </div>
-        <div className="terminal-header-actions">
-          <button
-            type="button"
-            className="panel-inline-action terminal-display-settings-button"
-            aria-expanded={showDisplaySettings}
-            aria-label="Terminal display settings"
-            title="Terminal display settings"
-            onClick={() => setShowDisplaySettings((current) => !current)}
-          >
-            <GearIcon />
-          </button>
-          <button
-            type="button"
-            className="panel-inline-action terminal-terminate"
-            aria-label="Terminate active terminal"
-            title="Terminate process"
-            disabled={
-              !activeTab?.canTerminate || !isInteractive(activeTab.status)
-            }
-            onClick={() => {
-              if (
-                activeTab &&
-                window.confirm(`Terminate “${activeTab.title}”?`)
-              ) {
-                void window.codexDesktop
-                  .terminateTerminal(activeTab.id)
-                  .catch((error) => setLocalError(toTerminalError(error)));
-              }
-            }}
-          >
-            <StopIcon />
-          </button>
-        </div>
-        {showDisplaySettings ? (
-          <div className="terminal-display-settings" aria-label="Terminal display settings">
-            <div className="terminal-display-settings-heading">
-              <span>Display</span>
-              <button type="button" onClick={resetDisplayPreferences}>
-                Reset
-              </button>
+    <div
+      className={`preview-panel terminal-panel ${
+        isManagerVariant ? "terminal-panel-manager" : "terminal-panel-workspace"
+      }`}
+    >
+      {isManagerVariant ? (
+        <>
+          <header className="panel-content-header terminal-header">
+            <div className="panel-content-copy">
+              <h2 title={activeTab?.title}>{activeTab?.title ?? "Terminal"}</h2>
             </div>
-            <label className="settings-inline-field">
-              <span>Font family</span>
-              <select
-                value={displayPreferences.fontFamily}
-                onChange={(event) =>
-                  updateDisplayPreferences({
-                    fontFamily: event.target.value as typeof displayPreferences.fontFamily,
-                  })
-                }
-              >
-                {TERMINAL_FONT_FAMILIES.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="terminal-display-settings-grid">
-              <label className="settings-inline-field">
-                <span>Font size</span>
-                <input
-                  type="number"
-                  min="10"
-                  max="22"
-                  step="1"
-                  value={displayPreferences.fontSize}
-                  onChange={(event) =>
-                    updateDisplayPreferences({
-                      fontSize: Number(event.target.value),
-                    })
-                  }
-                />
-              </label>
-              <label className="settings-inline-field">
-                <span>Line height</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="2"
-                  step="0.05"
-                  value={displayPreferences.lineHeight}
-                  onChange={(event) =>
-                    updateDisplayPreferences({
-                      lineHeight: Number(event.target.value),
-                    })
-                  }
-                />
-              </label>
-            </div>
-          </div>
-        ) : null}
-      </header>
-
-      {liveCommands.length > 0 ? (
-        <div className="terminal-live-commands" aria-label="Live Commands">
-          <span className="terminal-live-commands-label">Live Commands</span>
-          <div className="terminal-live-command-list">
-            {liveCommands.map((command) => (
+            <div className="terminal-header-actions">
               <button
-                key={command.id}
                 type="button"
-                className="terminal-live-command"
-                title={command.command}
-                onClick={() => focusLiveCommand(command)}
+                className="panel-inline-action terminal-display-settings-button"
+                aria-expanded={showDisplaySettings}
+                aria-label="Terminal display settings"
+                title="Terminal display settings"
+                onClick={() => setShowDisplaySettings((current) => !current)}
               >
-                <span className="terminal-status-dot running" />
-                <span>{command.command}</span>
+                <GearIcon />
               </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="browser-tab-strip terminal-tab-strip" role="tablist" aria-label="Terminal tabs">
-        <div className="browser-tabs">
-          {state.tabs.map((tab) => {
-            const isActive = tab.id === activeTab?.id;
-            return (
-              <div
-                key={tab.id}
-                className={`browser-tab-shell terminal-tab-shell ${isActive ? "active" : ""} ${tab.status}`}
-              >
-                <button
-                  type="button"
-                  className="browser-tab"
-                  draggable={onOpenTerminalTabInWorkspace != null}
-                  role="tab"
-                  aria-selected={isActive}
-                  title={tab.title}
-                  onClick={() => {
+              <button
+                type="button"
+                className="panel-inline-action terminal-terminate"
+                aria-label="Terminate active terminal"
+                title="Terminate process"
+                disabled={
+                  !activeTab?.canTerminate || !isInteractive(activeTab.status)
+                }
+                onClick={() => {
+                  if (
+                    activeTab &&
+                    window.confirm(`Terminate “${activeTab.title}”?`)
+                  ) {
                     void window.codexDesktop
-                      .selectTerminalTab(tab.id)
-                      .then((nextState) => {
-                        setState(nextState);
-                        requestTerminalViewportFocus(tab.id);
-                        setLocalError(null);
-                      })
+                      .terminateTerminal(activeTab.id)
                       .catch((error) => setLocalError(toTerminalError(error)));
-                  }}
-                  onDoubleClick={() =>
-                    onOpenTerminalTabInWorkspace?.(terminalTabDragPayload(tab))
                   }
-                  onDragStart={(event) =>
-                    writeWorkspaceObjectDragData(
-                      event.dataTransfer,
-                      terminalTabDragPayload(tab),
-                    )
-                  }
-                >
-                  <span
-                    className={`browser-tab-dot terminal-tab-dot ${tab.status} ${tab.backgroundActivity ? "activity" : ""}`}
-                  />
-                  <span className="browser-tab-title">{tab.title}</span>
-                </button>
-                <button
-                  type="button"
-                  className="browser-tab-close"
-                  aria-label={`Detach ${tab.title}`}
-                  title="Close tab (process keeps running)"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    applyState(window.codexDesktop.closeTerminalTab(tab.id));
-                  }}
-                >
-                  <XIcon />
-                </button>
+                }}
+              >
+                <StopIcon />
+              </button>
+            </div>
+            {showDisplaySettings ? (
+              <div className="terminal-display-settings" aria-label="Terminal display settings">
+                <div className="terminal-display-settings-heading">
+                  <span>Display</span>
+                  <button type="button" onClick={resetDisplayPreferences}>
+                    Reset
+                  </button>
+                </div>
+                <label className="settings-inline-field">
+                  <span>Font family</span>
+                  <select
+                    value={displayPreferences.fontFamily}
+                    onChange={(event) =>
+                      updateDisplayPreferences({
+                        fontFamily: event.target.value as typeof displayPreferences.fontFamily,
+                      })
+                    }
+                  >
+                    {TERMINAL_FONT_FAMILIES.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="terminal-display-settings-grid">
+                  <label className="settings-inline-field">
+                    <span>Font size</span>
+                    <input
+                      type="number"
+                      min="10"
+                      max="22"
+                      step="1"
+                      value={displayPreferences.fontSize}
+                      onChange={(event) =>
+                        updateDisplayPreferences({
+                          fontSize: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="settings-inline-field">
+                    <span>Line height</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="2"
+                      step="0.05"
+                      value={displayPreferences.lineHeight}
+                      onChange={(event) =>
+                        updateDisplayPreferences({
+                          lineHeight: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
               </div>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          className="browser-icon-button browser-new-tab-button"
-          aria-label="New shell terminal"
-          title="New shell"
-          onClick={createTerminal}
-        >
-          <PlusIcon />
-        </button>
-        {state.detachedCount > 0 ? (
-          <button
-            type="button"
-            className="browser-icon-button terminal-reattach-button"
-            onClick={() => applyState(window.codexDesktop.reattachTerminalTabs())}
-          >
-            Reattach {state.detachedCount}
-          </button>
-        ) : null}
-      </div>
+            ) : null}
+          </header>
+
+          {liveCommands.length > 0 ? (
+            <div className="terminal-live-commands" aria-label="Live Commands">
+              <span className="terminal-live-commands-label">Live Commands</span>
+              <div className="terminal-live-command-list">
+                {liveCommands.map((command) => (
+                  <button
+                    key={command.id}
+                    type="button"
+                    className="terminal-live-command"
+                    title={command.command}
+                    onClick={() => focusLiveCommand(command)}
+                  >
+                    <span className="terminal-status-dot running" />
+                    <span>{command.command}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="browser-tab-strip terminal-tab-strip" role="tablist" aria-label="Terminal tabs">
+            <div className="browser-tabs">
+              {state.tabs.map((tab) => {
+                const isActive = tab.id === activeTab?.id;
+                return (
+                  <div
+                    key={tab.id}
+                    className={`browser-tab-shell terminal-tab-shell ${isActive ? "active" : ""} ${tab.status}`}
+                  >
+                    <button
+                      type="button"
+                      className="browser-tab"
+                      draggable={onOpenTerminalTabInWorkspace != null}
+                      role="tab"
+                      aria-selected={isActive}
+                      title={tab.title}
+                      onClick={() => {
+                        void window.codexDesktop
+                          .selectTerminalTab(tab.id)
+                          .then((nextState) => {
+                            setState(nextState);
+                            requestTerminalViewportFocus(tab.id);
+                            setLocalError(null);
+                          })
+                          .catch((error) => setLocalError(toTerminalError(error)));
+                      }}
+                      onDoubleClick={() =>
+                        onOpenTerminalTabInWorkspace?.(terminalTabDragPayload(tab))
+                      }
+                      onDragStart={(event) =>
+                        writeWorkspaceObjectDragData(
+                          event.dataTransfer,
+                          terminalTabDragPayload(tab),
+                        )
+                      }
+                    >
+                      <span
+                        className={`browser-tab-dot terminal-tab-dot ${tab.status} ${tab.backgroundActivity ? "activity" : ""}`}
+                      />
+                      <span className="browser-tab-title">{tab.title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="browser-tab-close"
+                      aria-label={`Detach ${tab.title}`}
+                      title="Close tab (process keeps running)"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        applyState(window.codexDesktop.closeTerminalTab(tab.id));
+                      }}
+                    >
+                      <XIcon />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="browser-icon-button browser-new-tab-button"
+              aria-label="New shell terminal"
+              title="New shell"
+              onClick={createTerminal}
+            >
+              <PlusIcon />
+            </button>
+            {state.detachedCount > 0 ? (
+              <button
+                type="button"
+                className="browser-icon-button terminal-reattach-button"
+                onClick={() => applyState(window.codexDesktop.reattachTerminalTabs())}
+              >
+                Reattach {state.detachedCount}
+              </button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
 
       {localError || state.error ? (
         <div className="terminal-status-row" role="status">
@@ -817,10 +828,16 @@ export function TerminalPanel({
         {!activeTab ? (
           <div className="terminal-empty">
             <span>$</span>
-            <p>Open a sandboxed shell or wait for a model PTY to become attachable.</p>
-            <button type="button" onClick={createTerminal}>
-              New shell
-            </button>
+            <p>
+              {isManagerVariant
+                ? "Open a sandboxed shell or wait for a model PTY to become attachable."
+                : "Terminal session is not available."}
+            </p>
+            {isManagerVariant ? (
+              <button type="button" onClick={createTerminal}>
+                New shell
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
