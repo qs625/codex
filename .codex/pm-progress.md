@@ -11,7 +11,19 @@
 Compact fresh Init Context project instruction_files, skill-body init-context hygiene, and inter-agent tool item display fixes are installed effective. Current main HEAD is `e4d48c4143ecb79c165b0e0d0feb97bc628c79e9`; installed Runtime Capsule is `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43`. Restart request `call_qJve0JO8odiQ2vdSEe0isffw` recovered and completed; do not repeat that request.
 
 ## Active Work
-None.
+- id: compact-project-instruction-files-installed-regression
+  status: investigating
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/compact-project-instruction-files
+  task_type: runtime_context_bugfix
+  depends_on: installed delivery `sha256:2f319ed799683ce0848d4b2c5c1cf9b3b4aa77e98c29ad12426e220f0aa47c43`
+  files: likely `codex-rs/thread-service/src/session/*`, `codex-rs/config/src/*`, config reload tests and possibly runtime request/resume config path
+  base_commit: `effc84f3ca474acaf77d237368eb68f58867372f`
+  next_action: owner_dev to reproduce/root-cause why compact after installed restart still omits project `.morpheus/config.toml` `instruction_files` from fresh Init Context, and why reopening the Telebot thread shows neither compact summary nor Init Context; then fix with independent reviewer and focused tests.
+  validation: pending. User reported on 2026-09-23 after installed Runtime Capsule restart `call_qJve0JO8odiQ2vdSEe0isffw` completed that compact后的 Init Context still has no project instructions. User then reported reopening the Telebot thread has no compact summary and no Init Context. PM verified installed capsule/control state earlier but behavior-level verification was insufficient.
+  commit: pending
 
 ## Recent Completed
 - id: compact-project-instruction-files
