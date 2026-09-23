@@ -984,8 +984,11 @@ test("renders backend tool I/O buckets as top-level context categories", () => {
   assert.doesNotMatch(markup, /Tool I\/O Detail/);
   assert.doesNotMatch(markup, /estimated/);
   assert.match(markup, /File Writes/);
+  assert.match(markup, /File Reads/);
   assert.match(markup, /Commands/);
   assert.match(markup, /Inter-Agent/);
+  assert.match(markup, /Search &amp; Media/);
+  assert.match(markup, /Other Tools/);
   assert.doesNotMatch(markup, /Tool Inputs &amp; Results/);
   assert.doesNotMatch(markup, /in 1\.2 KB \/ out 300 B/);
 });
