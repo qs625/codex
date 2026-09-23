@@ -14,7 +14,10 @@ test("main window uses minimal macOS titlebar chrome without going frameless", (
   assert.doesNotMatch(mainSource, /frame:\s*false/);
   assert.match(appSource, /document\.body\.classList\.toggle\("macos-window-chrome", isMac\)/);
   assert.match(stylesSource, /body\.macos-window-chrome \.sidebar > \.sidebar-section-header:first-child/);
-  assert.match(stylesSource, /padding-left: 86px;/);
+  assert.match(stylesSource, /\.sidebar-window-drag-strip \{[\s\S]*grid-area: drag;[\s\S]*min-height: 22px;/);
+  assert.match(stylesSource, /\.section-heading \{[\s\S]*grid-area: heading;[\s\S]*flex-direction: column;/);
+  assert.match(stylesSource, /\.sidebar-actions \{[\s\S]*grid-area: actions;[\s\S]*-webkit-app-region: no-drag;/);
+  assert.doesNotMatch(stylesSource, /padding-left: 86px;/);
   assert.match(stylesSource, /\.workspace-tab-strip \{[\s\S]*-webkit-app-region: drag;/);
   assert.match(stylesSource, /\.sidebar-section-header \{[\s\S]*-webkit-app-region: drag;/);
   assert.match(stylesSource, /button,[\s\S]*-webkit-app-region: no-drag;/);

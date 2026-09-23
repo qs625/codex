@@ -20,6 +20,7 @@ import {
   BrowserPanel,
   FilePreviewPanel,
   RightPanel,
+  WORKSPACE_OBJECT_DRAG_TYPE,
   type GitDiffPreviewState,
   resolveThreadAnalysisCommandFocus,
 } from "./components/RightPanel";
@@ -206,7 +207,7 @@ const EMPTY_GIT_DIFF_PREVIEW: GitDiffPreviewState = {
   diff: null,
   error: null,
 };
-const WORKSPACE_TAB_DRAG_TYPE = "application/x-morpheus-workspace-object-tab";
+const PANEL_RESIZER_WIDTH = 4;
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 
@@ -2950,6 +2951,7 @@ function App() {
       setFilePreviewByRootId((current) =>
         rememberProjectFilePreview(current, requestRootId, preview),
       );
+      return { preview, rootId: requestRootId };
     } catch (previewLoadError) {
       if (
         filePreviewRequestTokenRef.current !== requestToken ||
@@ -2959,6 +2961,7 @@ function App() {
       }
       setFilePreview(null);
       setPreviewError(toErrorMessage(previewLoadError));
+      return null;
     } finally {
       if (
         filePreviewRequestTokenRef.current === requestToken &&
@@ -2970,7 +2973,7 @@ function App() {
   }
 
   async function handleOpenLocalFile(target: string) {
-    await loadFilePreview(target);
+    await openFilePathInWorkspace(target);
   }
 
   function handleOpenArtifactUrl(url: string) {
@@ -3069,7 +3072,7 @@ function App() {
   }
 
   function handleOpenTreeFile(target: string) {
-    void loadFilePreview(target);
+    void openFilePathInWorkspace(target);
   }
 
   async function handleNavigateToSymbol(
@@ -3249,8 +3252,21 @@ function App() {
     if (!filePreview) {
       return;
     }
+    if (rightPanelView === "preview") {
+      setRightPanelView("skills");
+    }
     upsertWorkspaceObjectTab(
       workspaceTabForFile(filePreview, selectedTreeRootIdRef.current),
+    );
+  }
+
+  async function openFilePathInWorkspace(target: string) {
+    const result = await loadFilePreview(target, { preserveRightPanel: true });
+    if (!result) {
+      return;
+    }
+    upsertWorkspaceObjectTab(
+      workspaceTabForFile(result.preview, result.rootId),
     );
   }
 
@@ -3336,14 +3352,14 @@ function App() {
   }
 
   function handleWorkspaceObjectDragOver(event: DragEvent<HTMLElement>) {
-    if (event.dataTransfer.types.includes(WORKSPACE_TAB_DRAG_TYPE)) {
+    if (event.dataTransfer.types.includes(WORKSPACE_OBJECT_DRAG_TYPE)) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
     }
   }
 
   function handleWorkspaceObjectDrop(event: DragEvent<HTMLElement>) {
-    const tabKind = event.dataTransfer.getData(WORKSPACE_TAB_DRAG_TYPE);
+    const tabKind = event.dataTransfer.getData(WORKSPACE_OBJECT_DRAG_TYPE);
     if (
       tabKind !== "file" &&
       tabKind !== "browser" &&
@@ -3395,7 +3411,7 @@ function App() {
   ) {
     if (
       !draggedWorkspaceTab &&
-      event.dataTransfer.types.includes(WORKSPACE_TAB_DRAG_TYPE)
+      event.dataTransfer.types.includes(WORKSPACE_OBJECT_DRAG_TYPE)
     ) {
       return;
     }
@@ -3458,7 +3474,7 @@ function App() {
       <main
         className="workspace"
         style={{
-          gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr) 6px ${
+          gridTemplateColumns: `${sidebarWidth}px ${PANEL_RESIZER_WIDTH}px minmax(0, 1fr) ${PANEL_RESIZER_WIDTH}px ${
             isRightPanelCollapsed ? RIGHT_PANEL_COLLAPSED_WIDTH : rightPanelWidth
           }px`,
         }}
@@ -3630,7 +3646,6 @@ function App() {
                 onOpenPreviewInBrowser={openPreviewInBrowser}
                 onOpenTreeFile={handleOpenTreeFile}
                 onPreviewUpdated={updateFilePreviewAfterSave}
-                onSetFilePanelView={handleSetFilePanelView}
                 onToggleTreeDirectory={handleToggleTreeDirectory}
                 preview={filePreview}
                 previewError={previewError}

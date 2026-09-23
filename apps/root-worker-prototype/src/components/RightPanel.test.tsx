@@ -39,6 +39,7 @@ const {
   completeFilePreviewSave,
   currentBrowserPanelApi,
   failFilePreviewSave,
+  FilePreviewPanel,
   filePreviewCanEdit,
   filePreviewHeaderEditControlsVisible,
   filePreviewIdentity,
@@ -58,6 +59,7 @@ const {
   shouldClearGitDiffPreviewForFilePreviewChange,
   syncFilePreviewEditState,
   updateFilePreviewDraft,
+  writeWorkspaceObjectDragData,
 } = await import("./RightPanel");
 
 const FEATURE_DEV_WORKFLOW: WorkflowSummary = {
@@ -152,6 +154,35 @@ function renderRightPanel(
     workspaceTabsEnabled?: boolean;
   },
 ) {
+  if (
+    activeView === "preview" &&
+    options?.filePanelView !== "tree" &&
+    (options?.preview || options?.previewError || options?.previewLoading)
+  ) {
+    return renderToStaticMarkup(
+      <FilePreviewPanel
+        expandedTreeDirectories={options?.expandedTreeDirectories ?? []}
+        filePanelView="preview"
+        fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
+        fileTreeErrorsByPath={{}}
+        fileTreeLoadingPath={null}
+        gitDiffPreview={null}
+        gitDiffPreviewError={null}
+        gitDiffPreviewLoading={false}
+        onNavigateToSymbol={() => {}}
+        onOpenPreviewExternally={() => {}}
+        onOpenPreviewInBrowser={() => {}}
+        onOpenTreeFile={() => {}}
+        onPreviewUpdated={() => {}}
+        onToggleTreeDirectory={() => {}}
+        preview={options?.preview ?? null}
+        previewError={options?.previewError ?? null}
+        previewLoading={options?.previewLoading ?? false}
+        previewRootId="root-1"
+        thread={thread}
+      />,
+    );
+  }
   return renderToStaticMarkup(
     <RightPanel
       activeView={activeView}
@@ -342,6 +373,32 @@ test("renders browser panel and rail button", () => {
   assert.match(markup, /Browser URL/);
   assert.match(markup, /class="browser-go-button" disabled=""/);
   assert.match(markup, /Open a page in the right panel/);
+});
+
+test("browser and terminal rail entries are real workspace drag sources", () => {
+  const markup = renderRightPanel(makeThread([]), "skills");
+  const writes: Array<[string, string]> = [];
+  const dataTransfer = {
+    effectAllowed: "none",
+    setData(type: string, value: string) {
+      writes.push([type, value]);
+    },
+  };
+
+  assert.match(
+    markup,
+    /draggable="true"[^>]*aria-label="Browser"|aria-label="Browser"[^>]*draggable="true"/,
+  );
+  assert.match(
+    markup,
+    /draggable="true"[^>]*aria-label="Terminal"|aria-label="Terminal"[^>]*draggable="true"/,
+  );
+
+  writeWorkspaceObjectDragData(dataTransfer, "browser");
+  assert.equal(dataTransfer.effectAllowed, "move");
+  assert.deepEqual(writes, [
+    ["application/x-morpheus-workspace-object-tab", "browser"],
+  ]);
 });
 
 test("browserBoundsFromElement measures the visible viewport rect with sequence", () => {
@@ -940,24 +997,36 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.doesNotMatch(appSource, /workspace-tab-dot \$\{tab\.kind\}/);
   assert.match(appSource, /closeWorkspaceTabById\(currentTabs, tabId\)/);
   assert.match(appSource, /event\.stopPropagation\(\);\s*closeWorkspaceTab\(tab\.id\)/);
+  assert.match(appSource, /async function openFilePathInWorkspace\(target: string\)/);
+  assert.match(appSource, /return \{ preview, rootId: requestRootId \}/);
+  assert.match(appSource, /const result = await loadFilePreview\(target, \{ preserveRightPanel: true \}\)/);
+  assert.match(appSource, /workspaceTabForFile\(result\.preview, result\.rootId\)/);
+  assert.doesNotMatch(appSource, /workspaceTabForFile\(preview, selectedTreeRootIdRef\.current\)/);
+  assert.match(appSource, /function handleOpenTreeFile\(target: string\) \{[\s\S]*openFilePathInWorkspace\(target\)/);
+  assert.match(appSource, /if \(rightPanelView === "preview"\) \{[\s\S]*setRightPanelView\("skills"\)/);
   assert.match(appSource, /activeWorkspaceTab\?\.kind !== "file"/);
   assert.match(appSource, /activeWorkspaceTab\?\.kind !== "browser"/);
   assert.match(appSource, /activeWorkspaceTab\?\.kind !== "terminal"/);
   assert.match(appSource, /const activeTerminalThread =/);
   assert.match(appSource, /thread=\{activeTerminalThread\}/);
   assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
-  assert.match(appSource, /WORKSPACE_TAB_DRAG_TYPE/);
+  assert.match(appSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
+  assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(appSource, /revealThreadInSidebarState\(\{/);
   assert.match(appSource, /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/);
   assert.match(rightPanelSource, /WorkspaceOpenableRightPanelObject = "file" \| "browser" \| "terminal"/);
   assert.doesNotMatch(rightPanelSource, /panel-eyebrow/);
   assert.doesNotMatch(rightPanelSource, /preview-mode-toggle/);
   assert.doesNotMatch(rightPanelSource, /Context mix/);
-  assert.match(rightPanelSource, /aria-label="Show current file"/);
-  assert.match(rightPanelSource, /aria-label="Show file tree"/);
+  assert.doesNotMatch(rightPanelSource, /aria-label="Show current file"/);
+  assert.doesNotMatch(rightPanelSource, /aria-label="Show file tree"/);
+  assert.doesNotMatch(rightPanelSource, /file-object-toolbar/);
   assert.match(rightPanelSource, /draggable=\{workspaceObjectKindForView\(item\.view\) != null\}/);
+  assert.match(rightPanelSource, /writeWorkspaceObjectDragData\(event\.dataTransfer, kind\)/);
   assert.match(rightPanelSource, /onOpenWorkspaceObject\?\.\(kind\)/);
-  assert.match(rightPanelSource, /application\/x-morpheus-workspace-object-tab/);
+  assert.match(rightPanelSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
+  assert.match(rightPanelSource, /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/);
+  assert.match(rightPanelSource, /filePanelView=\{fileSourcePanelView\}/);
   assert.match(panelsSource, /data-thread-id/);
   assert.match(panelsSource, /className="chat-list-row"[\s\S]*data-thread-id=\{node\.threadId\}/);
   assert.match(panelsSource, /scrollIntoView\(\{ block: "nearest" \}\)/);
@@ -966,7 +1035,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /<FilePreviewPanel/);
   assert.match(appSource, /<BrowserPanel/);
   assert.match(appSource, /<TerminalPanel/);
-  assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px 6px minmax\(0, 1fr\) 6px/);
+  assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px \$\{PANEL_RESIZER_WIDTH\}px minmax\(0, 1fr\) \$\{PANEL_RESIZER_WIDTH\}px/);
   assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel/);
   assert.match(stylesSource, /width: 100%;/);
   assert.match(
@@ -978,7 +1047,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.12\);/);
   assert.match(stylesSource, /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.18\);/);
   assert.match(stylesSource, /\.panel-content-header \{[\s\S]*min-height: 34px;[\s\S]*padding: 6px 10px;/);
-  assert.match(stylesSource, /\.file-object-toolbar \{/);
+  assert.doesNotMatch(stylesSource, /\.file-object-toolbar/);
   assert.doesNotMatch(stylesSource, /\.panel-eyebrow/);
   assert.doesNotMatch(stylesSource, /\.preview-mode-toggle/);
   assert.match(stylesSource, /\.workspace-tab-dot\.doing/);
@@ -1831,8 +1900,8 @@ test("renders cwd tree inside the preview panel", () => {
     },
   });
 
-  assert.match(markup, /aria-label="Show current file"/);
-  assert.match(markup, /aria-label="Show file tree"/);
+  assert.doesNotMatch(markup, /aria-label="Show current file"/);
+  assert.doesNotMatch(markup, /aria-label="Show file tree"/);
   assert.doesNotMatch(markup, /CWD Tree/);
   assert.match(markup, /Thread cwd file tree/);
   assert.match(markup, /README\.md/);
@@ -2328,7 +2397,7 @@ test("hides chat compat cwd from the preview tree", () => {
     },
   });
 
-  assert.match(markup, /aria-label="Show file tree"/);
+  assert.doesNotMatch(markup, /aria-label="Show file tree"/);
   assert.doesNotMatch(markup, /CWD Tree/);
   assert.match(markup, /This chat has no project cwd to browse\./);
   assert.doesNotMatch(markup, /Thread cwd file tree/);
