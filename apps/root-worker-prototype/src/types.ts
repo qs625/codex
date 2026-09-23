@@ -293,55 +293,8 @@ export type ThreadItem = ThreadItemTimestamps &
   | {
       type: "contextCompaction";
       id: string;
-      summary?: string | null;
-      replacementHistory?: CompactReplacementHistoryItem[] | ResponseItem[] | null;
-      replacementHistoryStatus?: "missing" | "empty" | "available";
-      replacementHistoryCount?: number | null;
     }
   );
-
-export type CompactReplacementHistoryItem =
-  | {
-      type: "injectedContext";
-      id: string;
-      title: string;
-      preview: string;
-      sections: Array<{
-        label: string;
-        text: string;
-      }>;
-    }
-  | {
-      type: "userMessage";
-      id: string;
-      content: Array<{
-        type: string;
-        text?: string;
-        image_url?: string;
-        imageUrl?: string;
-        url?: string;
-        path?: string;
-        text_elements?: unknown[];
-        textElements?: unknown[];
-      }>;
-    }
-  | {
-      type: "agentMessage";
-      id: string;
-      text: string;
-      phase?: string | null;
-      memoryCitation?: unknown | null;
-    }
-  | {
-      type: "conversationArtifact";
-      id: string;
-      title: string;
-      source?: ConversationArtifactSource | null;
-      mimeType: string;
-      content: string;
-      language?: string | null;
-      truncated?: boolean;
-    };
 
 export type ConversationArtifactSource =
   | {
@@ -956,14 +909,9 @@ export type ConversationEntry = {
     | "goal"
     | "external"
     | "context";
-  replacementHistoryCells?: ConversationCell[] | null;
-  replacementHistoryEntries?: ConversationEntry[] | null;
-  replacementHistoryStatus?: "missing" | "empty" | "available";
-  replacementHistoryCount?: number | null;
   compactSummary?: string | null;
   archivedCells?: ConversationCell[];
   archivedEntryCount?: number;
-  isReplacementHistory?: boolean;
 };
 
 export type ConversationCell = {

@@ -101,7 +101,6 @@ test("uses durable compaction count before scanning visible turns", () => {
       {
         type: "contextCompaction",
         id: "compact-latest",
-        replacementHistory: [],
       },
     ]),
     stats: { compactionCount: 3 },
@@ -117,12 +116,10 @@ test("falls back to visible context compaction items when stats are unavailable"
     {
       type: "contextCompaction",
       id: "compact-1",
-      replacementHistory: [],
     },
     {
       type: "contextCompaction",
       id: "compact-2",
-      replacementHistory: [],
     },
   ]);
 

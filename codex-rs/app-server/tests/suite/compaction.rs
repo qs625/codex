@@ -234,17 +234,9 @@ description: Mid-turn compact role fixture.
             .await?;
     send_turn_and_wait(&mut mcp, &thread_id, "trigger mid-turn compact").await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
-    let ThreadItem::ContextCompaction {
-        replacement_history,
-        ..
-    } = completed.item
-    else {
+    let ThreadItem::ContextCompaction { .. } = completed.item else {
         unreachable!("completed item should be context compaction");
     };
-    assert!(
-        replacement_history.as_ref().is_none_or(Vec::is_empty),
-        "completed compact item should not expose full replacement history: {replacement_history:?}"
-    );
 
     let response_requests = responses_log.requests();
     assert_eq!(response_requests.len(), 3);
@@ -467,17 +459,9 @@ description: Manual compact role fixture.
             .await?;
     let completed =
         compact_thread_and_wait_for_completed(&mut mcp, &thread_id, "ROLE_COMPACT_SUMMARY").await?;
-    let ThreadItem::ContextCompaction {
-        replacement_history,
-        ..
-    } = completed.item
-    else {
+    let ThreadItem::ContextCompaction { .. } = completed.item else {
         unreachable!("completed item should be context compaction");
     };
-    assert!(
-        replacement_history.as_ref().is_none_or(Vec::is_empty),
-        "completed compact item should not expose full replacement history: {replacement_history:?}"
-    );
 
     let response_requests = responses_log.requests();
     let compact_request = response_requests
@@ -797,6 +781,7 @@ async fn compact_thread_and_wait_for_completed(
         thread_id,
         expected_final_output,
     )?;
+    wait_for_turn_completed(mcp, &completed.turn_id).await?;
     Ok(completed)
 }
 
@@ -887,44 +872,18 @@ fn assert_context_compaction_lifecycle(
     started: ItemStartedNotification,
     completed: ItemCompletedNotification,
     thread_id: &str,
-    expected_final_output: &str,
+    _expected_final_output: &str,
 ) -> Result<()> {
-    let ThreadItem::ContextCompaction {
-        id: started_id,
-        summary: started_summary,
-        replacement_history: started_replacement_history,
-        ..
-    } = started.item
-    else {
+    let ThreadItem::ContextCompaction { id: started_id } = started.item else {
         unreachable!("started item should be context compaction");
     };
-    let ThreadItem::ContextCompaction {
-        id: completed_id,
-        summary: completed_summary,
-        replacement_history: completed_replacement_history,
-        ..
-    } = completed.item
-    else {
+    let ThreadItem::ContextCompaction { id: completed_id } = completed.item else {
         unreachable!("completed item should be context compaction");
     };
 
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
-    assert!(
-        started_replacement_history
-            .as_ref()
-            .is_none_or(Vec::is_empty)
-    );
-    assert_eq!(started_summary, None);
-    assert_eq!(completed_summary.as_deref(), Some(expected_final_output));
-
-    assert!(
-        completed_replacement_history
-            .as_ref()
-            .is_none_or(Vec::is_empty),
-        "completed compact item should not expose full replacement history: {completed_replacement_history:?}"
-    );
 
     Ok(())
 }

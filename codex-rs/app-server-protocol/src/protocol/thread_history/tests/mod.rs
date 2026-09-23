@@ -7,7 +7,6 @@ use crate::protocol::CommandExecutionNotificationKind;
 use crate::protocol::CommandExecutionNotifyOn;
 use crate::protocol::CommandExecutionSource;
 use crate::protocol::CommandExecutionStatus;
-use crate::protocol::ContextCompactionReplacementItem;
 use crate::protocol::DynamicToolCallStatus;
 use crate::protocol::InjectedContextSection;
 use crate::protocol::McpToolCallResult;

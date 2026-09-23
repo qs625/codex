@@ -3,8 +3,6 @@ import type { ConversationCell, ConversationEntry } from "../types";
 export type LoadedCompactConversationDetails = {
   archivedCells: ConversationCell[];
   archivedEntryCount: number;
-  replacementHistoryEntries: ConversationEntry[];
-  replacementHistoryCells: ConversationCell[];
 };
 
 export type ConversationCellBuildOptions = {
@@ -35,13 +33,9 @@ export function extractCompactConversationDetails(
         prefixCells,
         entry.turnId,
       );
-      const replacementHistoryEntries = entry.replacementHistoryEntries ?? [];
       return {
         archivedCells,
         archivedEntryCount: countConversationEntries(archivedCells),
-        replacementHistoryEntries,
-        replacementHistoryCells:
-          buildConversationCellsForSegment(replacementHistoryEntries),
       };
     }
     priorEntries.push(entry);
@@ -99,9 +93,6 @@ function buildConversationCellsForSegment(
                 ...entry,
                 archivedCells,
                 archivedEntryCount,
-                replacementHistoryEntries:
-                  loadedDetails.replacementHistoryEntries,
-                replacementHistoryCells: loadedDetails.replacementHistoryCells,
               }
             : archivedCells.length > 0 || archivedEntryCount !== undefined
               ? {
@@ -153,12 +144,7 @@ function countConversationEntries(cells: ConversationCell[]) {
             return entryCount + (entry.archivedEntryCount ?? 0);
           }
           if (entry.kind === "compact") {
-            return (
-              entryCount +
-              (entry.archivedEntryCount ?? 0) +
-              1 +
-              countConversationEntries(entry.replacementHistoryCells ?? [])
-            );
+            return entryCount + (entry.archivedEntryCount ?? 0) + 1;
           }
           return entryCount + 1;
         },
@@ -220,9 +206,6 @@ function shouldMergeConversationEntry(
     if (previousEntry.turnId !== nextEntry.turnId) {
       return false;
     }
-    if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
-      return false;
-    }
     if (
       isStandaloneNotificationEntry(previousEntry) ||
       isStandaloneNotificationEntry(nextEntry)
@@ -249,9 +232,6 @@ function shouldMergeConversationEntry(
       nextEntry.turnId === undefined ||
       previousEntry.turnId !== nextEntry.turnId
     ) {
-      return false;
-    }
-    if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
       return false;
     }
     return true;

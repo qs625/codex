@@ -297,19 +297,17 @@ fn preserves_compaction_only_turn() {
             items_view: TurnItemsView::Full,
             items: vec![ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                summary: None,
-                replacement_history: None,
             }],
         }]
     );
 }
 
 #[test]
-fn compact_head_attaches_following_init_context_to_marker() {
+fn compact_head_projects_summary_and_init_context_as_flat_items() {
     let items = vec![
         RolloutItem::Compacted(CompactedItem {
             message: "summary".into(),
-            replacement_history: Some(Vec::new()),
+            replacement_history: None,
             visible_replacement_history_len: None,
         }),
         RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
@@ -340,33 +338,34 @@ fn compact_head_attaches_following_init_context_to_marker() {
     let turns = build_turns_from_rollout_items(&items);
 
     assert_eq!(turns.len(), 1);
-    assert_eq!(turns[0].items.len(), 1);
-    assert!(matches!(
-        &turns[0].items[0],
+    assert_eq!(turns[0].items.len(), 3);
+    assert_eq!(
+        turns[0].items[0],
         ThreadItem::ContextCompaction {
-            summary,
-            replacement_history,
-            ..
-        } if summary.as_deref() == Some("summary")
-            && replacement_history.as_ref().is_some_and(|items| matches!(
-                items.as_slice(),
-                [ContextCompactionReplacementItem::InjectedContext {
-                    title,
-                    sections,
-                    ..
-                }] if title == "Init Context"
-                    && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
-                        == vec!["Permissions", "Environment"]
-            ))
+            id: "item-1".into(),
+        }
+    );
+    assert!(matches!(
+        &turns[0].items[1],
+        ThreadItem::AgentMessage { id, text, .. }
+            if id == "item-1:summary" && text == "summary"
+    ));
+    assert!(matches!(
+        &turns[0].items[2],
+        ThreadItem::InjectedContext {
+            title, sections, ..
+        } if title == "Init Context"
+            && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
+                == vec!["Permissions", "Environment"]
     ));
 }
 
 #[test]
-fn compact_head_deduplicates_repeated_init_context_completion() {
+fn compact_head_deduplicates_repeated_flat_init_context_completion() {
     let items = vec![
         RolloutItem::Compacted(CompactedItem {
             message: "summary".into(),
-            replacement_history: Some(Vec::new()),
+            replacement_history: None,
             visible_replacement_history_len: None,
         }),
         RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
@@ -406,24 +405,15 @@ fn compact_head_deduplicates_repeated_init_context_completion() {
     let turns = build_turns_from_rollout_items(&items);
 
     assert_eq!(turns.len(), 1);
-    assert!(matches!(
-        &turns[0].items[0],
-        ThreadItem::ContextCompaction {
-            summary,
-            replacement_history,
-            ..
-        } if summary.as_deref() == Some("summary")
-            && replacement_history.as_ref().is_some_and(|items| matches!(
-                items.as_slice(),
-                [ContextCompactionReplacementItem::InjectedContext {
-                    title,
-                    sections,
-                    ..
-                }] if title == "Init Context"
-                    && sections.iter().map(|section| section.label.as_str()).collect::<Vec<_>>()
-                        == vec!["Permissions"]
-            ))
-    ));
+    assert_eq!(turns[0].items.len(), 3);
+    assert_eq!(
+        turns[0]
+            .items
+            .iter()
+            .filter(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -456,13 +446,12 @@ fn init_context_after_compact_turn_context_stays_top_level() {
     let turns = build_turns_from_rollout_items(&items);
 
     assert_eq!(turns.len(), 2);
-    assert!(matches!(
-        &turns[0].items[0],
+    assert_eq!(
+        turns[0].items[0],
         ThreadItem::ContextCompaction {
-            replacement_history,
-            ..
-        } if replacement_history.is_none()
-    ));
+            id: "item-1".into(),
+        }
+    );
     assert!(matches!(
         &turns[1].items[0],
         ThreadItem::InjectedContext { title, .. } if title == "Init Context"
@@ -526,8 +515,6 @@ fn checkpoint_compaction_prompt_marks_boundary_without_hiding_summary() {
         vec![
             ThreadItem::ContextCompaction {
                 id: "item-2".into(),
-                summary: None,
-                replacement_history: None,
             },
             ThreadItem::AgentMessage {
                 id: "item-3".into(),
@@ -572,8 +559,6 @@ fn checkpoint_compaction_prompt_before_turn_start_uses_summary_turn_boundary() {
         vec![
             ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                summary: None,
-                replacement_history: None,
             },
             ThreadItem::AgentMessage {
                 id: "item-2".into(),
@@ -624,7 +609,7 @@ fn checkpoint_compaction_prompt_without_summary_does_not_mark_boundary() {
 }
 
 #[test]
-fn checkpoint_compaction_summary_boundary_preserves_later_replacement_history() {
+fn checkpoint_compaction_summary_boundary_preserves_flat_summary() {
     let items = vec![
         RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-compact".into(),
@@ -647,14 +632,7 @@ fn checkpoint_compaction_summary_boundary_preserves_later_replacement_history() 
         })),
         RolloutItem::Compacted(CompactedItem {
             message: "summary".into(),
-            replacement_history: Some(vec![ResponseItem::Message {
-                id: None,
-                role: "user".into(),
-                content: vec![ContentItem::InputText {
-                    text: "recent request".into(),
-                }],
-                phase: None,
-            }]),
+            replacement_history: None,
             visible_replacement_history_len: None,
         }),
     ];
@@ -667,14 +645,12 @@ fn checkpoint_compaction_summary_boundary_preserves_later_replacement_history() 
         vec![
             ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                summary: Some("summary".into()),
-                replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
-                    id: "replacement-0".into(),
-                    content: vec![UserInput::Text {
-                        text: "recent request".into(),
-                        text_elements: Vec::new(),
-                    }],
-                }]),
+            },
+            ThreadItem::AgentMessage {
+                id: "item-1:summary".into(),
+                text: "summary".into(),
+                phase: None,
+                memory_citation: None,
             },
             ThreadItem::AgentMessage {
                 id: "item-2".into(),
@@ -687,66 +663,7 @@ fn checkpoint_compaction_summary_boundary_preserves_later_replacement_history() 
 }
 
 #[test]
-fn preserves_compaction_replacement_history_while_preserving_summary() {
-    let replacement_history = vec![
-        ResponseItem::Message {
-            id: None,
-            role: "user".into(),
-            content: vec![ContentItem::InputText {
-                text: "recent request".into(),
-            }],
-            phase: None,
-        },
-        ResponseItem::FunctionCall {
-            id: None,
-            name: "shell".into(),
-            namespace: Some("functions".into()),
-            arguments: "{\"cmd\":\"pwd\"}".into(),
-            call_id: "call-1".into(),
-        },
-    ];
-    let items = vec![
-        RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
-            turn_id: "turn-compact".into(),
-            started_at: None,
-            model_context_window: None,
-            collaboration_mode_kind: Default::default(),
-        })),
-        RolloutItem::Compacted(CompactedItem {
-            message: "summary".into(),
-            replacement_history: Some(replacement_history.clone()),
-            visible_replacement_history_len: None,
-        }),
-    ];
-
-    let turns = build_turns_from_rollout_items(&items);
-
-    assert_eq!(
-        turns[0].items,
-        vec![ThreadItem::ContextCompaction {
-            id: "item-1".into(),
-            summary: Some("summary".into()),
-            replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
-                id: "replacement-0".into(),
-                content: vec![UserInput::Text {
-                    text: "recent request".into(),
-                    text_elements: Vec::new(),
-                }],
-            }]),
-        }]
-    );
-}
-
-#[test]
-fn deduplicates_legacy_context_compacted_after_replacement_history() {
-    let replacement_history = vec![ResponseItem::Message {
-        id: None,
-        role: "user".into(),
-        content: vec![ContentItem::InputText {
-            text: "recent request".into(),
-        }],
-        phase: None,
-    }];
+fn compact_marker_remains_single_marker_when_context_compacted_repeats() {
     let items = vec![
         RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-compact".into(),
@@ -757,7 +674,7 @@ fn deduplicates_legacy_context_compacted_after_replacement_history() {
         RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
         RolloutItem::Compacted(CompactedItem {
             message: "summary".into(),
-            replacement_history: Some(replacement_history.clone()),
+            replacement_history: None,
             visible_replacement_history_len: None,
         }),
         RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
@@ -782,17 +699,17 @@ fn deduplicates_legacy_context_compacted_after_replacement_history() {
             completed_at: None,
             duration_ms: None,
             items_view: TurnItemsView::Full,
-            items: vec![ThreadItem::ContextCompaction {
-                id: "item-1".into(),
-                summary: Some("summary".into()),
-                replacement_history: Some(vec![ContextCompactionReplacementItem::UserMessage {
-                    id: "replacement-0".into(),
-                    content: vec![UserInput::Text {
-                        text: "recent request".into(),
-                        text_elements: Vec::new(),
-                    }],
-                }]),
-            }],
+            items: vec![
+                ThreadItem::ContextCompaction {
+                    id: "item-1".into(),
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-1:summary".into(),
+                    text: "summary".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ],
         }]
     );
 }

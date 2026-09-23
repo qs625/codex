@@ -100,9 +100,6 @@ test("estimates archived history rows separately from compact rows", () => {
         text: "compacted",
         timestamp: "09:41",
         attachments: [],
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 2,
-        replacementHistoryEntries: [],
       },
     ],
   };
@@ -125,10 +122,6 @@ test("compact row height ignores archived details and inline summary fields", ()
         timestamp: "09:41",
         attachments: [],
         compactSummary: "Short compact summary.",
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 1,
-        replacementHistoryEntries: [],
-        replacementHistoryCells: [],
       },
     ],
   };
@@ -141,7 +134,6 @@ test("compact row height ignores archived details and inline summary fields", ()
         id: "compact-expanded",
         archivedEntryCount: 1,
         archivedCells: [makeMessageCell("archived", "old request")],
-        replacementHistoryCells: [makeMessageCell("replacement", "recent request")],
       },
     ],
   };
@@ -167,9 +159,6 @@ test("compact row height stays fixed for large compact summary fields", () => {
         timestamp: "09:41",
         attachments: [],
         compactSummary: "Short compact summary.",
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 0,
-        replacementHistoryEntries: [],
       },
     ],
   };

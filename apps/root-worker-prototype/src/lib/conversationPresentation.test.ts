@@ -85,7 +85,7 @@ test("keeps command entries visible while filtering command notifications", () =
   assert.equal(cells[0].entries.length, 2);
 });
 
-test("keeps command entries inside compact and archived display cells", () => {
+test("keeps command entries inside archived display cells", () => {
   const cells = [
     {
       id: "compact",
@@ -93,18 +93,11 @@ test("keeps command entries inside compact and archived display cells", () => {
       entries: [
         {
           ...entry("compact-entry"),
-          replacementHistoryCells: [
-            {
-              id: "replacement",
-              kind: "tool",
-              entries: [entry("command", "command"), entry("message")],
-            },
-          ],
           archivedCells: [
             {
               id: "archive",
               kind: "tool",
-              entries: [entry("notification", "commandNotification")],
+              entries: [entry("command", "command"), entry("message")],
             },
           ],
         },
@@ -113,11 +106,10 @@ test("keeps command entries inside compact and archived display cells", () => {
   ] satisfies ConversationCell[];
 
   const result = filterConversationCellsForDisplay(cells);
-  assert.deepEqual(result[0]?.entries[0]?.replacementHistoryCells?.[0]?.entries, [
+  assert.deepEqual(result[0]?.entries[0]?.archivedCells?.[0]?.entries, [
     entry("command", "command"),
     entry("message"),
   ]);
-  assert.deepEqual(result[0]?.entries[0]?.archivedCells, []);
 });
 
 test("filters duplicate restart recovery user rows across compact details", () => {
@@ -147,13 +139,6 @@ test("filters duplicate restart recovery user rows across compact details", () =
               ],
             },
           ],
-          replacementHistoryCells: [
-            {
-              id: "replacement-recovery",
-              kind: "message",
-              entries: [userEntry("replacement-user", prompt)],
-            },
-          ],
         },
       ],
     },
@@ -166,9 +151,6 @@ test("filters duplicate restart recovery user rows across compact details", () =
       cell.entries.flatMap((displayEntry) => [
         displayEntry.id,
         ...(displayEntry.archivedCells ?? []).flatMap((nestedCell) =>
-          nestedCell.entries.map((entry) => entry.id),
-        ),
-        ...(displayEntry.replacementHistoryCells ?? []).flatMap((nestedCell) =>
           nestedCell.entries.map((entry) => entry.id),
         ),
       ]),
@@ -224,7 +206,7 @@ test("keeps top-level restart recovery row when compact details appear first", (
   );
 });
 
-test("filters duplicate restart recovery marker rows across compact details", () => {
+test("filters duplicate restart recovery marker rows across archived compact details", () => {
   const prompt =
     "Morpheus 已恢复预期的 Runtime Capsule 重启请求。\n\n恢复标识：runtime-restart:call_NgZHVF9C4uSemUFbNHpzSuWG";
   const cells = [
@@ -239,9 +221,9 @@ test("filters duplicate restart recovery marker rows across compact details", ()
       entries: [
         {
           ...entry("compact-entry"),
-          replacementHistoryCells: [
+          archivedCells: [
             {
-              id: "replacement-recovery",
+              id: "archived-recovery",
               kind: "message",
               entries: [
                 userEntry(
@@ -260,7 +242,7 @@ test("filters duplicate restart recovery marker rows across compact details", ()
     filterConversationCellsForDisplay(cells).flatMap((cell) =>
       cell.entries.flatMap((displayEntry) => [
         displayEntry.id,
-        ...(displayEntry.replacementHistoryCells ?? []).flatMap((nestedCell) =>
+        ...(displayEntry.archivedCells ?? []).flatMap((nestedCell) =>
           nestedCell.entries.map((entry) => entry.id),
         ),
       ]),
@@ -269,7 +251,7 @@ test("filters duplicate restart recovery marker rows across compact details", ()
   );
 });
 
-test("keeps top-level init context and compact replacement init context", () => {
+test("keeps top-level init context and flat post-compact init context", () => {
   const cells = [
     {
       id: "live-init-context",
@@ -279,18 +261,12 @@ test("keeps top-level init context and compact replacement init context", () => 
     {
       id: "compact",
       kind: "compact",
-      entries: [
-        {
-          ...entry("compact-entry"),
-          replacementHistoryCells: [
-            {
-              id: "replacement-init-context",
-              kind: "tool",
-              entries: [initContextEntry("ctx-retained")],
-            },
-          ],
-        },
-      ],
+      entries: [entry("compact-entry")],
+    },
+    {
+      id: "retained-init-context",
+      kind: "tool",
+      entries: [initContextEntry("ctx-retained")],
     },
     {
       id: "ordinary-context",
@@ -303,9 +279,6 @@ test("keeps top-level init context and compact replacement init context", () => 
     filterConversationCellsForDisplay(cells).flatMap((cell) =>
       cell.entries.flatMap((displayEntry) => [
         displayEntry.id,
-        ...(displayEntry.replacementHistoryCells ?? []).flatMap((nestedCell) =>
-          nestedCell.entries.map((entry) => entry.id),
-        ),
       ]),
     ),
     ["ctx-live", "compact-entry", "ctx-retained", "ctx-different"],

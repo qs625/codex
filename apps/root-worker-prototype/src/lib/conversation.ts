@@ -1,9 +1,7 @@
 import type {
   ConversationArtifactSource,
-  CompactReplacementHistoryItem,
   ConversationCell,
   ConversationEntry,
-  ResponseItem,
   Thread,
   ThreadItem,
   ThreadLifecycleStatus,
@@ -37,7 +35,6 @@ import {
   attachmentsFromUserInput,
   formatUserInputContent,
 } from "./conversationUserInput";
-import { buildReplacementHistoryEntries } from "./conversationReplacementHistory";
 import {
   buildCommandLookup,
   commandExecutionNotificationOutput,
@@ -527,11 +524,7 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "contextCompaction") {
-    return buildContextCompactionEntries(item, {
-      author,
-      timestamp,
-      showDetails: showCompactionDetails,
-    });
+    return [buildContextCompactionEntry(item, { author, timestamp })];
   }
 
   if (item.type === "plan") {
@@ -840,37 +833,6 @@ function artifactSourceMimeType(
   return (source.mimeType ?? fallbackMimeType).trim() || "unknown";
 }
 
-function buildContextCompactionEntries(
-  item: Extract<ThreadItem, { type: "contextCompaction" }>,
-  {
-    author,
-    timestamp,
-    showDetails = true,
-  }: {
-    author: string;
-    timestamp: string;
-    showDetails?: boolean;
-  },
-): ConversationEntry[] {
-  const compactEntry = buildContextCompactionEntry(item, { author, timestamp });
-  if (!showDetails) {
-    return [compactEntry];
-  }
-  const summaryEntry = buildContextCompactionSummaryEntry(item, {
-    author,
-    timestamp,
-  });
-  const retainedContextEntries = retainedInjectedContextEntries(item, {
-    author,
-    timestamp,
-  });
-  return [
-    compactEntry,
-    ...(summaryEntry ? [summaryEntry] : []),
-    ...retainedContextEntries,
-  ];
-}
-
 function buildContextCompactionEntry(
   item: Extract<ThreadItem, { type: "contextCompaction" }>,
   {
@@ -881,25 +843,6 @@ function buildContextCompactionEntry(
     timestamp: string;
   },
 ): ConversationEntry {
-  const replacementHistory = Array.isArray(item.replacementHistory)
-    ? item.replacementHistory
-    : null;
-  const replacementHistoryCount = replacementHistory?.length ?? null;
-  const replacementHistoryStatus =
-    replacementHistory === null
-      ? "missing"
-      : replacementHistory.length > 0
-        ? "available"
-        : "empty";
-  const replacementHistoryEntries =
-    replacementHistory === null
-      ? null
-      : buildReplacementHistoryEntries(replacementHistory, {
-          author,
-          timestamp,
-          parentId: item.id,
-        });
-
   return {
     id: item.id,
     kind: "compact",
@@ -909,176 +852,7 @@ function buildContextCompactionEntry(
     timestamp,
     attachments: [],
     compactSummary: null,
-    replacementHistoryEntries,
-    replacementHistoryStatus,
-    replacementHistoryCount,
   };
-}
-
-function buildContextCompactionSummaryEntry(
-  item: Extract<ThreadItem, { type: "contextCompaction" }>,
-  {
-    author,
-    timestamp,
-  }: {
-    author: string;
-    timestamp: string;
-  },
-): ConversationEntry | null {
-  const summary = contextCompactionSummaryText(item);
-  if (!summary) {
-    return null;
-  }
-
-  return {
-    id: `${item.id}:summary`,
-    kind: "message",
-    author,
-    role: "agent",
-    text: summary,
-    timestamp,
-    attachments: [],
-  };
-}
-
-function contextCompactionSummaryText(
-  item: Extract<ThreadItem, { type: "contextCompaction" }>,
-) {
-  const directSummary = item.summary?.trim();
-  if (directSummary) {
-    return directSummary;
-  }
-  if (!Array.isArray(item.replacementHistory)) {
-    return null;
-  }
-  for (const historyItem of item.replacementHistory) {
-    if (!isResponseItem(historyItem)) {
-      continue;
-    }
-    const summary = responseCompactionSummaryText(historyItem);
-    if (summary) {
-      return summary;
-    }
-  }
-  return null;
-}
-
-function responseCompactionSummaryText(item: ResponseItem) {
-  if (item.type !== "compaction" && item.type !== "context_compaction") {
-    return null;
-  }
-  const summary = stringOrNull((item as { summary?: unknown }).summary)?.trim();
-  return summary || null;
-}
-
-function retainedInjectedContextEntries(
-  item: Extract<ThreadItem, { type: "contextCompaction" }>,
-  {
-    author,
-    timestamp,
-  }: {
-    author: string;
-    timestamp: string;
-  },
-): ConversationEntry[] {
-  if (!Array.isArray(item.replacementHistory)) {
-    return [];
-  }
-  return item.replacementHistory.flatMap((historyItem, index) => {
-    if (isCompactReplacementInjectedContext(historyItem)) {
-      return buildInjectedContextEntries(
-        {
-          ...historyItem,
-          id: `${item.id}:retained:${index}:${historyItem.id}`,
-        },
-        { author, timestamp },
-      );
-    }
-    if (isResponseItem(historyItem)) {
-      const rawContextEntry = retainedRawContextEntry(historyItem, index, {
-        parentId: item.id,
-        author,
-        timestamp,
-      });
-      return rawContextEntry ? [rawContextEntry] : [];
-    }
-    return [];
-  });
-}
-
-function isCompactReplacementInjectedContext(
-  item: CompactReplacementHistoryItem | unknown,
-): item is Extract<CompactReplacementHistoryItem, { type: "injectedContext" }> {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    (item as { type?: unknown }).type === "injectedContext"
-  );
-}
-
-function retainedRawContextEntry(
-  item: ResponseItem,
-  index: number,
-  {
-    parentId,
-    author,
-    timestamp,
-  }: {
-    parentId: string;
-    author: string;
-    timestamp: string;
-  },
-): ConversationEntry | null {
-  if (item.type !== "message") {
-    return null;
-  }
-  const role = stringOrFallback((item as { role?: unknown }).role, "message");
-  if (role !== "developer" && role !== "system") {
-    return null;
-  }
-  const text = extractResponseContentText((item as { content?: unknown }).content);
-  const label = role === "developer" ? "Developer" : "System";
-  return {
-    id: `${parentId}:retained:${index}:raw-${role}-context`,
-    kind: "tool",
-    author,
-    role: "system",
-    text: previewInlineText(text, 160) ?? "Initial context was injected.",
-    timestamp,
-    attachments: [],
-    toolName: `Init Context · ${label}`,
-    toolStatus: "completed",
-    toolDetails: text,
-    toolCategory: "context",
-  };
-}
-
-function isResponseItem(
-  item: CompactReplacementHistoryItem | ResponseItem,
-): item is ResponseItem {
-  return ![
-    "injectedContext",
-    "userMessage",
-    "agentMessage",
-    "conversationArtifact",
-  ].includes(String(item.type));
-}
-
-function extractResponseContentText(content: unknown) {
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  return content
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return "";
-      }
-      const record = item as Record<string, unknown>;
-      return stringOrNull(record.text) ?? stringOrNull(record.content) ?? "";
-    })
-    .filter((text) => text.trim().length > 0)
-    .join("\n")
-    .trim();
 }
 
 function formatItemTimestamp(item: ThreadItem) {

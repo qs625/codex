@@ -2,12 +2,9 @@ use super::PendingTurn;
 use super::ThreadHistoryBuilder;
 use super::support::REVIEW_FALLBACK_MESSAGE;
 use super::support::render_review_output_text;
-use app_server_protocol::ContextCompactionReplacementItem;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::TurnError as V2TurnError;
 use app_server_protocol::TurnStatus;
-use app_server_protocol::context_compaction_replacement_item_from_core;
-use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
@@ -70,37 +67,25 @@ impl ThreadHistoryBuilder {
         let id = self.next_item_id();
         self.ensure_turn()
             .items
-            .push(ThreadItem::ContextCompaction {
-                id,
-                summary: None,
-                replacement_history: None,
-            });
+            .push(ThreadItem::ContextCompaction { id });
     }
 
     pub(super) fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
         self.pending_checkpoint_compaction = None;
         let turn = self.ensure_turn();
         turn.saw_compaction = true;
-        if turn.items.iter().any(|item| {
-            matches!(
-                item,
-                ThreadItem::ContextCompaction {
-                    replacement_history: _,
-                    ..
-                }
-            )
-        }) {
+        if turn
+            .items
+            .iter()
+            .any(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+        {
             return;
         }
 
         let id = self.next_item_id();
         self.ensure_turn()
             .items
-            .push(ThreadItem::ContextCompaction {
-                id,
-                summary: None,
-                replacement_history: None,
-            });
+            .push(ThreadItem::ContextCompaction { id });
     }
 
     pub(super) fn handle_entered_review_mode(
@@ -308,34 +293,38 @@ impl ThreadHistoryBuilder {
         self.pending_checkpoint_compaction = None;
         self.pending_compact_summary_echo = compact_summary_response_item(payload);
         let summary = compact_summary(payload);
-        let replacement_history = compact_replacement_history(payload);
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;
 
-            if let Some(ThreadItem::ContextCompaction {
-                summary: existing_summary,
-                replacement_history: existing_replacement_history,
-                ..
-            }) = turn
+            if let Some(compaction_index) = turn
                 .items
-                .iter_mut()
-                .rev()
-                .find(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
+                .iter()
+                .rposition(|item| matches!(item, ThreadItem::ContextCompaction { .. }))
             {
-                *existing_summary = summary;
-                *existing_replacement_history = replacement_history;
+                let compact_id = turn.items[compaction_index].id().to_string();
+                turn.items[compaction_index] = ThreadItem::ContextCompaction {
+                    id: compact_id.clone(),
+                };
+                if let Some(summary) = summary {
+                    upsert_compaction_summary_after_marker(
+                        &mut turn.items,
+                        compaction_index,
+                        &compact_id,
+                        summary,
+                    );
+                }
                 return;
             }
         }
 
         let id = self.next_item_id();
         let turn = self.ensure_turn();
-        turn.items.push(ThreadItem::ContextCompaction {
-            id,
-            summary,
-            replacement_history,
-        });
+        turn.items
+            .push(ThreadItem::ContextCompaction { id: id.clone() });
+        if let Some(summary) = summary {
+            turn.items.push(compaction_summary_item(&id, summary));
+        }
     }
 
     pub(super) fn handle_thread_rollback(&mut self, payload: &ThreadRolledBackEvent) {
@@ -353,6 +342,30 @@ impl ThreadHistoryBuilder {
     }
 }
 
+fn upsert_compaction_summary_after_marker(
+    items: &mut Vec<ThreadItem>,
+    compaction_index: usize,
+    compaction_id: &str,
+    summary: String,
+) {
+    let summary_item = compaction_summary_item(compaction_id, summary);
+    let summary_id = summary_item.id().to_string();
+    if let Some(existing_index) = items.iter().position(|item| item.id() == summary_id) {
+        items[existing_index] = summary_item;
+        return;
+    }
+    items.insert(compaction_index + 1, summary_item);
+}
+
+fn compaction_summary_item(compaction_id: &str, summary: String) -> ThreadItem {
+    ThreadItem::AgentMessage {
+        id: format!("{compaction_id}:summary"),
+        text: summary,
+        phase: None,
+        memory_citation: None,
+    }
+}
+
 fn compact_summary_response_item(compacted: &CompactedItem) -> Option<ResponseItem> {
     compact_summary(compacted)?;
     Some(compacted.clone().into())
@@ -364,21 +377,6 @@ fn compact_summary(compacted: &CompactedItem) -> Option<String> {
         return None;
     }
     Some(summary.to_string())
-}
-
-fn compact_replacement_history(
-    compacted: &CompactedItem,
-) -> Option<Vec<ContextCompactionReplacementItem>> {
-    compacted
-        .replacement_history
-        .clone()
-        .map(context_compaction_replacement_items_from_response_items)
-        .map(|items| {
-            items
-                .into_iter()
-                .map(context_compaction_replacement_item_from_core)
-                .collect()
-        })
 }
 
 fn is_checkpoint_compaction_prompt(item: &ResponseItem) -> bool {

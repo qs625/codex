@@ -501,15 +501,7 @@ pub enum ThreadItem {
     ExitedReviewMode { id: String, review: String },
     #[serde(rename_all = "camelCase")]
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
-    ContextCompaction {
-        id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema-export", ts(optional))]
-        summary: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema-export", ts(optional))]
-        replacement_history: Option<Vec<ContextCompactionReplacementItem>>,
-    },
+    ContextCompaction { id: String },
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
@@ -537,51 +529,6 @@ impl From<protocol::items::HookPromptFragment> for HookPromptFragment {
 pub struct InjectedContextSection {
     pub label: String,
     pub text: String,
-}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[cfg_attr(
-    feature = "schema-export",
-    ts(tag = "type", rename_all = "camelCase", export)
-)]
-pub enum ContextCompactionReplacementItem {
-    InjectedContext {
-        id: String,
-        title: String,
-        preview: String,
-        sections: Vec<InjectedContextSection>,
-    },
-    UserMessage {
-        id: String,
-        content: Vec<UserInput>,
-    },
-    AgentMessage {
-        id: String,
-        text: String,
-        #[serde(default)]
-        phase: Option<MessagePhase>,
-        #[serde(default, rename = "memoryCitation")]
-        #[cfg_attr(feature = "schema-export", ts(rename = "memoryCitation"))]
-        memory_citation: Option<MemoryCitation>,
-    },
-    #[serde(rename_all = "camelCase")]
-    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
-    ConversationArtifact {
-        id: String,
-        title: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema-export", ts(optional))]
-        source: Option<ConversationArtifactSource>,
-        mime_type: String,
-        content: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema-export", ts(optional))]
-        language: Option<String>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        truncated: bool,
-    },
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
