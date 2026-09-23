@@ -2276,7 +2276,19 @@ test("shows structured follow-up text and image refs in outgoing inter-agent ite
         prompt: "please compare this\n[image:image-1]",
         model: null,
         reasoningEffort: null,
-        agentsStates: {},
+        agentsStates: {
+          "thread-2": {
+            path: "/root/worker",
+            lifecycleStatus: {
+              type: "final",
+              result: {
+                type: "completed",
+                lastAgentMessage: "stale previous task result",
+              },
+            },
+            message: "stale previous task result",
+          },
+        },
       },
     ]),
   );
@@ -2289,6 +2301,13 @@ test("shows structured follow-up text and image refs in outgoing inter-agent ite
     entries[0]?.toolDetails ?? "",
     /Prompt\nplease compare this\n\[image:image-1\]/,
   );
+  assert.match(entries[0]?.toolDetails ?? "", /Receivers\n\/root\/worker/);
+  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /Agent States/);
+  assert.doesNotMatch(
+    entries[0]?.toolDetails ?? "",
+    /stale previous task result/,
+  );
+  assert.doesNotMatch(entries[0]?.text ?? "", /stale previous task result/);
 });
 
 test("shows legacy sendMessage collab messages as follow-up messages", () => {
