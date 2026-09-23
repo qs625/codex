@@ -2173,7 +2173,14 @@ impl Session {
         turn_context: &TurnContext,
         external_agent_tool_specs: &[tool_service_api::ToolSpec],
     ) -> CodexResult<FreshCompactInitialContext> {
-        let user_instructions = AgentsMdManager::new(&turn_context.config)
+        let compact_config = Self::reload_project_config_for_cwd(&turn_context.config)
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!(
+                    "failed to refresh project config for compact: {err}"
+                ))
+            })?;
+        let user_instructions = AgentsMdManager::new(&compact_config)
             .try_user_instructions_with_fs(codex_file_system::LOCAL_FS.as_ref())
             .await
             .map_err(|err| {

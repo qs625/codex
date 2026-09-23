@@ -420,6 +420,161 @@ async fn fresh_compact_initial_context_uses_one_refreshed_instruction_snapshot()
 }
 
 #[tokio::test]
+async fn fresh_compact_initial_context_reloads_project_instruction_files_for_current_cwd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let codex_home = temp.path().join("home");
+    let project_root = temp.path().join("project");
+    let project_morpheus = project_root.join(".morpheus");
+    let project_instructions = project_root.join("instructions");
+    let home_instructions = codex_home.join("instructions");
+    let runtime_instruction = temp.path().join("runtime-instruction.md");
+    std::fs::create_dir_all(&project_morpheus).expect("create project config dir");
+    std::fs::create_dir_all(&project_instructions).expect("create project instructions");
+    std::fs::create_dir_all(&home_instructions).expect("create home instructions");
+    std::fs::write(project_root.join(".git"), "gitdir: here").expect("write git marker");
+    std::fs::write(
+        project_morpheus.join(CONFIG_TOML_FILE),
+        r#"
+instruction_files = [
+  "instructions/user-preferences.md",
+  "instructions/project-understanding.md",
+]
+"#,
+    )
+    .expect("write project config");
+    std::fs::write(
+        project_instructions.join("user-preferences.md"),
+        "# User Preferences\n\nProject compact preference body.",
+    )
+    .expect("write user preferences");
+    std::fs::write(
+        project_instructions.join("project-understanding.md"),
+        "# Project Understanding\n\nProject compact understanding body.",
+    )
+    .expect("write project understanding");
+    std::fs::write(
+        home_instructions.join("morpheus-source-workspace.md"),
+        "# Home Source Workspace\n\nHome compact instruction body.",
+    )
+    .expect("write home instruction");
+    std::fs::write(
+        &runtime_instruction,
+        "# Runtime Instruction\n\nRuntime compact instruction body.",
+    )
+    .expect("write runtime instruction");
+    write_project_trust_config(&codex_home, &[(&project_root, TrustLevel::Trusted)])
+        .await
+        .expect("write trust config");
+
+    let (session, mut turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        codex_home.as_path(),
+        |_| {},
+    )
+    .await;
+    let project_root = project_root.abs();
+    let runtime_instruction = runtime_instruction.abs();
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.cwd = project_root.clone();
+        state.session_configuration.workspace_roots = vec![project_root.clone()];
+    }
+    {
+        let turn_context = Arc::get_mut(&mut turn_context).expect("unique turn context");
+        turn_context.cwd = project_root.clone();
+        let mut config = turn_context.config.as_ref().clone();
+        config.cwd = project_root;
+        config.instruction_files = vec![runtime_instruction];
+        turn_context.config = Arc::new(config);
+    }
+
+    let snapshot = session
+        .build_fresh_compact_initial_context(turn_context.as_ref())
+        .await
+        .expect("fresh compact initial context");
+
+    let initial_context_text = response_input_text(&snapshot.response_items);
+    assert!(
+        initial_context_text.contains("Home compact instruction body."),
+        "{initial_context_text}"
+    );
+    assert!(
+        initial_context_text.contains("Runtime compact instruction body."),
+        "{initial_context_text}"
+    );
+    assert!(
+        initial_context_text.contains("# User Preferences")
+            && initial_context_text.contains("Project compact preference body."),
+        "{initial_context_text}"
+    );
+    assert!(
+        initial_context_text.contains("# Project Understanding")
+            && initial_context_text.contains("Project compact understanding body."),
+        "{initial_context_text}"
+    );
+
+    let TurnItem::InjectedContext(injected_context) =
+        codex_turn_items::injected_context_item_from_response_items(&snapshot.response_items)
+            .expect("expected injected context")
+    else {
+        panic!("expected injected context display item");
+    };
+    let injected_context_text = injected_context
+        .sections
+        .iter()
+        .map(|section| section.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(injected_context_text.contains("Project compact preference body."));
+    assert!(injected_context_text.contains("Project compact understanding body."));
+
+    let replacement_history = snapshot.response_items.clone();
+    let TurnItem::InjectedContext(replacement_injected_context) =
+        codex_turn_items::injected_context_item_from_response_items(&replacement_history)
+            .expect("expected replacement history injected context")
+    else {
+        panic!("expected replacement history injected context");
+    };
+    assert!(
+        replacement_injected_context
+            .sections
+            .iter()
+            .any(|section| section.text.contains("Project compact understanding body."))
+    );
+
+    let compacted_summary = ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: "compacted summary".to_string(),
+        }],
+        phase: None,
+    };
+    let mut post_compact_history = vec![compacted_summary.clone()];
+    post_compact_history.extend(snapshot.response_items.clone());
+    session
+        .replace_compacted_history(
+            post_compact_history,
+            replacement_history.clone(),
+            Some(snapshot.reference_context_item),
+            CompactedItem {
+                message: "compacted summary".to_string(),
+                replacement_history: Some(replacement_history),
+                visible_replacement_history_len: None,
+            },
+            snapshot.user_instructions,
+        )
+        .await
+        .expect("install compacted history");
+
+    let installed_history = session.clone_history().await;
+    let installed_text = response_input_text(installed_history.raw_items());
+    assert!(installed_text.contains("Project compact preference body."));
+    assert!(installed_text.contains("Project compact understanding body."));
+}
+
+#[tokio::test]
 async fn fresh_compact_initial_context_preserves_external_agent_tool_specs() {
     let (session, turn_context) = make_session_and_context().await;
     let external_spec = tool_service_api::ToolSpec::Function(tool_service_api::ResponsesApiTool {
