@@ -1065,6 +1065,25 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(appSource, /filePanelView="preview"/);
   assert.match(appSource, /\[target\]: payload\.entries/);
   assert.match(appSource, /\[payload\.path\]: payload\.entries/);
+  assert.doesNotMatch(appSource, /filePanelViewRef/);
+  assert.doesNotMatch(appSource, /filePanelViewRef\.current === "tree"/);
+  assert.match(
+    appSource,
+    /setExpandedTreeDirectories\(\[\]\);[\s\S]*if \(rightPanelView === "preview" && selectedThread\?\.cwd\) \{[\s\S]*loadFileTreeDirectory\(selectedThread\.cwd\)/,
+  );
+  assert.match(
+    appSource,
+    /const previousRightPanelViewRef = useRef<RightPanelView>\(rightPanelView\)/,
+  );
+  assert.match(
+    appSource,
+    /useEffect\(\(\) => \{[\s\S]*const previousRightPanelView = previousRightPanelViewRef\.current;[\s\S]*previousRightPanelViewRef\.current = rightPanelView;[\s\S]*previousRightPanelView !== "preview"[\s\S]*rightPanelView === "preview"[\s\S]*ensureFileTreeDirectoryLoaded\(selectedThread\.cwd\)/,
+  );
+  assert.doesNotMatch(
+    appSource,
+    /function handleSetRightPanelView\(view: RightPanelView\) \{[\s\S]*ensureFileTreeDirectoryLoaded\(selectedThread\.cwd\)[\s\S]*if \(activeWorkspaceTab\?\.kind === "browser"/,
+  );
+  assert.match(appSource, /fileTreeEntriesByPath\[target\] \|\| fileTreeLoadingPath === target/);
   assert.match(appSource, /function handleOpenTreeFile\(target: string\) \{[\s\S]*openFilePathInWorkspace\(target\)/);
   assert.match(appSource, /if \(rightPanelView === "preview"\) \{[\s\S]*setRightPanelView\("skills"\)/);
   assert.match(appSource, /activeWorkspaceTab\?\.kind !== "file"/);

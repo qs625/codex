@@ -410,7 +410,6 @@ function App() {
   const composerDraftsRef = useRef<ComposerDraftsByThreadId>({});
   const shouldStickConversationToBottomRef = useRef(true);
   const filePreviewRef = useRef<FilePreview | null>(null);
-  const filePanelViewRef = useRef<FilePanelView>("preview");
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedTreeRootIdRef = useRef<string | null>(null);
@@ -418,6 +417,7 @@ function App() {
   const selectedThreadIdRef = useRef<string | null>(null);
   const selectedThreadCwdRef = useRef<string | null>(null);
   const fileTreeSessionTokenRef = useRef(0);
+  const previousRightPanelViewRef = useRef<RightPanelView>(rightPanelView);
   const liveThreadIdsRef = useRef<Set<string>>(new Set());
   const runConfigOverrideByThreadIdRef = useRef<
     Map<string, RunConfigSelection>
@@ -842,19 +842,27 @@ function App() {
   }, [filePreview]);
 
   useEffect(() => {
-    filePanelViewRef.current = filePanelView;
-  }, [filePanelView]);
-
-  useEffect(() => {
     setFileTreeEntriesByPath({});
     setFileTreeLoadingPath(null);
     setFileTreeErrorsByPath({});
     setExpandedTreeDirectories([]);
     fileTreeSessionTokenRef.current += 1;
-    if (filePanelViewRef.current === "tree" && selectedThread?.cwd) {
+    if (rightPanelView === "preview" && selectedThread?.cwd) {
       void loadFileTreeDirectory(selectedThread.cwd);
     }
   }, [selectedThread?.cwd, selectedThreadId]);
+
+  useEffect(() => {
+    const previousRightPanelView = previousRightPanelViewRef.current;
+    previousRightPanelViewRef.current = rightPanelView;
+    if (
+      previousRightPanelView !== "preview" &&
+      rightPanelView === "preview" &&
+      selectedThread?.cwd
+    ) {
+      ensureFileTreeDirectoryLoaded(selectedThread.cwd);
+    }
+  }, [rightPanelView, selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
     function handlePointerMove(event: globalThis.PointerEvent) {
@@ -3061,7 +3069,7 @@ function App() {
   }
 
   function ensureFileTreeDirectoryLoaded(target: string) {
-    if (fileTreeEntriesByPath[target]) {
+    if (fileTreeEntriesByPath[target] || fileTreeLoadingPath === target) {
       return;
     }
     void loadFileTreeDirectory(target);
