@@ -13,6 +13,7 @@ import type {
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const {
+  ConversationPanel,
   NewThreadDialog,
   NewThreadPopover,
   ProjectSection,
@@ -150,6 +151,58 @@ function renderSidebar(
   );
 }
 
+function renderConversationPanel(
+  options: Partial<React.ComponentProps<typeof ConversationPanel>> = {},
+) {
+  const selectedThread =
+    options.selectedThread === undefined
+      ? makeThread("thread-1", "/work/alpha", "Alpha chat")
+      : options.selectedThread;
+  return renderToStaticMarkup(
+    <ConversationPanel
+      availableSkills={[]}
+      availableWorkflows={[]}
+      approvalRequests={[]}
+      conversationCells={[]}
+      conversationScrollRef={React.createRef<HTMLDivElement>()}
+      draft=""
+      draftImages={[]}
+      draftSkills={[]}
+      focusedConversationItem={null}
+      goal={null}
+      goalAction={null}
+      goalActionError={null}
+      imageInputRef={React.createRef<HTMLInputElement>()}
+      isLoadingThread={false}
+      isSending={false}
+      isStoppingTurn={false}
+      onAddDraftSkill={() => {}}
+      onCancelGoal={() => {}}
+      onConversationScroll={() => {}}
+      onDraftChange={() => {}}
+      onHandleComposerPaste={() => {}}
+      onHandleImageSelection={() => {}}
+      onOpenArtifactUrl={() => {}}
+      onOpenLocalFile={() => {}}
+      onPauseGoal={() => {}}
+      onRemoveDraftImage={() => {}}
+      onRemoveDraftSkill={() => {}}
+      onRespondApproval={() => {}}
+      onResumeGoal={() => {}}
+      onRunSlashCommand={() => {}}
+      onSendMessage={() => {}}
+      onStopTurn={() => {}}
+      onToggleVoiceCapture={() => {}}
+      onUpdateRunConfig={() => {}}
+      selectedThread={selectedThread}
+      selectedThreadId={selectedThread?.id ?? null}
+      voiceCaptureMessage={null}
+      voiceCaptureStatus="idle"
+      {...options}
+    />,
+  );
+}
+
 function findElementByAriaLabel(
   node: React.ReactNode,
   ariaLabel: string,
@@ -230,6 +283,23 @@ test("SidebarPanel renders projects with nested subagents and no extra root row"
   assert.doesNotMatch(markup, /Beta chat/);
   assert.doesNotMatch(markup, /Agent Tree/);
   assert.doesNotMatch(markup, /New Root/);
+});
+
+test("ConversationPanel keeps thread metadata in the composer without placeholder buttons", () => {
+  const markup = renderConversationPanel();
+
+  assert.doesNotMatch(markup, /conversation-header/);
+  assert.match(markup, /composer-metadata-row/);
+  assert.match(markup, /\/root/);
+  assert.match(markup, /cwd: .*alpha/);
+  assert.match(markup, /aria-label="Search conversation"/);
+  assert.match(markup, /aria-label="Attach image"/);
+  assert.match(markup, /aria-label="Start voice input"/);
+  assert.match(markup, /aria-label="Send message"/);
+  assert.doesNotMatch(markup, /aria-label="Attach file"/);
+  assert.doesNotMatch(markup, /aria-label="Insert code"/);
+  assert.doesNotMatch(markup, /aria-label="Open thread details"/);
+  assert.doesNotMatch(markup, /aria-label="More thread actions"/);
 });
 
 test("SidebarPanel exposes the settings action", () => {

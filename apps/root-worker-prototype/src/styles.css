@@ -95,6 +95,97 @@ svg {
   border-right: 1px solid rgba(16, 24, 40, 0.08);
 }
 
+.workspace-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.62);
+  border-right: 1px solid rgba(16, 24, 40, 0.08);
+}
+
+.workspace-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(252, 251, 249, 0.76);
+  overflow-x: auto;
+}
+
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #57534e;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+}
+
+.workspace-tab:active {
+  cursor: grabbing;
+}
+
+.workspace-tab.active {
+  border-color: rgba(14, 116, 144, 0.18);
+  background: rgba(236, 254, 255, 0.9);
+  color: #155e75;
+}
+
+.workspace-tab.dragging {
+  opacity: 0.58;
+}
+
+.workspace-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #a8a29e;
+}
+
+.workspace-tab-dot.conversation {
+  background: #2563eb;
+}
+
+.workspace-tab-dot.files {
+  background: #0f766e;
+}
+
+.workspace-tab-dot.terminal {
+  background: #a16207;
+}
+
+.workspace-tab-dot.browser {
+  background: #7c3aed;
+}
+
+.workspace-tab-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-tab-panel {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-tab-panel[hidden] {
+  display: none;
+}
+
 .panel-resizer {
   position: relative;
   cursor: col-resize;
@@ -3854,6 +3945,41 @@ svg {
   border: 1px solid rgba(16, 24, 40, 0.09);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.composer-metadata-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 8px;
+}
+
+.composer-thread-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  color: #78716c;
+  font-size: 11px;
+}
+
+.composer-thread-title {
+  max-width: min(30ch, 100%);
+  color: #292524;
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-search-slot {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  min-width: 32px;
 }
 
 .composer-file-input {
