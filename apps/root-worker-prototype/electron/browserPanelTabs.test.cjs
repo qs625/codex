@@ -182,9 +182,19 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     mainSource,
     /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*browserPanelBoundsAreVisible\(panel\.bounds\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
   );
+  const visibleNavigationTargetFunction = mainSource.slice(
+    mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget(panel, tab)"),
+    mainSource.indexOf("async function waitForBrowserPanelNavigationTarget", mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget(panel, tab)")),
+  );
   assert.match(
-    mainSource,
-    /async function waitForBrowserPanelVisibleNavigationTarget\(panel, tab\) \{[\s\S]*if \(!panel\.visible\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
+    visibleNavigationTargetFunction,
+    /if \(!panel\.visible\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*if \(!browserPanelBoundsAreVisible\(panel\.bounds\)\) \{[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);/,
+    "visible Browser navigation must still require a visible attached native view",
+  );
+  assert.match(
+    visibleNavigationTargetFunction,
+    /try \{[\s\S]*await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);[\s\S]*\} catch \(error\) \{[\s\S]*console\.warn\([\s\S]*"Browser panel DevTools target was not published for visible navigation"[\s\S]*error,[\s\S]*\);[\s\S]*\}/,
+    "visible Browser navigation must not fail user page display when DevTools target publication is unavailable",
   );
   assert.match(
     mainSource,
@@ -234,5 +244,10 @@ test("direct CDP-created Browser tabs do not force native attach while hidden", 
     createTargetFunction,
     /ensureBrowserPanelTabAttachedForNavigation|attachActiveBrowserPanelView/,
     "direct CDP target creation must not directly attach or raise the native view",
+  );
+  assert.match(
+    mainSource,
+    /async function waitForBrowserPanelNavigationTarget\([\s\S]*if \(requireVisiblePanel\) \{[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab\);[\s\S]*return;[\s\S]*\}[\s\S]*await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);[\s\S]*\}/,
+    "hidden CDP-created Browser targets must still require DevTools target publication",
   );
 });

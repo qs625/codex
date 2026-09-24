@@ -1736,7 +1736,14 @@ async function waitForBrowserPanelVisibleNavigationTarget(panel, tab) {
   if (!remoteDebuggingConfig.enabled) {
     return;
   }
-  await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
+  try {
+    await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
+  } catch (error) {
+    console.warn(
+      "Browser panel DevTools target was not published for visible navigation",
+      error,
+    );
+  }
 }
 
 async function waitForBrowserPanelNavigationTarget(
