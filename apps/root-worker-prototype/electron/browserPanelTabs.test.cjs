@@ -289,3 +289,49 @@ test("direct CDP-created Browser tabs do not force native attach while hidden", 
     "hidden CDP-created Browser targets must still require DevTools target publication",
   );
 });
+
+test("closing Browser tabs destroys webContents before replacement tabs navigate", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const closeFunction = mainSource.slice(
+    mainSource.indexOf("function closeBrowserPanelTab(panel, tabId)"),
+    mainSource.indexOf(
+      "function removeDestroyedBrowserPanelTab",
+      mainSource.indexOf("function closeBrowserPanelTab(panel, tabId)"),
+    ),
+  );
+  const destroyPanelFunction = mainSource.slice(
+    mainSource.indexOf("function destroyBrowserPanel(window)"),
+    mainSource.indexOf(
+      "function setBrowserPanelBounds",
+      mainSource.indexOf("function destroyBrowserPanel(window)"),
+    ),
+  );
+  const disposeFunction = mainSource.slice(
+    mainSource.indexOf("function disposeBrowserPanelTab(panel, tab)"),
+    mainSource.indexOf(
+      "function attachActiveBrowserPanelView",
+      mainSource.indexOf("function disposeBrowserPanelTab(panel, tab)"),
+    ),
+  );
+
+  assert.match(
+    closeFunction,
+    /panel\.tabs\.splice\(index, 1\);[\s\S]*disposeBrowserPanelTab\(panel, tab\);[\s\S]*if \(panel\.tabs\.length === 0 && !panel\.destroying\) \{[\s\S]*createBrowserPanelTab\(panel, \{ activate: true \}\);/,
+    "closed tabs must be disposed before an automatic replacement tab can be created",
+  );
+  assert.match(
+    destroyPanelFunction,
+    /for \(const tab of \[\.\.\.panel\.tabs\]\) \{[\s\S]*disposeBrowserPanelTab\(panel, tab\);[\s\S]*\}/,
+    "window teardown must dispose a tab snapshot because destroy events can mutate panel.tabs",
+  );
+  assert.match(
+    disposeFunction,
+    /if \(panel\.attachedTabId === tab\.id\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}[\s\S]*stopBrowserPanelNavigation\(tab\);[\s\S]*tab\.view\.webContents\.destroy\(\);/,
+    "Browser tab disposal must detach native views, cancel pending navigation, and destroy the WebContents",
+  );
+  assert.doesNotMatch(
+    disposeFunction,
+    /webContents\.close/,
+    "closing a Browser tab must not leave WebContentsView lifetime to page close semantics",
+  );
+});
