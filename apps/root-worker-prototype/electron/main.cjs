@@ -752,8 +752,14 @@ ipcMain.handle("codex:browser:navigate", async (event, target) => {
   return browserPanelState(panel);
 });
 
-ipcMain.handle("codex:browser:newTab", async (event, target) => {
+ipcMain.handle("codex:browser:newTab", async (event, targetOrOptions) => {
   const panel = browserPanelForEvent(event);
+  const options =
+    targetOrOptions && typeof targetOrOptions === "object"
+      ? targetOrOptions
+      : { target: targetOrOptions, activate: true };
+  const target = options.target;
+  const activate = options.activate !== false;
   const normalized =
     typeof target === "string" && target.trim()
       ? normalizeBrowserTarget(target)
@@ -761,7 +767,7 @@ ipcMain.handle("codex:browser:newTab", async (event, target) => {
   if (!normalized.ok) {
     throw new Error(normalized.reason);
   }
-  const tab = createBrowserPanelTab(panel, { activate: true });
+  const tab = createBrowserPanelTab(panel, { activate });
   if (normalized.url) {
     await loadBrowserPanelTabUrl(panel, tab, normalized.url);
   }

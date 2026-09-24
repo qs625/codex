@@ -424,6 +424,26 @@ test("BrowserPanel manager selection ignores workspace-owned tabs", () => {
     withVisibleFallback.renderedTabs.map((tab) => tab.id),
     ["browser-b"],
   );
+
+  const withLocalManagerSelection = resolveBrowserPanelTabSelection({
+    tabs: [
+      ...tabs,
+      {
+        id: "browser-c",
+        title: "C",
+        url: "https://new-right-owned.example",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ],
+    activeTabId: "browser-a",
+    managerSelectedBrowserTabId: "browser-c",
+    isManagerVariant: true,
+    detachedBrowserTabIds: ["browser-a"],
+  });
+  assert.equal(withLocalManagerSelection.activeTab?.id, "browser-c");
 });
 
 test("BrowserPanel workspace variant renders a minimal URL toolbar without manager chrome", () => {
@@ -596,11 +616,11 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
   );
   assert.match(
     appSource,
-    /function handleReturnWorkspaceObjectToRightPanel[\s\S]*payload\.kind === "browser"[\s\S]*item\.browserTabId === payload\.browserTabId[\s\S]*setRightPanelBrowserTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.browserTabId[\s\S]*setRightPanelView\("browser"\)[\s\S]*closeWorkspaceTab\(tab\.id\)/,
+    /function handleReturnWorkspaceObjectToRightPanel[\s\S]*payload\.kind === "browser"[\s\S]*item\.browserTabId === payload\.browserTabId[\s\S]*closeWorkspaceTab\(tab\.id\)[\s\S]*setRightPanelView\("browser"\)[\s\S]*setRightPanelBrowserTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.browserTabId/,
   );
   assert.match(
     appSource,
-    /function handleReturnWorkspaceObjectToRightPanel[\s\S]*payload\.kind === "terminal"[\s\S]*item\.terminalTabId === payload\.terminalTabId[\s\S]*setRightPanelTerminalTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.terminalTabId[\s\S]*setRightPanelView\("terminal"\)[\s\S]*closeWorkspaceTab\(tab\.id\)/,
+    /function handleReturnWorkspaceObjectToRightPanel[\s\S]*payload\.kind === "terminal"[\s\S]*item\.terminalTabId === payload\.terminalTabId[\s\S]*closeWorkspaceTab\(tab\.id\)[\s\S]*setRightPanelView\("terminal"\)[\s\S]*setRightPanelTerminalTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.terminalTabId/,
   );
   assert.match(appSource, /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/);
   assert.match(appSource, /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/);
@@ -609,11 +629,11 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
   assert.match(appSource, /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/);
   assert.match(
     rightPanelSource,
-    /function getReturnableWorkspaceObject[\s\S]*const kind = workspaceObjectKindForView\(view\)[\s\S]*kind !== "browser" && kind !== "terminal"[\s\S]*payload\.kind !== kind[\s\S]*return payload;/,
+    /function getReturnableWorkspaceObject[\s\S]*view: RightPanelView \| null = null[\s\S]*payload\.kind !== "browser" && payload\.kind !== "terminal"[\s\S]*view != null && payload\.kind !== workspaceObjectKindForView\(view\)[\s\S]*return payload;/,
   );
   assert.match(
     rightPanelSource,
-    /className="right-panel-content"[\s\S]*onDragOver=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDragOver\(event, effectiveActiveView\)[\s\S]*onDrop=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDrop\(event, effectiveActiveView\)/,
+    /className="right-panel-content"[\s\S]*onDragOver=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDragOver\(event, null\)[\s\S]*onDrop=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDrop\(event, null\)/,
   );
   assert.match(
     rightPanelSource,
@@ -1396,6 +1416,14 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     browserPanelSource.indexOf("const runCommand = ("),
     browserPanelSource.indexOf("const createTab = () => {"),
   );
+  const createTabSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("const createTab = () => {"),
+    browserPanelSource.indexOf("const selectTab = ("),
+  );
+  const managerNewTabButtonSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("browser-new-tab-button"),
+    browserPanelSource.indexOf("{activeTab ? ("),
+  );
   const surfaceApplySource = browserPanelSource.slice(
     browserPanelSource.indexOf("const applyBrowserState ="),
     browserPanelSource.indexOf("const showNativeBrowserView ="),
@@ -1407,8 +1435,10 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /function resolveBrowserPanelTabSelection/);
   assert.match(browserSelectionSource, /const detachedBrowserTabIdSet = new Set\(detachedBrowserTabIds\)/);
   assert.match(browserSelectionSource, /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/);
+  assert.match(browserSelectionSource, /managerSelectedBrowserTabId \?\? activeTabId/);
   assert.match(browserPanelSource, /resolveBrowserPanelTabSelection\(\{/);
   assert.match(browserPanelSource, /activeTabId: state\.activeTabId/);
+  assert.match(browserPanelSource, /managerSelectedBrowserTabId/);
   assert.match(rightPanelSource, /const nativeViewSuppressed = isManagerVariant && suppressNativeView/);
   assert.match(browserPanelSource, /const managerNativeViewBlocked =\s*nativeViewSuppressed \|\|/);
   assert.match(browserPanelSource, /managerHasDetachedTabs && activeTab == null/);
@@ -1425,7 +1455,10 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.ok(navigateSource.indexOf("if (nativeViewSuppressed)") < navigateSource.indexOf('if (isManagerVariant && managerHasDetachedTabs && !activeTab)'));
   assert.ok(runCommandSource.includes("if (nativeViewSuppressed)"));
   assert.ok(runCommandSource.indexOf("if (nativeViewSuppressed)") < runCommandSource.indexOf("const browserApi = currentBrowserPanelApi();"));
-  assert.match(browserPanelSource, /disabled=\{!hasBrowserApi \|\| nativeViewSuppressed\}/);
+  assert.match(createTabSource, /createBrowserTab\(\{ activate: false \}\)/);
+  assert.match(createTabSource, /setManagerSelectedBrowserTabId\(nextTab\.id\)/);
+  assert.match(managerNewTabButtonSource, /disabled=\{!hasBrowserApi\}/);
+  assert.doesNotMatch(managerNewTabButtonSource, /nativeViewSuppressed/);
   assert.match(rightPanelSource, /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/);
   assert.match(rightPanelSource, /let activeBrowserViewSurfaceToken: symbol \| null = null/);
   assert.match(rightPanelSource, /const browserSurfaceTokenRef = useRef\(Symbol\("browser-panel-surface"\)\)/);
@@ -1435,6 +1468,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(browserPanelSource, /const browserSurfaceRef = useRef\(\{/);
   assert.match(browserPanelSource, /detachedBrowserTabIds/);
   assert.match(surfaceApplySource, /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/);
+  assert.match(surfaceApplySource, /surface\.managerSelectedBrowserTabId/);
   assert.match(surfaceApplySource, /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/);
   assert.match(surfaceApplySource, /setAddress\(surfaceActiveTab\?\.url \?\? ""\)/);
   assert.match(navigateSource, /await selectBrowserTabForSurfaceIfNeeded\(browserApi\)/);

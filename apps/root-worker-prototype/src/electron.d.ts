@@ -555,7 +555,12 @@ declare global {
         sequence?: number;
       }) => Promise<BrowserPanelState>;
       navigateBrowserView: (target: string) => Promise<BrowserPanelState>;
-      createBrowserTab: (target?: string | null) => Promise<BrowserPanelState>;
+      createBrowserTab: (
+        targetOrOptions?:
+          | string
+          | null
+          | { target?: string | null; activate?: boolean },
+      ) => Promise<BrowserPanelState>;
       selectBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
       closeBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
       browserGoBack: () => Promise<BrowserPanelState>;
