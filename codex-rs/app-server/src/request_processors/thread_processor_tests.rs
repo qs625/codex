@@ -1360,6 +1360,129 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn restore_persisted_display_turns_replaces_loaded_marker_only_compaction_with_summary() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: vec![Turn {
+                id: "compact-turn".to_string(),
+                items: vec![ThreadItem::ContextCompaction {
+                    id: "item-2".to_string(),
+                }],
+                items_view: TurnItemsView::Full,
+                error: None,
+                status: TurnStatus::Completed,
+                started_at: Some(1),
+                completed_at: Some(2),
+                duration_ms: Some(1),
+            }],
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+
+        restore_persisted_display_turns_from_rollout_items(
+            &mut thread,
+            &compacted_flat_context_display_history_items(),
+        );
+        prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-3", "item-3:summary", "ctx-1"]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[1],
+            ThreadItem::AgentMessage { text, .. } if text == "summary"
+        ));
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_keeps_in_progress_marker_only_compaction() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: vec![Turn {
+                id: "compact-turn".to_string(),
+                items: vec![ThreadItem::ContextCompaction {
+                    id: "item-2".to_string(),
+                }],
+                items_view: TurnItemsView::Full,
+                error: None,
+                status: TurnStatus::InProgress,
+                started_at: Some(1),
+                completed_at: None,
+                duration_ms: None,
+            }],
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+
+        restore_persisted_display_turns_from_rollout_items(
+            &mut thread,
+            &compacted_flat_context_display_history_items(),
+        );
+        prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-2"]
+        );
+        assert_eq!(thread.turns[0].status, TurnStatus::InProgress);
+    }
+
+    #[test]
     fn thread_turns_list_reconstruction_does_not_prune_with_live_compaction_boundary_after_merge() {
         let persisted_items = vec![
             RolloutItem::Compacted(CompactedItem {
