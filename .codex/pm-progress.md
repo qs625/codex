@@ -11,6 +11,20 @@
 Finish the reopened installed regressions from the editor-style workspace/compact/poll_event follow-up. Current installed release is Runtime Capsule `sha256:ee6f1d006d6e43c75de952e51a1ea9f934d58e93e47d22c5ded8f4ff8b878c22` from sourceCommit `e4704c745f8a6d91a2e7992084aa8d0179ecb21c`; restart `call_a35pSU4rZJNFm5SUsmMdvc00` completed. This capsule contains Browser header `bf17c774d`, Browser navigation details-object handling `395f10f3d`, and compact projection recovery `33f0de446`, but installed validation failed for Browser and compact, so it is not an accepted delivery. Browser remains reopened: submitting `https://example.com/?morpheus_browser_install_ee6f=1` leaves the UI in `New tab / Ready / Open a page`, while `/json/list` briefly shows a title-empty target that later disappears. Compact remains reopened with a real sample: `readThread('01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b', true)` returns first items `contextCompaction item-2` then `injectedContext Init Context`, with no independent summary item. Poll/event contextual async facts remain installed-verified: model context receives `<async_event>...</async_event>` while the visible DOM does not show ordinary tail `Command async event` rows.
 
 ## Active Work
+- id: inter-agent-child-completion-raw-message
+  status: dispatched
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/inter-agent-child-completion-raw-message
+  task_type: runtime_display_projection_bugfix
+  depends_on: main `753dd7869`; user screenshot of raw `Inter-agent communication received` message showing `Status: Completed(Some(...))`
+  files: likely inter-agent notification/pending input/display projection and Root Worker conversation projection tests; exact files pending owner diagnosis
+  base_commit: `753dd7869`
+  next_action: Owner_dev_2 is diagnosing why child completion/inter-agent communication notification leaks as a raw ordinary conversation message. Fix must preserve parent wake/final-result consumption and avoid string/CSS hiding.
+  validation: Pending. Brief requires focused backend/frontend projection tests plus `git diff --check`; if Rust runtime touched, also debug app-server build.
+  commit: pending
+
 - id: browser-installed-whitepage-navigation-details
   status: merged_pending_capsule_delivery
   owner: /self/owner_dev_3
