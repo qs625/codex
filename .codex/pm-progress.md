@@ -25,6 +25,20 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   validation: Owner root-caused live `EventMsg::UserMessage` projection bypassing replay/ItemCompleted `is_legacy_structured_user_inputs` filtering, so provider-visible inter-agent envelopes were projected as `ThreadItem::UserMessage`. Owner fixed live user message display filtering while preserving typed child completion wake/final-result semantics; reviewer approved. PM validation on dev-2 and main: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server direct_live_user_message -- --nocapture` passed 2 tests; `git diff --check` passed. Installed capsule `703811...` still showed a raw `/self/owner_dev` child-completion envelope as ordinary visible text during this PM turn, so code-level tests were not sufficient. Fresh installed capsule `8f74ea...` validation initially found no `Inter-agent communication received` or `Status: Completed(Some...)` DOM/readThread hits except compact summary/self-authored validation notes, but subsequent UI usage again surfaced suspicious fixed-tail messages. Current evidence is not yet precise enough to dispatch a final owner brief; keep reopened for focused display-history diagnosis after Browser.
   commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`
 
+- id: browser-workspace-right-manager-independence
+  status: dispatched_to_owner
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/browser-workspace-right-manager-independence
+  task_type: frontend_electron_browser_workspace_ownership_bugfix
+  depends_on: main `cc5c11da1`; installed Browser base navigation effective in capsule `sha256:d763bb85838e6f30adfe96c56a853007f950e75e77b82e39bb83bc91aaf7fadf`; user report that after dragging Browser to center, right Browser new tab cannot display page and right Browser tabs cannot close while center tab can close
+  files: likely `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/lib/workspaceTabs.ts`, Browser/native view ownership paths in `apps/root-worker-prototype/electron/main.cjs`, and related tests
+  base_commit: `cc5c11da1`
+  next_action: `/self/owner_dev` dispatched to reproduce and fix Browser workspace-owned tab vs right Browser manager independence. Required semantics: dragged center Browser is a concrete independent workspace object tab; right Browser manager remains independently able to create, display, select, and close right-owned tabs; neither side steals native BrowserView ownership from the other.
+  validation: PM installed self-debug confirmed ordinary right Browser close works when no center Browser ownership condition is being exercised: clicking right `Close Example Domain` removed the tab and CDP target, leaving 百度/Google right tabs. Therefore owner should focus on the dragged-to-center ownership state, not basic close. User says center Browser can close but right Browser cannot after drag, and right new tab cannot display page.
+  commit: pending
+
 - id: browser-installed-whitepage-navigation-details
   status: installed_effective
   owner: /self/owner_dev_2
