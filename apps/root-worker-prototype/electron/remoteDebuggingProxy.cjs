@@ -304,6 +304,17 @@ async function handleBrowserClientMessage({
     return;
   }
 
+  if (message?.method === "Target.setAutoAttach") {
+    backendSocket.write(
+      encodeWebSocketFrame(
+        Buffer.from(JSON.stringify(normalizeTargetAutoAttachMessage(message)), "utf8"),
+        frame.opcode,
+        true,
+      ),
+    );
+    return;
+  }
+
   if (message?.method !== "Target.createTarget") {
     backendSocket.write(encodeWebSocketFrame(frame.payload, frame.opcode, true));
     return;
@@ -328,6 +339,19 @@ async function handleBrowserClientMessage({
       }),
     );
   }
+}
+
+function normalizeTargetAutoAttachMessage(message) {
+  if (message?.method !== "Target.setAutoAttach") {
+    return message;
+  }
+  return {
+    ...message,
+    params: {
+      ...(message.params ?? {}),
+      waitForDebuggerOnStart: false,
+    },
+  };
 }
 
 function writeCreateTargetResponse(clientSocket, id, targetId) {
@@ -665,8 +689,9 @@ module.exports = {
   buildJsonNewTargetInfo,
   encodeWebSocketFrame,
   filterBrowserBackendMessage,
-  targetUrlFromJsonNewRequest,
+  normalizeTargetAutoAttachMessage,
   parseWebSocketFrame,
   rewriteDevToolsWebSocketUrls,
   startRemoteDebuggingProxy,
+  targetUrlFromJsonNewRequest,
 };

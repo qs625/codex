@@ -7,6 +7,7 @@ const {
   buildJsonNewTargetInfo,
   encodeWebSocketFrame,
   filterBrowserBackendMessage,
+  normalizeTargetAutoAttachMessage,
   parseWebSocketFrame,
   rewriteDevToolsWebSocketUrls,
   startRemoteDebuggingProxy,
@@ -104,6 +105,29 @@ test("remote debugging proxy filters empty Electron page targets", () => {
       ],
     },
   });
+});
+
+test("remote debugging proxy does not pause filtered auto-attached targets", () => {
+  assert.deepEqual(
+    normalizeTargetAutoAttachMessage({
+      id: 9,
+      method: "Target.setAutoAttach",
+      params: {
+        autoAttach: true,
+        flatten: true,
+        waitForDebuggerOnStart: true,
+      },
+    }),
+    {
+      id: 9,
+      method: "Target.setAutoAttach",
+      params: {
+        autoAttach: true,
+        flatten: true,
+        waitForDebuggerOnStart: false,
+      },
+    },
+  );
 });
 
 test("remote debugging proxy rewrites /json/version WebSocket URLs", async (t) => {
