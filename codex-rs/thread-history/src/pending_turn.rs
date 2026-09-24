@@ -29,6 +29,9 @@ pub(super) struct PendingTurn {
     /// True when this turn includes a persisted `RolloutItem::Compacted`, which
     /// should keep the turn from being dropped even without normal items.
     pub(super) saw_compaction: bool,
+    /// True after an explicit `ContextCompacted` event has confirmed the display
+    /// compaction boundary for this pending turn.
+    pub(super) saw_context_compacted_event: bool,
     /// Index of the rollout item that opened this turn during replay.
     pub(super) rollout_start_index: usize,
 }
@@ -40,6 +43,19 @@ impl PendingTurn {
                 .items
                 .iter()
                 .all(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+    }
+
+    pub(super) fn has_only_compaction_display_items(&self) -> bool {
+        match self.items.as_slice() {
+            [ThreadItem::ContextCompaction { .. }] => true,
+            [
+                ThreadItem::ContextCompaction { id },
+                ThreadItem::AgentMessage {
+                    id: summary_id, ..
+                },
+            ] => summary_id == &format!("{id}:summary"),
+            _ => false,
+        }
     }
 
     pub(super) fn opened_explicitly(mut self) -> Self {

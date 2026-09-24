@@ -74,6 +74,7 @@ impl ThreadHistoryBuilder {
         self.pending_checkpoint_compaction = None;
         let turn = self.ensure_turn();
         turn.saw_compaction = true;
+        turn.saw_context_compacted_event = true;
         if turn
             .items
             .iter()
@@ -230,7 +231,10 @@ impl ThreadHistoryBuilder {
 
         if let Some(turn) = self.current_turn.as_mut()
             && !turn.opened_explicitly
-            && (turn.items.is_empty() || turn.has_only_injected_context())
+            && (turn.items.is_empty()
+                || turn.has_only_injected_context()
+                || (!turn.saw_context_compacted_event
+                    && turn.has_only_compaction_display_items()))
         {
             turn.id = turn_id.clone();
             turn.rollout_start_index = self.current_rollout_index;
