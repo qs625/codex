@@ -102,10 +102,15 @@ pub(crate) fn populate_thread_turns_from_history(
 }
 
 pub(super) fn merge_turn_history_with_active_turn(turns: &mut Vec<Turn>, active_turn: Turn) {
-    let Some(persisted_turn) = turns.iter_mut().find(|turn| turn.id == active_turn.id) else {
+    let Some(persisted_index) = turns.iter().position(|turn| turn.id == active_turn.id) else {
         turns.push(active_turn);
         return;
     };
+    if persisted_index + 1 != turns.len() {
+        return;
+    }
+
+    let persisted_turn = &mut turns[persisted_index];
 
     persisted_turn.status = active_turn.status;
     persisted_turn.error = active_turn.error;

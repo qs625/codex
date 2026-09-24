@@ -1807,6 +1807,96 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn populate_thread_turns_from_history_ignores_stale_active_compact_turn_collision() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+        let active_turn = Turn {
+            id: "compact-turn".to_string(),
+            items: vec![ThreadItem::AgentMessage {
+                id: "live-tail".to_string(),
+                text: "stale live tail".to_string(),
+                phase: None,
+                memory_citation: None,
+            }],
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(3),
+            completed_at: None,
+            duration_ms: None,
+        };
+
+        let mut persisted_items = compacted_display_history_items();
+        persisted_items.push(RolloutItem::EventMsg(EventMsg::TurnComplete(
+            protocol::protocol::TurnCompleteEvent {
+                turn_id: "new-turn".to_string(),
+                last_agent_message: None,
+                completed_at: Some(6),
+                duration_ms: Some(1),
+                time_to_first_token_ms: None,
+            },
+        )));
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
+
+        assert_eq!(
+            thread
+                .turns
+                .iter()
+                .map(|turn| (turn.id.as_str(), turn.status.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("compact-turn", TurnStatus::Completed),
+                ("new-turn", TurnStatus::Completed),
+            ]
+        );
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec!["item-3", "item-3:summary", "item-4"]
+        );
+        assert!(
+            thread
+                .turns
+                .iter()
+                .flat_map(|turn| turn.items.iter())
+                .all(|item| item.id() != "live-tail"),
+            "stale active snapshot must not rewrite a non-tail compact display turn"
+        );
+    }
+
+    #[test]
     fn populate_thread_turns_for_persisted_read_preserves_flat_compaction_display_items() {
         let mut thread = Thread {
             id: "thread-1".to_string(),
