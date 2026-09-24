@@ -17,6 +17,7 @@ import {
 import {
   ConversationVirtualList,
   buildConversationRowClassName,
+  conversationCellInstanceKey,
   planConversationCellMeasurement,
   planFocusedItemScrollAttempt,
   shouldHandleFocusedItemRequest,
@@ -545,6 +546,7 @@ test("url artifact row exposes explicit browser action", () => {
 test("virtual list renders url artifacts with browser action", () => {
   const markup = renderToStaticMarkup(
     <ConversationVirtualList
+      conversationKey="thread-1"
       cells={[
         {
           id: "artifact-cell",
@@ -575,6 +577,23 @@ test("virtual list renders url artifacts with browser action", () => {
 
   assert.match(markup, /Preview server/);
   assert.match(markup, />Open<\/button>/);
+  assert.match(markup, /data-conversation-key="thread-1"/);
+});
+
+test("virtual list cell instance keys are scoped to their conversation", () => {
+  assert.equal(
+    conversationCellInstanceKey("thread-1", "item-1"),
+    "thread-1:item-1",
+  );
+  assert.equal(
+    conversationCellInstanceKey("thread-2", "item-1"),
+    "thread-2:item-1",
+  );
+  assert.notEqual(
+    conversationCellInstanceKey("thread-1", "item-1"),
+    conversationCellInstanceKey("thread-2", "item-1"),
+  );
+  assert.equal(conversationCellInstanceKey(null, "item-1"), "item-1");
 });
 
 test("virtual list renders backend compact summary read projection as a visible message", () => {

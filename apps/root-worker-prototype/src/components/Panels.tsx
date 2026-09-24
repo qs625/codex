@@ -1579,6 +1579,7 @@ export function ConversationPanel({
             <ConversationVirtualList
               key={selectedThreadId}
               cells={conversationCells}
+              conversationKey={selectedThreadId}
               containerRef={conversationScrollRef}
               focusedItem={focusedConversationListItem}
               onOpenLocalFile={onOpenLocalFile}

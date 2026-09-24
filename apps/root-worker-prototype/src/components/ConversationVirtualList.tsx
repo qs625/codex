@@ -26,6 +26,7 @@ import type { ConversationCell } from "../types";
 
 type ConversationVirtualListProps = {
   cells: ConversationCell[];
+  conversationKey?: string | null;
   containerRef: RefObject<HTMLDivElement | null>;
   focusedItem: { itemId: string; token: number } | null;
   onOpenLocalFile: (target: string) => void;
@@ -102,6 +103,7 @@ export function planConversationCellMeasurement({
 
 export function ConversationVirtualList({
   cells,
+  conversationKey = null,
   containerRef,
   focusedItem,
   onOpenLocalFile,
@@ -133,6 +135,18 @@ export function ConversationVirtualList({
     token: number;
   } | null>(null);
   const pendingFocusRequestRef = useRef<PendingFocusRequest | null>(null);
+
+  useEffect(() => {
+    measuredHeightsRef.current.clear();
+    measuredCellIdsRef.current.clear();
+    layoutRef.current = null;
+    pendingFocusRequestRef.current = null;
+    lastHandledFocusRequestRef.current = null;
+    setOpenToolCellIds(new Set());
+    setSelectedToolEntryIds(new Map());
+    setHighlightedCellId(null);
+    setHeightVersion((version) => version + 1);
+  }, [conversationKey]);
 
   useEffect(() => {
     const liveCellIds = new Set(cells.map((cell) => cell.id));
@@ -437,6 +451,7 @@ export function ConversationVirtualList({
   return (
     <div
       className="conversation-virtual-list"
+      data-conversation-key={conversationKey ?? undefined}
       style={{ height: `${layout.totalHeight}px` }}
     >
       {cells
@@ -445,7 +460,7 @@ export function ConversationVirtualList({
           const index = visibleWindow.startIndex + relativeIndex;
           return (
             <MeasuredConversationCell
-              key={cell.id}
+              key={conversationCellInstanceKey(conversationKey, cell.id)}
               highlighted={cell.id === highlightedCellId}
               searchCurrent={cell.id === searchCurrentCellId}
               searchMatch={searchMatchCellIds.has(cell.id)}
@@ -468,6 +483,13 @@ export function ConversationVirtualList({
         })}
     </div>
   );
+}
+
+export function conversationCellInstanceKey(
+  conversationKey: string | null | undefined,
+  cellId: string,
+) {
+  return conversationKey ? `${conversationKey}:${cellId}` : cellId;
 }
 
 function conversationEntryContainsId(
