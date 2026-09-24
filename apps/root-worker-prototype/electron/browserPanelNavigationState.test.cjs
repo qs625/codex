@@ -700,7 +700,7 @@ test("main browser debug target creation starts hidden tab navigation before tar
   );
 });
 
-test("main browser navigation bootstraps cold WebContentsView before target load", () => {
+test("main browser navigation does not about:blank bootstrap visible target loads", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
   const createTabIndex = mainSource.indexOf("function createBrowserPanelTab");
   const bootstrapIndex = mainSource.indexOf(
@@ -731,7 +731,7 @@ test("main browser navigation bootstraps cold WebContentsView before target load
   assert.match(
     mainSource.slice(bootstrapIndex, loadUrlIndex),
     /loadBrowserPanelTabAboutBlankBootstrap\(panel, tab\)/,
-    "cold Browser tabs must initialize with about:blank before their first external load",
+    "hidden CDP-created Browser tabs still use about:blank bootstrap when needed",
   );
   assert.match(
     mainSource.slice(
@@ -741,14 +741,32 @@ test("main browser navigation bootstraps cold WebContentsView before target load
     /tab\.initialNavigationBootstrapped = true;/,
     "about:blank bootstrap completion must be recorded",
   );
-  const bootstrapCallIndex = mainSource.indexOf(
-    "await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);",
+  assert.match(
+    mainSource.slice(
+      mainSource.indexOf("async function loadBrowserPanelTabAboutBlankBootstrap"),
+      bootstrapIndex,
+    ),
+    /await waitForBrowserPanelLoadStop\(tab\.view\.webContents\);[\s\S]*tab\.initialNavigationBootstrapped = true;/,
+    "about:blank bootstrap must wait for Electron loading to stop before marking it complete",
+  );
+  const hiddenBootstrapIndex = mainSource.indexOf(
+    "if (requireVisiblePanel === false)",
     loadUrlIndex,
   );
+  const bootstrapCallIndex = mainSource.indexOf(
+    "await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);",
+    hiddenBootstrapIndex,
+  );
   assert.ok(
-    normalizedOkIndex < bootstrapCallIndex &&
+    normalizedOkIndex < hiddenBootstrapIndex &&
+      hiddenBootstrapIndex < bootstrapCallIndex &&
       bootstrapCallIndex < navigationSequenceIndex &&
       navigationSequenceIndex < externalLoadIndex,
-    "external navigation must bootstrap after URL validation but before pending navigation state and loadURL",
+    "only hidden CDP navigation should bootstrap after URL validation and before pending navigation state",
+  );
+  assert.doesNotMatch(
+    mainSource.slice(loadUrlIndex, hiddenBootstrapIndex),
+    /await ensureBrowserPanelTabInitialNavigationBootstrap\(panel, tab\);/,
+    "visible Browser panel navigation must not load about:blank before the requested target",
   );
 });
