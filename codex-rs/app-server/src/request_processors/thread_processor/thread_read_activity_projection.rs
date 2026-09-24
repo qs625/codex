@@ -2,6 +2,7 @@ use super::*;
 use app_server_protocol::CommandExecutionNotificationKind;
 use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallStatus;
+use app_server_protocol::is_legacy_structured_assistant_message_text;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
@@ -47,8 +48,7 @@ fn compact_display_projection_rollout_items(rollout_items: &[RolloutItem]) -> Ve
         return limited_items;
     }
 
-    if let Some((insert_index, summary)) =
-        compact_summary_from_response_item_prefix(&limited_items)
+    if let Some((insert_index, summary)) = compact_summary_from_response_item_prefix(&limited_items)
     {
         limited_items.insert(
             insert_index,
@@ -105,6 +105,9 @@ fn assistant_response_message_text(item: &ResponseItem) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n");
     let text = text.trim();
+    if is_legacy_structured_assistant_message_text(text) {
+        return None;
+    }
     (!text.is_empty()).then(|| text.to_string())
 }
 
@@ -1005,6 +1008,79 @@ mod restore_persisted_injected_context_turns_tests {
                     "# User Preferences\n\nProject body"
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn build_display_turns_from_rollout_items_does_not_recover_inter_agent_envelope_as_compact_summary(
+    ) {
+        let rollout_items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: concat!(
+                        "Inter-agent communication received.\n",
+                        "Author: /self/owner_dev_3\n",
+                        "Recipient: /self\n",
+                        "Operation: child_completion\n",
+                        "Status: Completed(Some(\"done\"))\n",
+                        "Lifecycle status: Final { result: Completed { last_agent_message: Some(\"done\") } }\n",
+                        "Content:\n",
+                        "done"
+                    )
+                    .to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "developer context restored after compact".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "compact-turn".to_string(),
+                item: protocol::items::TurnItem::InjectedContext(
+                    protocol::items::InjectedContextItem {
+                        id: "ctx-1".to_string(),
+                        title: "Init Context".to_string(),
+                        preview: "Init Context".to_string(),
+                        sections: vec![protocol::items::InjectedContextSection {
+                            label: "User Preferences".to_string(),
+                            text: "# User Preferences\n\nProject body".to_string(),
+                        }],
+                    },
+                ),
+                completed_at_ms: 1,
+            })),
+        ];
+
+        let turns = build_display_turns_from_rollout_items(&rollout_items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                context_compaction_item("item-1"),
+                injected_context_item_with_label(
+                    "ctx-1",
+                    "User Preferences",
+                    "# User Preferences\n\nProject body"
+                ),
+            ]
+        );
+        assert!(
+            !turns[0].items.iter().any(|item| matches!(
+                item,
+                ThreadItem::AgentMessage { text, .. }
+                    if text.contains("Inter-agent communication received.")
+            )),
+            "raw inter-agent envelopes must not be projected as visible compact summaries"
         );
     }
 
