@@ -17,6 +17,7 @@ const CONTEXTUAL_USER_MARKERS: &[(&str, &str)] = &[
     ("<turn_aborted>", "</turn_aborted>"),
     ("<subagent_notification>", "</subagent_notification>"),
     ("<goal_context>", "</goal_context>"),
+    ("<async_event>", "</async_event>"),
 ];
 
 const CONTEXTUAL_DEVELOPER_PREFIXES: &[&str] = &[

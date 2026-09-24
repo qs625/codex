@@ -3900,7 +3900,10 @@ async fn pending_command_output_and_exit_record_bounded_model_visible_facts() {
             command_item_id: "cmd-1".to_string(),
             kind: protocol::models::CommandExecutionNotificationKind::Exit,
             message: "Command cmd-1 has exited with code 7.".to_string(),
-            output: Some(format!("{}tail", "x".repeat(4100))),
+            output: Some(format!(
+                "running 1 test\nconversation-like text may be present in event payload\n{}END_MARKER_DO_NOT_INCLUDE",
+                "compile log\n".repeat(500)
+            )),
             exit_code: Some(7),
             created_at_ms: 1235,
         },
@@ -3946,10 +3949,22 @@ async fn pending_command_output_and_exit_record_bounded_model_visible_facts() {
     assert!(text.contains("Output preview:\nfirst chunk\n"));
     assert!(text.contains("Command async event: command_item_id=cmd-1 kind=exit"));
     assert!(text.contains("exit_code=7 has_output=true created_at_ms=1235"));
-    assert!(text.contains(&"x".repeat(4000)));
+    assert!(text.contains(
+        "Output preview:\nrunning 1 test\nconversation-like text may be present in event payload"
+    ));
+    assert!(text.contains("compile log"));
     assert!(
-        !text.contains("tail"),
+        !text.contains("END_MARKER_DO_NOT_INCLUDE"),
         "command async event output preview should be bounded"
+    );
+    assert!(
+        history.raw_items().iter().any(|item| matches!(
+            item,
+            ResponseItem::Message { content, .. }
+                if codex_context_manager::is_contextual_user_message_content(content)
+                    && codex_turn_items::parse_turn_item(item).is_none()
+        )),
+        "command async facts should be model-visible contextual input, not user-visible conversation rows"
     );
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
@@ -4023,6 +4038,114 @@ async fn poll_event_user_input_source_does_not_hide_pending_command_event() {
         other => panic!("expected command exit payload despite user_input source, got {other:?}"),
     }
     assert_eq!(result.events.len(), 1);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_user_input_and_command_event_drain_once_without_visible_async_fact() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.steer_input(
+        vec![UserInput::Text {
+            text: "late user input".to_string(),
+            text_elements: Vec::new(),
+        }],
+        None,
+        None,
+    )
+    .await
+    .expect("user input should steer active turn");
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-exit-1".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command exit notification received.".to_string(),
+            output: Some("conversation text that must not be echoed from exit\n".to_string()),
+            exit_code: Some(0),
+            created_at_ms: 1234,
+        },
+    ))
+    .await;
+
+    let result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should succeed");
+
+    assert!(!result.timed_out);
+    assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+    assert_poll_event_result_json_omits_payload(&result);
+
+    let pending_input = sess.get_pending_input().await;
+    assert_eq!(
+        pending_input.len(),
+        2,
+        "poll_event should wake without consuming or dropping queued pending input"
+    );
+    for pending_input_item in pending_input {
+        match hooks::inspect_pending_input(sess.as_ref(), tc.as_ref(), pending_input_item).await {
+            hooks::PendingInputHookDisposition::Accepted(pending_input) => {
+                hooks::record_pending_input(sess.as_ref(), tc.as_ref(), *pending_input).await;
+            }
+            hooks::PendingInputHookDisposition::Blocked { .. } => {
+                panic!("pending input should not be blocked")
+            }
+        }
+    }
+
+    assert!(
+        !sess.has_pending_input().await,
+        "accepted pending input should be drained after request construction"
+    );
+
+    let history = sess.clone_history().await;
+    let user_message_count = history
+        .raw_items()
+        .iter()
+        .filter(|item| {
+            matches!(
+                codex_turn_items::parse_turn_item(item),
+                Some(TurnItem::UserMessage(UserMessageItem { content, .. }))
+                    if content == vec![UserInput::Text {
+                        text: "late user input".to_string(),
+                        text_elements: Vec::new(),
+                    }]
+            )
+        })
+        .count();
+    assert_eq!(
+        user_message_count, 1,
+        "same async user input should not be projected twice"
+    );
+
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("late user input"));
+    assert!(text.contains("Command async event: command_item_id=cmd-1 kind=exit"));
+    assert!(text.contains("exit_code=0 has_output=true created_at_ms=1234"));
+    assert!(text.contains("conversation text that must not be echoed from exit"));
+    assert!(
+        history.raw_items().iter().any(|item| matches!(
+            item,
+            ResponseItem::Message { content, .. }
+                if codex_context_manager::is_contextual_user_message_content(content)
+                    && codex_turn_items::parse_turn_item(item).is_none()
+        )),
+        "async event fact should be context-only for display projection, even when it carries output"
+    );
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -4502,7 +4625,7 @@ async fn leftover_command_exit_display_does_not_enter_provider_request_history()
         command_item_id: "cmd-1".to_string(),
         kind: protocol::models::CommandExecutionNotificationKind::Exit,
         message: "Command exit notification received.".to_string(),
-        output: Some("done\n".to_string()),
+        output: Some("compile log echo should enter bounded async fact\n".to_string()),
         exit_code: Some(0),
         created_at_ms: 1234,
     };
@@ -4519,12 +4642,12 @@ async fn leftover_command_exit_display_does_not_enter_provider_request_history()
         interaction_input: None,
         initial_wait_ms: Some(0),
         notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
-        stdout: "done\n".to_string(),
+        stdout: "compile log echo should enter bounded async fact\n".to_string(),
         stderr: String::new(),
-        aggregated_output: "done\n".to_string(),
+        aggregated_output: "compile log echo should enter bounded async fact\n".to_string(),
         exit_code: 0,
         duration: Duration::from_millis(10),
-        formatted_output: "done\n".to_string(),
+        formatted_output: "compile log echo should enter bounded async fact\n".to_string(),
         status: protocol::protocol::ExecCommandStatus::Completed,
     });
 
@@ -4584,6 +4707,16 @@ async fn leftover_command_exit_display_does_not_enter_provider_request_history()
         "provider request input should not include display-only command notification: {body}"
     );
     assert!(
+        !body.to_string().contains("cmd-1:notification:exit"),
+        "provider request input should not include raw command notification id: {body}"
+    );
+    assert!(
+        !body
+            .to_string()
+            .contains("Command exit notification received."),
+        "provider request input should not include raw command notification message: {body}"
+    );
+    assert!(
         body.to_string()
             .contains("Command async event: command_item_id=cmd-1 kind=exit"),
         "provider request input should include bounded command async event fact: {body}"
@@ -4592,6 +4725,11 @@ async fn leftover_command_exit_display_does_not_enter_provider_request_history()
         body.to_string()
             .contains("exit_code=0 has_output=true created_at_ms=1234"),
         "provider request input should include bounded command exit metadata: {body}"
+    );
+    assert!(
+        body.to_string()
+            .contains("compile log echo should enter bounded async fact"),
+        "notify_on=exit command output should remain model-visible through the bounded async exit fact: {body}"
     );
 
     Ok(())
@@ -4665,6 +4803,17 @@ async fn pending_event_driven_tool_display_waits_for_request_construction_consum
     .expect("event-driven tool display should be emitted after consumption");
     assert_eq!(completed.id, "subscription-event-1");
     assert_eq!(completed.trigger, trigger);
+    assert!(
+        sess.clone_history()
+            .await
+            .raw_items()
+            .iter()
+            .any(|item| matches!(
+                item,
+                ResponseItem::EventDrivenTool { trigger: stored, .. } if stored == &trigger
+            )),
+        "event-driven schedule/subscription firing should enter model-visible context through pending input"
+    );
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
