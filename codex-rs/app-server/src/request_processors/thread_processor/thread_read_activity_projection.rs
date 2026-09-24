@@ -825,6 +825,49 @@ mod restore_persisted_injected_context_turns_tests {
     }
 
     #[test]
+    fn restore_persisted_display_turns_replaces_live_marker_context_with_durable_summary() {
+        let mut thread = thread_with_turns(vec![turn(
+            "compact-turn",
+            vec![
+                context_compaction_item("item-2"),
+                injected_context_item_with_label(
+                    "ctx-1",
+                    "User Preferences",
+                    "# User Preferences\n\nProject body",
+                ),
+            ],
+        )]);
+        let persisted_turns = vec![turn(
+            "compact-turn",
+            vec![
+                context_compaction_item("item-1"),
+                agent_message_item("item-1:summary", "compact summary body"),
+                injected_context_item_with_label(
+                    "ctx-1",
+                    "User Preferences",
+                    "# User Preferences\n\nProject body",
+                ),
+            ],
+        )];
+
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
+        prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+
+        assert_eq!(
+            thread.turns[0].items,
+            vec![
+                context_compaction_item("item-1"),
+                agent_message_item("item-1:summary", "compact summary body"),
+                injected_context_item_with_label(
+                    "ctx-1",
+                    "User Preferences",
+                    "# User Preferences\n\nProject body"
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn build_display_turns_from_rollout_items_recovers_compact_summary_response_prefix() {
         let rollout_items = vec![
             RolloutItem::ResponseItem(ResponseItem::Message {
