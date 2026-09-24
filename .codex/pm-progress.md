@@ -11,6 +11,21 @@
 Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c53861cae7b30aa903d1fc0e6cd1c4008b96541c72bdfc`. PM built fresh candidate `capsule-1790254792706-f43839cfff04273b` from canonical main `98ba8952fe170ecbb95e678839c2cb62774f5cc7` and restarted via `call_URpeuu7HWrSoqlJnaniT7cWA`. Candidate and installed payload hashes match (`app.asar` `5e31f46b...`, `bin/app-server` `5f023711...`), so the unchanged artifact `capsule.json` metadata sourceCommit `1e337999...` is a same-release dedupe artifact, not proof of old code. Installed Browser still fails the key path: fresh first navigation succeeds, close loaded tab leaves replacement `New tab / Ready`, but replacement external navigation briefly creates a CDP target then times out after 15s and target disappears. `/self/owner_dev_2` clean current-main dev Electron UI/harness passes the same path, so the active problem is now dev-vs-installed runtime/environment/state divergence rather than a simple stale-source install.
 
 ## Active Work
+
+- id: compact-read-duplicate-user-input-tail
+  status: dispatched_to_owner
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/compact-read-duplicate-user-input-tail
+  task_type: app_server_frontend_read_projection_bugfix
+  depends_on: installed capsule `sha256:d763bb85838e6f30adfe96c56a853007f950e75e77b82e39bb83bc91aaf7fadf`; user report that after compact, read user input appears duplicated and one duplicate stays pinned at the tail; selected thread `01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b`
+  files: likely `codex-rs/app-server/src/request_processors/thread_processor/thread_read_activity_projection.rs`, `codex-rs/thread-history/src/lifecycle.rs`, and possibly `apps/root-worker-prototype/src/lib/thread.ts` / conversation virtualization tests if frontend reconciliation contributes
+  base_commit: `38473d6fc`
+  next_action: Owner dispatched to root-cause and fix before any client cleanup/performance work. PM self-debug evidence shows `readThread(id)` returns `{ thread: { turns } }`; userMessage id/text are not duplicated, but the compact head turn is `inProgress`, contains 72 tail items, starts with `contextCompaction`, and later user inputs are separate `rollout-*` turns. Focus on turn-boundary/status/restore merge rather than text-level userMessage dedupe.
+  validation: pending owner fix/review. Required: read/reload compact head turn must not aggregate later active tail incorrectly; compact summary/raw inter-agent filters still pass; same-text distinct user inputs remain preserved; installed self-debug must show no fixed tail duplicate user input.
+  commit: pending
+
 - id: inter-agent-child-completion-raw-message
   status: merged_pending_capsule_delivery
   owner: /self/owner_dev_2
@@ -26,7 +41,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`; owner compact fallback fix `7ad221bb`; merge `a2c55f84`; pending capsule delivery
 
 - id: browser-workspace-right-manager-independence
-  status: dispatched_to_owner
+  status: paused_wip_not_mergeable
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -35,9 +50,9 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   depends_on: main `cc5c11da1`; installed Browser base navigation effective in capsule `sha256:d763bb85838e6f30adfe96c56a853007f950e75e77b82e39bb83bc91aaf7fadf`; user report that after dragging Browser to center, right Browser new tab cannot display page and right Browser tabs cannot close while center tab can close
   files: likely `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/lib/workspaceTabs.ts`, Browser/native view ownership paths in `apps/root-worker-prototype/electron/main.cjs`, and related tests
   base_commit: `cc5c11da1`
-  next_action: `/self/owner_dev` dispatched to reproduce and fix Browser workspace-owned tab vs right Browser manager independence. Required semantics: dragged center Browser is a concrete independent workspace object tab; right Browser manager remains independently able to create, display, select, and close right-owned tabs; neither side steals native BrowserView ownership from the other.
+  next_action: Paused because user prioritized compact/read duplicate bug before all cleanup/performance work. WIP save commit `99865697a` exists but is explicitly not mergeable, unreviewed, and may have type/runtime errors. When resumed, continue per-surface BrowserView ownership design; do not merge WIP directly.
   validation: PM installed self-debug confirmed ordinary right Browser close works when no center Browser ownership condition is being exercised: clicking right `Close Example Domain` removed the tab and CDP target, leaving 百度/Google right tabs. Therefore owner should focus on the dragged-to-center ownership state, not basic close. User says center Browser can close but right Browser cannot after drag, and right new tab cannot display page.
-  commit: pending
+  commit: WIP save `99865697a` not mergeable
 
 - id: client-code-organization-followup
   status: queued
