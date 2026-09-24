@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),
   openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
   showBrowserView: (bounds) => ipcRenderer.invoke("codex:browser:show", bounds),
-  hideBrowserView: () => ipcRenderer.invoke("codex:browser:hide"),
+  hideBrowserView: (options) => ipcRenderer.invoke("codex:browser:hide", options),
   setBrowserViewBounds: (bounds) =>
     ipcRenderer.invoke("codex:browser:setBounds", bounds),
   navigateBrowserView: (target) =>
@@ -95,10 +95,12 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:browser:selectTab", tabId),
   closeBrowserTab: (tabId) =>
     ipcRenderer.invoke("codex:browser:closeTab", tabId),
-  browserGoBack: () => ipcRenderer.invoke("codex:browser:goBack"),
-  browserGoForward: () => ipcRenderer.invoke("codex:browser:goForward"),
-  reloadBrowserView: () => ipcRenderer.invoke("codex:browser:reload"),
-  stopBrowserView: () => ipcRenderer.invoke("codex:browser:stop"),
+  browserGoBack: (options) => ipcRenderer.invoke("codex:browser:goBack", options),
+  browserGoForward: (options) =>
+    ipcRenderer.invoke("codex:browser:goForward", options),
+  reloadBrowserView: (options) =>
+    ipcRenderer.invoke("codex:browser:reload", options),
+  stopBrowserView: (options) => ipcRenderer.invoke("codex:browser:stop", options),
   getTerminalState: (threadId) =>
     ipcRenderer.invoke("codex:terminal:getState", threadId),
   createTerminal: (payload) =>

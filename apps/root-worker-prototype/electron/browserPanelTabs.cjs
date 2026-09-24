@@ -58,7 +58,7 @@ async function closeBrowserPanelTabLifecycle(
     tab.id,
   );
   if (wasActive) {
-    detachAttachedView(panel);
+    detachAttachedView(panel, tab);
   }
   panel.tabs.splice(index, 1);
   if (wasActive) {

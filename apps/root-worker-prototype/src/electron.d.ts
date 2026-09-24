@@ -545,16 +545,30 @@ declare global {
         width: number;
         height: number;
         sequence?: number;
+        surfaceId?: string | null;
+        tabId?: string | null;
       }) => Promise<BrowserPanelState>;
-      hideBrowserView: () => Promise<BrowserPanelState>;
+      hideBrowserView: (options?: {
+        surfaceId?: string | null;
+      }) => Promise<BrowserPanelState>;
       setBrowserViewBounds: (bounds: {
         x: number;
         y: number;
         width: number;
         height: number;
         sequence?: number;
+        surfaceId?: string | null;
+        tabId?: string | null;
       }) => Promise<BrowserPanelState>;
-      navigateBrowserView: (target: string) => Promise<BrowserPanelState>;
+      navigateBrowserView: (
+        target:
+          | string
+          | {
+              target: string;
+              surfaceId?: string | null;
+              tabId?: string | null;
+            },
+      ) => Promise<BrowserPanelState>;
       createBrowserTab: (
         targetOrOptions?:
           | string
@@ -563,10 +577,22 @@ declare global {
       ) => Promise<BrowserPanelState>;
       selectBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
       closeBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
-      browserGoBack: () => Promise<BrowserPanelState>;
-      browserGoForward: () => Promise<BrowserPanelState>;
-      reloadBrowserView: () => Promise<BrowserPanelState>;
-      stopBrowserView: () => Promise<BrowserPanelState>;
+      browserGoBack: (options?: {
+        surfaceId?: string | null;
+        tabId?: string | null;
+      }) => Promise<BrowserPanelState>;
+      browserGoForward: (options?: {
+        surfaceId?: string | null;
+        tabId?: string | null;
+      }) => Promise<BrowserPanelState>;
+      reloadBrowserView: (options?: {
+        surfaceId?: string | null;
+        tabId?: string | null;
+      }) => Promise<BrowserPanelState>;
+      stopBrowserView: (options?: {
+        surfaceId?: string | null;
+        tabId?: string | null;
+      }) => Promise<BrowserPanelState>;
       getTerminalState: (threadId?: string | null) => Promise<TerminalPanelState>;
       createTerminal: (payload: {
         cwd?: string | null;
