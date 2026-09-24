@@ -1004,6 +1004,94 @@ fn thread_history_projects_active_schedule_subscription_event_after_compact() {
 }
 
 #[test]
+fn thread_history_rebinds_compact_summary_when_turn_context_precedes_compacted_event() {
+    let turn_id = "01a0d249-650b-73f3-89ab-7074cb750ed9";
+    let init_context_id = "5c5f34a2-5543-43a0-b7b1-db49bd3cadbb";
+    let items = vec![
+        protocol::protocol::RolloutItem::Compacted(protocol::protocol::CompactedItem {
+            message: "summary".into(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }),
+        protocol::protocol::RolloutItem::TurnContext(protocol::protocol::TurnContextItem {
+            turn_id: Some(turn_id.into()),
+            trace_id: None,
+            cwd: PathBuf::from("/tmp"),
+            current_date: None,
+            timezone: None,
+            approval_policy: protocol::protocol::AskForApproval::Never,
+            sandbox_policy: protocol::protocol::SandboxPolicy::DangerFullAccess,
+            permission_profile: None,
+            network: None,
+            file_system_sandbox_policy: None,
+            model: "test-model".into(),
+            personality: None,
+            collaboration_mode: None,
+            realtime_active: None,
+            effort: None,
+            summary: protocol::config_types::ReasoningSummary::Auto,
+            user_instructions: None,
+            developer_instructions: None,
+            init_context_snapshot: None,
+            final_output_json_schema: None,
+            truncation_policy: None,
+        }),
+        protocol::protocol::RolloutItem::EventMsg(protocol::protocol::EventMsg::ContextCompacted(
+            protocol::protocol::ContextCompactedEvent {},
+        )),
+        protocol::protocol::RolloutItem::EventMsg(protocol::protocol::EventMsg::ItemCompleted(
+            protocol::protocol::ItemCompletedEvent {
+                thread_id: protocol::ThreadId::from_string(
+                    "00000000-0000-0000-0000-000000000001",
+                )
+                .expect("valid thread id"),
+                turn_id: turn_id.into(),
+                item: protocol::items::TurnItem::InjectedContext(
+                    protocol::items::InjectedContextItem {
+                        id: init_context_id.into(),
+                        title: "Init Context".into(),
+                        preview: "Permissions • Apps • Skills".into(),
+                        sections: vec![protocol::items::InjectedContextSection {
+                            label: "Permissions".into(),
+                            text: "danger-full-access".into(),
+                        }],
+                    },
+                ),
+                completed_at_ms: 1,
+            },
+        )),
+    ];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].id, turn_id);
+    assert_eq!(
+        turns[0].items,
+        vec![
+            ThreadItem::ContextCompaction {
+                id: "item-1".into(),
+            },
+            ThreadItem::AgentMessage {
+                id: "item-1:summary".into(),
+                text: "summary".into(),
+                phase: None,
+                memory_citation: None,
+            },
+            ThreadItem::InjectedContext {
+                id: init_context_id.into(),
+                title: "Init Context".into(),
+                preview: "Permissions • Apps • Skills".into(),
+                sections: vec![InjectedContextSection {
+                    label: "Permissions".into(),
+                    text: "danger-full-access".into(),
+                }],
+            },
+        ]
+    );
+}
+
+#[test]
 fn thread_history_does_not_duplicate_existing_schedule_monitor_from_subscription_snapshot() {
     let items = vec![
         protocol::protocol::RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnStarted(
