@@ -52,8 +52,8 @@ const {
   configurePermissionHandlers,
 } = require("./permissionHandlers.cjs");
 const {
+  closeBrowserPanelTabLifecycle,
   isBrowserPanelTabAlreadyAttached,
-  nextBrowserTabIdAfterClose,
   shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,
 } = require("./browserPanelTabs.cjs");
@@ -786,7 +786,7 @@ ipcMain.handle("codex:browser:selectTab", async (event, tabId) => {
 
 ipcMain.handle("codex:browser:closeTab", async (event, tabId) => {
   const panel = browserPanelForEvent(event);
-  if (!closeBrowserPanelTab(panel, tabId)) {
+  if (!(await closeBrowserPanelTab(panel, tabId))) {
     throw new Error("Browser tab not found");
   }
   return browserPanelState(panel);
@@ -1684,7 +1684,7 @@ async function createBrowserPanelDebugTarget(target) {
     const targetId = await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
     return { targetId, tabId: tab.id };
   } catch (error) {
-    closeBrowserPanelTab(panel, tab.id);
+    await closeBrowserPanelTab(panel, tab.id);
     sendBrowserPanelState(panel);
     throw error;
   }
@@ -1848,7 +1848,12 @@ function destroyBrowserPanel(window) {
   browserPanelsByWindowId.delete(window.id);
   detachBrowserPanel(panel);
   for (const tab of [...panel.tabs]) {
-    disposeBrowserPanelTab(panel, tab);
+    void disposeBrowserPanelTab(panel, tab).catch((error) => {
+      console.warn(
+        "[prototype] failed to dispose Browser tab during window teardown",
+        error,
+      );
+    });
   }
   panel.tabs = [];
   panel.activeTabId = null;
@@ -2606,34 +2611,13 @@ function selectBrowserPanelTab(panel, tabId) {
   return true;
 }
 
-function closeBrowserPanelTab(panel, tabId) {
-  const index = panel.tabs.findIndex((tab) => tab.id === tabId);
-  if (index === -1) {
-    return false;
-  }
-  const tab = panel.tabs[index];
-  const wasActive = panel.activeTabId === tab.id;
-  const nextActiveTabId = nextBrowserTabIdAfterClose(
-    panel.tabs,
-    panel.activeTabId,
-    tab.id,
-  );
-  if (wasActive) {
-    detachAttachedBrowserPanelView(panel);
-  }
-  panel.tabs.splice(index, 1);
-  disposeBrowserPanelTab(panel, tab);
-  if (panel.tabs.length === 0 && !panel.destroying) {
-    createBrowserPanelTab(panel, { activate: true });
-    return true;
-  }
-  if (wasActive) {
-    panel.activeTabId = nextActiveTabId;
-    if (panel.visible) {
-      attachActiveBrowserPanelView(panel, { raise: true });
-    }
-  }
-  return true;
+async function closeBrowserPanelTab(panel, tabId) {
+  return closeBrowserPanelTabLifecycle(panel, tabId, {
+    detachAttachedView: detachAttachedBrowserPanelView,
+    disposeTab: disposeBrowserPanelTab,
+    createTab: createBrowserPanelTab,
+    attachActiveView: attachActiveBrowserPanelView,
+  });
 }
 
 function removeDestroyedBrowserPanelTab(panel, tab) {
@@ -2661,14 +2645,35 @@ function removeDestroyedBrowserPanelTab(panel, tab) {
   sendBrowserPanelState(panel);
 }
 
-function disposeBrowserPanelTab(panel, tab) {
+async function disposeBrowserPanelTab(panel, tab) {
   if (panel.attachedTabId === tab.id) {
     detachAttachedBrowserPanelView(panel);
   }
   stopBrowserPanelNavigation(tab);
+  await destroyBrowserPanelTabWebContents(tab);
+}
+
+function destroyBrowserPanelTabWebContents(tab) {
   if (!tab.view.webContents.isDestroyed()) {
-    tab.view.webContents.destroy();
+    return new Promise((resolve) => {
+      const webContents = tab.view.webContents;
+      let settled = false;
+      const cleanup = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        webContents.removeListener("destroyed", cleanup);
+        resolve();
+      };
+      webContents.once("destroyed", cleanup);
+      webContents.destroy();
+      if (webContents.isDestroyed()) {
+        cleanup();
+      }
+    });
   }
+  return Promise.resolve();
 }
 
 function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
