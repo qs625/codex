@@ -733,8 +733,17 @@ impl ThreadRequestProcessor {
             }
             Err(err) => return Err(err),
         };
+        let durable_persisted_turns = if include_turns {
+            self.load_persisted_thread_for_read(thread_id, /*include_turns*/ true)
+                .await?
+                .map(|thread| thread.turns)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         if include_turns {
             restore_persisted_display_turns(&mut thread, &persisted_turns);
+            restore_persisted_display_turns(&mut thread, &durable_persisted_turns);
             apply_runtime_activity_items_from_persisted_turns(&mut thread);
             self.apply_persisted_subscription_snapshot_items(thread_id, &mut thread)
                 .await?;
