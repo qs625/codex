@@ -38,6 +38,7 @@ impl ThreadHistoryBuilder {
             duration_ms: None,
             opened_explicitly: false,
             saw_compaction: false,
+            saw_context_compacted_event: false,
             rollout_start_index: self.current_rollout_index,
         }
     }

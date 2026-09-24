@@ -868,6 +868,92 @@ mod restore_persisted_injected_context_turns_tests {
     }
 
     #[test]
+    fn restore_persisted_display_turns_recovers_head_compact_summary_before_live_marker() {
+        let turn_id = "01a0d249-650b-73f3-89ab-7074cb750ed9";
+        let init_context_id = "28a0f05b-3b5b-4f72-9da1-5f3dff71a395";
+        let mut thread = thread_with_turns(vec![turn(
+            turn_id,
+            vec![
+                context_compaction_item("item-2"),
+                injected_context_item_with_label(
+                    init_context_id,
+                    "Permissions",
+                    "danger-full-access",
+                ),
+                agent_message_item("live-message-1", "post-compact live suffix"),
+            ],
+        )]);
+        let rollout_items = vec![
+            RolloutItem::Compacted(CompactedItem {
+                message: "compact summary body".to_string(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::TurnContext(protocol::protocol::TurnContextItem {
+                turn_id: Some(turn_id.to_string()),
+                trace_id: None,
+                cwd: std::path::PathBuf::from("/tmp"),
+                current_date: None,
+                timezone: None,
+                approval_policy: protocol::protocol::AskForApproval::Never,
+                sandbox_policy: protocol::protocol::SandboxPolicy::DangerFullAccess,
+                permission_profile: None,
+                network: None,
+                file_system_sandbox_policy: None,
+                model: "test-model".to_string(),
+                personality: None,
+                collaboration_mode: None,
+                realtime_active: None,
+                effort: None,
+                summary: protocol::config_types::ReasoningSummary::Auto,
+                user_instructions: None,
+                developer_instructions: None,
+                init_context_snapshot: None,
+                final_output_json_schema: None,
+                truncation_policy: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: turn_id.to_string(),
+                item: protocol::items::TurnItem::InjectedContext(
+                    protocol::items::InjectedContextItem {
+                        id: init_context_id.to_string(),
+                        title: "Init Context".to_string(),
+                        preview: "Permissions • Apps • Skills".to_string(),
+                        sections: vec![protocol::items::InjectedContextSection {
+                            label: "Permissions".to_string(),
+                            text: "danger-full-access".to_string(),
+                        }],
+                    },
+                ),
+                completed_at_ms: 1,
+            })),
+        ];
+
+        restore_persisted_display_turns_from_rollout_items(&mut thread, &rollout_items);
+        prune_turns_to_latest_compaction_boundary(&mut thread.turns);
+
+        assert_eq!(
+            thread.turns[0]
+                .items
+                .iter()
+                .map(ThreadItem::id)
+                .collect::<Vec<_>>(),
+            vec![
+                "item-1",
+                "item-1:summary",
+                init_context_id,
+                "live-message-1"
+            ]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[1],
+            ThreadItem::AgentMessage { text, .. } if text == "compact summary body"
+        ));
+    }
+
+    #[test]
     fn build_display_turns_from_rollout_items_recovers_compact_summary_response_prefix() {
         let rollout_items = vec![
             RolloutItem::ResponseItem(ResponseItem::Message {

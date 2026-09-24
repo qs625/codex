@@ -361,6 +361,64 @@ fn compact_head_projects_summary_and_init_context_as_flat_items() {
 }
 
 #[test]
+fn compact_head_turn_context_before_context_compacted_keeps_summary_in_context_turn() {
+    let items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".into(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        }),
+        RolloutItem::TurnContext(turn_context_item_with_id(
+            "01a0d249-650b-73f3-89ab-7074cb750ed9",
+        )),
+        RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+        RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread id"),
+            turn_id: "01a0d249-650b-73f3-89ab-7074cb750ed9".into(),
+            item: CoreTurnItem::InjectedContext(CoreInjectedContextItem {
+                id: "28a0f05b-3b5b-4f72-9da1-5f3dff71a395".into(),
+                title: "Init Context".into(),
+                preview: "Permissions • Apps • Skills".into(),
+                sections: vec![CoreInjectedContextSection {
+                    label: "Permissions".into(),
+                    text: "danger-full-access".into(),
+                }],
+            }),
+            completed_at_ms: 1,
+        })),
+    ];
+
+    let turns = build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].id, "01a0d249-650b-73f3-89ab-7074cb750ed9");
+    assert_eq!(
+        turns[0].items,
+        vec![
+            ThreadItem::ContextCompaction {
+                id: "item-1".into(),
+            },
+            ThreadItem::AgentMessage {
+                id: "item-1:summary".into(),
+                text: "summary".into(),
+                phase: None,
+                memory_citation: None,
+            },
+            ThreadItem::InjectedContext {
+                id: "28a0f05b-3b5b-4f72-9da1-5f3dff71a395".into(),
+                title: "Init Context".into(),
+                preview: "Permissions • Apps • Skills".into(),
+                sections: vec![InjectedContextSection {
+                    label: "Permissions".into(),
+                    text: "danger-full-access".into(),
+                }],
+            },
+        ]
+    );
+}
+
+#[test]
 fn compact_head_deduplicates_repeated_flat_init_context_completion() {
     let items = vec![
         RolloutItem::Compacted(CompactedItem {

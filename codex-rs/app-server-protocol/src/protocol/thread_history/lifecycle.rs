@@ -21,6 +21,7 @@ impl ThreadHistoryBuilder {
     pub(super) fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
         let turn = self.ensure_turn();
         turn.saw_compaction = true;
+        turn.saw_context_compacted_event = true;
         if turn
             .items
             .iter()
@@ -176,7 +177,8 @@ impl ThreadHistoryBuilder {
             && !turn.opened_explicitly
             && (turn.items.is_empty()
                 || turn.has_only_injected_context()
-                || turn.has_only_compaction_display_items())
+                || (!turn.saw_context_compacted_event
+                    && turn.has_only_compaction_display_items()))
         {
             turn.id = turn_id.clone();
             turn.rollout_start_index = self.current_rollout_index;
