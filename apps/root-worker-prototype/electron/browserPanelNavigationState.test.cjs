@@ -512,6 +512,59 @@ test("main browser navigation completes timed out visible load when target commi
   );
 });
 
+test("main browser navigation completes stopped redirected loads before timeout", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const stopHandlerIndex = mainSource.indexOf(
+    'tab.view.webContents.on("did-stop-loading", () => {',
+  );
+  const stoppedAcceptedIndex = mainSource.indexOf(
+    "browserPanelTabHasStoppedAtAcceptedUrl(tab)",
+    stopHandlerIndex,
+  );
+  const completeIndex = mainSource.indexOf(
+    "completeBrowserPanelNavigationWhenTargetReady",
+    stoppedAcceptedIndex,
+  );
+  const stoppedHelperIndex = mainSource.indexOf(
+    "function browserPanelTabHasStoppedAtAcceptedUrl",
+  );
+
+  assert.notEqual(stopHandlerIndex, -1);
+  assert.notEqual(stoppedAcceptedIndex, -1);
+  assert.notEqual(completeIndex, -1);
+  assert.notEqual(stoppedHelperIndex, -1);
+  assert.match(
+    mainSource.slice(stoppedHelperIndex, mainSource.indexOf("function browserPanelTabHasCommittedTarget", stoppedHelperIndex)),
+    /shouldCompleteBrowserPanelStoppedNavigation[\s\S]*browserPanelTabHasCommittedTarget\(tab, tab\.pendingNavigationTarget\)/,
+  );
+});
+
+test("main browser navigation observes frame finish when loadURL hangs", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const bindIndex = mainSource.indexOf("function bindBrowserPanelTab");
+  const observerIndex = mainSource.indexOf("function observeBrowserPanelTargetNavigation");
+  const frameFinishBindIndex = mainSource.indexOf(
+    'tab.view.webContents.on("did-frame-finish-load"',
+    bindIndex,
+  );
+  const frameFinishObserverIndex = mainSource.indexOf(
+    'webContents.on("did-frame-finish-load", handleFrameFinish);',
+    observerIndex,
+  );
+  const acceptedCurrentIndex = mainSource.indexOf(
+    "const acceptedCurrentCommittedUrl = () =>",
+    observerIndex,
+  );
+
+  assert.notEqual(frameFinishBindIndex, -1);
+  assert.notEqual(frameFinishObserverIndex, -1);
+  assert.notEqual(acceptedCurrentIndex, -1);
+  assert.match(
+    mainSource.slice(acceptedCurrentIndex, mainSource.indexOf("const handleStart", acceptedCurrentIndex)),
+    /navigationStarted[\s\S]*shouldCompleteBrowserPanelTimedOutNavigation\(\{[\s\S]*startUrl: tab\.pendingNavigationStartUrl,[\s\S]*targetUrl: tab\.pendingNavigationTarget,/,
+  );
+});
+
 test("main browser navigation records start URL for timeout fallback", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
   const loadUrlIndex = mainSource.indexOf("async function loadBrowserPanelTabUrl");
