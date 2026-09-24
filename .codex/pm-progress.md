@@ -55,30 +55,30 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   commit: owner `fe6679491`; merge `df5a23f6`; installed capsule `sha256:ef619ef73c5969cce5d55d8e1312fc6b762a07125a1eafe1fa0fd5c185ef1ebf`; restart `call_VG4nEX0I1jT3xJmcZDQU6lH7`
 
 - id: client-code-organization-followup
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_main
+  reviewer: pending
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/client-browser-surface-modularization
+  task_type: client_code_cleanup_refactor
+  depends_on: compact/read duplicate bug installed effective; Browser workspace/right-manager fix installed effective; raw inter-agent fix included in installed capsules
+  files: client/frontend/electron code areas to be scoped after active bugfixes
+  base_commit: `a425d3738`
+  next_action: No immediate action; batch Runtime Capsule delivery with performance optimization unless later risk requires earlier install.
+  validation: Owner split `BrowserPanel.tsx` out of `RightPanel.tsx`, added `browserPanelSurface.cjs` for pure Browser surface bookkeeping, updated Browser/RightPanel tests, and reviewer approved after two rounds. PM validation on main passed: `node --check` for main/surface modules, Browser Electron focused tests including new surface tests passed 69/69, RightPanel/Panels/workspaceTabs passed 99/99, production build passed with existing chunk warnings, and `git diff --check` passed.
+  commit: owner `784bb7116`; merge `712890d44`; pending capsule delivery batched with performance tranche
+
+- id: client-performance-optimization-followup
   status: ready_to_dispatch
   owner: /self/owner_main
   reviewer: pending
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: pending
-  task_type: client_code_cleanup_refactor
-  depends_on: compact/read duplicate bug installed effective; Browser workspace/right-manager fix installed effective; raw inter-agent fix included in installed capsules
-  files: client/frontend/electron code areas to be scoped after active bugfixes
-  base_commit: pending
-  next_action: Dispatch now as global-exclusive refactor tranche on main checkout. Scope should be larger but coherent: modularize Browser/native surface logic and RightPanel Browser UI/test helpers without changing behavior; preserve installed-effective Browser and compact/read semantics.
-  validation: pending
-  commit: pending
-
-- id: client-performance-optimization-followup
-  status: queued
-  owner: performance_owner_pending
-  reviewer: pending
-  checkout: /Users/bytedance/.morpheus/source_workspace
-  branch: pending
   task_type: performance_optimization
-  depends_on: client-code-organization-followup completed and installed/validated as needed
+  depends_on: client-code-organization-followup merged on main `712890d44`; final Runtime Capsule delivery pending
   files: pending measurement plan
-  base_commit: pending
-  next_action: After client cleanup, run a global-exclusive performance optimization tranche with explicit measurement baseline/profile, one optimization at a time, regression protection, and installed validation if user-visible runtime behavior changes.
+  base_commit: `712890d44`
+  next_action: Dispatch now as global-exclusive performance tranche on main checkout. Establish baseline first, then optimize client startup/render/Browser panel hotspots without changing behavior; final capsule delivery after merge.
   validation: pending
   commit: pending
 
