@@ -3290,6 +3290,94 @@ test("keeps compact summary messages visible while preserving later visible item
   );
 });
 
+test("renders backend thread/read compact projection with summary and init context", () => {
+  const state = buildConversationState(
+    normalizeThreadSnapshot(
+      makeThreadWithTurns([
+        {
+          id: "turn-old",
+          items: [
+            {
+              type: "userMessage",
+              id: "old-user",
+              content: [{ type: "text", text: "old request hidden by compact" }],
+            },
+            {
+              type: "agentMessage",
+              id: "old-agent",
+              text: "old answer hidden by compact",
+              phase: null,
+              memoryCitation: null,
+            },
+          ],
+          itemsView: "full",
+          status: "completed",
+          error: null,
+          startedAt: 1,
+          completedAt: 1,
+          durationMs: 0,
+        },
+        {
+          id: "compact-turn",
+          items: [
+            {
+              type: "contextCompaction",
+              id: "item-1",
+            },
+            {
+              type: "agentMessage",
+              id: "item-1:summary",
+              text: "compact summary body from thread/read",
+              phase: null,
+              memoryCitation: null,
+            },
+            {
+              type: "injectedContext",
+              id: "ctx-1",
+              title: "Init Context",
+              preview: "Init Context",
+              sections: [
+                {
+                  label: "User Preferences",
+                  text: "# User Preferences\n\nProject body",
+                },
+              ],
+            },
+          ],
+          itemsView: "full",
+          status: "completed",
+          error: null,
+          startedAt: 2,
+          completedAt: 2,
+          durationMs: 0,
+        },
+      ]),
+    ),
+  );
+
+  assert.deepEqual(
+    state.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["item-1", "compact"],
+      ["item-1:summary", "message"],
+      ["ctx-1:section:0", "tool"],
+    ],
+  );
+  assert.equal(
+    state.cells[1]?.entries[0]?.text,
+    "compact summary body from thread/read",
+  );
+  assert.equal(state.cells[0]?.entries[0]?.kind, "compact");
+  assert.equal(state.cells[0]?.entries[0]?.compactSummary, null);
+  assert.deepEqual(
+    state.cells
+      .flatMap((cell) => cell.entries)
+      .map((entry) => entry.text)
+      .filter((text) => text.includes("old")),
+    [],
+  );
+});
+
 test("hides pre-compact same-turn user messages while preserving post-compact user messages", () => {
   const firstPrompt =
     "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";
