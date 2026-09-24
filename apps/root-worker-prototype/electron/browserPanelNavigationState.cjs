@@ -63,9 +63,34 @@ function shouldCompleteBrowserPanelStoppedNavigation({
 
 function shouldCompleteBrowserPanelTimedOutNavigation({
   currentUrl,
+  startUrl = null,
   targetUrl,
 }) {
-  return browserPanelUrlsEqual(currentUrl, targetUrl);
+  if (!browserPanelUrlIsSafeCommittedHttpUrl(currentUrl)) {
+    return false;
+  }
+  if (!browserPanelUrlIsSafeCommittedHttpUrl(targetUrl)) {
+    return false;
+  }
+  if (browserPanelUrlsEqual(currentUrl, targetUrl)) {
+    return true;
+  }
+  if (!startUrl) {
+    return false;
+  }
+  return !browserPanelUrlsEqual(currentUrl, startUrl);
+}
+
+function browserPanelUrlIsSafeCommittedHttpUrl(url) {
+  if (!url || url === "about:blank") {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function shouldAcceptBrowserPanelCommittedNavigation({
@@ -125,6 +150,7 @@ module.exports = {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
   browserPanelUrlsEqual,
+  browserPanelUrlIsSafeCommittedHttpUrl,
   shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
   shouldCompleteBrowserPanelTimedOutNavigation,
