@@ -1174,6 +1174,19 @@ export function getThreadItemNotificationSyntheticTurnStatus(
     : undefined;
 }
 
+export function shouldRefreshThreadAfterItemNotification(
+  method: "item/started" | "item/completed",
+  notificationThreadId: string,
+  selectedThreadId: string | null,
+  item: ThreadItem,
+) {
+  return (
+    method === "item/completed" &&
+    item.type === "contextCompaction" &&
+    notificationThreadId === selectedThreadId
+  );
+}
+
 function isCollabCompletionNotificationItem(item: ThreadItem) {
   return (
     item.type === "collabAgentStatusUpdate" ||
@@ -1231,7 +1244,11 @@ export function appendAgentDelta(
           return turn;
         }
         const hasItem = turn.items.some((item) => item.id === itemId);
-        if (!hasItem && turnHasCompactItem(turn)) {
+        if (
+          !hasItem &&
+          turnHasCompactItem(turn) &&
+          !isExactSummaryDeltaForLatestCompact(thread, itemId)
+        ) {
           return turn;
         }
         const items = hasItem
@@ -1277,6 +1294,11 @@ export function appendAgentDelta(
           } satisfies Turn,
         ];
   return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+}
+
+function isExactSummaryDeltaForLatestCompact(thread: Thread, itemId: string) {
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  return latestCompact !== null && itemId === `${latestCompact.id}:summary`;
 }
 
 function isThreadActive(thread: Thread) {

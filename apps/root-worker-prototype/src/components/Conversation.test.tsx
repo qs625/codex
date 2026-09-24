@@ -25,6 +25,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "../lib/conversation";
+import { normalizeThreadSnapshot } from "../lib/thread";
 import type { ConversationEntry } from "../types";
 import type { Thread } from "../types";
 
@@ -574,6 +575,101 @@ test("virtual list renders url artifacts with browser action", () => {
 
   assert.match(markup, /Preview server/);
   assert.match(markup, />Open<\/button>/);
+});
+
+test("virtual list renders backend compact summary read projection as a visible message", () => {
+  const thread = normalizeThreadSnapshot({
+    id: "thread-1",
+    sessionId: "session-1",
+    forkedFromId: null,
+    preview: "",
+    ephemeral: false,
+    modelProvider: "openai",
+    model: "gpt-5",
+    reasoningEffort: null,
+    createdAt: 1,
+    updatedAt: 2,
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+    path: null,
+    cwd: "/tmp",
+    cliVersion: "test",
+    source: "cli",
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    skills: [],
+    turns: [
+      {
+        id: "turn-old",
+        items: [
+          {
+            type: "agentMessage",
+            id: "old-agent",
+            text: "old answer hidden by compact",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "compact-turn",
+        items: [
+          { type: "contextCompaction", id: "item-1" },
+          {
+            type: "agentMessage",
+            id: "item-1:summary",
+            text: "compact summary body from thread/read",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "injectedContext",
+            id: "ctx-1",
+            title: "Init Context",
+            preview: "Init Context",
+            sections: [
+              {
+                label: "User Preferences",
+                text: "# User Preferences\n\nProject body",
+              },
+            ],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ],
+  } satisfies Thread);
+  const { cells } = buildConversationState(thread);
+  const markup = renderToStaticMarkup(
+    <ConversationVirtualList
+      cells={cells}
+      containerRef={React.createRef<HTMLDivElement>()}
+      focusedItem={null}
+      onOpenLocalFile={() => {}}
+      onOpenArtifactUrl={() => {}}
+      searchCurrentCellId="item-1:summary"
+      searchMatchCellIds={new Set(["item-1:summary"])}
+    />,
+  );
+
+  assert.match(markup, /Context compacted/);
+  assert.match(markup, /compact summary body from thread\/read/);
+  assert.match(markup, /Init Context · User Preferences/);
+  assert.doesNotMatch(markup, /old answer hidden by compact/);
+  assert.doesNotMatch(markup, /compact-summary-details/);
 });
 
 test("compact rows do not render archived artifacts inline", () => {

@@ -29,6 +29,7 @@ import {
   getThreadPath,
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
+  shouldRefreshThreadAfterItemNotification,
   isThreadThinking,
   isActiveTurnMismatchError,
   markThreadCommandExecutionRunning,
@@ -4305,6 +4306,46 @@ test("late backend compact message summary can arrive after the marker", () => {
   );
 });
 
+test("late backend compact message summary delta can create the exact summary item", () => {
+  const compactedThread = updateThreadItem(
+    makeThread(),
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+
+  const updated = appendAgentDelta(
+    compactedThread,
+    "turn-compact",
+    "compact-1:summary",
+    "streamed compact summary",
+  );
+  const lateOrdinaryDelta = appendAgentDelta(
+    compactedThread,
+    "turn-compact",
+    "ordinary-agent",
+    "old ordinary delta",
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) =>
+      turn.items.map((item) => [
+        item.id,
+        item.type === "agentMessage" ? item.text : "",
+      ]),
+    ),
+    [
+      ["compact-1", ""],
+      ["compact-1:summary", "streamed compact summary"],
+    ],
+  );
+  assert.deepEqual(
+    lateOrdinaryDelta.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1"],
+  );
+});
+
 test("late backend compact message summary can arrive from a missing turn", () => {
   const compactedThread = updateThreadItem(
     makeThread(),
@@ -7521,6 +7562,48 @@ test("direct collab status completion notifications create completed synthetic t
         durationMs: null,
       },
     ],
+  );
+});
+
+test("compact item completion asks the selected thread to refresh projected summary", () => {
+  const compactItem = makeCompactItem("compact-1");
+  const agentItem = makeAgentMessage("agent-1", "hello");
+
+  assert.equal(
+    shouldRefreshThreadAfterItemNotification(
+      "item/completed",
+      "thread-1",
+      "thread-1",
+      compactItem,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRefreshThreadAfterItemNotification(
+      "item/started",
+      "thread-1",
+      "thread-1",
+      compactItem,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRefreshThreadAfterItemNotification(
+      "item/completed",
+      "thread-2",
+      "thread-1",
+      compactItem,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRefreshThreadAfterItemNotification(
+      "item/completed",
+      "thread-1",
+      "thread-1",
+      agentItem,
+    ),
+    false,
   );
 });
 

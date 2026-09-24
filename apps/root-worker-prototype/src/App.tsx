@@ -130,6 +130,7 @@ import {
   queuePendingThreadUpdate,
   revealThreadInSidebarState,
   rootAgentPathFromTaskName,
+  shouldRefreshThreadAfterItemNotification,
   threadDisplayStatusClass,
   updateThreadItem,
   updateThreadLifecycleStatusFromNotification,
@@ -2839,6 +2840,16 @@ function App() {
                 },
               ),
             );
+          }
+          if (
+            shouldRefreshThreadAfterItemNotification(
+              method,
+              notification.threadId,
+              selectedThreadIdRef.current,
+              notification.item,
+            )
+          ) {
+            void loadThread(notification.threadId);
           }
           break;
         }
