@@ -64,6 +64,7 @@ const {
 } = await import("./RightPanel");
 const {
   WORKSPACE_OBJECT_DRAG_TYPE,
+  hasWorkspaceObjectDragData,
   readWorkspaceObjectDragData,
   writeWorkspaceObjectDragData,
 } = await import("../lib/workspaceObjectDrag");
@@ -463,6 +464,7 @@ test("BrowserPanel workspace variant renders a minimal URL toolbar without manag
   assert.match(markup, /aria-label="Go forward"/);
   assert.match(markup, /aria-label="Reload"/);
   assert.match(markup, /aria-label="Workspace browser URL"/);
+  assert.doesNotMatch(markup, /aria-label="Workspace browser URL"[^>]*disabled/);
   assert.match(markup, /class="browser-go-button" disabled=""/);
   assert.doesNotMatch(markup, /browser-tab-strip/);
   assert.doesNotMatch(markup, /aria-label="New browser tab"/);
@@ -497,6 +499,22 @@ test("browser and terminal rail entries are real workspace drag sources", () => 
       getData: (type: string) => (type === WORKSPACE_OBJECT_DRAG_TYPE ? "browser" : ""),
     }),
     { kind: "browser" },
+  );
+  assert.equal(
+    hasWorkspaceObjectDragData({
+      types: [WORKSPACE_OBJECT_DRAG_TYPE],
+    } as Pick<DataTransfer, "types">),
+    true,
+  );
+  assert.equal(
+    hasWorkspaceObjectDragData({
+      types: {
+        length: 1,
+        item: () => WORKSPACE_OBJECT_DRAG_TYPE,
+        contains: () => true,
+      },
+    } as unknown as Pick<DataTransfer, "types">),
+    true,
   );
 });
 
@@ -1353,7 +1371,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelView\("terminal"\)/,
   );
   assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
-  assert.match(appSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
+  assert.match(appSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(appSource, /revealThreadInSidebarState\(\{/);
   assert.match(appSource, /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/);
@@ -1371,7 +1389,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /draggable=\{workspaceObjectKindForView\(item\.view\) != null\}/);
   assert.match(rightPanelSource, /writeWorkspaceObjectDragData\(event\.dataTransfer, kind\)/);
   assert.match(rightPanelSource, /onOpenWorkspaceObject\?\.\(kind\)/);
-  assert.match(rightPanelSource, /WORKSPACE_OBJECT_DRAG_TYPE/);
+  assert.match(rightPanelSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
   assert.match(rightPanelSource, /browserTabDragPayload/);
   assert.match(rightPanelSource, /browserTabId: tab\.id/);
   assert.match(rightPanelSource, /onOpenBrowserTabInWorkspace/);
@@ -1467,10 +1485,16 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(selectForSurfaceSource, /isManagerVariant \? activeTab\?\.id : \(activeBrowserTabId \?\? null\)/);
   assert.match(browserPanelSource, /const browserSurfaceRef = useRef\(\{/);
   assert.match(browserPanelSource, /detachedBrowserTabIds/);
+  assert.match(browserPanelSource, /const addressInputFocusedRef = useRef\(false\)/);
+  assert.match(browserPanelSource, /const lastAddressTabIdRef = useRef<string \| null>\(null\)/);
+  assert.match(browserPanelSource, /const syncAddressFromTab = \(/);
+  assert.match(browserPanelSource, /addressInputFocusedRef\.current && !tabChanged/);
+  assert.match(browserPanelSource, /onFocus=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = true/);
+  assert.match(browserPanelSource, /onBlur=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = false;[\s\S]*syncAddressFromTab\(activeTab\)/);
   assert.match(surfaceApplySource, /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/);
   assert.match(surfaceApplySource, /surface\.managerSelectedBrowserTabId/);
   assert.match(surfaceApplySource, /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/);
-  assert.match(surfaceApplySource, /setAddress\(surfaceActiveTab\?\.url \?\? ""\)/);
+  assert.match(surfaceApplySource, /syncAddressFromTab\(surfaceActiveTab\)/);
   assert.match(navigateSource, /await selectBrowserTabForSurfaceIfNeeded\(browserApi\)/);
   assert.match(navigateSource, /if \(!nativeViewSuppressed\)/);
   assert.match(navigateSource, /navigateBrowserView\(normalized\.url\)/);

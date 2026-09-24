@@ -69,7 +69,7 @@ import {
   storeRightPanelView,
 } from "./lib/rightPanelView";
 import {
-  WORKSPACE_OBJECT_DRAG_TYPE,
+  hasWorkspaceObjectDragData,
   readWorkspaceObjectDragData,
   writeWorkspaceObjectDragData,
   type WorkspaceObjectDragPayload,
@@ -3435,7 +3435,7 @@ function App() {
   }
 
   function handleWorkspaceObjectDragOver(event: DragEvent<HTMLElement>) {
-    if (event.dataTransfer.types.includes(WORKSPACE_OBJECT_DRAG_TYPE)) {
+    if (hasWorkspaceObjectDragData(event.dataTransfer)) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
     }
@@ -3535,7 +3535,7 @@ function App() {
   ) {
     if (
       !draggedWorkspaceTab &&
-      event.dataTransfer.types.includes(WORKSPACE_OBJECT_DRAG_TYPE)
+      hasWorkspaceObjectDragData(event.dataTransfer)
     ) {
       return;
     }
