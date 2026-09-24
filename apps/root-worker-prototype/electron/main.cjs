@@ -287,6 +287,7 @@ function browserPanelTrace(event, tab, details = {}) {
     return;
   }
   const webContents = tab?.view?.webContents ?? null;
+  const panel = tab ? browserPanelForTab(tab) : null;
   let webContentsState = {};
   if (webContents && !webContents.isDestroyed()) {
     webContentsState = {
@@ -294,6 +295,22 @@ function browserPanelTrace(event, tab, details = {}) {
       webContentsUrl: webContents.getURL() || null,
       webContentsTitle: webContents.getTitle() || null,
       webContentsLoading: webContents.isLoading(),
+      webContentsFocused:
+        typeof webContents.isFocused === "function"
+          ? webContents.isFocused()
+          : null,
+      webContentsCrashed:
+        typeof webContents.isCrashed === "function"
+          ? webContents.isCrashed()
+          : null,
+      webContentsProcessId:
+        typeof webContents.getProcessId === "function"
+          ? webContents.getProcessId()
+          : null,
+      webContentsOSProcessId:
+        typeof webContents.getOSProcessId === "function"
+          ? webContents.getOSProcessId()
+          : null,
     };
   } else if (webContents) {
     webContentsState = {
@@ -316,6 +333,17 @@ function browserPanelTrace(event, tab, details = {}) {
       stateTitle: tab?.state?.title ?? null,
       stateLoading: tab?.state?.loading ?? null,
       stateError: tab?.state?.error ?? null,
+      panelVisible: panel?.visible ?? null,
+      panelBounds: panel?.bounds ?? null,
+      panelActiveTabId: panel?.activeTabId ?? null,
+      panelAttachedTabId: panel?.attachedTabId ?? null,
+      panelWindowVisible:
+        panel && !panel.window.isDestroyed() ? panel.window.isVisible() : null,
+      panelWindowFocused:
+        panel && !panel.window.isDestroyed() ? panel.window.isFocused() : null,
+      panelWindowMinimized:
+        panel && !panel.window.isDestroyed() ? panel.window.isMinimized() : null,
+      browserSessionPartition,
       ...webContentsState,
       ...details,
     }),
@@ -3064,6 +3092,15 @@ function isBrowserPanelWebContents(webContents) {
     }
   }
   return false;
+}
+
+function browserPanelForTab(tab) {
+  for (const panel of browserPanelsByWindowId.values()) {
+    if (panel.tabs.includes(tab)) {
+      return panel;
+    }
+  }
+  return null;
 }
 
 function guardBrowserPanelNavigation(panel, tab, event, target) {
