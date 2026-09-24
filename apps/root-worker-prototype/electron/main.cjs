@@ -2074,12 +2074,26 @@ function bindBrowserPanelTab(panel, tab) {
     updateBrowserPanelLocationState(tab);
     if (
       tab.pendingNavigationSequence !== null &&
-      shouldCompleteBrowserPanelStoppedNavigation({
-        navigationSequence: tab.navigationSequence,
-        pendingNavigationSequence: tab.pendingNavigationSequence,
-        currentUrl: tab.state.url,
-        targetUrl: tab.pendingNavigationTarget,
-      })
+      browserPanelTabHasStoppedAtAcceptedUrl(tab)
+    ) {
+      void completeBrowserPanelNavigationWhenTargetReady(
+        panel,
+        tab,
+        tab.pendingNavigationSequence,
+      );
+      return;
+    }
+    tab.state.loading = false;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-frame-finish-load", (_event, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+    updateBrowserPanelLocationState(tab);
+    if (
+      tab.pendingNavigationSequence !== null &&
+      browserPanelTabHasCommittedTarget(tab, tab.pendingNavigationTarget)
     ) {
       void completeBrowserPanelNavigationWhenTargetReady(
         panel,
@@ -2149,6 +2163,7 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     webContents.removeListener("did-start-navigation", handleStart);
     webContents.removeListener("did-navigate", handleNavigate);
     webContents.removeListener("did-frame-navigate", handleFrameNavigate);
+    webContents.removeListener("did-frame-finish-load", handleFrameFinish);
     webContents.removeListener("did-finish-load", handleFinish);
     webContents.removeListener("did-stop-loading", handleStop);
     webContents.removeListener("did-fail-load", handleFail);
@@ -2173,6 +2188,26 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
       navigationStarted,
       committedUrl,
       currentUrl: decision.url,
+    })
+      ? decision.url
+      : null;
+  };
+  const acceptedCurrentCommittedUrl = () => {
+    if (
+      tab.navigationSequence !== navigationSequence ||
+      tab.pendingNavigationSequence !== navigationSequence ||
+      !navigationStarted
+    ) {
+      return null;
+    }
+    const decision = browserNavigationDecision(tab.state.url);
+    if (!decision.allow) {
+      return null;
+    }
+    return shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: decision.url,
+      startUrl: tab.pendingNavigationStartUrl,
+      targetUrl: tab.pendingNavigationTarget,
     })
       ? decision.url
       : null;
@@ -2228,6 +2263,12 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
   };
   const handleStop = () => {
     updateBrowserPanelLocationState(tab);
+    const currentCommittedUrl = acceptedCurrentCommittedUrl();
+    if (currentCommittedUrl) {
+      tab.state.url = currentCommittedUrl;
+      settle(resolveObserved);
+      return;
+    }
     const committedUrl = committedUrlForSequence
       ? acceptedCommittedUrl(tab.state.url, {
           committedUrl: committedUrlForSequence,
@@ -2235,6 +2276,17 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
       : null;
     if (committedUrl) {
       tab.state.url = committedUrl;
+      settle(resolveObserved);
+    }
+  };
+  const handleFrameFinish = (_event, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+    updateBrowserPanelLocationState(tab);
+    const currentCommittedUrl = acceptedCurrentCommittedUrl();
+    if (currentCommittedUrl) {
+      tab.state.url = currentCommittedUrl;
       settle(resolveObserved);
     }
   };
@@ -2269,6 +2321,7 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
   webContents.on("did-start-navigation", handleStart);
   webContents.on("did-navigate", handleNavigate);
   webContents.on("did-frame-navigate", handleFrameNavigate);
+  webContents.on("did-frame-finish-load", handleFrameFinish);
   webContents.on("did-finish-load", handleFinish);
   webContents.on("did-stop-loading", handleStop);
   webContents.on("did-fail-load", handleFail);
@@ -2464,6 +2517,17 @@ function browserPanelTabHasFinishedTarget(tab, target, navigationSequence) {
     currentUrl: tab.state.url,
     targetUrl: target,
   });
+}
+
+function browserPanelTabHasStoppedAtAcceptedUrl(tab) {
+  return (
+    shouldCompleteBrowserPanelStoppedNavigation({
+      navigationSequence: tab.navigationSequence,
+      pendingNavigationSequence: tab.pendingNavigationSequence,
+      currentUrl: tab.state.url,
+      targetUrl: tab.pendingNavigationTarget,
+    }) || browserPanelTabHasCommittedTarget(tab, tab.pendingNavigationTarget)
+  );
 }
 
 function browserPanelTabHasCommittedTarget(tab, target) {
