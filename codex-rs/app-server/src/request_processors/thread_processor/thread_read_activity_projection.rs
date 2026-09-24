@@ -2,6 +2,10 @@ use super::*;
 use app_server_protocol::CommandExecutionNotificationKind;
 use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallStatus;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::CompactedItem;
+use protocol::protocol::EventMsg;
 use protocol::subscriptions::PersistedSubscription;
 use rollout::EventPersistenceMode;
 use rollout::is_persisted_rollout_item;
@@ -18,19 +22,90 @@ pub(crate) fn restore_persisted_display_turns_from_rollout_items(
     thread: &mut Thread,
     rollout_items: &[RolloutItem],
 ) {
-    apply_thread_stats_from_rollout_items(thread, rollout_items);
-    let persisted_turns = thread_history::build_turns_from_rollout_items(rollout_items);
+    let projection_items = compact_display_projection_rollout_items(rollout_items);
+    apply_thread_stats_from_rollout_items(thread, &projection_items);
+    let persisted_turns = thread_history::build_turns_from_rollout_items(&projection_items);
     restore_persisted_display_turns(thread, &persisted_turns);
     apply_runtime_activity_items_from_turns(thread, &persisted_turns);
 }
 
 pub(crate) fn build_display_turns_from_rollout_items(rollout_items: &[RolloutItem]) -> Vec<Turn> {
-    let limited_items = rollout_items
+    let projection_items = compact_display_projection_rollout_items(rollout_items);
+    thread_history::build_turns_from_rollout_items(&projection_items)
+}
+
+fn compact_display_projection_rollout_items(rollout_items: &[RolloutItem]) -> Vec<RolloutItem> {
+    let mut limited_items = rollout_items
         .iter()
         .filter(|item| is_persisted_rollout_item(item, EventPersistenceMode::Limited))
         .cloned()
         .collect::<Vec<_>>();
-    thread_history::build_turns_from_rollout_items(&limited_items)
+    if limited_items
+        .iter()
+        .any(|item| matches!(item, RolloutItem::Compacted(_)))
+    {
+        return limited_items;
+    }
+
+    if let Some((insert_index, summary)) =
+        compact_summary_from_response_item_prefix(&limited_items)
+    {
+        limited_items.insert(
+            insert_index,
+            RolloutItem::Compacted(CompactedItem {
+                message: summary,
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+        );
+    }
+    limited_items
+}
+
+fn compact_summary_from_response_item_prefix(items: &[RolloutItem]) -> Option<(usize, String)> {
+    let context_compacted_index = items
+        .iter()
+        .position(|item| matches!(item, RolloutItem::EventMsg(EventMsg::ContextCompacted(_))))?;
+    let prefix = &items[..context_compacted_index];
+
+    let (summary_index, summary_item) = prefix
+        .iter()
+        .enumerate()
+        .find(|(_, item)| !matches!(item, RolloutItem::SessionMeta(_)))?;
+    let RolloutItem::ResponseItem(summary_response_item) = summary_item else {
+        return None;
+    };
+    let summary = assistant_response_message_text(summary_response_item)?;
+
+    let has_compact_context_suffix = prefix[summary_index + 1..].iter().any(|item| {
+        matches!(item, RolloutItem::TurnContext(_))
+            || matches!(
+                item,
+                RolloutItem::ResponseItem(ResponseItem::Message { role, .. })
+                    if role != "assistant"
+            )
+    });
+    has_compact_context_suffix.then_some((context_compacted_index, summary))
+}
+
+fn assistant_response_message_text(item: &ResponseItem) -> Option<String> {
+    let ResponseItem::Message { role, content, .. } = item else {
+        return None;
+    };
+    if role != "assistant" {
+        return None;
+    }
+
+    let text = content
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::OutputText { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 fn restore_persisted_flat_compaction_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
@@ -745,6 +820,137 @@ mod restore_persisted_injected_context_turns_tests {
                     "User Preferences",
                     "# User Preferences\n\nProject body"
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_display_turns_from_rollout_items_recovers_compact_summary_response_prefix() {
+        let rollout_items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "recovered compact summary".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "developer context restored after compact".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "compact-turn".to_string(),
+                item: protocol::items::TurnItem::InjectedContext(
+                    protocol::items::InjectedContextItem {
+                        id: "ctx-1".to_string(),
+                        title: "Init Context".to_string(),
+                        preview: "Init Context".to_string(),
+                        sections: vec![protocol::items::InjectedContextSection {
+                            label: "User Preferences".to_string(),
+                            text: "# User Preferences\n\nProject body".to_string(),
+                        }],
+                    },
+                ),
+                completed_at_ms: 1,
+            })),
+        ];
+
+        let turns = build_display_turns_from_rollout_items(&rollout_items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                context_compaction_item("item-1"),
+                agent_message_item("item-1:summary", "recovered compact summary"),
+                injected_context_item_with_label(
+                    "ctx-1",
+                    "User Preferences",
+                    "# User Preferences\n\nProject body"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_display_turns_from_rollout_items_does_not_display_generic_response_messages() {
+        let rollout_items = vec![RolloutItem::ResponseItem(ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "model context only".to_string(),
+            }],
+            phase: None,
+        })];
+
+        let turns = build_display_turns_from_rollout_items(&rollout_items);
+
+        assert!(turns.is_empty());
+    }
+
+    #[test]
+    fn build_display_turns_from_rollout_items_does_not_treat_plain_response_before_compact_as_summary()
+    {
+        let rollout_items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "ordinary model context assistant output".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+        ];
+
+        let turns = build_display_turns_from_rollout_items(&rollout_items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items, vec![context_compaction_item("item-1")]);
+    }
+
+    #[test]
+    fn build_display_turns_from_rollout_items_prefers_persisted_compacted_item() {
+        let rollout_items = vec![
+            RolloutItem::Compacted(CompactedItem {
+                message: "persisted compacted summary".to_string(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "fallback summary must not duplicate".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "developer context restored after compact".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
+        ];
+
+        let turns = build_display_turns_from_rollout_items(&rollout_items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                context_compaction_item("item-1"),
+                agent_message_item("item-1:summary", "persisted compacted summary"),
             ]
         );
     }
