@@ -12,6 +12,7 @@ use app_server_protocol::TurnStartedNotification;
 use app_server_protocol::TurnStatus;
 use app_server_protocol::UserInput;
 use app_server_protocol::is_legacy_structured_assistant_message_text;
+use app_server_protocol::is_legacy_structured_user_inputs;
 use app_server_protocol::item_event_to_server_notification;
 use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
@@ -626,6 +627,9 @@ impl ThreadRequestProcessor {
                 }
                 for path in payload.local_images {
                     content.push(UserInput::LocalImage { path });
+                }
+                if !should_display_user_message_event(&content) {
+                    return;
                 }
                 ServerNotification::ItemCompleted(ItemCompletedNotification {
                     thread_id: thread_id_string,
@@ -1947,6 +1951,10 @@ fn should_display_agent_message_event(message: &str) -> bool {
     !is_legacy_structured_assistant_message_text(message)
 }
 
+fn should_display_user_message_event(content: &[UserInput]) -> bool {
+    !is_legacy_structured_user_inputs(content)
+}
+
 fn thread_start_create_error(err: CodexErr) -> JSONRPCErrorError {
     match err {
         CodexErr::InvalidRequest(message) => invalid_request(message),
@@ -2068,6 +2076,35 @@ mod tests {
         .to_string();
 
         assert!(should_display_agent_message_event(&message));
+    }
+
+    #[test]
+    fn direct_live_user_message_suppresses_plain_inter_agent_completion_envelope() {
+        let content = vec![UserInput::Text {
+            text: concat!(
+                "Inter-agent communication received.\n",
+                "Author: /self/owner_dev_3\n",
+                "Recipient: /self\n",
+                "Operation: child_completion\n",
+                "Status: Completed(Some(\"状态：完成\"))\n",
+                "Content:\n",
+                "The child completed successfully."
+            )
+            .to_string(),
+            text_elements: Vec::new(),
+        }];
+
+        assert!(!should_display_user_message_event(&content));
+    }
+
+    #[test]
+    fn direct_live_user_message_preserves_ordinary_text() {
+        let content = vec![UserInput::Text {
+            text: "Inter-agent communication bug report without envelope metadata".to_string(),
+            text_elements: Vec::new(),
+        }];
+
+        assert!(should_display_user_message_event(&content));
     }
 
     #[test]
