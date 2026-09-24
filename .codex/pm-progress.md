@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c53861cae7b30aa903d1fc0e6cd1c4008b96541c72bdfc`. PM built fresh candidate `capsule-1790254792706-f43839cfff04273b` from canonical main `98ba8952fe170ecbb95e678839c2cb62774f5cc7` and restarted via `call_URpeuu7HWrSoqlJnaniT7cWA`. Candidate and installed payload hashes match (`app.asar` `5e31f46b...`, `bin/app-server` `5f023711...`), so the unchanged artifact `capsule.json` metadata sourceCommit `1e337999...` is a same-release dedupe artifact, not proof of old code. Installed Browser still fails the key path: fresh first navigation succeeds, close loaded tab leaves replacement `New tab / Ready`, but replacement external navigation briefly creates a CDP target then times out after 15s and target disappears. `/self/owner_dev_2` clean current-main dev Electron UI/harness passes the same path, so the active problem is now dev-vs-installed runtime/environment/state divergence rather than a simple stale-source install.
+Final bugfix + code-organization + performance tranche is installed effective in Runtime Capsule `sha256:94cc19243366382a979b2e022c7f5d14d733c1d67aa977cdb52d93460f9111a4` from canonical main `4b5dfb200`; Runtime Capsule restart `call_T3IiLBOlK7vSEYrAON5JKZFM` recovered/completed. Installed renderer URL points to the final artifact. Installed self-debug confirmed RightPanel lazy chunk renders the Browser panel without being stuck in `Loading panel...`, and Browser right/workspace surfaces can independently show/navigate/close test tabs.
 
 ## Active Work
 
@@ -65,22 +65,22 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   files: client/frontend/electron code areas to be scoped after active bugfixes
   base_commit: `a425d3738`
   next_action: No immediate action; delivered with performance optimization final capsule.
-  validation: Owner split `BrowserPanel.tsx` out of `RightPanel.tsx`, added `browserPanelSurface.cjs` for pure Browser surface bookkeeping, updated Browser/RightPanel tests, and reviewer approved after two rounds. PM validation on main passed: `node --check` for main/surface modules, Browser Electron focused tests including new surface tests passed 69/69, RightPanel/Panels/workspaceTabs passed 99/99, production build passed with existing chunk warnings, and `git diff --check` passed.
-  commit: owner `784bb7116`; merge `712890d44`; delivered in final performance capsule pending exact release record
+  validation: Owner split `BrowserPanel.tsx` out of `RightPanel.tsx`, added `browserPanelSurface.cjs` for pure Browser surface bookkeeping, updated Browser/RightPanel tests, and reviewer approved after two rounds. PM validation on main passed: `node --check` for main/surface modules, Browser Electron focused tests including new surface tests passed 69/69, RightPanel/Panels/workspaceTabs passed 99/99, production build passed with existing chunk warnings, and `git diff --check` passed. Delivered in final Runtime Capsule `sha256:94cc19243366382a979b2e022c7f5d14d733c1d67aa977cdb52d93460f9111a4`; installed self-debug confirmed renderer URL from the final artifact and Browser panel render/API smoke remained healthy.
+  commit: owner `784bb7116`; merge `712890d44`; installed capsule `sha256:94cc19243366382a979b2e022c7f5d14d733c1d67aa977cdb52d93460f9111a4`; restart `call_T3IiLBOlK7vSEYrAON5JKZFM`
 
 - id: client-performance-optimization-followup
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_main
   reviewer: pending
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: perf/client-browser-render-tranche
   task_type: performance_optimization
-  depends_on: client-code-organization-followup merged on main `712890d44`; final Runtime Capsule delivery pending
+  depends_on: client-code-organization-followup merged on main `712890d44`; final Runtime Capsule delivered
   files: pending measurement plan
   base_commit: `712890d44`
-  next_action: Build final Runtime Capsule and run installed self-debug smoke/Browser validation.
-  validation: Owner established build baseline `index-DxR3MtZk.js` 746.81 kB / gzip 226.21 kB and xterm warning. First slice dynamically loads `@xterm/addon-fit` and memoizes Browser/App derived values. Second slice lazy-loads `RightPanel`/file preview/diff preview and moves command focus helper to lightweight lib. Final build after owner: `index-B4UbQ1F_.js` 655.85 kB / gzip 200.67 kB, new `RightPanel-BcEGl_qF.js` 91.93 kB / gzip 26.79 kB, `addon-fit-DX4qG4td.js` 1.21 kB / gzip 0.51 kB, xterm mixed static/dynamic warning removed, true >500k warning preserved. PM validation before merge: build passed, frontend/Terminal focused tests 118/118 passed, Browser Electron tests 69/69 passed, `git diff --check` passed.
-  commit: owner `8acfef0b` and `f8fb6076`; merge pending final commit id
+  next_action: No immediate action; final Runtime Capsule is installed effective.
+  validation: Owner established build baseline `index-DxR3MtZk.js` 746.81 kB / gzip 226.21 kB and xterm warning. First slice dynamically loads `@xterm/addon-fit` and memoizes Browser/App derived values. Second slice lazy-loads `RightPanel`/file preview/diff preview and moves command focus helper to lightweight lib. Final build after owner: `index-B4UbQ1F_.js` 655.85 kB / gzip 200.67 kB, new `RightPanel-BcEGl_qF.js` 91.93 kB / gzip 26.79 kB, `addon-fit-DX4qG4td.js` 1.21 kB / gzip 0.51 kB, xterm mixed static/dynamic warning removed, true >500k warning preserved. PM validation before merge: build passed, frontend/Terminal focused tests 118/118 passed, Browser Electron tests 69/69 passed, `git diff --check` passed. PM built final Runtime Capsule `sha256:94cc19243366382a979b2e022c7f5d14d733c1d67aa977cdb52d93460f9111a4` from canonical main `4b5dfb200`; restart `call_T3IiLBOlK7vSEYrAON5JKZFM` recovered/completed. Installed self-debug confirmed renderer URL from final artifact, RightPanel lazy chunk rendered Browser panel without permanent `Loading panel...`, `codexDesktop` Browser IPC methods were present, and right/workspace Browser surfaces independently navigated to Example Domain while closing the workspace/right smoke tabs succeeded.
+  commit: owner `8acfef0b` and `f8fb6076`; merge `df3f6374c`; progress `4b5dfb200`; installed capsule `sha256:94cc19243366382a979b2e022c7f5d14d733c1d67aa977cdb52d93460f9111a4`; restart `call_T3IiLBOlK7vSEYrAON5JKZFM`
 
 - id: browser-installed-whitepage-navigation-details
   status: installed_effective
