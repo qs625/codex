@@ -4,6 +4,7 @@ const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const {
+  isBrowserPanelTabAlreadyAttached,
   nextBrowserTabIdAfterClose,
   shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,
@@ -125,6 +126,30 @@ test("shouldAttachBrowserPanelView requires a visible panel with visible bounds"
   );
 });
 
+test("isBrowserPanelTabAlreadyAttached detects stable same-tab refreshes", () => {
+  assert.equal(
+    isBrowserPanelTabAlreadyAttached({
+      attachedTabId: "browser-tab-1",
+      tabId: "browser-tab-1",
+    }),
+    true,
+  );
+  assert.equal(
+    isBrowserPanelTabAlreadyAttached({
+      attachedTabId: "browser-tab-1",
+      tabId: "browser-tab-2",
+    }),
+    false,
+  );
+  assert.equal(
+    isBrowserPanelTabAlreadyAttached({
+      attachedTabId: null,
+      tabId: "browser-tab-2",
+    }),
+    false,
+  );
+});
+
 test("browser panel native view lifecycle raises only on explicit show or tab actions", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
 
@@ -169,6 +194,19 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     attachFunction,
     /if \(!boundsVisible\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}/,
     "native Browser views must detach when bounds stop being visible",
+  );
+  assert.match(
+    attachFunction,
+    /isBrowserPanelTabAlreadyAttached\(\{[\s\S]*attachedTabId: panel\.attachedTabId,[\s\S]*tabId: tab\.id,[\s\S]*\}\)[\s\S]*tab\.view\.setBounds\(panel\.bounds\);[\s\S]*return true;/,
+    "same-tab BrowserView refreshes must not remove and re-add the WebContentsView before navigation",
+  );
+  assert.doesNotMatch(
+    attachFunction.slice(
+      attachFunction.indexOf("isBrowserPanelTabAlreadyAttached"),
+      attachFunction.indexOf("return true;", attachFunction.indexOf("isBrowserPanelTabAlreadyAttached")) + "return true;".length,
+    ),
+    /removeChildView|addChildView|detachBrowserPanelTabView|detachAttachedBrowserPanelView/,
+    "same-tab raises should avoid native view reparenting churn",
   );
   assert.match(
     mainSource,

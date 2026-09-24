@@ -37,7 +37,12 @@ function shouldAttachBrowserPanelView({
   );
 }
 
+function isBrowserPanelTabAlreadyAttached({ attachedTabId, tabId }) {
+  return Boolean(attachedTabId && tabId && attachedTabId === tabId);
+}
+
 module.exports = {
+  isBrowserPanelTabAlreadyAttached,
   nextBrowserTabIdAfterClose,
   shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,

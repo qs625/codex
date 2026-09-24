@@ -52,6 +52,7 @@ const {
   configurePermissionHandlers,
 } = require("./permissionHandlers.cjs");
 const {
+  isBrowserPanelTabAlreadyAttached,
   nextBrowserTabIdAfterClose,
   shouldAttachBrowserPanelView,
   shouldDetachAttachedBrowserPanelView,
@@ -2671,12 +2672,12 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
   ) {
     return false;
   }
-  if (panel.attachedTabId === tab.id) {
-    if (raise) {
-      detachBrowserPanelTabView(panel, tab);
-      panel.window.contentView.addChildView(tab.view);
-      panel.attachedTabId = tab.id;
-    }
+  if (
+    isBrowserPanelTabAlreadyAttached({
+      attachedTabId: panel.attachedTabId,
+      tabId: tab.id,
+    })
+  ) {
     tab.view.setBounds(panel.bounds);
     return true;
   }
