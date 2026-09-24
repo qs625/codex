@@ -3619,12 +3619,20 @@ function App() {
       ? (gitDiffWorkspaceStateById[activeWorkspaceTab.gitDiffTargetId] ??
         EMPTY_GIT_DIFF_PREVIEW)
       : EMPTY_GIT_DIFF_PREVIEW;
-  const detachedWorkspaceBrowserTabIds = workspaceTabs
-    .filter((tab) => tab.kind === "browser" && tab.browserTabId)
-    .map((tab) => tab.browserTabId as string);
-  const detachedWorkspaceTerminalTabIds = workspaceTabs
-    .filter((tab) => tab.kind === "terminal" && tab.terminalTabId)
-    .map((tab) => tab.terminalTabId as string);
+  const detachedWorkspaceBrowserTabIds = useMemo(
+    () =>
+      workspaceTabs
+        .filter((tab) => tab.kind === "browser" && tab.browserTabId)
+        .map((tab) => tab.browserTabId as string),
+    [workspaceTabs],
+  );
+  const detachedWorkspaceTerminalTabIds = useMemo(
+    () =>
+      workspaceTabs
+        .filter((tab) => tab.kind === "terminal" && tab.terminalTabId)
+        .map((tab) => tab.terminalTabId as string),
+    [workspaceTabs],
+  );
 
   return (
     <div className="app-shell" onPointerDown={dismissTreeMenu}>
