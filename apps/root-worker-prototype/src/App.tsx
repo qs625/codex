@@ -3462,13 +3462,13 @@ function App() {
       if (!tab) {
         return;
       }
+      closeWorkspaceTab(tab.id);
+      setRightPanelView("browser");
+      setIsRightPanelCollapsed(false);
       setRightPanelBrowserTabFocusRequest((current) => ({
         tabId: payload.browserTabId,
         token: (current?.token ?? 0) + 1,
       }));
-      setRightPanelView("browser");
-      setIsRightPanelCollapsed(false);
-      closeWorkspaceTab(tab.id);
       return;
     }
     if (payload.kind === "terminal") {
@@ -3480,13 +3480,13 @@ function App() {
       if (!tab) {
         return;
       }
+      closeWorkspaceTab(tab.id);
+      setRightPanelView("terminal");
+      setIsRightPanelCollapsed(false);
       setRightPanelTerminalTabFocusRequest((current) => ({
         tabId: payload.terminalTabId,
         token: (current?.token ?? 0) + 1,
       }));
-      setRightPanelView("terminal");
-      setIsRightPanelCollapsed(false);
-      closeWorkspaceTab(tab.id);
     }
   }
 

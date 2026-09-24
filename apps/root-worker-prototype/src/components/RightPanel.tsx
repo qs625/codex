@@ -225,12 +225,14 @@ export function resolveBrowserPanelTabSelection({
   tabs,
   activeTabId,
   activeBrowserTabId = null,
+  managerSelectedBrowserTabId = null,
   isManagerVariant,
   detachedBrowserTabIds = [],
 }: {
   tabs: BrowserPanelTabState[];
   activeTabId: string | null;
   activeBrowserTabId?: string | null;
+  managerSelectedBrowserTabId?: string | null;
   isManagerVariant: boolean;
   detachedBrowserTabIds?: string[];
 }) {
@@ -241,7 +243,11 @@ export function resolveBrowserPanelTabSelection({
       : tabs;
   const renderedTabs = isManagerVariant ? managerVisibleTabs : tabs;
   const selectedBrowserTabId =
-    !isManagerVariant && activeBrowserTabId ? activeBrowserTabId : activeTabId;
+    isManagerVariant
+      ? (managerSelectedBrowserTabId ?? activeTabId)
+      : activeBrowserTabId
+        ? activeBrowserTabId
+        : activeTabId;
   const activeTab =
     renderedTabs.find((tab) => tab.id === selectedBrowserTabId) ??
     renderedTabs[0] ??
@@ -498,14 +504,13 @@ export function RightPanel({
 
   function getReturnableWorkspaceObject(
     event: DragEvent<HTMLElement>,
-    view: RightPanelView,
+    view: RightPanelView | null = null,
   ): WorkspaceObjectDragPayload | null {
-    const kind = workspaceObjectKindForView(view);
-    if (kind !== "browser" && kind !== "terminal") {
+    const payload = readWorkspaceObjectDragData(event.dataTransfer);
+    if (!payload || (payload.kind !== "browser" && payload.kind !== "terminal")) {
       return null;
     }
-    const payload = readWorkspaceObjectDragData(event.dataTransfer);
-    if (!payload || payload.kind !== kind) {
+    if (view != null && payload.kind !== workspaceObjectKindForView(view)) {
       return null;
     }
     return payload;
@@ -513,7 +518,7 @@ export function RightPanel({
 
   function handleWorkspaceObjectReturnDragOver(
     event: DragEvent<HTMLElement>,
-    view: RightPanelView,
+    view: RightPanelView | null,
   ) {
     if (!getReturnableWorkspaceObject(event, view)) {
       return;
@@ -524,7 +529,7 @@ export function RightPanel({
 
   function handleWorkspaceObjectReturnDrop(
     event: DragEvent<HTMLElement>,
-    view: RightPanelView,
+    view: RightPanelView | null,
   ) {
     const payload = getReturnableWorkspaceObject(event, view);
     if (!payload) {
@@ -672,10 +677,10 @@ export function RightPanel({
           <div
             className="right-panel-content"
             onDragOver={(event) =>
-              handleWorkspaceObjectReturnDragOver(event, effectiveActiveView)
+              handleWorkspaceObjectReturnDragOver(event, null)
             }
             onDrop={(event) =>
-              handleWorkspaceObjectReturnDrop(event, effectiveActiveView)
+              handleWorkspaceObjectReturnDrop(event, null)
             }
           >
             {effectiveActiveView === "skills" ? (
@@ -1119,10 +1124,13 @@ export function BrowserPanel({
     activeBrowserTabId,
     detachedBrowserTabIds,
     isManagerVariant: variant === "manager",
+    managerSelectedBrowserTabId: null as string | null,
   });
   const browserSurfaceTokenRef = useRef(Symbol("browser-panel-surface"));
   const lastBrowserTabFocusRequestTokenRef = useRef(0);
   const [address, setAddress] = useState("");
+  const [managerSelectedBrowserTabId, setManagerSelectedBrowserTabId] =
+    useState<string | null>(null);
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
@@ -1131,6 +1139,7 @@ export function BrowserPanel({
     activeBrowserTabId,
     detachedBrowserTabIds,
     isManagerVariant,
+    managerSelectedBrowserTabId,
   };
   const tabs =
     state.tabs.length > 0 || isManagerVariant
@@ -1145,6 +1154,7 @@ export function BrowserPanel({
     tabs,
     activeTabId: state.activeTabId,
     activeBrowserTabId,
+    managerSelectedBrowserTabId,
     isManagerVariant,
     detachedBrowserTabIds,
   });
@@ -1173,7 +1183,14 @@ export function BrowserPanel({
         ? (normalizedState.tabs.find((tab) => tab.id === surface.activeBrowserTabId) ??
           normalizedActiveTab)
         : surface.isManagerVariant
-          ? (normalizedActiveTab &&
+          ? (surface.managerSelectedBrowserTabId
+              ? (normalizedState.tabs.find(
+                (tab) =>
+                  tab.id === surface.managerSelectedBrowserTabId &&
+                  !surfaceDetachedTabIds.has(tab.id),
+              ) ?? null)
+              : null) ??
+            (normalizedActiveTab &&
               !surfaceDetachedTabIds.has(normalizedActiveTab.id)
               ? normalizedActiveTab
               : (normalizedState.tabs.find(
@@ -1228,6 +1245,24 @@ export function BrowserPanel({
     }
     setAddress(activeTab?.url ?? "");
   }, [activeTab?.id, activeTab?.url, isManagerVariant]);
+
+  useEffect(() => {
+    if (
+      !isManagerVariant ||
+      nativeViewSuppressed ||
+      !managerSelectedBrowserTabId ||
+      !renderedTabs.some((tab) => tab.id === state.activeTabId)
+    ) {
+      return;
+    }
+    setManagerSelectedBrowserTabId(null);
+  }, [
+    isManagerVariant,
+    managerSelectedBrowserTabId,
+    nativeViewSuppressed,
+    renderedTabs,
+    state.activeTabId,
+  ]);
 
   useEffect(() => {
     if (!navigationRequest) {
@@ -1487,14 +1522,44 @@ export function BrowserPanel({
   };
 
   const createTab = () => {
-    if (nativeViewSuppressed) {
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      setLocalError("In-app browser is unavailable in this environment.");
       return;
     }
-    runCommand((browserApi) => browserApi.createBrowserTab(), "Could not create a tab.");
+    setLocalError(null);
+    if (nativeViewSuppressed) {
+      const previousTabIds = new Set(state.tabs.map((tab) => tab.id));
+      void browserApi
+        .createBrowserTab({ activate: false })
+        .then((nextState) => {
+          const nextTab =
+            nextState.tabs.find((tab) => !previousTabIds.has(tab.id)) ??
+            nextState.tabs.find((tab) => !detachedBrowserTabIds.includes(tab.id)) ??
+            null;
+          applyBrowserState(nextState);
+          if (nextTab) {
+            setManagerSelectedBrowserTabId(nextTab.id);
+            setAddress(nextTab.url ?? "");
+          }
+        })
+        .catch((error) => setLocalError(toBrowserError(error) || "Could not create a tab."));
+      return;
+    }
+    runCommand(
+      (api) => api.createBrowserTab(),
+      "Could not create a tab.",
+    );
   };
 
   const selectTab = (tabId: string) => {
     if (nativeViewSuppressed) {
+      const tab = renderedTabs.find((item) => item.id === tabId);
+      if (tab) {
+        setManagerSelectedBrowserTabId(tab.id);
+        setAddress(tab.url ?? "");
+        setLocalError(null);
+      }
       return;
     }
     if (tabId === state.activeTabId) {
@@ -1557,7 +1622,7 @@ export function BrowserPanel({
           <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
             <div className="browser-tabs">
               {renderedTabs.map((tab) => {
-                const isActive = tab.id === (state.activeTabId ?? activeTab?.id);
+                const isActive = tab.id === activeTab?.id;
                 return (
                   <div
                     key={tab.id}
@@ -1570,7 +1635,6 @@ export function BrowserPanel({
                       role="tab"
                       aria-selected={isActive}
                       title={browserTabLabel(tab)}
-                      disabled={nativeViewSuppressed}
                       onClick={() => selectTab(tab.id)}
                       onDoubleClick={() =>
                         onOpenBrowserTabInWorkspace?.(browserTabDragPayload(tab))
@@ -1615,7 +1679,7 @@ export function BrowserPanel({
               className="browser-icon-button browser-new-tab-button"
               aria-label="New browser tab"
               title="New tab"
-              disabled={!hasBrowserApi || nativeViewSuppressed}
+              disabled={!hasBrowserApi}
               onClick={createTab}
             >
               <PlusIcon />
@@ -1683,7 +1747,6 @@ export function BrowserPanel({
                   aria-label="Browser URL"
                   value={address}
                   placeholder="https://example.com or localhost:5173"
-                  disabled={nativeViewSuppressed}
                   onChange={(event) => setAddress(event.target.value)}
                 />
                 <button
