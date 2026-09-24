@@ -3671,9 +3671,7 @@ async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_in
     );
 }
 
-fn assert_poll_event_result_json_omits_payload(
-    result: &thread_service_api::ThreadPollEventResult,
-) {
+fn assert_poll_event_result_json_omits_payload(result: &thread_service_api::ThreadPollEventResult) {
     let serialized = serde_json::to_value(result).expect("serialize poll_event result");
     assert!(serialized.get("event").is_none());
     assert!(serialized.get("events").is_none());
@@ -3867,6 +3865,92 @@ async fn poll_event_existing_pending_events_keep_first_source_event_and_all_even
             ..
         }
     ));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn pending_command_output_and_exit_record_bounded_model_visible_facts() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-1:notification:output:1".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            message: "Command cmd-1 produced new output.".to_string(),
+            output: Some("first chunk\n".to_string()),
+            exit_code: None,
+            created_at_ms: 1234,
+        },
+    ))
+    .await;
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-1:notification:exit".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command cmd-1 has exited with code 7.".to_string(),
+            output: Some(format!("{}tail", "x".repeat(4100))),
+            exit_code: Some(7),
+            created_at_ms: 1235,
+        },
+    ))
+    .await;
+
+    let poll_result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should wake");
+    assert!(!poll_result.timed_out);
+    assert_eq!(poll_result.source_hint.as_deref(), Some("command_output"));
+    assert_eq!(poll_result.source_category.as_deref(), Some("command"));
+    assert_poll_event_result_json_omits_payload(&poll_result);
+
+    let pending_input = sess.get_pending_input().await;
+    assert_eq!(pending_input.len(), 2);
+    for pending_input_item in pending_input {
+        match hooks::inspect_pending_input(sess.as_ref(), tc.as_ref(), pending_input_item).await {
+            hooks::PendingInputHookDisposition::Accepted(pending_input) => {
+                hooks::record_pending_input(sess.as_ref(), tc.as_ref(), *pending_input).await;
+            }
+            hooks::PendingInputHookDisposition::Blocked { .. } => {
+                panic!("command notification should not be blocked")
+            }
+        }
+    }
+
+    let history = sess.clone_history().await;
+    assert!(
+        !history
+            .raw_items()
+            .iter()
+            .any(|item| matches!(item, ResponseItem::CommandExecutionNotification { .. })),
+        "raw command notifications should remain display-only"
+    );
+    let text = response_input_text(history.raw_items());
+    assert!(text.contains("Command async event: command_item_id=cmd-1 kind=output"));
+    assert!(text.contains("exit_code=none has_output=true created_at_ms=1234"));
+    assert!(text.contains("Output preview:\nfirst chunk\n"));
+    assert!(text.contains("Command async event: command_item_id=cmd-1 kind=exit"));
+    assert!(text.contains("exit_code=7 has_output=true created_at_ms=1235"));
+    assert!(text.contains(&"x".repeat(4000)));
+    assert!(
+        !text.contains("tail"),
+        "command async event output preview should be bounded"
+    );
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -4498,6 +4582,16 @@ async fn leftover_command_exit_display_does_not_enter_provider_request_history()
     assert!(
         notification_item.is_none(),
         "provider request input should not include display-only command notification: {body}"
+    );
+    assert!(
+        body.to_string()
+            .contains("Command async event: command_item_id=cmd-1 kind=exit"),
+        "provider request input should include bounded command async event fact: {body}"
+    );
+    assert!(
+        body.to_string()
+            .contains("exit_code=0 has_output=true created_at_ms=1234"),
+        "provider request input should include bounded command exit metadata: {body}"
     );
 
     Ok(())

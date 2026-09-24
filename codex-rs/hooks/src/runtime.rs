@@ -17,6 +17,8 @@ use hooks_api::SharedHookRuntime;
 use hooks_api::UserPromptSubmitOutcome;
 use hooks_api::UserPromptSubmitRequest;
 use protocol::items::TurnItem;
+use protocol::models::CommandExecutionNotificationKind;
+use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::HookCompletedEvent;
@@ -24,6 +26,8 @@ use protocol::protocol::HookRunSummary;
 use protocol::user_input::UserInput;
 use serde_json::Value;
 use thread_service_api::PendingInputItem;
+
+const MAX_COMMAND_ASYNC_EVENT_OUTPUT_PREVIEW_CHARS: usize = 4000;
 
 pub struct HookRuntimeContext {
     pub session_id: protocol::ThreadId,
@@ -490,8 +494,11 @@ where
             record_additional_contexts(host, turn, additional_contexts).await;
         }
         PendingInputRecord::ConversationItem { response_item } => {
-            host.record_model_items_and_emit_display_events(turn, vec![response_item])
-                .await;
+            host.record_model_items_and_emit_display_events(
+                turn,
+                model_items_for_pending_conversation_item(response_item),
+            )
+            .await;
         }
         PendingInputRecord::InterAgentCommunication { pending_input } => {
             let response_item = pending_input.into_response_item();
@@ -499,6 +506,70 @@ where
                 .await;
         }
     }
+}
+
+fn model_items_for_pending_conversation_item(response_item: ResponseItem) -> Vec<ResponseItem> {
+    match &response_item {
+        ResponseItem::CommandExecutionNotification { .. } => {
+            vec![command_async_event_fact(&response_item), response_item]
+        }
+        _ => vec![response_item],
+    }
+}
+
+fn command_async_event_fact(notification: &ResponseItem) -> ResponseItem {
+    let ResponseItem::CommandExecutionNotification {
+        command_item_id,
+        kind,
+        output,
+        exit_code,
+        created_at_ms,
+        ..
+    } = notification
+    else {
+        unreachable!("command async event facts are only built for command notifications");
+    };
+
+    let kind_label = match kind {
+        CommandExecutionNotificationKind::Output => "output",
+        CommandExecutionNotificationKind::Exit => "exit",
+    };
+    let exit_code_label = exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let has_output = output.as_ref().is_some_and(|output| !output.is_empty());
+    let output_preview = output
+        .as_deref()
+        .filter(|output| !output.is_empty())
+        .map(bound_command_async_event_output_preview);
+
+    let mut text = format!(
+        "Command async event: command_item_id={command_item_id} kind={kind_label} exit_code={exit_code_label} has_output={has_output} created_at_ms={created_at_ms}"
+    );
+    if let Some(output_preview) = output_preview {
+        text.push_str("\nOutput preview:\n");
+        text.push_str(&output_preview);
+    }
+
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText { text }],
+        phase: None,
+    }
+}
+
+fn bound_command_async_event_output_preview(output: &str) -> String {
+    let sanitized = output.replace('\0', "\u{FFFD}");
+    if sanitized.chars().count() <= MAX_COMMAND_ASYNC_EVENT_OUTPUT_PREVIEW_CHARS {
+        return sanitized;
+    }
+    let mut bounded = sanitized
+        .chars()
+        .take(MAX_COMMAND_ASYNC_EVENT_OUTPUT_PREVIEW_CHARS)
+        .collect::<String>();
+    bounded.push('…');
+    bounded
 }
 
 async fn run_context_injecting_hook<H, Fut, Outcome>(
