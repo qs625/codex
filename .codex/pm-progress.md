@@ -12,7 +12,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
 
 ## Active Work
 - id: inter-agent-child-completion-raw-message
-  status: dispatched_to_owner
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -21,9 +21,9 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   depends_on: main `6173082c`; Browser installed effective; user screenshot and repeated PM installed UI samples of raw `Inter-agent communication received` message showing `Status: Completed(Some(...))`
   files: likely inter-agent notification/pending input/display projection and Root Worker conversation projection tests; exact files pending owner diagnosis
   base_commit: `6173082c`
-  next_action: `/self/owner_dev_2` has been dispatched from synced dev-2 checkout to diagnose and fix the raw child completion display leak now that Browser is installed effective. Owner must distinguish live pending-input/lifecycle wake facts, persisted history/readThread projection, model-visible async context, and ordinary visible conversation items; no UI-only regex hiding.
-  validation: Owner root-caused live `EventMsg::UserMessage` projection bypassing replay/ItemCompleted `is_legacy_structured_user_inputs` filtering, so provider-visible inter-agent envelopes were projected as `ThreadItem::UserMessage`. Owner fixed live user message display filtering while preserving typed child completion wake/final-result semantics; reviewer approved. PM validation on dev-2 and main: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server direct_live_user_message -- --nocapture` passed 2 tests; `git diff --check` passed. Installed capsule `703811...` still showed a raw `/self/owner_dev` child-completion envelope as ordinary visible text during this PM turn, so code-level tests were not sufficient. Fresh installed capsule `8f74ea...` validation initially found no `Inter-agent communication received` or `Status: Completed(Some...)` DOM/readThread hits except compact summary/self-authored validation notes, but subsequent UI usage again surfaced suspicious fixed-tail messages. Current evidence is not yet precise enough to dispatch a final owner brief; keep reopened for focused display-history diagnosis after Browser.
-  commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`
+  next_action: Owner fix `7ad221bb` merged to main as `a2c55f84`; PM main validation passed two focused app-server tests, `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`, and `git diff --check HEAD~1..HEAD`. Pending Runtime Capsule delivery, preferably batched with active Browser workspace/right-manager UI fix.
+  validation: Owner root-caused live `EventMsg::UserMessage` projection bypassing replay/ItemCompleted `is_legacy_structured_user_inputs` filtering, so provider-visible inter-agent envelopes were projected as `ThreadItem::UserMessage`. Owner fixed live user message display filtering while preserving typed child completion wake/final-result semantics; reviewer approved. PM validation on dev-2 and main: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server direct_live_user_message -- --nocapture` passed 2 tests; `git diff --check` passed. Installed capsule `703811...` still showed a raw `/self/owner_dev` child-completion envelope as ordinary visible text during this PM turn, so code-level tests were not sufficient. Fresh installed capsule `8f74ea...` validation initially found no `Inter-agent communication received` or `Status: Completed(Some...)` DOM/readThread hits except compact summary/self-authored validation notes, but subsequent UI usage again surfaced suspicious fixed-tail messages. Owner follow-up root-caused an additional read/reload compact-summary fallback gap: legacy raw inter-agent `ResponseItem::Message(role=assistant)` before `ContextCompacted` was recovered as visible compact summary. Fix reuses `is_legacy_structured_assistant_message_text` in `thread_read_activity_projection` compact-summary fallback, preserving normal compact summary recovery. Reviewer approved. PM main validation after merge `a2c55f84`: focused leak test passed, compact summary positive test passed, app-server debug build passed, `git diff --check` passed. Pending installed capsule validation; if live raw completion still appears after install, continue with live pending-input/display projection chain.
+  commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`; owner compact fallback fix `7ad221bb`; merge `a2c55f84`; pending capsule delivery
 
 - id: browser-workspace-right-manager-independence
   status: dispatched_to_owner
@@ -37,6 +37,34 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   base_commit: `cc5c11da1`
   next_action: `/self/owner_dev` dispatched to reproduce and fix Browser workspace-owned tab vs right Browser manager independence. Required semantics: dragged center Browser is a concrete independent workspace object tab; right Browser manager remains independently able to create, display, select, and close right-owned tabs; neither side steals native BrowserView ownership from the other.
   validation: PM installed self-debug confirmed ordinary right Browser close works when no center Browser ownership condition is being exercised: clicking right `Close Example Domain` removed the tab and CDP target, leaving 百度/Google right tabs. Therefore owner should focus on the dragged-to-center ownership state, not basic close. User says center Browser can close but right Browser cannot after drag, and right new tab cannot display page.
+  commit: pending
+
+- id: client-code-organization-followup
+  status: queued
+  owner: owner_main_or_refactor_owner_pending
+  reviewer: pending
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: pending
+  task_type: client_code_cleanup_refactor
+  depends_on: active Browser workspace/right-manager fix installed effective; raw inter-agent display fix delivered/validated
+  files: client/frontend/electron code areas to be scoped after active bugfixes
+  base_commit: pending
+  next_action: After current bugfixes are merged and installed effective, run a global-exclusive client code organization tranche. Must define design intent, invariants, forbidden paths, and regression matrix before dispatch; do not run concurrently with active bugfix owners.
+  validation: pending
+  commit: pending
+
+- id: client-performance-optimization-followup
+  status: queued
+  owner: performance_owner_pending
+  reviewer: pending
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: pending
+  task_type: performance_optimization
+  depends_on: client-code-organization-followup completed and installed/validated as needed
+  files: pending measurement plan
+  base_commit: pending
+  next_action: After client cleanup, run a global-exclusive performance optimization tranche with explicit measurement baseline/profile, one optimization at a time, regression protection, and installed validation if user-visible runtime behavior changes.
+  validation: pending
   commit: pending
 
 - id: browser-installed-whitepage-navigation-details
