@@ -42,6 +42,19 @@ impl PendingTurn {
                 .all(|item| matches!(item, ThreadItem::InjectedContext { .. }))
     }
 
+    pub(super) fn has_only_compaction_display_items(&self) -> bool {
+        match self.items.as_slice() {
+            [ThreadItem::ContextCompaction { .. }] => true,
+            [
+                ThreadItem::ContextCompaction { id },
+                ThreadItem::AgentMessage {
+                    id: summary_id, ..
+                },
+            ] => summary_id == &format!("{id}:summary"),
+            _ => false,
+        }
+    }
+
     pub(super) fn opened_explicitly(mut self) -> Self {
         self.opened_explicitly = true;
         self
