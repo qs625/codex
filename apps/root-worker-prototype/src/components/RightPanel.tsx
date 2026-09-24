@@ -1169,7 +1169,7 @@ export function BrowserPanel({
   const error = activeTab
     ? (localError ?? activeTab.error ?? state.error)
     : localError;
-  const activeTitle = activeTab?.title || (!isManagerVariant ? state.title : null) || "Browser";
+  const panelChromeLabels = resolveBrowserPanelChromeLabels(activeTab);
   const syncAddressFromTab = (
     tab: BrowserPanelTabState | null,
     { force = false }: { force?: boolean } = {},
@@ -1613,7 +1613,7 @@ export function BrowserPanel({
         <>
           <header className="panel-content-header browser-header">
             <div className="panel-content-copy">
-              <h2>{activeTitle}</h2>
+              <h2>{panelChromeLabels.headerTitle}</h2>
             </div>
             <button
               type="button"
@@ -1947,6 +1947,15 @@ export function browserTabLabel(tab: BrowserPanelTabState) {
   } catch {
     return tab.url;
   }
+}
+
+export function resolveBrowserPanelChromeLabels(
+  activeTab: BrowserPanelTabState | null,
+) {
+  return {
+    headerTitle: "Browser",
+    activeTabTitle: activeTab ? browserTabLabel(activeTab) : "New tab",
+  };
 }
 
 export function browserBoundsFromElement(

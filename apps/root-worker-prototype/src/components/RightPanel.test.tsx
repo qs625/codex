@@ -53,6 +53,7 @@ const {
   normalizeBrowserPanelState,
   nextBrowserBoundsSequence,
   openCwdTreeFilePreview,
+  resolveBrowserPanelChromeLabels,
   resolveBrowserPanelTabSelection,
   resolveThreadAnalysisCommandFocus,
   resolvePreviewDefinitionPosition,
@@ -858,6 +859,32 @@ test("browser tab helpers preserve active tab state and readable labels", () => 
   assert.equal(legacyState.activeTabId, "browser-tab-active");
   assert.equal(legacyState.tabs.length, 1);
   assert.equal(legacyState.tabs[0]?.title, "Legacy page");
+});
+
+test("browser panel header stays product chrome while tabs use page titles", () => {
+  const rightPanelSource = readFileSync(
+    new URL("./RightPanel.tsx", import.meta.url),
+    "utf8",
+  );
+  const baiduTab = {
+    id: "tab-baidu",
+    url: "https://www.baidu.com/",
+    title: "百度一下，你就知道",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  };
+  const labels = resolveBrowserPanelChromeLabels(baiduTab);
+
+  assert.equal(labels.headerTitle, "Browser");
+  assert.equal(labels.activeTabTitle, "百度一下，你就知道");
+  assert.equal(browserTabLabel(baiduTab), "百度一下，你就知道");
+  assert.match(rightPanelSource, /<h2>\{panelChromeLabels\.headerTitle\}<\/h2>/);
+  assert.match(
+    rightPanelSource,
+    /<span className="browser-tab-title">\{browserTabLabel\(tab\)\}<\/span>/,
+  );
 });
 
 test("browser successful state clears stale local errors", () => {
