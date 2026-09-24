@@ -643,3 +643,56 @@ test("main browser debug target creation starts hidden tab navigation before tar
     /const targetId = await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
   );
 });
+
+test("main browser navigation bootstraps cold WebContentsView before target load", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const createTabIndex = mainSource.indexOf("function createBrowserPanelTab");
+  const bootstrapIndex = mainSource.indexOf(
+    "async function ensureBrowserPanelTabInitialNavigationBootstrap",
+  );
+  const loadUrlIndex = mainSource.indexOf("async function loadBrowserPanelTabUrl");
+  const normalizedOkIndex = mainSource.indexOf("if (!normalized.ok)", loadUrlIndex);
+  const navigationSequenceIndex = mainSource.indexOf(
+    "const navigationSequence = ++tab.navigationSequence",
+    loadUrlIndex,
+  );
+  const externalLoadIndex = mainSource.indexOf(
+    "tab.view.webContents.loadURL(normalized.url)",
+    loadUrlIndex,
+  );
+
+  assert.notEqual(createTabIndex, -1);
+  assert.notEqual(bootstrapIndex, -1);
+  assert.notEqual(loadUrlIndex, -1);
+  assert.notEqual(normalizedOkIndex, -1);
+  assert.notEqual(navigationSequenceIndex, -1);
+  assert.notEqual(externalLoadIndex, -1);
+  assert.match(
+    mainSource.slice(createTabIndex, loadUrlIndex),
+    /initialNavigationBootstrapped: false/,
+    "new Browser tabs must track cold WebContentsView bootstrap state",
+  );
+  assert.match(
+    mainSource.slice(bootstrapIndex, loadUrlIndex),
+    /loadBrowserPanelTabAboutBlankBootstrap\(panel, tab\)/,
+    "cold Browser tabs must initialize with about:blank before their first external load",
+  );
+  assert.match(
+    mainSource.slice(
+      mainSource.indexOf("async function loadBrowserPanelTabAboutBlankBootstrap"),
+      bootstrapIndex,
+    ),
+    /tab\.initialNavigationBootstrapped = true;/,
+    "about:blank bootstrap completion must be recorded",
+  );
+  const bootstrapCallIndex = mainSource.indexOf(
+    "await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);",
+    loadUrlIndex,
+  );
+  assert.ok(
+    normalizedOkIndex < bootstrapCallIndex &&
+      bootstrapCallIndex < navigationSequenceIndex &&
+      navigationSequenceIndex < externalLoadIndex,
+    "external navigation must bootstrap after URL validation but before pending navigation state and loadURL",
+  );
+});

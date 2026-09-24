@@ -1694,11 +1694,24 @@ async function loadBrowserPanelTabAboutBlankBootstrap(panel, tab) {
   tab.allowNextAboutBlankNavigation = true;
   try {
     await tab.view.webContents.loadURL("about:blank");
+    tab.initialNavigationBootstrapped = true;
   } finally {
     tab.allowNextAboutBlankNavigation = false;
     updateBrowserPanelLocationState(tab);
     sendBrowserPanelState(panel);
   }
+}
+
+async function ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab) {
+  if (tab.initialNavigationBootstrapped || tab.view.webContents.isDestroyed()) {
+    return;
+  }
+  const currentUrl = tab.view.webContents.getURL();
+  if (!isEmptyBrowserPanelUrl(currentUrl)) {
+    tab.initialNavigationBootstrapped = true;
+    return;
+  }
+  await loadBrowserPanelTabAboutBlankBootstrap(panel, tab);
 }
 
 async function waitForBrowserPanelDevToolsTarget(webContents) {
@@ -1904,6 +1917,7 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
     view,
     state: emptyBrowserPanelTabState(),
     allowNextAboutBlankNavigation: false,
+    initialNavigationBootstrapped: false,
     navigationSequence: 0,
     finishedNavigationSequence: 0,
     finishedUrl: null,
@@ -1942,6 +1956,7 @@ async function loadBrowserPanelTabUrl(
     sendBrowserPanelState(panel);
     throw new Error(normalized.reason);
   }
+  await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);
   const navigationSequence = ++tab.navigationSequence;
   const navigationStartUrl = tab.view.webContents.getURL() || tab.state.url || null;
   tab.pendingDeferredFailure = null;
