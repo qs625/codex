@@ -12,16 +12,16 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
 
 ## Active Work
 - id: inter-agent-child-completion-raw-message
-  status: reopened_installed_ui_display_suspect
+  status: dispatched_to_owner
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
   branch: fix/inter-agent-child-completion-raw-message
   task_type: runtime_display_projection_bugfix
-  depends_on: main `753dd7869`; user screenshot of raw `Inter-agent communication received` message showing `Status: Completed(Some(...))`
+  depends_on: main `6173082c`; Browser installed effective; user screenshot and repeated PM installed UI samples of raw `Inter-agent communication received` message showing `Status: Completed(Some(...))`
   files: likely inter-agent notification/pending input/display projection and Root Worker conversation projection tests; exact files pending owner diagnosis
-  base_commit: `753dd7869`
-  next_action: Re-verify after Browser is stabilized. Fresh installed UI again rendered `/self/owner_dev_3` child completion as ordinary visible text beginning `Inter-agent communication received. Author: /self/owner_dev_3 ... Operation: child_completion Status: Completed(Some(...))`. Need distinguish model-visible async facts, typed tool/command notifications, and ordinary persisted conversation items before marking fixed.
+  base_commit: `6173082c`
+  next_action: `/self/owner_dev_2` has been dispatched from synced dev-2 checkout to diagnose and fix the raw child completion display leak now that Browser is installed effective. Owner must distinguish live pending-input/lifecycle wake facts, persisted history/readThread projection, model-visible async context, and ordinary visible conversation items; no UI-only regex hiding.
   validation: Owner root-caused live `EventMsg::UserMessage` projection bypassing replay/ItemCompleted `is_legacy_structured_user_inputs` filtering, so provider-visible inter-agent envelopes were projected as `ThreadItem::UserMessage`. Owner fixed live user message display filtering while preserving typed child completion wake/final-result semantics; reviewer approved. PM validation on dev-2 and main: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server direct_live_user_message -- --nocapture` passed 2 tests; `git diff --check` passed. Installed capsule `703811...` still showed a raw `/self/owner_dev` child-completion envelope as ordinary visible text during this PM turn, so code-level tests were not sufficient. Fresh installed capsule `8f74ea...` validation initially found no `Inter-agent communication received` or `Status: Completed(Some...)` DOM/readThread hits except compact summary/self-authored validation notes, but subsequent UI usage again surfaced suspicious fixed-tail messages. Current evidence is not yet precise enough to dispatch a final owner brief; keep reopened for focused display-history diagnosis after Browser.
   commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`
 
