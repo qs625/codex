@@ -41,7 +41,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`; owner compact fallback fix `7ad221bb`; merge `a2c55f84`; pending capsule delivery
 
 - id: browser-workspace-right-manager-independence
-  status: resumed_to_owner
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -50,21 +50,21 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   depends_on: main `cc5c11da1`; installed Browser base navigation effective in capsule `sha256:d763bb85838e6f30adfe96c56a853007f950e75e77b82e39bb83bc91aaf7fadf`; user report that after dragging Browser to center, right Browser new tab cannot display page and right Browser tabs cannot close while center tab can close
   files: likely `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/lib/workspaceTabs.ts`, Browser/native view ownership paths in `apps/root-worker-prototype/electron/main.cjs`, and related tests
   base_commit: `cc5c11da1`
-  next_action: Resume now that compact/read duplicate bug is installed effective. Continue from or replace WIP save commit `99865697a`, but do not merge it directly until reviewed/tested. Required: per-surface BrowserView ownership; center Browser close closes underlying tab and does not return it to right manager; drag-back is the only release/return; right manager remains able to new/select/close/display right-owned tabs while center Browser exists.
-  validation: PM installed self-debug confirmed ordinary right Browser close works when no center Browser ownership condition is being exercised: clicking right `Close Example Domain` removed the tab and CDP target, leaving 百度/Google right tabs. Therefore owner should focus on the dragged-to-center ownership state, not basic close. User says center Browser can close but right Browser cannot after drag, and right new tab cannot display page.
-  commit: WIP save `99865697a` not mergeable
+  next_action: No immediate action. Proceed to queued client code organization tranche, then performance optimization.
+  validation: Owner implemented per-surface BrowserView ownership: Browser IPC supports `surfaceId/tabId`, main tracks `visibleSurfaceIds`, `boundsBySurfaceId`, and `attachedTabIdBySurfaceId`, workspace Browser no longer globally selects right manager tab, close lifecycle detaches all surfaces for the closing tab, workspace close closes underlying Browser tab, drag-back remains release-only, and right manager suppression was removed. Reviewer approved after three rounds. PM validation on dev and main: syntax checks passed; Browser Electron focused tests, navigation-state tests, remote-debugging-proxy tests, and RightPanel/Panels/workspaceTabs tests passed; `git diff --check` passed. PM built Runtime Capsule `sha256:ef619ef73c5969cce5d55d8e1312fc6b762a07125a1eafe1fa0fd5c185ef1ebf` from main `df5a23f6`; restart `call_VG4nEX0I1jT3xJmcZDQU6lH7` recovered. Installed self-debug/API validation confirmed right surface tab A and workspace surface tab B can independently show/navigate to Example Domain; right tab can navigate while workspace surface is visible; closing workspace underlying tab removes it without returning to right manager; closing right tab works.
+  commit: owner `fe6679491`; merge `df5a23f6`; installed capsule `sha256:ef619ef73c5969cce5d55d8e1312fc6b762a07125a1eafe1fa0fd5c185ef1ebf`; restart `call_VG4nEX0I1jT3xJmcZDQU6lH7`
 
 - id: client-code-organization-followup
-  status: queued
-  owner: owner_main_or_refactor_owner_pending
+  status: ready_to_dispatch
+  owner: /self/owner_main
   reviewer: pending
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: pending
   task_type: client_code_cleanup_refactor
-  depends_on: active Browser workspace/right-manager fix installed effective; raw inter-agent display fix delivered/validated
+  depends_on: compact/read duplicate bug installed effective; Browser workspace/right-manager fix installed effective; raw inter-agent fix included in installed capsules
   files: client/frontend/electron code areas to be scoped after active bugfixes
   base_commit: pending
-  next_action: After current bugfixes are merged and installed effective, run a global-exclusive client code organization tranche. Must define design intent, invariants, forbidden paths, and regression matrix before dispatch; do not run concurrently with active bugfix owners.
+  next_action: Dispatch now as global-exclusive refactor tranche on main checkout. Scope should be larger but coherent: modularize Browser/native surface logic and RightPanel Browser UI/test helpers without changing behavior; preserve installed-effective Browser and compact/read semantics.
   validation: pending
   commit: pending
 
