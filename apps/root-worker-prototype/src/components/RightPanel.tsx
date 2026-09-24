@@ -44,7 +44,7 @@ import { filePreviewOpenInBrowserActionVisible } from "../lib/filePreviewBrowser
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
 import {
-  WORKSPACE_OBJECT_DRAG_TYPE,
+  hasWorkspaceObjectDragData,
   readWorkspaceObjectDragData,
   writeWorkspaceObjectDragData,
   type WorkspaceOpenableRightPanelObject,
@@ -520,7 +520,7 @@ export function RightPanel({
     event: DragEvent<HTMLElement>,
     view: RightPanelView | null,
   ) {
-    if (!getReturnableWorkspaceObject(event, view)) {
+    if (!hasWorkspaceObjectDragData(event.dataTransfer)) {
       return;
     }
     event.preventDefault();
@@ -1120,6 +1120,8 @@ export function BrowserPanel({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const boundsSequenceRef = useRef(0);
   const passiveBoundsCorrectionRef = useRef<(() => void) | null>(null);
+  const addressInputFocusedRef = useRef(false);
+  const lastAddressTabIdRef = useRef<string | null>(null);
   const browserSurfaceRef = useRef({
     activeBrowserTabId,
     detachedBrowserTabIds,
@@ -1168,6 +1170,18 @@ export function BrowserPanel({
     ? (localError ?? activeTab.error ?? state.error)
     : localError;
   const activeTitle = activeTab?.title || (!isManagerVariant ? state.title : null) || "Browser";
+  const syncAddressFromTab = (
+    tab: BrowserPanelTabState | null,
+    { force = false }: { force?: boolean } = {},
+  ) => {
+    const tabId = tab?.id ?? null;
+    const tabChanged = tabId !== lastAddressTabIdRef.current;
+    lastAddressTabIdRef.current = tabId;
+    if (!force && addressInputFocusedRef.current && !tabChanged) {
+      return;
+    }
+    setAddress(tab?.url ?? "");
+  };
 
   const applyBrowserState = (nextState: BrowserPanelState) => {
     const normalizedState = normalizeBrowserPanelState(nextState);
@@ -1197,7 +1211,7 @@ export function BrowserPanel({
                 (tab) => !surfaceDetachedTabIds.has(tab.id),
               ) ?? null))
           : normalizedActiveTab;
-    setAddress(surfaceActiveTab?.url ?? "");
+    syncAddressFromTab(surfaceActiveTab);
     if (shouldClearBrowserLocalError(normalizedState, normalizedActiveTab)) {
       setLocalError(null);
     }
@@ -1243,7 +1257,7 @@ export function BrowserPanel({
     if (!isManagerVariant) {
       return;
     }
-    setAddress(activeTab?.url ?? "");
+    syncAddressFromTab(activeTab);
   }, [activeTab?.id, activeTab?.url, isManagerVariant]);
 
   useEffect(() => {
@@ -1278,6 +1292,7 @@ export function BrowserPanel({
       return;
     }
     setAddress(normalized.url);
+    lastAddressTabIdRef.current = activeTab?.id ?? null;
     setLocalError(null);
     if (isManagerVariant && managerHasDetachedTabs && !activeTab) {
       return;
@@ -1476,6 +1491,7 @@ export function BrowserPanel({
       return;
     }
     setAddress(normalized.url);
+    lastAddressTabIdRef.current = activeTab?.id ?? null;
     setLocalError(null);
     if (nativeViewSuppressed) {
       return;
@@ -1747,6 +1763,13 @@ export function BrowserPanel({
                   aria-label="Browser URL"
                   value={address}
                   placeholder="https://example.com or localhost:5173"
+                  onFocus={() => {
+                    addressInputFocusedRef.current = true;
+                  }}
+                  onBlur={() => {
+                    addressInputFocusedRef.current = false;
+                    syncAddressFromTab(activeTab);
+                  }}
                   onChange={(event) => setAddress(event.target.value)}
                 />
                 <button
@@ -1828,6 +1851,13 @@ export function BrowserPanel({
             aria-label="Workspace browser URL"
             value={address}
             placeholder={displayUrl || "https://example.com or localhost:5173"}
+            onFocus={() => {
+              addressInputFocusedRef.current = true;
+            }}
+            onBlur={() => {
+              addressInputFocusedRef.current = false;
+              syncAddressFromTab(activeTab);
+            }}
             onChange={(event) => setAddress(event.target.value)}
           />
           <button

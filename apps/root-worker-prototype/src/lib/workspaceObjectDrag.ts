@@ -37,6 +37,29 @@ export function writeWorkspaceObjectDragData(
   );
 }
 
+export function hasWorkspaceObjectDragData(
+  dataTransfer: Pick<DataTransfer, "types">,
+) {
+  const { types } = dataTransfer;
+  if (
+    typeof (types as { includes?: (type: string) => boolean }).includes ===
+    "function"
+  ) {
+    return (types as { includes: (type: string) => boolean }).includes(
+      WORKSPACE_OBJECT_DRAG_TYPE,
+    );
+  }
+  if (
+    typeof (types as { contains?: (type: string) => boolean }).contains ===
+    "function"
+  ) {
+    return (types as { contains: (type: string) => boolean }).contains(
+      WORKSPACE_OBJECT_DRAG_TYPE,
+    );
+  }
+  return Array.from(types).includes(WORKSPACE_OBJECT_DRAG_TYPE);
+}
+
 export function readWorkspaceObjectDragData(
   dataTransfer: Pick<DataTransfer, "getData">,
 ): WorkspaceObjectDragPayload | null {
