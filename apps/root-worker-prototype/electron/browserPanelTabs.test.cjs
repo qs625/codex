@@ -339,30 +339,31 @@ test("closeBrowserPanelTabLifecycle leaves the active visible tab alone when clo
 
 test("browser panel native view lifecycle raises only on explicit show or tab actions", () => {
   const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const surfaceSource = readFileSync(join(__dirname, "browserPanelSurface.cjs"), "utf8");
 
   assert.match(
     mainSource,
     /ipcMain\.handle\("codex:browser:show"[\s\S]*const surfaceId = browserSurfaceIdFromPayload\(bounds\);[\s\S]*const tabId = browserTabIdFromPayload\(bounds\);[\s\S]*setBrowserPanelBounds\(panel, browserBoundsFromPayload\(bounds\), \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);[\s\S]*attachBrowserPanel\(panel, \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);/,
   );
   assert.match(
-    mainSource,
+    surfaceSource,
     /visibleSurfaceIds: new Set\(\)/,
   );
   assert.match(
-    mainSource,
+    surfaceSource,
     /boundsBySurfaceId: new Map\(\[[\s\S]*DEFAULT_BROWSER_SURFACE_ID[\s\S]*initialBoundsUpdate\.bounds/,
   );
   assert.match(
-    mainSource,
+    surfaceSource,
     /attachedTabIdBySurfaceId: new Map\(\)/,
   );
   assert.match(
     mainSource,
-    /function attachBrowserPanel\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*panel\.visibleSurfaceIds\.add\(surfaceId\);[\s\S]*attachBrowserPanelTabView\(panel, \{[\s\S]*surfaceId,[\s\S]*tab:[\s\S]*tabId[\s\S]*activeBrowserPanelTab\(panel\),[\s\S]*raise,[\s\S]*\}\);/,
+    /function attachBrowserPanel\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*showBrowserPanelSurface\(panel, surfaceId\);[\s\S]*attachBrowserPanelTabView\(panel, \{[\s\S]*surfaceId,[\s\S]*tab:[\s\S]*tabId[\s\S]*activeBrowserPanelTab\(panel\),[\s\S]*raise,[\s\S]*\}\);/,
   );
   assert.match(
     mainSource,
-    /function detachBrowserPanel\(panel, \{ surfaceId = null \} = \{\}\) \{[\s\S]*panel\.visibleSurfaceIds\.delete\(surfaceId\);[\s\S]*detachAttachedBrowserPanelView\(panel, \{ surfaceId \}\);[\s\S]*detachAllBrowserPanelViews\(panel\);[\s\S]*panel\.visible = panel\.visibleSurfaceIds\.size > 0;/,
+    /function detachBrowserPanel\(panel, \{ surfaceId = null \} = \{\}\) \{[\s\S]*hideBrowserPanelSurface\(panel, surfaceId\);[\s\S]*detachAttachedBrowserPanelView\(panel, \{ surfaceId \}\);[\s\S]*detachAllBrowserPanelViews\(panel\);/,
   );
   assert.match(
     mainSource,
@@ -386,7 +387,7 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   );
   assert.match(
     attachFunction,
-    /const bounds = browserPanelBoundsForSurface\(panel, surfaceId\);[\s\S]*const boundsVisible = browserPanelBoundsAreVisible\(bounds\);[\s\S]*shouldAttachBrowserPanelView\(\{[\s\S]*boundsVisible,[\s\S]*panelVisible: panel\.visibleSurfaceIds\.has\(surfaceId\),[\s\S]*\}\)[\s\S]*panel\.window\.contentView\.addChildView\(tab\.view\);/,
+    /const bounds = browserPanelBoundsForSurface\(panel, surfaceId\);[\s\S]*const boundsVisible = browserPanelBoundsAreVisible\(bounds\);[\s\S]*shouldAttachBrowserPanelView\(\{[\s\S]*boundsVisible,[\s\S]*panelVisible: panel\.visibleSurfaceIds\.has\(surfaceId\),[\s\S]*\}\)[\s\S]*panel\.window\.contentView\.addChildView\(tab\.view\);[\s\S]*rememberBrowserPanelAttachedTab\(panel, surfaceId, tab\.id\);/,
     "native Browser views must not attach before panel bounds are visible",
   );
   assert.match(

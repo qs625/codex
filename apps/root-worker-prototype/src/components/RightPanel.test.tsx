@@ -571,6 +571,10 @@ test("detached workspace objects are hidden from the right panel until their wor
     new URL("./RightPanel.tsx", import.meta.url),
     "utf8",
   );
+  const browserPanelSource = readFileSync(
+    new URL("./BrowserPanel.tsx", import.meta.url),
+    "utf8",
+  );
   const terminalPanelSource = readFileSync(
     new URL("./TerminalPanel.tsx", import.meta.url),
     "utf8",
@@ -597,16 +601,16 @@ test("detached workspace objects are hidden from the right panel until their wor
     /activeWorkspaceTab\?\.kind === "terminal"/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /resolveBrowserPanelTabSelection\(\{[\s\S]*detachedBrowserTabIds/,
   );
   assert.match(
     terminalPanelSource,
     /state\.tabs\.filter\(\(tab\) => !detachedTerminalTabIdSet\.has\(tab\.id\)\)/,
   );
-  assert.match(rightPanelSource, /managerNativeViewBlocked/);
-  assert.match(rightPanelSource, /browserSurfaceIdRef/);
-  assert.match(rightPanelSource, /Browser content is open in workspace\./);
+  assert.match(browserPanelSource, /managerNativeViewBlocked/);
+  assert.match(browserPanelSource, /browserSurfaceIdRef/);
+  assert.match(browserPanelSource, /Browser content is open in workspace\./);
   assert.match(terminalPanelSource, /Terminal session is open in workspace\./);
 });
 
@@ -614,6 +618,10 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
   const rightPanelSource = readFileSync(
     new URL("./RightPanel.tsx", import.meta.url),
+    "utf8",
+  );
+  const browserPanelSource = readFileSync(
+    new URL("./BrowserPanel.tsx", import.meta.url),
     "utf8",
   );
   const terminalPanelSource = readFileSync(
@@ -658,9 +666,9 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
     rightPanelSource,
     /className=\{`panel-rail-button[\s\S]*onDragOver=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDragOver\(event, item\.view\)[\s\S]*onDrop=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDrop\(event, item\.view\)/,
   );
-  assert.match(rightPanelSource, /focusBrowserTabRequest\?: \{ tabId: string; token: number \} \| null/);
+  assert.match(browserPanelSource, /focusBrowserTabRequest\?: \{ tabId: string; token: number \} \| null/);
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /!renderedTabs\.some\(\(tab\) => tab\.id === focusBrowserTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusBrowserTabRequest\.tabId === state\.activeTabId[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*currentBrowserPanelApi\(\)[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*selectBrowserTab\(focusBrowserTabRequest\.tabId\)/,
   );
   assert.match(terminalPanelSource, /focusTerminalTabRequest\?: \{ tabId: string; token: number \} \| null/);
@@ -720,59 +728,59 @@ test("browserBoundsMatch ignores sequence and detects layout movement", () => {
 });
 
 test("browser native view hides under app overlays and restores with measured bounds", () => {
-  const rightPanelSource = readFileSync(
-    new URL("./RightPanel.tsx", import.meta.url),
+  const browserPanelSource = readFileSync(
+    new URL("./BrowserPanel.tsx", import.meta.url),
     "utf8",
   );
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /const shouldHideNativeView =[\s\S]*!active[\s\S]*nativeOverlayActive[\s\S]*resizing[\s\S]*managerNativeViewBlocked/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /\}, \[active, activeTab\?\.id, managerNativeViewBlocked, nativeOverlayActive, resizing\]\);/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /if \(shouldHideNativeView\) \{[\s\S]*\.hideBrowserView\(\{ surfaceId \}\)/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /else \{[\s\S]*const bounds = measureBounds\(\)[\s\S]*\.showBrowserView\(bounds\)/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /const passiveBoundsCorrectionRef = useRef<\(\(\) => void\) \| null>\(null\)/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /const applyBrowserState = \(nextState: BrowserPanelState\) => \{[\s\S]*passiveBoundsCorrectionRef\.current\?\.\(\);[\s\S]*\};/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /passiveBoundsCorrectionRef\.current = scheduleBoundsUpdate;[\s\S]*scheduleBoundsUpdate\(\);/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /const sendBounds = \(\) => \{[\s\S]*\.setBrowserViewBounds\(bounds\)/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /const showNativeBrowserView = async \(browserApi: BrowserPanelApi\) => \{[\s\S]*browserBoundsFromElement\([\s\S]*\.showBrowserView\(bounds\)/,
   );
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /await showNativeBrowserView\(browserApi\);[\s\S]*await browserApi\.navigateBrowserView\(\{[\s\S]*target: normalized\.url,[\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: activeTab\?\.id \?\? null/,
   );
-  const showBranch = rightPanelSource.slice(
-    rightPanelSource.indexOf("} else {", rightPanelSource.indexOf("if (shouldHideNativeView)")),
-    rightPanelSource.indexOf("scheduleBoundsUpdate();"),
+  const showBranch = browserPanelSource.slice(
+    browserPanelSource.indexOf("} else {", browserPanelSource.indexOf("if (shouldHideNativeView)")),
+    browserPanelSource.indexOf("scheduleBoundsUpdate();"),
   );
   assert.doesNotMatch(showBranch, /lastSentBounds = bounds/);
   assert.doesNotMatch(
-    rightPanelSource,
+    browserPanelSource,
     /requestAnimationFrame\(watchBounds\)/,
   );
   assert.match(
@@ -862,8 +870,8 @@ test("browser tab helpers preserve active tab state and readable labels", () => 
 });
 
 test("browser panel header stays product chrome while tabs use page titles", () => {
-  const rightPanelSource = readFileSync(
-    new URL("./RightPanel.tsx", import.meta.url),
+  const browserPanelSource = readFileSync(
+    new URL("./BrowserPanel.tsx", import.meta.url),
     "utf8",
   );
   const baiduTab = {
@@ -880,9 +888,9 @@ test("browser panel header stays product chrome while tabs use page titles", () 
   assert.equal(labels.headerTitle, "Browser");
   assert.equal(labels.activeTabTitle, "百度一下，你就知道");
   assert.equal(browserTabLabel(baiduTab), "百度一下，你就知道");
-  assert.match(rightPanelSource, /<h2>\{panelChromeLabels\.headerTitle\}<\/h2>/);
+  assert.match(browserPanelSource, /<h2>\{panelChromeLabels\.headerTitle\}<\/h2>/);
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /<span className="browser-tab-title">\{browserTabLabel\(tab\)\}<\/span>/,
   );
 });
@@ -1264,6 +1272,7 @@ test("rejects stale terminal focus requests from another thread", () => {
 test("workspace conversation tabs use concrete thread labels and preserve layout affordances", () => {
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
   const rightPanelSource = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const browserPanelSource = readFileSync(new URL("./BrowserPanel.tsx", import.meta.url), "utf8");
   const terminalPanelSource = readFileSync(new URL("./TerminalPanel.tsx", import.meta.url), "utf8");
   const panelsSource = readFileSync(new URL("./Panels.tsx", import.meta.url), "utf8");
   const agentTreeSource = readFileSync(new URL("./AgentTree.tsx", import.meta.url), "utf8");
@@ -1439,13 +1448,13 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(rightPanelSource, /writeWorkspaceObjectDragData\(event\.dataTransfer, kind\)/);
   assert.match(rightPanelSource, /onOpenWorkspaceObject\?\.\(kind\)/);
   assert.match(rightPanelSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
-  assert.match(rightPanelSource, /browserTabDragPayload/);
-  assert.match(rightPanelSource, /browserTabId: tab\.id/);
-  assert.match(rightPanelSource, /onOpenBrowserTabInWorkspace/);
+  assert.match(browserPanelSource, /browserTabDragPayload/);
+  assert.match(browserPanelSource, /browserTabId: tab\.id/);
+  assert.match(browserPanelSource, /onOpenBrowserTabInWorkspace/);
   assert.match(rightPanelSource, /detachedBrowserTabIds\?: string\[\]/);
   assert.match(rightPanelSource, /detachedTerminalTabIds\?: string\[\]/);
   assert.match(rightPanelSource, /onReturnWorkspaceObject\?: \(payload: WorkspaceObjectDragPayload\) => void/);
-  assert.match(rightPanelSource, /activeBrowserTabId\?: string \| null/);
+  assert.match(browserPanelSource, /activeBrowserTabId\?: string \| null/);
   assert.match(rightPanelSource, /browserTabFocusRequest\?: \{ tabId: string; token: number \} \| null/);
   assert.doesNotMatch(rightPanelSource, /browserNativeViewSuppressed\?: boolean/);
   assert.doesNotMatch(rightPanelSource, /suppressNativeView/);
@@ -1453,15 +1462,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(terminalPanelSource, /activeTerminalTabId\?: string \| null/);
   assert.match(rightPanelSource, /detachedBrowserTabIds=\{detachedBrowserTabIds\}/);
   assert.match(rightPanelSource, /detachedTerminalTabIds=\{detachedTerminalTabIds\}/);
-  assert.match(rightPanelSource, /variant = "manager"/);
-  assert.match(rightPanelSource, /variant\?: "manager" \| "workspace"/);
-  const browserPanelSource = rightPanelSource.slice(
-    rightPanelSource.indexOf("export function BrowserPanel"),
-    rightPanelSource.indexOf("export function normalizeBrowserPanelState"),
-  );
-  const browserSelectionSource = rightPanelSource.slice(
-    rightPanelSource.indexOf("export function resolveBrowserPanelTabSelection"),
-    rightPanelSource.indexOf("function formatByteSize"),
+  assert.match(browserPanelSource, /variant = "manager"/);
+  assert.match(browserPanelSource, /variant\?: "manager" \| "workspace"/);
+  const browserSelectionSource = browserPanelSource.slice(
+    browserPanelSource.indexOf("export function resolveBrowserPanelTabSelection"),
+    browserPanelSource.indexOf("export function BrowserPanel"),
   );
   const selectForSurfaceSource = browserPanelSource.slice(
     browserPanelSource.indexOf("const selectBrowserTabForSurfaceIfNeeded"),
@@ -1499,7 +1504,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     browserPanelSource.indexOf("{isManagerVariant ? ("),
     browserPanelSource.indexOf("{!isManagerVariant ? ("),
   );
-  assert.match(rightPanelSource, /function resolveBrowserPanelTabSelection/);
+  assert.match(browserPanelSource, /function resolveBrowserPanelTabSelection/);
   assert.match(browserSelectionSource, /const detachedBrowserTabIdSet = new Set\(detachedBrowserTabIds\)/);
   assert.match(browserSelectionSource, /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/);
   assert.match(browserSelectionSource, /managerSelectedBrowserTabId \?\? activeTabId/);
@@ -1507,6 +1512,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(browserPanelSource, /activeTabId: state\.activeTabId/);
   assert.match(browserPanelSource, /managerSelectedBrowserTabId/);
   assert.doesNotMatch(rightPanelSource, /nativeViewSuppressed/);
+  assert.doesNotMatch(browserPanelSource, /nativeViewSuppressed/);
   assert.match(browserPanelSource, /const managerNativeViewBlocked =\s*managerActiveTabDetached \|\|/);
   assert.match(browserPanelSource, /managerHasDetachedTabs && activeTab == null/);
   assert.match(selectForSurfaceSource, /if \(!isManagerVariant\) \{[\s\S]*return;[\s\S]*\}/);
@@ -1514,7 +1520,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.doesNotMatch(selectForSurfaceSource, /activeBrowserTabId/);
   assert.doesNotMatch(focusBrowserRequestSource, /nativeViewSuppressed/);
   assert.match(
-    rightPanelSource,
+    browserPanelSource,
     /if \(isManagerVariant && managerHasDetachedTabs && !activeTab\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
   );
   assert.doesNotMatch(navigationRequestSource, /nativeViewSuppressed/);
@@ -1522,11 +1528,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.doesNotMatch(runCommandSource, /nativeViewSuppressed/);
   assert.match(createTabSource, /createBrowserTab\(\)/);
   assert.match(managerNewTabButtonSource, /disabled=\{!hasBrowserApi\}/);
-  assert.match(rightPanelSource, /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/);
-  assert.match(rightPanelSource, /function nextBrowserPanelSurfaceId\(\)/);
-  assert.match(rightPanelSource, /const browserSurfaceIdRef = useRef\(nextBrowserPanelSurfaceId\(\)\)/);
-  assert.match(rightPanelSource, /hideBrowserView\(\{ surfaceId \}\)/);
-  assert.match(rightPanelSource, /Browser content is open in workspace\./);
+  assert.match(browserPanelSource, /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/);
+  assert.match(browserPanelSource, /function nextBrowserPanelSurfaceId\(\)/);
+  assert.match(browserPanelSource, /const browserSurfaceIdRef = useRef\(nextBrowserPanelSurfaceId\(\)\)/);
+  assert.match(browserPanelSource, /hideBrowserView\(\{ surfaceId \}\)/);
+  assert.match(browserPanelSource, /Browser content is open in workspace\./);
   assert.doesNotMatch(
     browserPanelSource,
     /runCommand\([\s\S]*selectBrowserTab\(activeBrowserTabId\)/,
@@ -1552,13 +1558,13 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(navigateSource, /await selectBrowserTabForSurfaceIfNeeded\(browserApi\)/);
   assert.match(navigateSource, /await showNativeBrowserView\(browserApi\)/);
   assert.match(navigateSource, /navigateBrowserView\(\{[\s\S]*target: normalized\.url,[\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: activeTab\?\.id \?\? null/);
-  assert.match(rightPanelSource, /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/);
+  assert.match(browserPanelSource, /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/);
   assert.match(managerChromeSource, /browser-tab-strip/);
   assert.match(managerChromeSource, /\{activeTab \? \(/);
   assert.match(managerChromeSource, /browser-toolbar/);
   assert.match(managerChromeSource, /browser-status-row/);
-  assert.match(rightPanelSource, /!isManagerVariant \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/);
-  assert.match(rightPanelSource, /<div ref=\{viewportRef\} className="browser-native-viewport">/);
+  assert.match(browserPanelSource, /!isManagerVariant \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/);
+  assert.match(browserPanelSource, /<div ref=\{viewportRef\} className="browser-native-viewport">/);
   assert.match(rightPanelSource, /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/);
   assert.match(rightPanelSource, /!workspaceTabsEnabled &&[\s\S]*gitDiffPreview\.loading/);
   assert.match(rightPanelSource, /gitDiffRequestScopeByTargetRef/);

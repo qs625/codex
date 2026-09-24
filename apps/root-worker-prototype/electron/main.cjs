@@ -48,6 +48,21 @@ const {
   normalizeBrowserBoundsUpdate,
 } = require("./browserPanelBounds.cjs");
 const {
+  DEFAULT_BROWSER_SURFACE_ID,
+  browserBoundsFromPayload,
+  browserPanelBoundsForSurface,
+  browserSurfaceIdFromPayload,
+  browserTabIdFromPayload,
+  browserTargetFromPayload,
+  createBrowserPanelSurfaceState,
+  forgetBrowserPanelAttachedSurface,
+  forgetBrowserPanelTabFromSurfaces,
+  hideAllBrowserPanelSurfaces,
+  hideBrowserPanelSurface,
+  rememberBrowserPanelAttachedTab,
+  showBrowserPanelSurface,
+} = require("./browserPanelSurface.cjs");
+const {
   allowBrowserPanelPermission,
   allowDefaultSessionPermission,
   configurePermissionHandlers,
@@ -266,7 +281,6 @@ const commandOutputCache = new Map();
 const MAX_PENDING_TERMINAL_NOTIFICATIONS = 4096;
 const BROWSER_PANEL_NAVIGATION_TIMEOUT_MS = 15_000;
 const DEBUG_BROWSER_PANEL = process.env.ROOT_WORKER_DEBUG_BROWSER_PANEL === "1";
-const DEFAULT_BROWSER_SURFACE_ID = "browser-surface-default";
 let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
@@ -1354,40 +1368,12 @@ function browserPanelForEvent(event) {
   return browserPanelForWindow(window);
 }
 
-function browserSurfaceIdFromPayload(payload) {
-  const surfaceId =
-    payload && typeof payload === "object" && typeof payload.surfaceId === "string"
-      ? payload.surfaceId.trim()
-      : "";
-  return surfaceId || DEFAULT_BROWSER_SURFACE_ID;
-}
-
-function browserTabIdFromPayload(payload) {
-  return payload && typeof payload === "object" && typeof payload.tabId === "string"
-    ? payload.tabId
-    : null;
-}
-
-function browserTargetFromPayload(payload) {
-  return payload && typeof payload === "object" && "target" in payload
-    ? payload.target
-    : payload;
-}
-
 function browserPanelTabForPayload(panel, payload) {
   const tabId = browserTabIdFromPayload(payload);
   if (!tabId) {
     return activeBrowserPanelTab(panel);
   }
   return panel.tabs.find((tab) => tab.id === tabId) ?? null;
-}
-
-function browserBoundsFromPayload(payload) {
-  if (!payload || typeof payload !== "object") {
-    return payload;
-  }
-  const { x, y, width, height, sequence } = payload;
-  return { x, y, width, height, sequence };
 }
 
 function terminalPanelForEvent(event) {
@@ -1758,20 +1744,9 @@ function browserPanelForWindow(window) {
   const initialBoundsUpdate = normalizeBrowserBoundsUpdate(null);
   const panel = {
     window,
-    visible: false,
-    bounds: initialBoundsUpdate.bounds,
-    boundsSequence: initialBoundsUpdate.sequence,
-    visibleSurfaceIds: new Set(),
-    boundsBySurfaceId: new Map([
-      [DEFAULT_BROWSER_SURFACE_ID, initialBoundsUpdate.bounds],
-    ]),
-    boundsSequenceBySurfaceId: new Map([
-      [DEFAULT_BROWSER_SURFACE_ID, initialBoundsUpdate.sequence],
-    ]),
-    attachedTabIdBySurfaceId: new Map(),
+    ...createBrowserPanelSurfaceState(initialBoundsUpdate),
     tabs: [],
     activeTabId: null,
-    attachedTabId: null,
     destroying: false,
   };
 
@@ -1992,8 +1967,7 @@ function attachBrowserPanel(
   panel,
   { surfaceId = DEFAULT_BROWSER_SURFACE_ID, tabId = null, raise = true } = {},
 ) {
-  panel.visible = true;
-  panel.visibleSurfaceIds.add(surfaceId);
+  showBrowserPanelSurface(panel, surfaceId);
   attachBrowserPanelTabView(panel, {
     surfaceId,
     tab: tabId
@@ -2008,12 +1982,11 @@ function detachBrowserPanel(panel, { surfaceId = null } = {}) {
     return;
   }
   if (surfaceId) {
-    panel.visibleSurfaceIds.delete(surfaceId);
+    hideBrowserPanelSurface(panel, surfaceId);
     detachAttachedBrowserPanelView(panel, { surfaceId });
   } else {
     detachAllBrowserPanelViews(panel);
   }
-  panel.visible = panel.visibleSurfaceIds.size > 0;
 }
 
 function destroyBrowserPanel(window) {
@@ -3063,10 +3036,6 @@ function destroyBrowserPanelTabWebContents(tab) {
   return Promise.resolve();
 }
 
-function browserPanelBoundsForSurface(panel, surfaceId) {
-  return panel.boundsBySurfaceId.get(surfaceId) ?? panel.bounds;
-}
-
 function attachActiveBrowserPanelView(
   panel,
   { raise = false, surfaceId = DEFAULT_BROWSER_SURFACE_ID } = {},
@@ -3126,9 +3095,7 @@ function attachBrowserPanelTabView(
   detachBrowserPanelTabFromAllSurfaces(panel, tab);
   detachAttachedBrowserPanelView(panel, { surfaceId });
   panel.window.contentView.addChildView(tab.view);
-  panel.attachedTabIdBySurfaceId.set(surfaceId, tab.id);
-  panel.attachedTabId =
-    panel.attachedTabIdBySurfaceId.get(DEFAULT_BROWSER_SURFACE_ID) ?? tab.id;
+  rememberBrowserPanelAttachedTab(panel, surfaceId, tab.id);
   tab.view.setBounds(bounds);
   browserPanelTrace("view:attach:done", tab, { raise, bounds, surfaceId });
   return true;
@@ -3154,12 +3121,7 @@ function detachAttachedBrowserPanelView(
   panel,
   { surfaceId = DEFAULT_BROWSER_SURFACE_ID } = {},
 ) {
-  const attachedTabId = panel.attachedTabIdBySurfaceId.get(surfaceId) ?? null;
-  panel.attachedTabIdBySurfaceId.delete(surfaceId);
-  panel.attachedTabId =
-    panel.attachedTabIdBySurfaceId.get(DEFAULT_BROWSER_SURFACE_ID) ??
-    panel.attachedTabIdBySurfaceId.values().next().value ??
-    null;
+  const attachedTabId = forgetBrowserPanelAttachedSurface(panel, surfaceId);
   const tab = panel.tabs.find((candidate) => candidate.id === attachedTabId);
   browserPanelTrace("view:detach-attached", tab, { attachedTabId, surfaceId });
   if (tab) {
@@ -3168,9 +3130,9 @@ function detachAttachedBrowserPanelView(
 }
 
 function detachAllBrowserPanelViews(panel) {
-  panel.attachedTabId = null;
   panel.attachedTabIdBySurfaceId.clear();
-  panel.visibleSurfaceIds.clear();
+  panel.attachedTabId = null;
+  hideAllBrowserPanelSurfaces(panel);
   if (panel.window.isDestroyed()) {
     return;
   }
@@ -3180,15 +3142,7 @@ function detachAllBrowserPanelViews(panel) {
 }
 
 function detachBrowserPanelTabFromAllSurfaces(panel, tab) {
-  for (const [surfaceId, attachedTabId] of panel.attachedTabIdBySurfaceId) {
-    if (attachedTabId === tab.id) {
-      panel.attachedTabIdBySurfaceId.delete(surfaceId);
-    }
-  }
-  panel.attachedTabId =
-    panel.attachedTabIdBySurfaceId.get(DEFAULT_BROWSER_SURFACE_ID) ??
-    panel.attachedTabIdBySurfaceId.values().next().value ??
-    null;
+  forgetBrowserPanelTabFromSurfaces(panel, tab.id);
   detachBrowserPanelTabView(panel, tab);
 }
 
