@@ -1429,6 +1429,15 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelView\("terminal"\)/,
   );
   assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
+  assert.match(appSource, /function lazyRightPanelComponent\(exportName: LazyRightPanelExport\)/);
+  assert.match(appSource, /await import\("\.\/components\/RightPanel"\)/);
+  assert.match(appSource, /const RightPanel = lazyRightPanelComponent\("RightPanel"\)/);
+  assert.match(appSource, /<Suspense[\s\S]*Loading panel\.\.\.[\s\S]*<RightPanel/);
+  assert.deepEqual(
+    appSource.match(/^import\s+\{[^}]*\}\s+from "\.\/components\/RightPanel";/gm),
+    ['import {\n  type GitDiffPreviewState,\n} from "./components/RightPanel";'],
+  );
+  assert.doesNotMatch(appSource, /^import "\.\/components\/RightPanel";/m);
   assert.match(appSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(appSource, /revealThreadInSidebarState\(\{/);

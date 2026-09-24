@@ -1,8 +1,11 @@
 import {
   type ChangeEvent,
   type ClipboardEvent,
+  type ComponentType,
   type DragEvent,
   type PointerEvent,
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,14 +20,9 @@ import {
   TreeContextMenu,
 } from "./components/Panels";
 import {
-  BrowserPanel,
-  FilePreviewPanel,
-  GitDiffPreviewPanel,
-  RightPanel,
-  type BrowserWorkspaceTabDescriptor,
   type GitDiffPreviewState,
-  resolveThreadAnalysisCommandFocus,
 } from "./components/RightPanel";
+import { BrowserPanel, type BrowserWorkspaceTabDescriptor } from "./components/BrowserPanel";
 import {
   isSelfCommandShortcut,
   normalizeSelfCommandText,
@@ -68,6 +66,7 @@ import {
   readStoredRightPanelView,
   storeRightPanelView,
 } from "./lib/rightPanelView";
+import { resolveThreadAnalysisCommandFocus } from "./lib/threadAnalysisCommandFocus";
 import {
   hasWorkspaceObjectDragData,
   readWorkspaceObjectDragData,
@@ -216,6 +215,24 @@ const EMPTY_GIT_DIFF_PREVIEW: GitDiffPreviewState = {
   error: null,
 };
 const PANEL_RESIZER_WIDTH = 4;
+
+type LazyRightPanelExport =
+  | "FilePreviewPanel"
+  | "GitDiffPreviewPanel"
+  | "RightPanel";
+
+function lazyRightPanelComponent(exportName: LazyRightPanelExport) {
+  return lazy(async () => {
+    const module = await import("./components/RightPanel");
+    return {
+      default: module[exportName] as ComponentType<Record<string, unknown>>,
+    };
+  });
+}
+
+const FilePreviewPanel = lazyRightPanelComponent("FilePreviewPanel");
+const GitDiffPreviewPanel = lazyRightPanelComponent("GitDiffPreviewPanel");
+const RightPanel = lazyRightPanelComponent("RightPanel");
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 
@@ -3796,28 +3813,30 @@ function App() {
               className="workspace-tab-panel"
               hidden={activeWorkspaceTab?.kind !== "file"}
             >
-              <FilePreviewPanel
-                variant="workspace"
-                expandedTreeDirectories={expandedTreeDirectories}
-                filePanelView="preview"
-                fileTreeEntriesByPath={fileTreeEntriesByPath}
-                fileTreeErrorsByPath={fileTreeErrorsByPath}
-                fileTreeLoadingPath={fileTreeLoadingPath}
-                gitDiffPreview={null}
-                gitDiffPreviewError={null}
-                gitDiffPreviewLoading={false}
-                onNavigateToSymbol={handleNavigateToSymbol}
-                onOpenPreviewExternally={() => void openPreviewExternally()}
-                onOpenPreviewInBrowser={openPreviewInBrowser}
-                onOpenTreeFile={handleOpenTreeFile}
-                onPreviewUpdated={updateFilePreviewAfterSave}
-                onToggleTreeDirectory={handleToggleTreeDirectory}
-                preview={filePreview}
-                previewError={previewError}
-                previewLoading={isLoadingPreview}
-                previewRootId={selectedTreeRootId}
-                thread={selectedThread}
-              />
+              <Suspense fallback={<div className="preview-panel preview-empty">Loading preview...</div>}>
+                <FilePreviewPanel
+                  variant="workspace"
+                  expandedTreeDirectories={expandedTreeDirectories}
+                  filePanelView="preview"
+                  fileTreeEntriesByPath={fileTreeEntriesByPath}
+                  fileTreeErrorsByPath={fileTreeErrorsByPath}
+                  fileTreeLoadingPath={fileTreeLoadingPath}
+                  gitDiffPreview={null}
+                  gitDiffPreviewError={null}
+                  gitDiffPreviewLoading={false}
+                  onNavigateToSymbol={handleNavigateToSymbol}
+                  onOpenPreviewExternally={() => void openPreviewExternally()}
+                  onOpenPreviewInBrowser={openPreviewInBrowser}
+                  onOpenTreeFile={handleOpenTreeFile}
+                  onPreviewUpdated={updateFilePreviewAfterSave}
+                  onToggleTreeDirectory={handleToggleTreeDirectory}
+                  preview={filePreview}
+                  previewError={previewError}
+                  previewLoading={isLoadingPreview}
+                  previewRootId={selectedTreeRootId}
+                  thread={selectedThread}
+                />
+              </Suspense>
             </div>
             <div
               className="workspace-tab-panel"
@@ -3825,11 +3844,13 @@ function App() {
             >
               {activeWorkspaceTab?.kind === "diff" ? (
                 <div className="preview-panel diff-panel-workspace">
-                  <GitDiffPreviewPanel
-                    diff={activeWorkspaceDiffState.diff}
-                    error={activeWorkspaceDiffState.error}
-                    loading={activeWorkspaceDiffState.loading}
-                  />
+                  <Suspense fallback={<div className="preview-empty">Loading Git diff...</div>}>
+                    <GitDiffPreviewPanel
+                      diff={activeWorkspaceDiffState.diff}
+                      error={activeWorkspaceDiffState.error}
+                      loading={activeWorkspaceDiffState.loading}
+                    />
+                  </Suspense>
                 </div>
               ) : null}
             </div>
@@ -3885,63 +3906,75 @@ function App() {
             );
           }}
         />
-        <RightPanel
-          activeView={rightPanelView}
-          browserNativeOverlayActive={
-            isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+        <Suspense
+          fallback={
+            <aside className={`right-panel ${isRightPanelCollapsed ? "collapsed" : ""}`}>
+              <div className="right-panel-body">
+                <div className="right-panel-content">
+                  <div className="preview-empty">Loading panel...</div>
+                </div>
+              </div>
+            </aside>
           }
-          browserPanelResizing={isRightPanelResizing}
-          browserNavigationRequest={browserNavigationRequest}
-          onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
-          workspaceTabsEnabled
-          onGitDiffPreviewChange={handleGitDiffPreviewChange}
-          onFocusCommandMonitor={handleThreadAnalysisCommandFocus}
-          availableSkillCount={availableSkills.length}
-          availableWorkflows={availableWorkflows}
-          isCollapsed={isRightPanelCollapsed}
-          expandedTreeDirectories={expandedTreeDirectories}
-          filePanelView={filePanelView}
-          fileTreeEntriesByPath={fileTreeEntriesByPath}
-          fileTreeErrorsByPath={fileTreeErrorsByPath}
-          fileTreeLoadingPath={fileTreeLoadingPath}
-          onNavigateToSymbol={(destination, sourceLocation) =>
-            void handleNavigateToSymbol(destination, sourceLocation)
-          }
-          onOpenPreviewExternally={() => void openPreviewExternally()}
-          onOpenPreviewInBrowser={openPreviewInBrowser}
-          onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
-          onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
-          onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
-          onReturnWorkspaceObject={handleReturnWorkspaceObjectToRightPanel}
-          browserTabFocusRequest={rightPanelBrowserTabFocusRequest}
-          terminalTabFocusRequest={rightPanelTerminalTabFocusRequest}
-          detachedBrowserTabIds={detachedWorkspaceBrowserTabIds}
-          detachedTerminalTabIds={detachedWorkspaceTerminalTabIds}
-          onOpenTreeFile={handleOpenTreeFile}
-          onPreviewUpdated={updateFilePreviewAfterSave}
-          previewRootId={selectedTreeRootId}
-          onSetActiveView={handleSetRightPanelView}
-          onSetCollapsed={setIsRightPanelCollapsed}
-          onSetFilePanelView={handleSetFilePanelView}
-          onToggleTreeDirectory={handleToggleTreeDirectory}
-          preview={filePreview}
-          previewError={previewError}
-          previewLoading={isLoadingPreview}
-          planUpdate={selectedThreadPlan}
-          goal={selectedThreadGoal}
-          goalAction={selectedThreadGoalAction}
-          goalActionError={selectedThreadGoalError}
-          onCancelGoal={clearCurrentThreadGoalFromUi}
-          onPauseGoal={pauseCurrentThreadGoal}
-          onResumeGoal={resumeCurrentThreadGoal}
-          runtimeRestartProgress={runtimeRestartProgress}
-          skills={selectedThread?.skills ?? []}
-          thread={selectedThread}
-          modelContextWindowOverride={
-            selectedRunConfigOverride?.contextWindow ?? null
-          }
-          todoItems={todoItems}
-        />
+        >
+          <RightPanel
+            activeView={rightPanelView}
+            browserNativeOverlayActive={
+              isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+            }
+            browserPanelResizing={isRightPanelResizing}
+            browserNavigationRequest={browserNavigationRequest}
+            onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+            workspaceTabsEnabled
+            onGitDiffPreviewChange={handleGitDiffPreviewChange}
+            onFocusCommandMonitor={handleThreadAnalysisCommandFocus}
+            availableSkillCount={availableSkills.length}
+            availableWorkflows={availableWorkflows}
+            isCollapsed={isRightPanelCollapsed}
+            expandedTreeDirectories={expandedTreeDirectories}
+            filePanelView={filePanelView}
+            fileTreeEntriesByPath={fileTreeEntriesByPath}
+            fileTreeErrorsByPath={fileTreeErrorsByPath}
+            fileTreeLoadingPath={fileTreeLoadingPath}
+            onNavigateToSymbol={(destination, sourceLocation) =>
+              void handleNavigateToSymbol(destination, sourceLocation)
+            }
+            onOpenPreviewExternally={() => void openPreviewExternally()}
+            onOpenPreviewInBrowser={openPreviewInBrowser}
+            onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
+            onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
+            onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
+            onReturnWorkspaceObject={handleReturnWorkspaceObjectToRightPanel}
+            browserTabFocusRequest={rightPanelBrowserTabFocusRequest}
+            terminalTabFocusRequest={rightPanelTerminalTabFocusRequest}
+            detachedBrowserTabIds={detachedWorkspaceBrowserTabIds}
+            detachedTerminalTabIds={detachedWorkspaceTerminalTabIds}
+            onOpenTreeFile={handleOpenTreeFile}
+            onPreviewUpdated={updateFilePreviewAfterSave}
+            previewRootId={selectedTreeRootId}
+            onSetActiveView={handleSetRightPanelView}
+            onSetCollapsed={setIsRightPanelCollapsed}
+            onSetFilePanelView={handleSetFilePanelView}
+            onToggleTreeDirectory={handleToggleTreeDirectory}
+            preview={filePreview}
+            previewError={previewError}
+            previewLoading={isLoadingPreview}
+            planUpdate={selectedThreadPlan}
+            goal={selectedThreadGoal}
+            goalAction={selectedThreadGoalAction}
+            goalActionError={selectedThreadGoalError}
+            onCancelGoal={clearCurrentThreadGoalFromUi}
+            onPauseGoal={pauseCurrentThreadGoal}
+            onResumeGoal={resumeCurrentThreadGoal}
+            runtimeRestartProgress={runtimeRestartProgress}
+            skills={selectedThread?.skills ?? []}
+            thread={selectedThread}
+            modelContextWindowOverride={
+              selectedRunConfigOverride?.contextWindow ?? null
+            }
+            todoItems={todoItems}
+          />
+        </Suspense>
       </main>
 
       <TreeContextMenu

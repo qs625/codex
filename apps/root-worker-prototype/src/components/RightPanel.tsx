@@ -32,7 +32,6 @@ import { TerminalPanel } from "./TerminalPanel";
 import { LocalImagePreview } from "./Conversation";
 import {
   countActiveCommandItemsWithProcess,
-  findActiveCommandItem,
 } from "../lib/activeCommands";
 import { isChatCompatCwd } from "../lib/chatCompat";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
@@ -52,6 +51,10 @@ import {
 } from "../lib/workspaceObjectDrag";
 import type { RuntimeRestartProgress } from "../lib/runtimeRestartProgress";
 import type { TerminalCommandFocusRequest } from "../lib/terminalCommandFocus";
+import {
+  resolveThreadAnalysisCommandFocus,
+  type ThreadAnalysisCommandFocusTarget,
+} from "../lib/threadAnalysisCommandFocus";
 import {
   buildThreadAnalysis,
   type MonitorSummary,
@@ -93,17 +96,10 @@ export {
   shouldClearBrowserLocalError,
 } from "./BrowserPanel";
 export type { BrowserPanelTabState, BrowserWorkspaceTabDescriptor } from "./BrowserPanel";
+export { resolveThreadAnalysisCommandFocus } from "../lib/threadAnalysisCommandFocus";
+export type { ThreadAnalysisCommandFocusTarget } from "../lib/threadAnalysisCommandFocus";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
-
-export type ThreadAnalysisCommandFocusTarget = {
-  threadId: string;
-  commandItemId: string;
-  processId?: string | null;
-  command?: string | null;
-  cwd?: string | null;
-  status?: string | null;
-};
 
 type FilePreviewEditState = {
   mode: "readonly" | "editing" | "saving";
@@ -767,27 +763,6 @@ export function RightPanel({
       </div>
     </aside>
   );
-}
-
-export function resolveThreadAnalysisCommandFocus(
-  thread: Thread | null,
-  monitor: MonitorSummary,
-): ThreadAnalysisCommandFocusTarget | null {
-  if (monitor.kind !== "command") {
-    return null;
-  }
-  if (!thread) {
-    return null;
-  }
-  const command = findActiveCommandItem(thread, monitor.id);
-  return {
-    threadId: thread.id,
-    commandItemId: monitor.id,
-    processId: command ? command.processId : null,
-    command: command ? command.command : null,
-    cwd: command ? command.cwd : null,
-    status: command ? command.status : null,
-  };
 }
 
 function WorkflowPanel({
