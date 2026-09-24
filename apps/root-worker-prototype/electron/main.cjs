@@ -36,6 +36,7 @@ const {
   browserPanelUrlsEqual,
   shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
+  shouldCompleteBrowserPanelTimedOutNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure: shouldDeferBrowserPanelLoadFailureState,
   shouldExposeBrowserPanelLoading,
@@ -1739,10 +1740,12 @@ async function waitForBrowserPanelVisibleNavigationTarget(panel, tab) {
   try {
     await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
   } catch (error) {
-    console.warn(
-      "Browser panel DevTools target was not published for visible navigation",
-      error,
-    );
+    if (process.env.ROOT_WORKER_DEBUG_BROWSER_PANEL === "1") {
+      console.warn(
+        "Browser panel DevTools target was not published for visible navigation",
+        error,
+      );
+    }
   }
 }
 
@@ -1968,6 +1971,27 @@ async function loadBrowserPanelTabUrl(
   } catch (error) {
     observedNavigation.dispose();
     if (isBrowserPanelNavigationTimeoutError(error)) {
+      updateBrowserPanelLocationState(tab);
+      if (browserPanelTabHasCommittedTarget(tab, normalized.url)) {
+        if (tab.navigationSequence === navigationSequence) {
+          try {
+            await waitForBrowserPanelNavigationTarget(panel, tab, {
+              requireVisiblePanel,
+            });
+            completeBrowserPanelNavigation(panel, tab, navigationSequence);
+          } catch (visibilityError) {
+            failBrowserPanelNavigation(panel, tab, {
+              errorDescription:
+                visibilityError instanceof Error
+                  ? visibilityError.message
+                  : String(visibilityError),
+              validatedUrl: normalized.url,
+            });
+            throw visibilityError;
+          }
+        }
+        return;
+      }
       stopBrowserPanelWebContentsLoad(tab);
     }
     await delay(100);
@@ -2334,6 +2358,15 @@ function scheduleBrowserPanelPendingNavigationTimeout(
     ) {
       return;
     }
+    updateBrowserPanelLocationState(tab);
+    if (browserPanelTabHasCommittedTarget(tab, tab.pendingNavigationTarget)) {
+      void completeBrowserPanelNavigationWhenTargetReady(
+        panel,
+        tab,
+        navigationSequence,
+      );
+      return;
+    }
     stopBrowserPanelWebContentsLoad(tab);
     failBrowserPanelNavigation(panel, tab, {
       errorDescription: browserPanelNavigationTimeoutMessage(timeoutMs),
@@ -2420,6 +2453,14 @@ function browserPanelTabHasFinishedTarget(tab, target, navigationSequence) {
     navigationSequence,
     finishedNavigationSequence: tab.finishedNavigationSequence,
     finishedUrl: tab.finishedUrl,
+    currentUrl: tab.state.url,
+    targetUrl: target,
+  });
+}
+
+function browserPanelTabHasCommittedTarget(tab, target) {
+  updateBrowserPanelLocationState(tab);
+  return shouldCompleteBrowserPanelTimedOutNavigation({
     currentUrl: tab.state.url,
     targetUrl: target,
   });

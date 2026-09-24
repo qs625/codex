@@ -9,6 +9,7 @@ const {
   browserPanelUrlsEqual,
   shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
+  shouldCompleteBrowserPanelTimedOutNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
   shouldExposeBrowserPanelLoading,
@@ -140,6 +141,33 @@ test("shouldCompleteBrowserPanelStoppedNavigation rejects stale or non-target st
     shouldCompleteBrowserPanelStoppedNavigation({
       navigationSequence: 4,
       pendingNavigationSequence: 4,
+      currentUrl: "https://previous.example/",
+      targetUrl: "https://example.com/",
+    }),
+    false,
+  );
+});
+
+test("shouldCompleteBrowserPanelTimedOutNavigation accepts committed target URL", () => {
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: "https://example.com",
+      targetUrl: "https://example.com/",
+    }),
+    true,
+  );
+});
+
+test("shouldCompleteBrowserPanelTimedOutNavigation rejects non-target timeout state", () => {
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: "about:blank",
+      targetUrl: "https://example.com/",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
       currentUrl: "https://previous.example/",
       targetUrl: "https://example.com/",
     }),
@@ -383,6 +411,39 @@ test("main browser navigation observes committed redirects before full load", ()
   assert.notEqual(
     mainSource.indexOf("committedUrl: committedUrlForSequence", observerIndex),
     -1,
+  );
+});
+
+test("main browser navigation completes timed out visible load when target committed", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const timeoutCatchIndex = mainSource.indexOf(
+    "if (isBrowserPanelNavigationTimeoutError(error))",
+  );
+  const committedTargetIndex = mainSource.indexOf(
+    "browserPanelTabHasCommittedTarget(tab, normalized.url)",
+    timeoutCatchIndex,
+  );
+  const waitTargetIndex = mainSource.indexOf(
+    "await waitForBrowserPanelNavigationTarget(panel, tab",
+    committedTargetIndex,
+  );
+  const completeIndex = mainSource.indexOf(
+    "completeBrowserPanelNavigation(panel, tab, navigationSequence)",
+    committedTargetIndex,
+  );
+  const stopLoadIndex = mainSource.indexOf(
+    "stopBrowserPanelWebContentsLoad(tab);",
+    timeoutCatchIndex,
+  );
+
+  assert.notEqual(timeoutCatchIndex, -1);
+  assert.notEqual(committedTargetIndex, -1);
+  assert.notEqual(waitTargetIndex, -1);
+  assert.notEqual(completeIndex, -1);
+  assert.notEqual(stopLoadIndex, -1);
+  assert.ok(
+    committedTargetIndex < stopLoadIndex,
+    "timeout handling must check committed native URL before stopping the BrowserView load",
   );
 });
 

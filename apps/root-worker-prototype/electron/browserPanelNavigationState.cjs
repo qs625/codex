@@ -61,6 +61,13 @@ function shouldCompleteBrowserPanelStoppedNavigation({
   );
 }
 
+function shouldCompleteBrowserPanelTimedOutNavigation({
+  currentUrl,
+  targetUrl,
+}) {
+  return browserPanelUrlsEqual(currentUrl, targetUrl);
+}
+
 function shouldAcceptBrowserPanelCommittedNavigation({
   navigationSequence,
   pendingNavigationSequence,
@@ -120,6 +127,7 @@ module.exports = {
   browserPanelUrlsEqual,
   shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
+  shouldCompleteBrowserPanelTimedOutNavigation,
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
   shouldExposeBrowserPanelLoading,
