@@ -265,6 +265,7 @@ const computerUseManagersByWindowId = new Map();
 const commandOutputCache = new Map();
 const MAX_PENDING_TERMINAL_NOTIFICATIONS = 4096;
 const BROWSER_PANEL_NAVIGATION_TIMEOUT_MS = 15_000;
+const DEBUG_BROWSER_PANEL = process.env.ROOT_WORKER_DEBUG_BROWSER_PANEL === "1";
 let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
@@ -280,6 +281,50 @@ const devServerUrl =
 
 const remoteDebuggingConfig = applyRemoteDebuggingConfig(app, process.env, console);
 let remoteDebuggingProxy = null;
+
+function browserPanelTrace(event, tab, details = {}) {
+  if (!DEBUG_BROWSER_PANEL) {
+    return;
+  }
+  const webContents = tab?.view?.webContents ?? null;
+  let webContentsState = {};
+  if (webContents && !webContents.isDestroyed()) {
+    webContentsState = {
+      webContentsId: webContents.id,
+      webContentsUrl: webContents.getURL() || null,
+      webContentsTitle: webContents.getTitle() || null,
+      webContentsLoading: webContents.isLoading(),
+    };
+  } else if (webContents) {
+    webContentsState = {
+      webContentsId: webContents.id,
+      webContentsDestroyed: true,
+    };
+  }
+  console.warn(
+    "[prototype] browser-panel trace",
+    JSON.stringify({
+      event,
+      tabId: tab?.id ?? null,
+      navigationSequence: tab?.navigationSequence ?? null,
+      pendingNavigationSequence: tab?.pendingNavigationSequence ?? null,
+      pendingNavigationStartUrl: tab?.pendingNavigationStartUrl ?? null,
+      pendingNavigationTarget: tab?.pendingNavigationTarget ?? null,
+      finishedNavigationSequence: tab?.finishedNavigationSequence ?? null,
+      finishedUrl: tab?.finishedUrl ?? null,
+      stateUrl: tab?.state?.url ?? null,
+      stateTitle: tab?.state?.title ?? null,
+      stateLoading: tab?.state?.loading ?? null,
+      stateError: tab?.state?.error ?? null,
+      ...webContentsState,
+      ...details,
+    }),
+  );
+}
+
+function browserPanelEventTrace(event, tab, details = {}) {
+  browserPanelTrace(`webContents:${event}`, tab, details);
+}
 
 process.on("uncaughtException", requestFatalPayloadExit);
 process.on("unhandledRejection", requestFatalPayloadExit);
@@ -1692,13 +1737,17 @@ async function createBrowserPanelDebugTarget(target) {
 }
 
 async function loadBrowserPanelTabAboutBlankBootstrap(panel, tab) {
+  browserPanelTrace("bootstrap:about-blank:start", tab);
   tab.allowNextAboutBlankNavigation = true;
   try {
     await tab.view.webContents.loadURL("about:blank");
+    await waitForBrowserPanelLoadStop(tab.view.webContents);
     tab.initialNavigationBootstrapped = true;
+    browserPanelTrace("bootstrap:about-blank:done", tab);
   } finally {
     tab.allowNextAboutBlankNavigation = false;
     updateBrowserPanelLocationState(tab);
+    browserPanelTrace("bootstrap:about-blank:state", tab);
     sendBrowserPanelState(panel);
   }
 }
@@ -1728,6 +1777,18 @@ async function waitForBrowserPanelDevToolsTarget(webContents) {
         return electronWebContents.fromDevToolsTargetId(candidate.id) === webContents;
       });
       if (target) {
+        if (DEBUG_BROWSER_PANEL) {
+          console.warn(
+            "[prototype] browser-panel trace",
+            JSON.stringify({
+              event: "devtools-target:matched",
+              webContentsId: webContents.id,
+              targetId: target.id,
+              targetUrl: target.url ?? null,
+              targetTitle: target.title ?? null,
+            }),
+          );
+        }
         return target.id;
       }
     } catch (error) {
@@ -1880,6 +1941,14 @@ function setBrowserPanelBounds(panel, bounds) {
 
 function sendBrowserPanelState(panel) {
   if (!panel.window.isDestroyed()) {
+    if (DEBUG_BROWSER_PANEL) {
+      const activeTab = activeBrowserPanelTab(panel);
+      browserPanelTrace("state:send", activeTab, {
+        activeTabId: panel.activeTabId,
+        attachedTabId: panel.attachedTabId,
+        tabCount: panel.tabs.length,
+      });
+    }
     panel.window.webContents.send("codex:browser:state", browserPanelState(panel));
   }
 }
@@ -1935,6 +2004,10 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
     pendingDeferredFailure: null,
   };
   panel.tabs.push(tab);
+  browserPanelTrace("tab:create", tab, {
+    activate,
+    requestedUrl: url,
+  });
   bindBrowserPanelTab(panel, tab);
   if (activate || !panel.activeTabId) {
     selectBrowserPanelTab(panel, tab.id);
@@ -1962,9 +2035,18 @@ async function loadBrowserPanelTabUrl(
     sendBrowserPanelState(panel);
     throw new Error(normalized.reason);
   }
-  await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);
+  if (requireVisiblePanel === false) {
+    await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);
+  }
   const navigationSequence = ++tab.navigationSequence;
   const navigationStartUrl = tab.view.webContents.getURL() || tab.state.url || null;
+  browserPanelTrace("navigate:start", tab, {
+    requestedTarget: target,
+    normalizedUrl: normalized.url,
+    requireVisiblePanel,
+    nextNavigationSequence: navigationSequence,
+    navigationStartUrl,
+  });
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = navigationSequence;
@@ -1974,6 +2056,10 @@ async function loadBrowserPanelTabUrl(
   tab.state.error = null;
   tab.state.loading = true;
   if (shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: navigationStartUrl })) {
+    browserPanelTrace("navigate:preload-stop", tab, {
+      navigationSequence,
+      navigationStartUrl,
+    });
     stopBrowserPanelWebContentsLoad(tab);
   }
   if (requireVisiblePanel) {
@@ -1982,12 +2068,17 @@ async function loadBrowserPanelTabUrl(
   sendBrowserPanelState(panel);
   const observedNavigation = observeBrowserPanelTargetNavigation(tab, navigationSequence);
   try {
+    browserPanelTrace("navigate:load-url", tab, {
+      navigationSequence,
+      normalizedUrl: normalized.url,
+    });
     await waitForBrowserPanelNavigationResult(
       tab.view.webContents.loadURL(normalized.url),
       BROWSER_PANEL_NAVIGATION_TIMEOUT_MS,
       {},
       observedNavigation.promise,
     );
+    browserPanelTrace("navigate:result", tab, { navigationSequence });
     observedNavigation.dispose();
     await waitForBrowserPanelLoadStop(tab.view.webContents);
     if (tab.navigationSequence === navigationSequence) {
@@ -1997,6 +2088,11 @@ async function loadBrowserPanelTabUrl(
       completeBrowserPanelNavigation(panel, tab, navigationSequence);
     }
   } catch (error) {
+    browserPanelTrace("navigate:error", tab, {
+      navigationSequence,
+      message: error instanceof Error ? error.message : String(error),
+      code: error?.code ?? null,
+    });
     observedNavigation.dispose();
     if (isBrowserPanelNavigationTimeoutError(error)) {
       updateBrowserPanelLocationState(tab);
@@ -2065,15 +2161,63 @@ function bindBrowserPanelTab(panel, tab) {
   });
 
   tab.view.webContents.on("will-navigate", (event, url) =>
-    guardBrowserPanelNavigation(panel, tab, event, url),
+    {
+      browserPanelEventTrace("will-navigate", tab, {
+        url,
+        isMainFrame: event?.isMainFrame ?? null,
+      });
+      guardBrowserPanelNavigation(panel, tab, event, url);
+    },
   );
   tab.view.webContents.on("will-frame-navigate", (event, url) =>
-    guardBrowserPanelNavigation(panel, tab, event, url),
+    {
+      browserPanelEventTrace("will-frame-navigate", tab, {
+        url,
+        isMainFrame: event?.isMainFrame ?? null,
+      });
+      guardBrowserPanelNavigation(panel, tab, event, url);
+    },
   );
   tab.view.webContents.on("will-redirect", (event, url) =>
-    guardBrowserPanelNavigation(panel, tab, event, url),
+    {
+      browserPanelEventTrace("will-redirect", tab, {
+        url,
+        isMainFrame: event?.isMainFrame ?? null,
+      });
+      guardBrowserPanelNavigation(panel, tab, event, url);
+    },
   );
+  tab.view.webContents.on(
+    "did-start-navigation",
+    (event, url, isInPlace, isMainFrame) => {
+      browserPanelEventTrace("did-start-navigation", tab, {
+        url: browserNavigationEventTarget(event, url),
+        legacyUrl: url,
+        isInPlace,
+        isMainFrame: typeof event?.isMainFrame === "boolean"
+          ? event.isMainFrame
+          : isMainFrame,
+      });
+    },
+  );
+  tab.view.webContents.on(
+    "did-redirect-navigation",
+    (event, url, isInPlace, isMainFrame) => {
+      browserPanelEventTrace("did-redirect-navigation", tab, {
+        url: browserNavigationEventTarget(event, url),
+        legacyUrl: url,
+        isInPlace,
+        isMainFrame: typeof event?.isMainFrame === "boolean"
+          ? event.isMainFrame
+          : isMainFrame,
+      });
+    },
+  );
+  tab.view.webContents.on("dom-ready", () => {
+    browserPanelEventTrace("dom-ready", tab);
+  });
   tab.view.webContents.on("did-start-loading", () => {
+    browserPanelEventTrace("did-start-loading", tab);
     if (tab.pendingNavigationSequence === null) {
       const currentUrl = tab.view.webContents.getURL() || tab.state.url;
       if (!isEmptyBrowserPanelUrl(currentUrl)) {
@@ -2095,6 +2239,7 @@ function bindBrowserPanelTab(panel, tab) {
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("did-stop-loading", () => {
+    browserPanelEventTrace("did-stop-loading", tab);
     updateBrowserPanelLocationState(tab);
     if (
       tab.pendingNavigationSequence !== null &&
@@ -2111,6 +2256,7 @@ function bindBrowserPanelTab(panel, tab) {
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("did-frame-finish-load", (_event, isMainFrame) => {
+    browserPanelEventTrace("did-frame-finish-load", tab, { isMainFrame });
     if (!isMainFrame) {
       return;
     }
@@ -2130,6 +2276,7 @@ function bindBrowserPanelTab(panel, tab) {
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("did-finish-load", () => {
+    browserPanelEventTrace("did-finish-load", tab);
     if (tab.pendingNavigationSequence !== null) {
       void completeBrowserPanelNavigationWhenTargetReady(
         panel,
@@ -2143,23 +2290,32 @@ function bindBrowserPanelTab(panel, tab) {
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("did-navigate", (_event, url) => {
+    browserPanelEventTrace("did-navigate", tab, { url });
     tab.state.url = url || null;
     updateBrowserPanelLocationState(tab);
     tab.state.error = null;
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("did-navigate-in-page", (_event, url) => {
+    browserPanelEventTrace("did-navigate-in-page", tab, { url });
     tab.state.url = url || null;
     updateBrowserPanelLocationState(tab);
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on("page-title-updated", (_event, title) => {
+    browserPanelEventTrace("page-title-updated", tab, { title });
     tab.state.title = title || null;
     sendBrowserPanelState(panel);
   });
   tab.view.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      browserPanelEventTrace("did-fail-load", tab, {
+        errorCode,
+        errorDescription,
+        validatedUrl,
+        isMainFrame,
+      });
       if (!isMainFrame || errorCode === -3) {
         return;
       }
@@ -2172,12 +2328,14 @@ function bindBrowserPanelTab(panel, tab) {
     },
   );
   tab.view.webContents.on("destroyed", () => {
+    browserPanelEventTrace("destroyed", tab);
     removeDestroyedBrowserPanelTab(panel, tab);
   });
 }
 
 function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
   const webContents = tab.view.webContents;
+  browserPanelTrace("observer:create", tab, { navigationSequence });
   let settled = false;
   let navigationStarted = false;
   let committedUrlForSequence = null;
@@ -2198,6 +2356,11 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
       return;
     }
     settled = true;
+    browserPanelTrace("observer:settle", tab, {
+      navigationSequence,
+      outcome: callback === resolveObserved ? "resolve" : "reject",
+      value: value instanceof Error ? value.message : value ?? null,
+    });
     cleanup();
     callback(value);
   };
@@ -2244,11 +2407,20 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
       return;
     }
     const decision = browserNavigationEventDecision(event, legacyUrl);
+    browserPanelTrace("observer:did-start-navigation", tab, {
+      navigationSequence,
+      url: browserNavigationEventTarget(event, legacyUrl),
+      legacyUrl,
+      isMainFrame,
+      allow: decision.allow,
+      reason: decision.reason ?? null,
+    });
     if (decision.allow) {
       navigationStarted = true;
     }
   };
   const handleNavigate = (_event, url) => {
+    browserPanelTrace("observer:did-navigate", tab, { navigationSequence, url });
     const committedUrl = acceptedCommittedUrl(url);
     if (committedUrl) {
       committedUrlForSequence = committedUrl;
@@ -2263,6 +2435,11 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     _httpStatusText,
     isMainFrame,
   ) => {
+    browserPanelTrace("observer:did-frame-navigate", tab, {
+      navigationSequence,
+      url,
+      isMainFrame,
+    });
     if (!isMainFrame) {
       return;
     }
@@ -2274,6 +2451,11 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     }
   };
   const handleFinish = () => {
+    browserPanelTrace("observer:did-finish-load", tab, {
+      navigationSequence,
+      committedUrlForSequence,
+      navigationStarted,
+    });
     updateBrowserPanelLocationState(tab);
     const committedUrl = committedUrlForSequence
       ? acceptedCommittedUrl(tab.state.url, {
@@ -2286,6 +2468,11 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     }
   };
   const handleStop = () => {
+    browserPanelTrace("observer:did-stop-loading", tab, {
+      navigationSequence,
+      committedUrlForSequence,
+      navigationStarted,
+    });
     updateBrowserPanelLocationState(tab);
     const currentCommittedUrl = acceptedCurrentCommittedUrl();
     if (currentCommittedUrl) {
@@ -2304,6 +2491,12 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     }
   };
   const handleFrameFinish = (_event, isMainFrame) => {
+    browserPanelTrace("observer:did-frame-finish-load", tab, {
+      navigationSequence,
+      isMainFrame,
+      committedUrlForSequence,
+      navigationStarted,
+    });
     if (!isMainFrame) {
       return;
     }
@@ -2321,6 +2514,13 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     validatedUrl,
     isMainFrame,
   ) => {
+    browserPanelTrace("observer:did-fail-load", tab, {
+      navigationSequence,
+      errorCode,
+      errorDescription,
+      validatedUrl,
+      isMainFrame,
+    });
     if (!isMainFrame || errorCode === -3) {
       return;
     }
@@ -2336,6 +2536,7 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     );
   };
   const handleDestroyed = () => {
+    browserPanelTrace("observer:destroyed", tab, { navigationSequence });
     settle(rejectObserved, new Error("Browser panel webContents was destroyed"));
   };
   const promise = new Promise((resolve, reject) => {
@@ -2357,11 +2558,13 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
 }
 
 function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {
+  browserPanelTrace("navigation:complete:attempt", tab, { navigationSequence });
   if (
     navigationSequence !== null &&
     tab.pendingNavigationSequence !== null &&
     tab.pendingNavigationSequence !== navigationSequence
   ) {
+    browserPanelTrace("navigation:complete:skip-sequence", tab, { navigationSequence });
     return;
   }
   tab.pendingDeferredFailure = null;
@@ -2402,6 +2605,7 @@ async function completeBrowserPanelNavigationWhenTargetReady(
 }
 
 function failBrowserPanelNavigation(panel, tab, failure) {
+  browserPanelTrace("navigation:fail", tab, failure);
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
@@ -2417,6 +2621,7 @@ function failBrowserPanelNavigation(panel, tab, failure) {
 }
 
 function stopBrowserPanelNavigation(tab) {
+  browserPanelTrace("navigation:stop", tab);
   tab.navigationSequence += 1;
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
@@ -2437,6 +2642,7 @@ function scheduleBrowserPanelPendingNavigationTimeout(
 ) {
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationTimeout = setTimeout(() => {
+    browserPanelTrace("navigation:timeout", tab, { navigationSequence, timeoutMs });
     if (
       tab.pendingNavigationSequence !== navigationSequence ||
       tab.view.webContents.isDestroyed()
@@ -2444,6 +2650,10 @@ function scheduleBrowserPanelPendingNavigationTimeout(
       return;
     }
     updateBrowserPanelLocationState(tab);
+    browserPanelTrace("navigation:timeout:state", tab, {
+      navigationSequence,
+      timeoutMs,
+    });
     if (browserPanelTabHasCommittedTarget(tab, tab.pendingNavigationTarget)) {
       void completeBrowserPanelNavigationWhenTargetReady(
         panel,
@@ -2468,6 +2678,7 @@ function clearBrowserPanelPendingNavigationTimeout(tab) {
 }
 
 function stopBrowserPanelWebContentsLoad(tab) {
+  browserPanelTrace("webContents:stop:attempt", tab);
   if (
     tab &&
     tab.view &&
@@ -2475,6 +2686,7 @@ function stopBrowserPanelWebContentsLoad(tab) {
     tab.view.webContents.isLoading()
   ) {
     tab.view.webContents.stop();
+    browserPanelTrace("webContents:stop:called", tab);
   }
 }
 
@@ -2601,6 +2813,10 @@ function selectBrowserPanelTab(panel, tabId) {
     return false;
   }
   if (panel.activeTabId === nextTab.id) {
+    browserPanelTrace("tab:select:same", nextTab, {
+      activeTabId: panel.activeTabId,
+      attachedTabId: panel.attachedTabId,
+    });
     if (panel.visible) {
       attachActiveBrowserPanelView(panel, { raise: true });
     }
@@ -2608,6 +2824,10 @@ function selectBrowserPanelTab(panel, tabId) {
   }
   detachAttachedBrowserPanelView(panel);
   panel.activeTabId = nextTab.id;
+  browserPanelTrace("tab:select", nextTab, {
+    activeTabId: panel.activeTabId,
+    attachedTabId: panel.attachedTabId,
+  });
   if (panel.visible) {
     attachActiveBrowserPanelView(panel, { raise: true });
   }
@@ -2615,6 +2835,12 @@ function selectBrowserPanelTab(panel, tabId) {
 }
 
 async function closeBrowserPanelTab(panel, tabId) {
+  const tab = panel.tabs.find((candidate) => candidate.id === tabId);
+  browserPanelTrace("tab:close:start", tab, {
+    activeTabId: panel.activeTabId,
+    attachedTabId: panel.attachedTabId,
+    tabCount: panel.tabs.length,
+  });
   return closeBrowserPanelTabLifecycle(panel, tabId, {
     detachAttachedView: detachAttachedBrowserPanelView,
     disposeTab: disposeBrowserPanelTab,
@@ -2624,6 +2850,11 @@ async function closeBrowserPanelTab(panel, tabId) {
 }
 
 function removeDestroyedBrowserPanelTab(panel, tab) {
+  browserPanelTrace("tab:destroyed:remove", tab, {
+    activeTabId: panel.activeTabId,
+    attachedTabId: panel.attachedTabId,
+    tabCount: panel.tabs.length,
+  });
   const index = panel.tabs.findIndex((candidate) => candidate.id === tab.id);
   if (index === -1) {
     return;
@@ -2649,11 +2880,16 @@ function removeDestroyedBrowserPanelTab(panel, tab) {
 }
 
 async function disposeBrowserPanelTab(panel, tab) {
+  browserPanelTrace("tab:dispose:start", tab, {
+    activeTabId: panel.activeTabId,
+    attachedTabId: panel.attachedTabId,
+  });
   if (panel.attachedTabId === tab.id) {
     detachAttachedBrowserPanelView(panel);
   }
   stopBrowserPanelNavigation(tab);
   await destroyBrowserPanelTabWebContents(tab);
+  browserPanelTrace("tab:dispose:done", tab);
 }
 
 function destroyBrowserPanelTabWebContents(tab) {
@@ -2686,6 +2922,11 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
   const tabDestroyed = tabMissing || tab.view.webContents.isDestroyed();
   const boundsVisible = browserPanelBoundsAreVisible(panel.bounds);
   if (!boundsVisible) {
+    browserPanelTrace("view:attach:detach-no-bounds", tab, {
+      bounds: panel.bounds,
+      panelVisible: panel.visible,
+      raise,
+    });
     detachAttachedBrowserPanelView(panel);
   }
   if (
@@ -2697,6 +2938,14 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
       windowDestroyed,
     })
   ) {
+    browserPanelTrace("view:attach:skip", tab, {
+      boundsVisible,
+      tabMissing,
+      tabDestroyed,
+      panelVisible: panel.visible,
+      windowDestroyed,
+      raise,
+    });
     return false;
   }
   if (
@@ -2705,6 +2954,7 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
       tabId: tab.id,
     })
   ) {
+    browserPanelTrace("view:attach:already", tab, { raise, bounds: panel.bounds });
     tab.view.setBounds(panel.bounds);
     return true;
   }
@@ -2712,6 +2962,7 @@ function attachActiveBrowserPanelView(panel, { raise = false } = {}) {
   panel.window.contentView.addChildView(tab.view);
   panel.attachedTabId = tab.id;
   tab.view.setBounds(panel.bounds);
+  browserPanelTrace("view:attach:done", tab, { raise, bounds: panel.bounds });
   return true;
 }
 
@@ -2739,6 +2990,7 @@ function detachAttachedBrowserPanelView(panel) {
   const attachedTabId = panel.attachedTabId;
   panel.attachedTabId = null;
   const tab = panel.tabs.find((candidate) => candidate.id === attachedTabId);
+  browserPanelTrace("view:detach-attached", tab, { attachedTabId });
   if (tab) {
     detachBrowserPanelTabView(panel, tab);
   }
@@ -2756,6 +3008,10 @@ function detachAllBrowserPanelViews(panel) {
 
 function detachBrowserPanelTabView(panel, tab) {
   const tabDestroyed = !tab || tab.view.webContents.isDestroyed();
+  browserPanelTrace("view:detach-tab", tab, {
+    attachedTabId: tab?.id,
+    tabDestroyed,
+  });
   if (
     shouldDetachAttachedBrowserPanelView({
       attachedTabId: tab?.id,
