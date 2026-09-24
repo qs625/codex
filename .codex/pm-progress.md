@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Finish the reopened installed regressions from the editor-style workspace/compact/poll_event follow-up. Current installed release is Runtime Capsule `sha256:2e2a778768dbeef0ffb023c1d647c9fd24b9ce39b3efdaa92de5982289ebde07` from sourceCommit `be21fa63dae7acaa970d4f4f63146ab2a569fdd6`. User feedback after install says Browser URL/dragback mostly works but webpage content still does not display; compact summary still does not appear after compact; and command output + exit continuous async events leave the model aware of output but not reliably aware of exit. Browser page display and compact summary refresh fixes are now merged to main and pending final Runtime Capsule delivery; poll_event/command async model-visible fact implementation remains in progress on owner_dev_2.
+Finish the reopened installed regressions from the editor-style workspace/compact/poll_event follow-up. Current installed release is Runtime Capsule `sha256:2e2a778768dbeef0ffb023c1d647c9fd24b9ce39b3efdaa92de5982289ebde07` from sourceCommit `be21fa63dae7acaa970d4f4f63146ab2a569fdd6`. User feedback after install says Browser URL/dragback mostly works but webpage content still does not display; compact summary still does not appear after compact; and command output + exit continuous async events leave the model aware of output but not reliably aware of exit. Browser page display, compact summary refresh, and poll_event command async model-visible fact fixes are all merged to main and pending fresh Runtime Capsule delivery plus installed self-debug validation.
 
 ## Active Work
 - id: workspace-tabbed-shell-ui
@@ -96,7 +96,7 @@ Finish the reopened installed regressions from the editor-style workspace/compac
   commit: owner `0348b1fe`; merge `b3071bcc`; installed capsule `sha256:b463c57ea6223bd5495bb80de67e38220882215509160cfc19bad7e2bfc8d465`; restart `call_8T8bkpD2XbvT8o7fdoszn2Pa`; installed feedback owner `398c24008`; merge `e7b7a1e64`; installed capsule `sha256:80762ee2b278f31fbc1572c9affe3e7f37baa2dc47e7d9e413d0c3120036ccd7`; restart `call_SG3ZBnPBZfxdzxl9aCDjdIbe`; installed capsule `sha256:2e2a778768dbeef0ffb023c1d647c9fd24b9ce39b3efdaa92de5982289ebde07`; restart `call_8iQuMH6lZkT8OXN4iZmWQxM7`; installed regression reopened; live-refresh owner `93319898f`; merge `ed99199f4`; pending capsule delivery
 
 - id: poll-event-category-only-result
-  status: implementation_in_progress_after_installed_feedback
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -105,9 +105,9 @@ Finish the reopened installed regressions from the editor-style workspace/compac
   depends_on: main `c87b288a26bb6eedfa04541ae48cf7b5c92c5021`
   files: `codex-rs/thread-service/src/session/pending_input.rs`, `codex-rs/thread-service/src/session/thread_wait.rs`, `codex-rs/tool-service/src/planning/tool_specs/multi_agents.rs`, poll_event tests in `codex-rs/thread-service`, `codex-rs/tool-service`, and app-server display tests as needed
   base_commit: `c87b288a26bb6eedfa04541ae48cf7b5c92c5021`
-  next_action: Owner_dev_2 diagnosed the installed feedback: exit is not lost and can wake a later `poll_event`, but command notifications are display-only and do not enter model-visible context. Owner_dev_2 is now implementing a bounded model-visible async command fact while preserving category-only `poll_event` result and not injecting raw `CommandExecutionNotification` payloads.
+  next_action: Command async model-visible fact fix merged to main as `6941e2e88` after owner `2faecbf96`; include in the next fresh Runtime Capsule and validate installed behavior with a command that emits output then exits, ensuring model-visible context includes bounded command facts while `poll_event` result remains category-only.
   validation: Owner/reviewer completed. Owner reports `ThreadPollEventResult` now exposes `sourceCategory` and skips serializing internal `event/events`; native/external poll paths fill coarse categories (`command`, `subagent`, `user_input`, `queued_input`, `async_input`); schema/description remove payload contract; workflow `agent.wait()` keeps internal completion payload; frontend poll_event summary prefers category. Owner and PM validation: `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service poll_event` 10 passed; `cargo test --manifest-path codex-rs/Cargo.toml -p thread-service external_tool_call_poll_external_event` 4 passed; `cargo test --manifest-path codex-rs/Cargo.toml -p codex-workflow poll_event` 1 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` 76 passed; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed with existing linker/future-incompat warnings; `git diff --check` passed. Owner `rustfmt --check` on touched Rust files passed. `codex-tool-service poll_event` lib test remains blocked by existing test harness compile debt.
-  commit: owner `ae49b164e01a50c24b1ffb4146b37e6cc394a5a3`; merge `35ef113dc`
+  commit: owner `ae49b164e01a50c24b1ffb4146b37e6cc394a5a3`; merge `35ef113dc`; installed feedback diagnosis; model-visible fact owner `2faecbf96`; merge `6941e2e88`; pending capsule delivery
 
 - id: context-window-show-zero-categories
   status: capsule_built_not_installed_superseded_by_ui_tranche
