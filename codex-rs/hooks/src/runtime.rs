@@ -18,7 +18,6 @@ use hooks_api::UserPromptSubmitOutcome;
 use hooks_api::UserPromptSubmitRequest;
 use protocol::items::TurnItem;
 use protocol::models::CommandExecutionNotificationKind;
-use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::HookCompletedEvent;
@@ -28,6 +27,8 @@ use serde_json::Value;
 use thread_service_api::PendingInputItem;
 
 const MAX_COMMAND_ASYNC_EVENT_OUTPUT_PREVIEW_CHARS: usize = 4000;
+const ASYNC_EVENT_CONTEXT_START_MARKER: &str = "<async_event>";
+const ASYNC_EVENT_CONTEXT_END_MARKER: &str = "</async_event>";
 
 pub struct HookRuntimeContext {
     pub session_id: protocol::ThreadId,
@@ -551,11 +552,20 @@ fn command_async_event_fact(notification: &ResponseItem) -> ResponseItem {
         text.push_str(&output_preview);
     }
 
-    ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText { text }],
-        phase: None,
+    ContextualUserFragment::into(AsyncEventContext { text })
+}
+
+struct AsyncEventContext {
+    text: String,
+}
+
+impl ContextualUserFragment for AsyncEventContext {
+    const ROLE: &'static str = "user";
+    const START_MARKER: &'static str = ASYNC_EVENT_CONTEXT_START_MARKER;
+    const END_MARKER: &'static str = ASYNC_EVENT_CONTEXT_END_MARKER;
+
+    fn body(&self) -> String {
+        format!("\n{}\n", self.text)
     }
 }
 
