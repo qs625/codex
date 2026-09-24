@@ -61,6 +61,10 @@ test("browserNavigationEventTarget handles legacy and Electron 37 frame events",
     "https://frame.example/",
   );
   assert.equal(
+    browserNavigationEventTarget({}, { url: "https://details.example/" }),
+    "https://details.example/",
+  );
+  assert.equal(
     browserNavigationEventTarget({ url: "https://frame.example/" }, "https://legacy.example/"),
     "https://legacy.example/",
   );
@@ -71,6 +75,13 @@ test("browserNavigationEventDecision allows Electron 37 frame explicit targets",
     allow: true,
     url: "https://frame.example/",
   });
+  assert.deepEqual(
+    browserNavigationEventDecision({}, { url: "https://details.example/" }),
+    {
+      allow: true,
+      url: "https://details.example/",
+    },
+  );
   assert.deepEqual(browserNavigationEventDecision({ url: "file:///tmp/secret.txt" }), {
     allow: true,
     url: "file:///tmp/secret.txt",
