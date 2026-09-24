@@ -39,13 +39,16 @@ function normalizeBrowserDebugTarget(target) {
   return normalizeBrowserTarget(target);
 }
 
-function browserNavigationEventDecision(event, legacyUrl) {
-  return browserNavigationDecision(browserNavigationEventTarget(event, legacyUrl));
+function browserNavigationEventDecision(event, targetDetails) {
+  return browserNavigationDecision(browserNavigationEventTarget(event, targetDetails));
 }
 
-function browserNavigationEventTarget(event, legacyUrl) {
-  if (typeof legacyUrl === "string") {
-    return legacyUrl;
+function browserNavigationEventTarget(event, targetDetails) {
+  if (typeof targetDetails === "string") {
+    return targetDetails;
+  }
+  if (targetDetails && typeof targetDetails.url === "string") {
+    return targetDetails.url;
   }
   if (event && typeof event.url === "string") {
     return event.url;
