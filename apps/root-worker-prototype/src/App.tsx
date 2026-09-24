@@ -3417,12 +3417,16 @@ function App() {
     setRightPanelView(view);
   }
 
-  function closeWorkspaceTab(tabId: string) {
+  function closeWorkspaceTab(
+    tabId: string,
+    options: { closeOwnedBrowserTab?: boolean } = {},
+  ) {
     const currentTabs = workspaceTabsRef.current;
     const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId);
     if (closingIndex === -1) {
       return;
     }
+    const closingTab = currentTabs[closingIndex];
     const next = closeWorkspaceTabById(currentTabs, tabId);
     workspaceTabsRef.current = next;
     setWorkspaceTabs(next);
@@ -3433,6 +3437,15 @@ function App() {
       undefined,
       storedWorkspaceTabOrderRef.current,
     );
+    if (
+      options.closeOwnedBrowserTab &&
+      closingTab?.kind === "browser" &&
+      closingTab.browserTabId
+    ) {
+      void window.codexDesktop
+        .closeBrowserTab(closingTab.browserTabId)
+        .catch((error) => setError(toErrorMessage(error)));
+    }
     if (activeWorkspaceTabId !== tabId) {
       return;
     }
@@ -3705,13 +3718,13 @@ function App() {
                     tabIndex={0}
                     onClick={(event) => {
                       event.stopPropagation();
-                      closeWorkspaceTab(tab.id);
+                      closeWorkspaceTab(tab.id, { closeOwnedBrowserTab: true });
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         event.stopPropagation();
-                        closeWorkspaceTab(tab.id);
+                        closeWorkspaceTab(tab.id, { closeOwnedBrowserTab: true });
                       }
                     }}
                   >
@@ -3893,7 +3906,6 @@ function App() {
           onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
           onReturnWorkspaceObject={handleReturnWorkspaceObjectToRightPanel}
           browserTabFocusRequest={rightPanelBrowserTabFocusRequest}
-          browserNativeViewSuppressed={activeWorkspaceTab?.kind === "browser"}
           terminalTabFocusRequest={rightPanelTerminalTabFocusRequest}
           detachedBrowserTabIds={detachedWorkspaceBrowserTabIds}
           detachedTerminalTabIds={detachedWorkspaceTerminalTabIds}

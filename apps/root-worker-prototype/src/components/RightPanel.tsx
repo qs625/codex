@@ -146,7 +146,12 @@ type BrowserPanelApi = Pick<
   | "subscribeBrowserState"
 >;
 
-let activeBrowserViewSurfaceToken: symbol | null = null;
+let browserPanelSurfaceCounter = 0;
+
+function nextBrowserPanelSurfaceId() {
+  browserPanelSurfaceCounter += 1;
+  return `browser-surface-${browserPanelSurfaceCounter}`;
+}
 
 type GitSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitSnapshot"]>>;
 type GitChange = GitSnapshot["changes"][number];
@@ -315,7 +320,6 @@ export function RightPanel({
   onOpenWorkspaceObject,
   onReturnWorkspaceObject,
   browserTabFocusRequest,
-  browserNativeViewSuppressed = false,
   terminalTabFocusRequest,
   detachedBrowserTabIds,
   detachedTerminalTabIds,
@@ -369,7 +373,6 @@ export function RightPanel({
   onOpenWorkspaceObject?: (kind: WorkspaceOpenableRightPanelObject) => void;
   onReturnWorkspaceObject?: (payload: WorkspaceObjectDragPayload) => void;
   browserTabFocusRequest?: { tabId: string; token: number } | null;
-  browserNativeViewSuppressed?: boolean;
   terminalTabFocusRequest?: { tabId: string; token: number } | null;
   detachedBrowserTabIds?: string[];
   detachedTerminalTabIds?: string[];
@@ -712,7 +715,6 @@ export function RightPanel({
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
                 onOpenBrowserTabInWorkspace={onOpenBrowserTabInWorkspace}
                 focusBrowserTabRequest={browserTabFocusRequest}
-                suppressNativeView={browserNativeViewSuppressed}
                 detachedBrowserTabIds={detachedBrowserTabIds}
               />
             ) : effectiveActiveView === "terminal" ? (
@@ -1102,7 +1104,6 @@ export function BrowserPanel({
   onOpenBrowserTabInWorkspace,
   activeBrowserTabId,
   focusBrowserTabRequest,
-  suppressNativeView = false,
   detachedBrowserTabIds = [],
 }: {
   active?: boolean;
@@ -1114,7 +1115,6 @@ export function BrowserPanel({
   onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
   activeBrowserTabId?: string | null;
   focusBrowserTabRequest?: { tabId: string; token: number } | null;
-  suppressNativeView?: boolean;
   detachedBrowserTabIds?: string[];
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -1128,7 +1128,7 @@ export function BrowserPanel({
     isManagerVariant: variant === "manager",
     managerSelectedBrowserTabId: null as string | null,
   });
-  const browserSurfaceTokenRef = useRef(Symbol("browser-panel-surface"));
+  const browserSurfaceIdRef = useRef(nextBrowserPanelSurfaceId());
   const lastBrowserTabFocusRequestTokenRef = useRef(0);
   const [address, setAddress] = useState("");
   const [managerSelectedBrowserTabId, setManagerSelectedBrowserTabId] =
@@ -1160,9 +1160,7 @@ export function BrowserPanel({
     isManagerVariant,
     detachedBrowserTabIds,
   });
-  const nativeViewSuppressed = isManagerVariant && suppressNativeView;
   const managerNativeViewBlocked =
-    nativeViewSuppressed ||
     managerActiveTabDetached ||
     (managerHasDetachedTabs && activeTab == null);
   const displayUrl = activeTab?.url ?? (!isManagerVariant ? state.url : "") ?? "";
@@ -1231,22 +1229,26 @@ export function BrowserPanel({
   };
   const showNativeBrowserView = async (browserApi: BrowserPanelApi) => {
     const viewport = viewportRef.current;
-    if (!viewport) {
+    if (!viewport || !activeTab) {
       return;
     }
-    const bounds = browserBoundsFromElement(
-      viewport,
-      nextBrowserBoundsSequence(boundsSequenceRef),
-    );
+    const bounds = {
+      ...browserBoundsFromElement(
+        viewport,
+        nextBrowserBoundsSequence(boundsSequenceRef),
+      ),
+      surfaceId: browserSurfaceIdRef.current,
+      tabId: activeTab.id,
+    };
     const nextState = await browserApi.showBrowserView(bounds);
     applyBrowserState(nextState);
   };
   const selectBrowserTabForSurfaceIfNeeded = async (browserApi: BrowserPanelApi) => {
-    if (nativeViewSuppressed) {
+    if (!isManagerVariant) {
       return;
     }
     const targetTabId =
-      isManagerVariant ? activeTab?.id : (activeBrowserTabId ?? null);
+      activeTab?.id ?? null;
     if (!targetTabId || state.activeTabId === targetTabId) {
       return;
     }
@@ -1275,7 +1277,6 @@ export function BrowserPanel({
   useEffect(() => {
     if (
       !isManagerVariant ||
-      nativeViewSuppressed ||
       !managerSelectedBrowserTabId ||
       !renderedTabs.some((tab) => tab.id === state.activeTabId)
     ) {
@@ -1285,16 +1286,12 @@ export function BrowserPanel({
   }, [
     isManagerVariant,
     managerSelectedBrowserTabId,
-    nativeViewSuppressed,
     renderedTabs,
     state.activeTabId,
   ]);
 
   useEffect(() => {
     if (!navigationRequest) {
-      return;
-    }
-    if (nativeViewSuppressed) {
       return;
     }
     onNavigationRequestHandled?.(navigationRequest.token);
@@ -1316,11 +1313,13 @@ export function BrowserPanel({
     }
     void (async () => {
       await selectBrowserTabForSurfaceIfNeeded(browserApi);
-      if (!nativeViewSuppressed) {
-        await showNativeBrowserView(browserApi);
-      }
+      await showNativeBrowserView(browserApi);
       setAddress(normalized.url);
-      const nextState = await browserApi.navigateBrowserView(normalized.url);
+      const nextState = await browserApi.navigateBrowserView({
+        target: normalized.url,
+        surfaceId: browserSurfaceIdRef.current,
+        tabId: activeTab?.id ?? null,
+      });
       applyBrowserState(nextState);
     })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   }, [
@@ -1328,34 +1327,13 @@ export function BrowserPanel({
     isManagerVariant,
     managerHasDetachedTabs,
     navigationRequest,
-    nativeViewSuppressed,
     onNavigationRequestHandled,
   ]);
 
   useEffect(() => {
     if (
       !active ||
-      !activeBrowserTabId ||
-      activeBrowserTabId === state.activeTabId ||
-      !tabs.some((tab) => tab.id === activeBrowserTabId)
-    ) {
-      return;
-    }
-    const browserApi = currentBrowserPanelApi();
-    if (!browserApi) {
-      return;
-    }
-    runCommand(
-      (api) => api.selectBrowserTab(activeBrowserTabId),
-      "Could not switch tabs.",
-    );
-  }, [active, activeBrowserTabId, state.activeTabId, tabs]);
-
-  useEffect(() => {
-    if (
-      !active ||
       !isManagerVariant ||
-      nativeViewSuppressed ||
       !focusBrowserTabRequest ||
       focusBrowserTabRequest.token <= lastBrowserTabFocusRequestTokenRef.current
     ) {
@@ -1381,7 +1359,6 @@ export function BrowserPanel({
     active,
     focusBrowserTabRequest,
     isManagerVariant,
-    nativeViewSuppressed,
     renderedTabs,
     state.activeTabId,
   ]);
@@ -1390,7 +1367,6 @@ export function BrowserPanel({
     if (
       !active ||
       !isManagerVariant ||
-      nativeViewSuppressed ||
       !activeTab?.id ||
       activeTab.id === state.activeTabId
     ) {
@@ -1404,7 +1380,7 @@ export function BrowserPanel({
       (api) => api.selectBrowserTab(activeTab.id),
       "Could not switch tabs.",
     );
-  }, [active, activeTab?.id, isManagerVariant, nativeViewSuppressed, state.activeTabId]);
+  }, [active, activeTab?.id, isManagerVariant, state.activeTabId]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1412,27 +1388,26 @@ export function BrowserPanel({
     if (!viewport || !browserApi) {
       return undefined;
     }
-    const surfaceToken = browserSurfaceTokenRef.current;
+    const surfaceId = browserSurfaceIdRef.current;
 
     let boundsUpdateFrame: number | null = null;
     let lastSentBounds: BrowserViewBounds | null = null;
     const shouldHideNativeView =
       !active || nativeOverlayActive || resizing || managerNativeViewBlocked;
     const hideBrowserViewIfOwned = () => {
-      if (activeBrowserViewSurfaceToken !== surfaceToken) {
-        return;
-      }
-      activeBrowserViewSurfaceToken = null;
       void browserApi
-        .hideBrowserView()
+        .hideBrowserView({ surfaceId })
         .then((nextState) => applyBrowserState(nextState))
         .catch((error) => setLocalError(toBrowserError(error)));
     };
-    const measureBounds = () =>
-      browserBoundsFromElement(
+    const measureBounds = () => ({
+      ...browserBoundsFromElement(
         viewport,
         nextBrowserBoundsSequence(boundsSequenceRef),
-      );
+      ),
+      surfaceId,
+      tabId: activeTab?.id ?? null,
+    });
     const sendBounds = () => {
       const bounds = measureBounds();
       if (browserBoundsMatch(lastSentBounds, bounds)) {
@@ -1461,16 +1436,12 @@ export function BrowserPanel({
       hideBrowserViewIfOwned();
     } else {
       const bounds = measureBounds();
-      activeBrowserViewSurfaceToken = surfaceToken;
       void browserApi
         .showBrowserView(bounds)
         .then((nextState) => {
           applyBrowserState(nextState);
         })
         .catch((error) => {
-          if (activeBrowserViewSurfaceToken === surfaceToken) {
-            activeBrowserViewSurfaceToken = null;
-          }
           setLocalError(toBrowserError(error));
         });
     }
@@ -1489,12 +1460,9 @@ export function BrowserPanel({
       }
       resizeObserver.disconnect();
       window.removeEventListener("resize", scheduleBoundsUpdate);
-      if (activeBrowserViewSurfaceToken === surfaceToken) {
-        activeBrowserViewSurfaceToken = null;
-        void browserApi.hideBrowserView();
-      }
+      void browserApi.hideBrowserView({ surfaceId });
     };
-  }, [active, managerNativeViewBlocked, nativeOverlayActive, resizing]);
+  }, [active, activeTab?.id, managerNativeViewBlocked, nativeOverlayActive, resizing]);
 
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
@@ -1505,9 +1473,6 @@ export function BrowserPanel({
     setAddress(normalized.url);
     lastAddressTabIdRef.current = activeTab?.id ?? null;
     setLocalError(null);
-    if (nativeViewSuppressed) {
-      return;
-    }
     if (isManagerVariant && managerHasDetachedTabs && !activeTab) {
       return;
     }
@@ -1518,10 +1483,12 @@ export function BrowserPanel({
     }
     void (async () => {
       await selectBrowserTabForSurfaceIfNeeded(browserApi);
-      if (!nativeViewSuppressed) {
-        await showNativeBrowserView(browserApi);
-      }
-      const nextState = await browserApi.navigateBrowserView(normalized.url);
+      await showNativeBrowserView(browserApi);
+      const nextState = await browserApi.navigateBrowserView({
+        target: normalized.url,
+        surfaceId: browserSurfaceIdRef.current,
+        tabId: activeTab?.id ?? null,
+      });
       applyBrowserState(nextState);
     })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   };
@@ -1530,9 +1497,6 @@ export function BrowserPanel({
     command: (browserApi: BrowserPanelApi) => Promise<BrowserPanelState>,
     fallbackError: string,
   ) => {
-    if (nativeViewSuppressed) {
-      return;
-    }
     const browserApi = currentBrowserPanelApi();
     if (!browserApi) {
       setLocalError("In-app browser is unavailable in this environment.");
@@ -1548,6 +1512,10 @@ export function BrowserPanel({
         setLocalError(toBrowserError(commandError) || fallbackError),
       );
   };
+  const activeBrowserCommandTarget = () => ({
+    surfaceId: browserSurfaceIdRef.current,
+    tabId: activeTab?.id ?? null,
+  });
 
   const createTab = () => {
     const browserApi = currentBrowserPanelApi();
@@ -1556,24 +1524,6 @@ export function BrowserPanel({
       return;
     }
     setLocalError(null);
-    if (nativeViewSuppressed) {
-      const previousTabIds = new Set(state.tabs.map((tab) => tab.id));
-      void browserApi
-        .createBrowserTab({ activate: false })
-        .then((nextState) => {
-          const nextTab =
-            nextState.tabs.find((tab) => !previousTabIds.has(tab.id)) ??
-            nextState.tabs.find((tab) => !detachedBrowserTabIds.includes(tab.id)) ??
-            null;
-          applyBrowserState(nextState);
-          if (nextTab) {
-            setManagerSelectedBrowserTabId(nextTab.id);
-            setAddress(nextTab.url ?? "");
-          }
-        })
-        .catch((error) => setLocalError(toBrowserError(error) || "Could not create a tab."));
-      return;
-    }
     runCommand(
       (api) => api.createBrowserTab(),
       "Could not create a tab.",
@@ -1581,15 +1531,6 @@ export function BrowserPanel({
   };
 
   const selectTab = (tabId: string) => {
-    if (nativeViewSuppressed) {
-      const tab = renderedTabs.find((item) => item.id === tabId);
-      if (tab) {
-        setManagerSelectedBrowserTabId(tab.id);
-        setAddress(tab.url ?? "");
-        setLocalError(null);
-      }
-      return;
-    }
     if (tabId === state.activeTabId) {
       return;
     }
@@ -1682,7 +1623,6 @@ export function BrowserPanel({
                       className="browser-tab-close"
                       aria-label={`Close ${browserTabLabel(tab)}`}
                       title="Close tab"
-                      disabled={nativeViewSuppressed}
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1728,10 +1668,11 @@ export function BrowserPanel({
                   className="browser-icon-button"
                   aria-label="Go back"
                   title="Back"
-                  disabled={!activeTab.canGoBack || !hasBrowserApi || nativeViewSuppressed}
+                  disabled={!activeTab.canGoBack || !hasBrowserApi}
                   onClick={() =>
                     runCommand(
-                      (browserApi) => browserApi.browserGoBack(),
+                      (browserApi) =>
+                        browserApi.browserGoBack(activeBrowserCommandTarget()),
                       "Could not go back.",
                     )
                   }
@@ -1743,10 +1684,11 @@ export function BrowserPanel({
                   className="browser-icon-button"
                   aria-label="Go forward"
                   title="Forward"
-                  disabled={!activeTab.canGoForward || !hasBrowserApi || nativeViewSuppressed}
+                  disabled={!activeTab.canGoForward || !hasBrowserApi}
                   onClick={() =>
                     runCommand(
-                      (browserApi) => browserApi.browserGoForward(),
+                      (browserApi) =>
+                        browserApi.browserGoForward(activeBrowserCommandTarget()),
                       "Could not go forward.",
                     )
                   }
@@ -1758,13 +1700,13 @@ export function BrowserPanel({
                   className="browser-icon-button"
                   aria-label={activeTab.loading ? "Stop loading" : "Reload"}
                   title={activeTab.loading ? "Stop" : "Reload"}
-                  disabled={!hasBrowserApi || nativeViewSuppressed}
+                  disabled={!hasBrowserApi}
                   onClick={() =>
                     runCommand(
                       (browserApi) =>
                         activeTab.loading
-                          ? browserApi.stopBrowserView()
-                          : browserApi.reloadBrowserView(),
+                          ? browserApi.stopBrowserView(activeBrowserCommandTarget())
+                          : browserApi.reloadBrowserView(activeBrowserCommandTarget()),
                       "Could not update the page.",
                     )
                   }
@@ -1784,7 +1726,7 @@ export function BrowserPanel({
                 <button
                   type="submit"
                   className="browser-go-button"
-                  disabled={!hasBrowserApi || nativeViewSuppressed}
+                  disabled={!hasBrowserApi}
                 >
                   Go
                 </button>
@@ -1816,7 +1758,8 @@ export function BrowserPanel({
             disabled={!activeTab?.canGoBack || !hasBrowserApi}
             onClick={() =>
               runCommand(
-                (browserApi) => browserApi.browserGoBack(),
+                (browserApi) =>
+                  browserApi.browserGoBack(activeBrowserCommandTarget()),
                 "Could not go back.",
               )
             }
@@ -1831,7 +1774,8 @@ export function BrowserPanel({
             disabled={!activeTab?.canGoForward || !hasBrowserApi}
             onClick={() =>
               runCommand(
-                (browserApi) => browserApi.browserGoForward(),
+                (browserApi) =>
+                  browserApi.browserGoForward(activeBrowserCommandTarget()),
                 "Could not go forward.",
               )
             }
@@ -1848,8 +1792,8 @@ export function BrowserPanel({
               runCommand(
                 (browserApi) =>
                   activeTab?.loading
-                    ? browserApi.stopBrowserView()
-                    : browserApi.reloadBrowserView(),
+                    ? browserApi.stopBrowserView(activeBrowserCommandTarget())
+                    : browserApi.reloadBrowserView(activeBrowserCommandTarget()),
                 "Could not update the page.",
               )
             }

@@ -266,6 +266,29 @@ test("closeBrowserPanelTabLifecycle waits for active tab disposal before attachi
   assert.equal(panel.attachedTabId, "blank-tab");
 });
 
+test("closeBrowserPanelTabLifecycle passes the active closing tab to detach", async () => {
+  const detached = [];
+  const panel = {
+    tabs: [{ id: "tab-a" }, { id: "tab-b" }],
+    activeTabId: "tab-a",
+    attachedTabId: "tab-a",
+    visible: true,
+    destroying: false,
+  };
+
+  assert.equal(
+    await closeBrowserPanelTabLifecycle(panel, "tab-a", {
+      detachAttachedView: (_targetPanel, tab) => detached.push(tab.id),
+      disposeTab: async () => {},
+      createTab: () => {},
+      attachActiveView: () => {},
+    }),
+    true,
+  );
+
+  assert.deepEqual(detached, ["tab-a"]);
+});
+
 test("closeBrowserPanelTabLifecycle leaves the active visible tab alone when closing background", async () => {
   const events = [];
   let resolveDispose;
@@ -319,49 +342,61 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
 
   assert.match(
     mainSource,
-    /ipcMain\.handle\("codex:browser:show"[\s\S]*setBrowserPanelBounds\(panel, bounds\);[\s\S]*attachBrowserPanel\(panel\);/,
+    /ipcMain\.handle\("codex:browser:show"[\s\S]*const surfaceId = browserSurfaceIdFromPayload\(bounds\);[\s\S]*const tabId = browserTabIdFromPayload\(bounds\);[\s\S]*setBrowserPanelBounds\(panel, browserBoundsFromPayload\(bounds\), \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);[\s\S]*attachBrowserPanel\(panel, \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);/,
   );
   assert.match(
     mainSource,
-    /function attachBrowserPanel\(panel\) \{[\s\S]*attachActiveBrowserPanelView\(panel, \{ raise: true \}\);[\s\S]*\}/,
+    /visibleSurfaceIds: new Set\(\)/,
   );
   assert.match(
     mainSource,
-    /function detachBrowserPanel\(panel\) \{[\s\S]*detachAllBrowserPanelViews\(panel\);[\s\S]*panel\.visible = false;/,
+    /boundsBySurfaceId: new Map\(\[[\s\S]*DEFAULT_BROWSER_SURFACE_ID[\s\S]*initialBoundsUpdate\.bounds/,
   );
   assert.match(
     mainSource,
-    /function setBrowserPanelBounds\(panel, bounds\) \{[\s\S]*attachActiveBrowserPanelView\(panel\);[\s\S]*\}/,
+    /attachedTabIdBySurfaceId: new Map\(\)/,
+  );
+  assert.match(
+    mainSource,
+    /function attachBrowserPanel\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*panel\.visibleSurfaceIds\.add\(surfaceId\);[\s\S]*attachBrowserPanelTabView\(panel, \{[\s\S]*surfaceId,[\s\S]*tab:[\s\S]*tabId[\s\S]*activeBrowserPanelTab\(panel\),[\s\S]*raise,[\s\S]*\}\);/,
+  );
+  assert.match(
+    mainSource,
+    /function detachBrowserPanel\(panel, \{ surfaceId = null \} = \{\}\) \{[\s\S]*panel\.visibleSurfaceIds\.delete\(surfaceId\);[\s\S]*detachAttachedBrowserPanelView\(panel, \{ surfaceId \}\);[\s\S]*detachAllBrowserPanelViews\(panel\);[\s\S]*panel\.visible = panel\.visibleSurfaceIds\.size > 0;/,
+  );
+  assert.match(
+    mainSource,
+    /function setBrowserPanelBounds\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*tabId = null[\s\S]*panel\.boundsBySurfaceId\.set\(surfaceId, update\.bounds\);[\s\S]*panel\.visibleSurfaceIds\.has\(surfaceId\)[\s\S]*attachBrowserPanelTabView\(panel, \{ surfaceId, tab \}\);/,
   );
   assert.doesNotMatch(
     mainSource.slice(
-      mainSource.indexOf("function setBrowserPanelBounds(panel, bounds) {"),
-      mainSource.indexOf("function sendBrowserPanelState(panel)", mainSource.indexOf("function setBrowserPanelBounds(panel, bounds) {")),
+      mainSource.indexOf("function setBrowserPanelBounds("),
+      mainSource.indexOf("function sendBrowserPanelState(panel)", mainSource.indexOf("function setBrowserPanelBounds(")),
     ),
     /attachActiveBrowserPanelView\(panel, \{ raise: true \}\)/,
     "passive Browser bounds refresh must not raise the native view and steal focus",
   );
   assert.match(
     mainSource,
-    /function attachActiveBrowserPanelView\(panel, \{ raise = false \} = \{\}\)/,
+    /function attachActiveBrowserPanelView\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID/,
   );
   const attachFunction = mainSource.slice(
-    mainSource.indexOf("function attachActiveBrowserPanelView(panel, { raise = false } = {})"),
-    mainSource.indexOf("function ensureBrowserPanelTabAttachedForNavigation", mainSource.indexOf("function attachActiveBrowserPanelView(panel, { raise = false } = {})")),
+    mainSource.indexOf("function attachBrowserPanelTabView("),
+    mainSource.indexOf("function ensureBrowserPanelTabAttachedForNavigation", mainSource.indexOf("function attachBrowserPanelTabView(")),
   );
   assert.match(
     attachFunction,
-    /const boundsVisible = browserPanelBoundsAreVisible\(panel\.bounds\);[\s\S]*shouldAttachBrowserPanelView\(\{[\s\S]*boundsVisible,[\s\S]*\}\)[\s\S]*panel\.window\.contentView\.addChildView\(tab\.view\);/,
+    /const bounds = browserPanelBoundsForSurface\(panel, surfaceId\);[\s\S]*const boundsVisible = browserPanelBoundsAreVisible\(bounds\);[\s\S]*shouldAttachBrowserPanelView\(\{[\s\S]*boundsVisible,[\s\S]*panelVisible: panel\.visibleSurfaceIds\.has\(surfaceId\),[\s\S]*\}\)[\s\S]*panel\.window\.contentView\.addChildView\(tab\.view\);/,
     "native Browser views must not attach before panel bounds are visible",
   );
   assert.match(
     attachFunction,
-    /if \(!boundsVisible\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}/,
+    /if \(!boundsVisible\) \{[\s\S]*detachAttachedBrowserPanelView\(panel, \{ surfaceId \}\);[\s\S]*\}/,
     "native Browser views must detach when bounds stop being visible",
   );
   assert.match(
     attachFunction,
-    /isBrowserPanelTabAlreadyAttached\(\{[\s\S]*attachedTabId: panel\.attachedTabId,[\s\S]*tabId: tab\.id,[\s\S]*\}\)[\s\S]*tab\.view\.setBounds\(panel\.bounds\);[\s\S]*return true;/,
+    /isBrowserPanelTabAlreadyAttached\(\{[\s\S]*attachedTabId: panel\.attachedTabIdBySurfaceId\.get\(surfaceId\) \?\? null,[\s\S]*tabId: tab\.id,[\s\S]*\}\)[\s\S]*tab\.view\.setBounds\(bounds\);[\s\S]*return true;/,
     "same-tab BrowserView refreshes must not remove and re-add the WebContentsView before navigation",
   );
   assert.doesNotMatch(
@@ -374,23 +409,23 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   );
   assert.match(
     mainSource,
-    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*attachActiveBrowserPanelView\(panel, \{ raise \}\)/,
+    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*attachBrowserPanelTabView\(panel, \{ surfaceId, tab, raise \}\)/,
   );
   assert.match(
     mainSource,
-    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*if \(!panel\.visible\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);/,
+    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*if \(!panel\.visibleSurfaceIds\.has\(surfaceId\)\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);/,
   );
   assert.match(
     mainSource,
-    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*browserPanelBoundsAreVisible\(panel\.bounds\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
+    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*browserPanelBoundsAreVisible\(browserPanelBoundsForSurface\(panel, surfaceId\)\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
   );
   const visibleNavigationTargetFunction = mainSource.slice(
-    mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget(panel, tab)"),
-    mainSource.indexOf("async function waitForBrowserPanelNavigationTarget", mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget(panel, tab)")),
+    mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget("),
+    mainSource.indexOf("async function waitForBrowserPanelNavigationTarget", mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget(")),
   );
   assert.match(
     visibleNavigationTargetFunction,
-    /if \(!panel\.visible\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*if \(!browserPanelBoundsAreVisible\(panel\.bounds\)\) \{[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);/,
+    /if \(!panel\.visibleSurfaceIds\.has\(surfaceId\)\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*if \(!browserPanelBoundsAreVisible\(browserPanelBoundsForSurface\(panel, surfaceId\)\)\) \{[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{[\s\S]*raise: true,[\s\S]*surfaceId,[\s\S]*\}\);/,
     "visible Browser navigation must still require a visible attached native view",
   );
   assert.match(
@@ -400,7 +435,7 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   );
   assert.match(
     mainSource,
-    /async function loadBrowserPanelTabUrl\([\s\S]*\{ requireVisiblePanel = true \} = \{\},[\s\S]*stopBrowserPanelWebContentsLoad\(tab\);[\s\S]*if \(requireVisiblePanel\) \{[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{ raise: true \}\);[\s\S]*tab\.view\.webContents\.loadURL\(normalized\.url\)[\s\S]*await waitForBrowserPanelNavigationTarget\(panel, tab, \{[\s\S]*requireVisiblePanel,[\s\S]*\}\);[\s\S]*completeBrowserPanelNavigation\(panel, tab, navigationSequence\);/,
+    /async function loadBrowserPanelTabUrl\([\s\S]*\{ requireVisiblePanel = true, surfaceId = DEFAULT_BROWSER_SURFACE_ID \} = \{\},[\s\S]*tab\.pendingNavigationSurfaceId = surfaceId;[\s\S]*stopBrowserPanelWebContentsLoad\(tab\);[\s\S]*if \(requireVisiblePanel\) \{[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{[\s\S]*raise: true,[\s\S]*surfaceId,[\s\S]*\}\);[\s\S]*tab\.view\.webContents\.loadURL\(normalized\.url\)[\s\S]*await waitForBrowserPanelNavigationTarget\(panel, tab, \{[\s\S]*requireVisiblePanel,[\s\S]*surfaceId,[\s\S]*\}\);[\s\S]*completeBrowserPanelNavigation\(panel, tab, navigationSequence\);/,
   );
   assert.match(
     mainSource,
@@ -412,16 +447,17 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   );
   assert.match(
     mainSource,
-    /ipcMain\.handle\("codex:browser:reload"[\s\S]*tab\.pendingNavigationSequence = navigationSequence;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = tab\.view\.webContents\.getURL\(\) \|\| null;/,
+    /ipcMain\.handle\("codex:browser:reload"[\s\S]*tab\.pendingNavigationSequence = navigationSequence;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationSurfaceId = browserSurfaceIdFromPayload\(options\);[\s\S]*tab\.pendingNavigationTarget = tab\.view\.webContents\.getURL\(\) \|\| null;/,
   );
   assert.match(
     mainSource,
-    /tab\.view\.webContents\.on\("did-start-loading", \(\) => \{[\s\S]*tab\.pendingNavigationSequence = navigationSequence;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = currentUrl \|\| null;/,
+    /tab\.view\.webContents\.on\("did-start-loading", \(\) => \{[\s\S]*tab\.pendingNavigationSequence = navigationSequence;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationSurfaceId =[\s\S]*attachedTabId\]\) => attachedTabId === tab\.id,[\s\S]*tab\.pendingNavigationTarget = currentUrl \|\| null;/,
   );
   assert.match(
     mainSource,
-    /function stopBrowserPanelNavigation\(tab\) \{[\s\S]*tab\.pendingNavigationSequence = null;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationTarget = null;/,
+    /function stopBrowserPanelNavigation\(tab\) \{[\s\S]*tab\.pendingNavigationSequence = null;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationSurfaceId = DEFAULT_BROWSER_SURFACE_ID;[\s\S]*tab\.pendingNavigationTarget = null;/,
   );
+  assert.match(mainSource, /function detachBrowserPanelTabFromAllSurfaces\(panel, tab\)/);
   assert.match(mainSource, /function detachAllBrowserPanelViews\(panel\)/);
 });
 
@@ -449,7 +485,7 @@ test("direct CDP-created Browser tabs do not force native attach while hidden", 
   );
   assert.match(
     mainSource,
-    /async function waitForBrowserPanelNavigationTarget\([\s\S]*if \(requireVisiblePanel\) \{[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab\);[\s\S]*return;[\s\S]*\}[\s\S]*await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);[\s\S]*\}/,
+    /async function waitForBrowserPanelNavigationTarget\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID,[\s\S]*if \(requireVisiblePanel\) \{[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab, surfaceId\);[\s\S]*return;[\s\S]*\}[\s\S]*await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);[\s\S]*\}/,
     "hidden CDP-created Browser targets must still require DevTools target publication",
   );
 });
@@ -497,7 +533,7 @@ test("closing Browser tabs destroys webContents before replacement tabs navigate
   );
   assert.match(
     closeFunction,
-    /return closeBrowserPanelTabLifecycle\(panel, tabId, \{[\s\S]*disposeTab: disposeBrowserPanelTab,[\s\S]*createTab: createBrowserPanelTab,[\s\S]*attachActiveView: attachActiveBrowserPanelView,/,
+    /return closeBrowserPanelTabLifecycle\(panel, tabId, \{[\s\S]*detachAttachedView: detachBrowserPanelTabFromAllSurfaces,[\s\S]*disposeTab: disposeBrowserPanelTab,[\s\S]*createTab: createBrowserPanelTab,[\s\S]*attachActiveView: attachActiveBrowserPanelView,/,
     "closed tabs must use the async lifecycle helper so replacement/selection waits for disposal",
   );
   assert.match(
@@ -512,7 +548,7 @@ test("closing Browser tabs destroys webContents before replacement tabs navigate
   );
   assert.match(
     disposeFunction,
-    /if \(panel\.attachedTabId === tab\.id\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}[\s\S]*stopBrowserPanelNavigation\(tab\);[\s\S]*await destroyBrowserPanelTabWebContents\(tab\);/,
+    /detachBrowserPanelTabFromAllSurfaces\(panel, tab\);[\s\S]*stopBrowserPanelNavigation\(tab\);[\s\S]*await destroyBrowserPanelTabWebContents\(tab\);/,
     "Browser tab disposal must detach native views, cancel pending navigation, and await WebContents destruction",
   );
   assert.match(
