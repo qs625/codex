@@ -1847,8 +1847,8 @@ function destroyBrowserPanel(window) {
   panel.destroying = true;
   browserPanelsByWindowId.delete(window.id);
   detachBrowserPanel(panel);
-  for (const tab of panel.tabs) {
-    closeBrowserPanelTabContents(tab);
+  for (const tab of [...panel.tabs]) {
+    disposeBrowserPanelTab(panel, tab);
   }
   panel.tabs = [];
   panel.activeTabId = null;
@@ -2622,7 +2622,7 @@ function closeBrowserPanelTab(panel, tabId) {
     detachAttachedBrowserPanelView(panel);
   }
   panel.tabs.splice(index, 1);
-  closeBrowserPanelTabContents(tab);
+  disposeBrowserPanelTab(panel, tab);
   if (panel.tabs.length === 0 && !panel.destroying) {
     createBrowserPanelTab(panel, { activate: true });
     return true;
@@ -2661,9 +2661,13 @@ function removeDestroyedBrowserPanelTab(panel, tab) {
   sendBrowserPanelState(panel);
 }
 
-function closeBrowserPanelTabContents(tab) {
+function disposeBrowserPanelTab(panel, tab) {
+  if (panel.attachedTabId === tab.id) {
+    detachAttachedBrowserPanelView(panel);
+  }
+  stopBrowserPanelNavigation(tab);
   if (!tab.view.webContents.isDestroyed()) {
-    tab.view.webContents.close({ waitForBeforeUnload: false });
+    tab.view.webContents.destroy();
   }
 }
 
