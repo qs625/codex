@@ -116,6 +116,14 @@ function shouldExposeBrowserPanelLoading({
   return Boolean(observedLoading && pendingNavigationSequence !== null);
 }
 
+function shouldStopBrowserPanelLoadBeforeNavigation({ startUrl }) {
+  return !isEmptyBrowserPanelNavigationUrl(startUrl);
+}
+
+function isEmptyBrowserPanelNavigationUrl(url) {
+  return !url || url === "about:blank";
+}
+
 function waitForBrowserPanelNavigationResult(
   loadPromise,
   timeoutMs,
@@ -157,5 +165,6 @@ module.exports = {
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
   shouldExposeBrowserPanelLoading,
+  shouldStopBrowserPanelLoadBeforeNavigation,
   waitForBrowserPanelNavigationResult,
 };

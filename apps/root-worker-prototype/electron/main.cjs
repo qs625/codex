@@ -40,6 +40,7 @@ const {
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure: shouldDeferBrowserPanelLoadFailureState,
   shouldExposeBrowserPanelLoading,
+  shouldStopBrowserPanelLoadBeforeNavigation,
   waitForBrowserPanelNavigationResult,
 } = require("./browserPanelNavigationState.cjs");
 const {
@@ -1972,7 +1973,9 @@ async function loadBrowserPanelTabUrl(
   tab.pendingNavigationTarget = normalized.url;
   tab.state.error = null;
   tab.state.loading = true;
-  stopBrowserPanelWebContentsLoad(tab);
+  if (shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: navigationStartUrl })) {
+    stopBrowserPanelWebContentsLoad(tab);
+  }
   if (requireVisiblePanel) {
     ensureBrowserPanelTabAttachedForNavigation(panel, tab, { raise: true });
   }

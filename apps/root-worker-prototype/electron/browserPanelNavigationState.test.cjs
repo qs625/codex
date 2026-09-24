@@ -14,6 +14,7 @@ const {
   shouldCompleteRejectedBrowserPanelNavigation,
   shouldDeferBrowserPanelFailure,
   shouldExposeBrowserPanelLoading,
+  shouldStopBrowserPanelLoadBeforeNavigation,
   waitForBrowserPanelNavigationResult,
 } = require("./browserPanelNavigationState.cjs");
 
@@ -339,6 +340,27 @@ test("shouldExposeBrowserPanelLoading shows active navigation loading", () => {
   );
 });
 
+test("shouldStopBrowserPanelLoadBeforeNavigation skips cold blank bootstrap loads", () => {
+  assert.equal(
+    shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: null }),
+    false,
+  );
+  assert.equal(
+    shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: "" }),
+    false,
+  );
+  assert.equal(
+    shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: "about:blank" }),
+    false,
+  );
+  assert.equal(
+    shouldStopBrowserPanelLoadBeforeNavigation({
+      startUrl: "https://example.com/",
+    }),
+    true,
+  );
+});
+
 test("waitForBrowserPanelNavigationResult rejects hung loadURL with bounded timeout", async () => {
   const timers = {
     setTimeout(callback) {
@@ -589,6 +611,40 @@ test("main browser navigation records start URL for timeout fallback", () => {
   assert.notEqual(
     mainSource.indexOf("startUrl: tab.pendingNavigationStartUrl", timeoutTargetIndex),
     -1,
+  );
+});
+
+test("main browser navigation does not stop cold blank bootstrap before external load", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const loadUrlIndex = mainSource.indexOf("async function loadBrowserPanelTabUrl");
+  const loadUrlSource = mainSource.slice(
+    loadUrlIndex,
+    mainSource.indexOf("function bindBrowserPanelTab", loadUrlIndex),
+  );
+  const navigationStartUrlIndex = loadUrlSource.indexOf("const navigationStartUrl =");
+  const stopDecisionIndex = loadUrlSource.indexOf(
+    "shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: navigationStartUrl })",
+  );
+  const stopCallIndex = loadUrlSource.indexOf("stopBrowserPanelWebContentsLoad(tab)");
+  const externalLoadIndex = loadUrlSource.indexOf(
+    "tab.view.webContents.loadURL(normalized.url)",
+  );
+
+  assert.notEqual(loadUrlIndex, -1);
+  assert.notEqual(navigationStartUrlIndex, -1);
+  assert.notEqual(stopDecisionIndex, -1);
+  assert.notEqual(stopCallIndex, -1);
+  assert.notEqual(externalLoadIndex, -1);
+  assert.ok(
+    navigationStartUrlIndex < stopDecisionIndex &&
+      stopDecisionIndex < stopCallIndex &&
+      stopCallIndex < externalLoadIndex,
+    "existing loads may be stopped only after start URL is captured and before the external load",
+  );
+  assert.match(
+    loadUrlSource,
+    /if \(shouldStopBrowserPanelLoadBeforeNavigation\(\{ startUrl: navigationStartUrl \}\)\) \{[\s\S]*stopBrowserPanelWebContentsLoad\(tab\);[\s\S]*\}/,
+    "cold or replacement about:blank tabs must not unconditionally stop their bootstrap load before external navigation",
   );
 });
 
