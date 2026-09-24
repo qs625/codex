@@ -8,9 +8,37 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Finish the reopened installed regressions from the editor-style workspace/compact/poll_event follow-up. Current installed release is Runtime Capsule `sha256:b22a0d1a7845f0d17c9e2e7e437c556ca7eabfb22ced7b40455c069980d95d4a` from sourceCommit `fa51412c8c78e02da23e756e3ad35de0b857ce3d`. Browser `https://baidu.com/` has been installed-verified: it canonicalizes to `https://www.baidu.com/`, shows title `百度一下，你就知道`, has no timeout, and publishes a Baidu CDP target. Poll/event contextual async facts are installed-verified: model context receives `<async_event>...</async_event>` while the visible DOM does not show ordinary tail `Command async event` rows. Compact loaded-marker restoration is installed in this capsule, but the current visible selected UI had no `Context compacted` / `summary` match, so no installed UI compact sample was available for final visual proof.
+Finish the reopened installed regressions from the editor-style workspace/compact/poll_event follow-up. Current installed release is Runtime Capsule `sha256:b22a0d1a7845f0d17c9e2e7e437c556ca7eabfb22ced7b40455c069980d95d4a` from sourceCommit `fa51412c8c78e02da23e756e3ad35de0b857ce3d`. Browser is reopened: `https://baidu.com/` can leave a Baidu target in `/json/list`, but the installed UI can still be blank and the target title/DOM may be unreadable. Poll/event contextual async facts are installed-verified: model context receives `<async_event>...</async_event>` while the visible DOM does not show ordinary tail `Command async event` rows. Compact is reopened with a real sample: selected thread `01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b` has a visible `Context compacted` marker and persisted non-empty compact summary, but installed read/UI currently omit the independent summary item. Browser header, Browser navigation details-object handling, and compact summary projection fixes are merged to main and pending fresh Runtime Capsule delivery.
 
 ## Active Work
+- id: browser-installed-whitepage-navigation-details
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_dev_3
+  reviewer: /self/owner_dev_3/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-3
+  branch: fix/browser-installed-whitepage-navigation-details
+  task_type: electron_browser_runtime_bugfix
+  depends_on: installed capsule `sha256:b22a0d1a7845f0d17c9e2e7e437c556ca7eabfb22ced7b40455c069980d95d4a`
+  files: `apps/root-worker-prototype/electron/browserPanelSecurity.cjs`, `apps/root-worker-prototype/electron/browserPanelSecurity.test.cjs`, Browser header files from prior pending commit
+  base_commit: `0cb25de2d`
+  next_action: Build a fresh Runtime Capsule from main and self-debug installed Browser using visible content/title or readable target DOM/title, not merely URL/no-timeout/target existence.
+  validation: Installed self-debug re-opened the issue: Root Worker target was evaluable and Browser viewport had real bounds, but Baidu target was title-empty and raw CDP `Runtime.evaluate` timed out. Owner root-caused Electron 37 navigation events passing `{ url }` as the second details object; previous `browserNavigationEventTarget()` ignored that shape, so `guardBrowserPanelNavigation()` treated legal navigation targets as empty and called `preventDefault()`. Owner fixed details-object URL extraction while preserving legacy string priority and existing `browserNavigationDecision` policy. Reviewer approved. PM validation on dev-3: `node --test apps/root-worker-prototype/electron/browserPanelSecurity.test.cjs apps/root-worker-prototype/electron/browserPanelNavigationState.test.cjs apps/root-worker-prototype/electron/browserPanelTabs.test.cjs apps/root-worker-prototype/electron/remoteDebuggingProxy.test.cjs` passed 61 tests; `pnpm exec tsx --test src/components/RightPanel.test.tsx src/components/Panels.test.tsx src/lib/workspaceTabs.test.ts` passed; `git diff --check` passed. PM merged to main as `193ad28e9`; main Browser Electron suite passed 61 tests, frontend focused suite passed, and `git diff --check HEAD~2..HEAD` passed.
+  commit: owner header `bf17c774d`; owner navigation `395f10f3d`; header merge `0cb25de2d`; navigation merge `193ad28e9`; pending capsule delivery
+
+- id: compact-summary-read-projection-regression
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/compact-summary-read-projection
+  task_type: app_server_read_projection_bugfix
+  depends_on: installed capsule `sha256:b22a0d1a7845f0d17c9e2e7e437c556ca7eabfb22ced7b40455c069980d95d4a`; selected thread `01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b`
+  files: `codex-rs/app-server/src/request_processors/thread_processor/thread_read_activity_projection.rs`
+  base_commit: `05633461b`
+  next_action: Build a fresh Runtime Capsule from main and self-debug installed read/UI: the compacted thread should show marker-only `Context compacted` plus an independent summary item before Init Context.
+  validation: Owner confirmed persisted/read/UI layers: `compact-000142.jsonl` contains non-empty `compacted.payload.message` length 14585 and a typed assistant summary echo; installed `readThread(id)` returned a first turn with only `contextCompaction item-2` plus injected context; UI therefore showed marker with no summary. Root cause: read/display projection sent Limited persisted rollout items directly to `thread_history`; if the typed compact head was missing while compact summary echo plus context suffix remained, ordinary `ResponseItem` stayed model-context-only and no independent summary item was built. Owner added app-server projection-only recovery: after Limited filtering, if no typed `RolloutItem::Compacted` exists and a strict compact-head prefix is detected, synthesize projection-only `Compacted` so the existing builder emits marker + `{compactId}:summary`; ordinary `ResponseItem` display remains disabled. Reviewer approved after fallback was tightened and negative tests were added. PM validation on dev and main: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server build_display_turns_from_rollout_items_ -- --nocapture` passed 5 tests with existing warnings; `git diff --check HEAD~2..HEAD` passed.
+  commit: owner `33f0de446`; merge `cee60a42a`; pending capsule delivery
+
 - id: workspace-tabbed-shell-ui
   status: superseded_by_editor_style_tab_clarification
   owner: /self/owner_dev_3
