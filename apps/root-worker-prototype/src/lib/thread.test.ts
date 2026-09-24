@@ -3693,7 +3693,7 @@ test("upsertThread does not revive pre-compact subscriptions after empty compact
   );
 });
 
-test("upsertThread prunes compact-turn items before the compact marker", () => {
+test("upsertThread preserves compact summary while pruning compact-turn items before the marker", () => {
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3707,7 +3707,26 @@ test("upsertThread prunes compact-turn items before the compact marker", () => {
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "after-compact"],
+    ["compact-summary", "compact-1", "after-compact"],
+  );
+});
+
+test("upsertThread keeps backend compact message summary after the marker", () => {
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-compact", [
+        makeAgentMessage("old-agent", "old ordinary assistant output"),
+        makeCompactItem("compact-1"),
+        makeAgentMessage("compact-1:summary", "summarizing old context"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "compact-1:summary", "after-compact"],
   );
 });
 
@@ -3757,6 +3776,7 @@ test("updateThreadItem prunes live state when a compact notification arrives", (
           makeAgentMessage("old-agent", "old answer"),
         ]),
         makeTurn("turn-compact", [
+          makeAgentMessage("pre-compact-agent", "ordinary pre-compact output"),
           makeAgentMessage("compact-summary", "summarizing old context"),
         ]),
       ],
@@ -3767,7 +3787,7 @@ test("updateThreadItem prunes live state when a compact notification arrives", (
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-summary", "compact-1"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 3 });
 });
@@ -3795,7 +3815,7 @@ test("updateThreadItem does not double count duplicate compact notifications", (
 
   assert.deepEqual(
     duplicate.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-summary", "compact-1"],
   );
   assert.deepEqual(duplicate.stats, { compactionCount: 3 });
 });
@@ -3915,7 +3935,7 @@ test("updateThreadTurn updates compact stats for live compact turns", () => {
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-5"],
+    ["compact-summary", "compact-5"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 5 });
 });
@@ -3948,7 +3968,7 @@ test("turn completed notifications merge compact items and update analysis", () 
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-3"],
+    ["compact-summary", "compact-3"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 3 });
   assert.equal(analysis.runtime.compactionCount, 3);
@@ -4068,7 +4088,7 @@ test("pending turn completed compact notifications update stats after snapshot",
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-3"],
+    ["compact-summary", "compact-3"],
   );
   assert.deepEqual(updated.stats, { compactionCount: 3 });
   assert.equal(buildThreadAnalysis(updated, 0).runtime.compactionCount, 3);
@@ -4183,7 +4203,7 @@ test("updateThreadItem preserves active subscriptions when a compact notificatio
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-summary", "compact-1"],
   );
   assert.deepEqual(
     thread.activeSubscriptionItems?.map((item) => item.id),
@@ -4207,7 +4227,7 @@ test("updateThreadItem preserves active subscriptions when a compact notificatio
   );
 });
 
-test("late same-turn item notifications cannot re-add compact-pruned items", () => {
+test("late same-turn item notifications preserve compact summary without re-adding ordinary items", () => {
   const compactedThread = updateThreadItem(
     {
       ...makeThread(),
@@ -4221,25 +4241,86 @@ test("late same-turn item notifications cannot re-add compact-pruned items", () 
     makeCompactItem("compact-1"),
   );
 
-  const lateItemThread = updateThreadItem(
+  const lateSummaryThread = updateThreadItem(
     compactedThread,
     "turn-compact",
     makeAgentMessage("compact-summary", "late summary completion"),
   );
-  const lateDeltaThread = appendAgentDelta(
+  const lateSummaryDeltaThread = appendAgentDelta(
     compactedThread,
     "turn-compact",
     "compact-summary",
     " late delta",
   );
+  const lateOrdinaryThread = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("ordinary-agent", "old ordinary output"),
+  );
 
   assert.deepEqual(
-    lateItemThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    compactedThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-summary", "compact-1"],
   );
   assert.deepEqual(
-    lateDeltaThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    lateSummaryThread.turns.flatMap((turn) =>
+      turn.items.map((item) => [item.id, item.type === "agentMessage" ? item.text : ""]),
+    ),
+    [
+      ["compact-summary", "late summary completion"],
+      ["compact-1", ""],
+    ],
+  );
+  assert.deepEqual(
+    lateSummaryDeltaThread.turns.flatMap((turn) =>
+      turn.items.map((item) => [item.id, item.type === "agentMessage" ? item.text : ""]),
+    ),
+    [
+      ["compact-summary", "summarizing old context late delta"],
+      ["compact-1", ""],
+    ],
+  );
+  assert.deepEqual(
+    lateOrdinaryThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-summary", "compact-1"],
+  );
+});
+
+test("late backend compact message summary can arrive after the marker", () => {
+  const compactedThread = updateThreadItem(
+    makeThread(),
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+
+  const updated = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("compact-1:summary", "summary from compacted item message"),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "compact-1:summary"],
+  );
+});
+
+test("late backend compact message summary can arrive from a missing turn", () => {
+  const compactedThread = updateThreadItem(
+    makeThread(),
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+
+  const updated = updateThreadItem(
+    compactedThread,
+    "missing-compact-turn",
+    makeAgentMessage("compact-1:summary", "summary from compacted item message"),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "compact-1:summary"],
   );
 });
 
@@ -4436,7 +4517,7 @@ test("same-turn pruned items with the compact boundary timestamp do not reappear
   const equalBoundaryThread = updateThreadItem(
     compactedThread,
     "turn-compact",
-    makeAgentMessage("compact-summary", "late summary completion"),
+    makeAgentMessage("ordinary-agent", "late ordinary completion"),
     { completedAtMs: 12_000 },
   );
   const afterBoundaryThread = updateThreadItem(
@@ -4450,13 +4531,13 @@ test("same-turn pruned items with the compact boundary timestamp do not reappear
     equalBoundaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1"],
+    ["compact-summary", "compact-1"],
   );
   assert.deepEqual(
     afterBoundaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1", "after-compact"],
+    ["compact-summary", "compact-1", "after-compact"],
   );
 });
 
@@ -4480,6 +4561,43 @@ test("compact-pruned threads do not create synthetic turns for old missing notif
 
   assert.deepEqual(
     lateOldTurnThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1", "after-compact"],
+  );
+});
+
+test("compact-pruned threads do not create synthetic turns for legacy compact summaries", () => {
+  const compactedThread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+
+  const lateLegacySummaryThread = updateThreadItem(
+    compactedThread,
+    "missing-compact-turn",
+    makeAgentMessage("compact-summary", "late legacy summary"),
+  );
+  const lateTimestampedLegacySummaryThread = updateThreadItem(
+    compactedThread,
+    "missing-compact-turn",
+    makeAgentMessage("compact-summary", "late timestamped legacy summary"),
+    { startedAtMs: 99_000 },
+  );
+
+  assert.deepEqual(
+    lateLegacySummaryThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1", "after-compact"],
+  );
+  assert.deepEqual(
+    lateTimestampedLegacySummaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
     ["compact-1", "after-compact"],

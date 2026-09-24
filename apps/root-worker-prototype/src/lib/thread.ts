@@ -857,6 +857,7 @@ export function updateThreadItem(
         turnHasCompactItem(turn) &&
         nextItem.type !== "contextCompaction" &&
         !nextItemIsInitContext &&
+        !isSummaryItemForLatestCompact(thread, nextItem) &&
         !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
       ) {
         return turn;
@@ -956,6 +957,14 @@ export function updateThreadItem(
 
   if (
     threadHasCompactItem(thread) &&
+    isLegacyCompactSummaryResultItem(nextItem)
+  ) {
+    return thread;
+  }
+
+  if (
+    threadHasCompactItem(thread) &&
+    !isExactSummaryItemForLatestCompact(thread, nextItem) &&
     !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
   ) {
     return thread;
@@ -1929,7 +1938,11 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
       const items = [
         ...turn.items
           .slice(0, latestCompact.itemIndex)
-          .filter(isUserMessageItem),
+          .filter(
+            (item) =>
+              isUserMessageItem(item) ||
+              isCompactSummaryResultItem(item, latestCompact.id),
+          ),
         ...turn.items.slice(latestCompact.itemIndex),
       ];
       return items.length === turn.items.length ? turn : { ...turn, items };
@@ -1962,6 +1975,34 @@ function isUserMessageItem(item: ThreadItem) {
   return item.type === "userMessage";
 }
 
+function isSummaryItemForLatestCompact(thread: Thread, item: ThreadItem) {
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  return (
+    latestCompact !== null && isCompactSummaryResultItem(item, latestCompact.id)
+  );
+}
+
+function isExactSummaryItemForLatestCompact(thread: Thread, item: ThreadItem) {
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  return (
+    latestCompact !== null &&
+    item.type === "agentMessage" &&
+    item.id === `${latestCompact.id}:summary`
+  );
+}
+
+function isCompactSummaryResultItem(item: ThreadItem, compactItemId: string) {
+  return (
+    item.type === "agentMessage" &&
+    (item.id === `${compactItemId}:summary` ||
+      isLegacyCompactSummaryResultItem(item))
+  );
+}
+
+function isLegacyCompactSummaryResultItem(item: ThreadItem) {
+  return item.type === "agentMessage" && item.id === "compact-summary";
+}
+
 function findLatestCompactItemPosition(turns: Turn[]) {
   for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = turns[turnIndex];
@@ -1976,6 +2017,7 @@ function findLatestCompactItemPosition(turns: Turn[]) {
       const item = turn.items[itemIndex];
       if (item?.type === "contextCompaction") {
         return {
+          id: item.id,
           turnIndex,
           itemIndex,
           timestampMs:
