@@ -49,6 +49,22 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
   );
 });
 
+test("TerminalPanel keeps xterm runtime modules behind one dynamic import boundary", () => {
+  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const importBlockIndex = source.indexOf(
+    'Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])',
+  );
+  const runtimeAddonImports = source.match(/import\("@xterm\/addon-fit"\)/g) ?? [];
+
+  assert.equal(
+    source.includes('import { FitAddon } from "@xterm/addon-fit"'),
+    false,
+  );
+  assert.notEqual(importBlockIndex, -1);
+  assert.equal(runtimeAddonImports.length, 1);
+  assert.match(source, /import type \{ FitAddon as XTermFitAddon \} from "@xterm\/addon-fit"/);
+});
+
 test("TerminalPanel publishes fitted size as thread preferred terminal size", () => {
   const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
   const fitIndex = source.indexOf("const next = { rows: terminal.rows, cols: terminal.cols };");

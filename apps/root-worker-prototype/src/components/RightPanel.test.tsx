@@ -580,17 +580,17 @@ test("detached workspace objects are hidden from the right panel until their wor
     "utf8",
   );
   const detachedOwnershipSource = appSource.slice(
-    appSource.indexOf("const detachedWorkspaceBrowserTabIds = workspaceTabs"),
-    appSource.indexOf("return (", appSource.indexOf("const detachedWorkspaceBrowserTabIds = workspaceTabs")),
+    appSource.indexOf("const detachedWorkspaceBrowserTabIds = useMemo"),
+    appSource.indexOf("return (", appSource.indexOf("const detachedWorkspaceBrowserTabIds = useMemo")),
   );
 
   assert.match(
     appSource,
-    /const detachedWorkspaceBrowserTabIds = workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)/,
+    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\[workspaceTabs\]/,
   );
   assert.match(
     appSource,
-    /const detachedWorkspaceTerminalTabIds = workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)/,
+    /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\[workspaceTabs\]/,
   );
   assert.doesNotMatch(
     detachedOwnershipSource,
@@ -1393,8 +1393,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /function openTerminalInWorkspace[\s\S]*setRightPanelView\("skills"\)/,
   );
   assert.doesNotMatch(appSource, /setRightPanelViewWithWorkspaceFallback/);
-  assert.match(appSource, /const detachedWorkspaceBrowserTabIds = workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)/);
-  assert.match(appSource, /const detachedWorkspaceTerminalTabIds = workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)/);
+  assert.match(appSource, /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\[workspaceTabs\]/);
+  assert.match(appSource, /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\[workspaceTabs\]/);
   assert.match(appSource, /detachedBrowserTabIds=\{detachedWorkspaceBrowserTabIds\}/);
   assert.match(appSource, /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/);
   assert.match(appSource, /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/);
@@ -1429,6 +1429,15 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelView\("terminal"\)/,
   );
   assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
+  assert.match(appSource, /function lazyRightPanelComponent\(exportName: LazyRightPanelExport\)/);
+  assert.match(appSource, /await import\("\.\/components\/RightPanel"\)/);
+  assert.match(appSource, /const RightPanel = lazyRightPanelComponent\("RightPanel"\)/);
+  assert.match(appSource, /<Suspense[\s\S]*Loading panel\.\.\.[\s\S]*<RightPanel/);
+  assert.deepEqual(
+    appSource.match(/^import\s+\{[^}]*\}\s+from "\.\/components\/RightPanel";/gm),
+    ['import {\n  type GitDiffPreviewState,\n} from "./components/RightPanel";'],
+  );
+  assert.doesNotMatch(appSource, /^import "\.\/components\/RightPanel";/m);
   assert.match(appSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
   assert.match(appSource, /revealThreadInSidebarState\(\{/);
@@ -1511,6 +1520,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(browserPanelSource, /resolveBrowserPanelTabSelection\(\{/);
   assert.match(browserPanelSource, /activeTabId: state\.activeTabId/);
   assert.match(browserPanelSource, /managerSelectedBrowserTabId/);
+  assert.match(browserPanelSource, /const tabs = useMemo\(/);
+  assert.match(browserPanelSource, /const \{[\s\S]*renderedTabs,[\s\S]*activeTab,[\s\S]*managerHasDetachedTabs,[\s\S]*managerActiveTabDetached,[\s\S]*\} = useMemo\(/);
+  assert.match(browserPanelSource, /const browserTabDragPayload = useCallback\(/);
   assert.doesNotMatch(rightPanelSource, /nativeViewSuppressed/);
   assert.doesNotMatch(browserPanelSource, /nativeViewSuppressed/);
   assert.match(browserPanelSource, /const managerNativeViewBlocked =\s*managerActiveTabDetached \|\|/);

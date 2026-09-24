@@ -1,5 +1,7 @@
 import React, {
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -179,23 +181,46 @@ export function BrowserPanel({
     isManagerVariant,
     managerSelectedBrowserTabId,
   };
-  const tabs =
-    state.tabs.length > 0 || isManagerVariant
-      ? state.tabs
-      : browserTabsFromActiveState(state);
+  const tabs = useMemo(
+    () =>
+      state.tabs.length > 0 || isManagerVariant
+        ? state.tabs
+        : browserTabsFromActiveState(state),
+    [
+      isManagerVariant,
+      state.canGoBack,
+      state.canGoForward,
+      state.error,
+      state.loading,
+      state.tabs,
+      state.title,
+      state.url,
+    ],
+  );
   const {
     renderedTabs,
     activeTab,
     managerHasDetachedTabs,
     managerActiveTabDetached,
-  } = resolveBrowserPanelTabSelection({
-    tabs,
-    activeTabId: state.activeTabId,
-    activeBrowserTabId,
-    managerSelectedBrowserTabId,
-    isManagerVariant,
-    detachedBrowserTabIds,
-  });
+  } = useMemo(
+    () =>
+      resolveBrowserPanelTabSelection({
+        tabs,
+        activeTabId: state.activeTabId,
+        activeBrowserTabId,
+        managerSelectedBrowserTabId,
+        isManagerVariant,
+        detachedBrowserTabIds,
+      }),
+    [
+      activeBrowserTabId,
+      detachedBrowserTabIds,
+      isManagerVariant,
+      managerSelectedBrowserTabId,
+      state.activeTabId,
+      tabs,
+    ],
+  );
   const managerNativeViewBlocked =
     managerActiveTabDetached ||
     (managerHasDetachedTabs && activeTab == null);
@@ -203,7 +228,10 @@ export function BrowserPanel({
   const error = activeTab
     ? (localError ?? activeTab.error ?? state.error)
     : localError;
-  const panelChromeLabels = resolveBrowserPanelChromeLabels(activeTab);
+  const panelChromeLabels = useMemo(
+    () => resolveBrowserPanelChromeLabels(activeTab),
+    [activeTab],
+  );
   const syncAddressFromTab = (
     tab: BrowserPanelTabState | null,
     { force = false }: { force?: boolean } = {},
@@ -583,14 +611,15 @@ export function BrowserPanel({
     );
   };
 
-  const browserTabDragPayload = (
-    tab: BrowserPanelTabState,
-  ): BrowserWorkspaceTabDescriptor => ({
-    kind: "browser",
-    browserTabId: tab.id,
-    title: browserTabLabel(tab),
-    url: tab.url,
-  });
+  const browserTabDragPayload = useCallback(
+    (tab: BrowserPanelTabState): BrowserWorkspaceTabDescriptor => ({
+      kind: "browser",
+      browserTabId: tab.id,
+      title: browserTabLabel(tab),
+      url: tab.url,
+    }),
+    [],
+  );
 
   return (
     <div

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FitAddon } from "@xterm/addon-fit";
+import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTermTerminal } from "@xterm/xterm";
 
 import { GearIcon, PlusIcon, StopIcon, XIcon } from "./icons";
@@ -91,7 +91,7 @@ export function TerminalPanel({
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const fitAddonRef = useRef<XTermFitAddon | null>(null);
   const syncTerminalSizeRef = useRef<(() => void) | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
   const activeTabRuntimeRef = useRef<{
@@ -363,8 +363,8 @@ export function TerminalPanel({
     let binarySubscription: { dispose: () => void } | null = null;
     const mountedTabId = activeTab.id;
 
-    void import("@xterm/xterm")
-      .then(({ Terminal }) => {
+    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
+      .then(([{ Terminal }, { FitAddon }]) => {
         if (disposed) {
           return;
         }
