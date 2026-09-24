@@ -55,7 +55,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   commit: owner `fe6679491`; merge `df5a23f6`; installed capsule `sha256:ef619ef73c5969cce5d55d8e1312fc6b762a07125a1eafe1fa0fd5c185ef1ebf`; restart `call_VG4nEX0I1jT3xJmcZDQU6lH7`
 
 - id: client-code-organization-followup
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_main
   reviewer: pending
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -64,23 +64,23 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   depends_on: compact/read duplicate bug installed effective; Browser workspace/right-manager fix installed effective; raw inter-agent fix included in installed capsules
   files: client/frontend/electron code areas to be scoped after active bugfixes
   base_commit: `a425d3738`
-  next_action: No immediate action; batch Runtime Capsule delivery with performance optimization unless later risk requires earlier install.
+  next_action: No immediate action; delivered with performance optimization final capsule.
   validation: Owner split `BrowserPanel.tsx` out of `RightPanel.tsx`, added `browserPanelSurface.cjs` for pure Browser surface bookkeeping, updated Browser/RightPanel tests, and reviewer approved after two rounds. PM validation on main passed: `node --check` for main/surface modules, Browser Electron focused tests including new surface tests passed 69/69, RightPanel/Panels/workspaceTabs passed 99/99, production build passed with existing chunk warnings, and `git diff --check` passed.
-  commit: owner `784bb7116`; merge `712890d44`; pending capsule delivery batched with performance tranche
+  commit: owner `784bb7116`; merge `712890d44`; delivered in final performance capsule pending exact release record
 
 - id: client-performance-optimization-followup
-  status: ready_to_dispatch
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: pending
   checkout: /Users/bytedance/.morpheus/source_workspace
-  branch: pending
+  branch: perf/client-browser-render-tranche
   task_type: performance_optimization
   depends_on: client-code-organization-followup merged on main `712890d44`; final Runtime Capsule delivery pending
   files: pending measurement plan
   base_commit: `712890d44`
-  next_action: Dispatch now as global-exclusive performance tranche on main checkout. Establish baseline first, then optimize client startup/render/Browser panel hotspots without changing behavior; final capsule delivery after merge.
-  validation: pending
-  commit: pending
+  next_action: Build final Runtime Capsule and run installed self-debug smoke/Browser validation.
+  validation: Owner established build baseline `index-DxR3MtZk.js` 746.81 kB / gzip 226.21 kB and xterm warning. First slice dynamically loads `@xterm/addon-fit` and memoizes Browser/App derived values. Second slice lazy-loads `RightPanel`/file preview/diff preview and moves command focus helper to lightweight lib. Final build after owner: `index-B4UbQ1F_.js` 655.85 kB / gzip 200.67 kB, new `RightPanel-BcEGl_qF.js` 91.93 kB / gzip 26.79 kB, `addon-fit-DX4qG4td.js` 1.21 kB / gzip 0.51 kB, xterm mixed static/dynamic warning removed, true >500k warning preserved. PM validation before merge: build passed, frontend/Terminal focused tests 118/118 passed, Browser Electron tests 69/69 passed, `git diff --check` passed.
+  commit: owner `8acfef0b` and `f8fb6076`; merge pending final commit id
 
 - id: browser-installed-whitepage-navigation-details
   status: installed_effective
