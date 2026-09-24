@@ -4,6 +4,7 @@ const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const {
+  closeBrowserPanelTabLifecycle,
   isBrowserPanelTabAlreadyAttached,
   nextBrowserTabIdAfterClose,
   shouldAttachBrowserPanelView,
@@ -148,6 +149,169 @@ test("isBrowserPanelTabAlreadyAttached detects stable same-tab refreshes", () =>
     }),
     false,
   );
+});
+
+test("closeBrowserPanelTabLifecycle waits for loaded tab disposal before replacement", async () => {
+  const events = [];
+  let replacementCounter = 0;
+  let resolveDispose;
+  const panel = {
+    tabs: [{ id: "loaded-tab" }],
+    activeTabId: "loaded-tab",
+    attachedTabId: "loaded-tab",
+    visible: true,
+    destroying: false,
+  };
+
+  const closePromise = closeBrowserPanelTabLifecycle(panel, "loaded-tab", {
+    detachAttachedView(targetPanel) {
+      events.push(`detach:${targetPanel.attachedTabId}`);
+      targetPanel.attachedTabId = null;
+    },
+    disposeTab(_targetPanel, tab) {
+      events.push(`dispose-start:${tab.id}`);
+      return new Promise((resolve) => {
+        resolveDispose = () => {
+          events.push(`dispose-done:${tab.id}`);
+          resolve();
+        };
+      });
+    },
+    createTab(targetPanel, { activate }) {
+      const replacement = { id: `replacement-${++replacementCounter}` };
+      events.push(`create:${replacement.id}:activate=${activate}`);
+      targetPanel.tabs.push(replacement);
+      if (activate) {
+        targetPanel.activeTabId = replacement.id;
+        targetPanel.attachedTabId = replacement.id;
+      }
+      return replacement;
+    },
+    attachActiveView(targetPanel, { raise }) {
+      events.push(`attach:${targetPanel.activeTabId}:raise=${raise}`);
+      targetPanel.attachedTabId = targetPanel.activeTabId;
+      return true;
+    },
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["detach:loaded-tab", "dispose-start:loaded-tab"]);
+  assert.deepEqual(panel.tabs, []);
+  assert.equal(panel.activeTabId, null);
+  assert.equal(panel.attachedTabId, null);
+
+  resolveDispose();
+  assert.equal(await closePromise, true);
+  assert.deepEqual(events, [
+    "detach:loaded-tab",
+    "dispose-start:loaded-tab",
+    "dispose-done:loaded-tab",
+    "create:replacement-1:activate=true",
+  ]);
+  assert.deepEqual(panel.tabs, [{ id: "replacement-1" }]);
+  assert.equal(panel.activeTabId, "replacement-1");
+  assert.equal(panel.attachedTabId, "replacement-1");
+});
+
+test("closeBrowserPanelTabLifecycle waits for active tab disposal before attaching neighbor", async () => {
+  const events = [];
+  let resolveDispose;
+  const panel = {
+    tabs: [{ id: "loaded-tab" }, { id: "blank-tab" }],
+    activeTabId: "loaded-tab",
+    attachedTabId: "loaded-tab",
+    visible: true,
+    destroying: false,
+  };
+
+  const closePromise = closeBrowserPanelTabLifecycle(panel, "loaded-tab", {
+    detachAttachedView(targetPanel) {
+      events.push(`detach:${targetPanel.attachedTabId}`);
+      targetPanel.attachedTabId = null;
+    },
+    disposeTab(_targetPanel, tab) {
+      events.push(`dispose-start:${tab.id}`);
+      return new Promise((resolve) => {
+        resolveDispose = () => {
+          events.push(`dispose-done:${tab.id}`);
+          resolve();
+        };
+      });
+    },
+    createTab() {
+      events.push("create-unexpected");
+    },
+    attachActiveView(targetPanel, { raise }) {
+      events.push(`attach:${targetPanel.activeTabId}:raise=${raise}`);
+      targetPanel.attachedTabId = targetPanel.activeTabId;
+      return true;
+    },
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["detach:loaded-tab", "dispose-start:loaded-tab"]);
+  assert.deepEqual(panel.tabs, [{ id: "blank-tab" }]);
+  assert.equal(panel.activeTabId, "blank-tab");
+  assert.equal(panel.attachedTabId, null);
+
+  resolveDispose();
+  assert.equal(await closePromise, true);
+  assert.deepEqual(events, [
+    "detach:loaded-tab",
+    "dispose-start:loaded-tab",
+    "dispose-done:loaded-tab",
+    "attach:blank-tab:raise=true",
+  ]);
+  assert.equal(panel.activeTabId, "blank-tab");
+  assert.equal(panel.attachedTabId, "blank-tab");
+});
+
+test("closeBrowserPanelTabLifecycle leaves the active visible tab alone when closing background", async () => {
+  const events = [];
+  let resolveDispose;
+  const panel = {
+    tabs: [{ id: "active-tab" }, { id: "background-tab" }],
+    activeTabId: "active-tab",
+    attachedTabId: "active-tab",
+    visible: true,
+    destroying: false,
+  };
+
+  const closePromise = closeBrowserPanelTabLifecycle(panel, "background-tab", {
+    detachAttachedView() {
+      events.push("detach-unexpected");
+    },
+    disposeTab(_targetPanel, tab) {
+      events.push(`dispose-start:${tab.id}`);
+      return new Promise((resolve) => {
+        resolveDispose = () => {
+          events.push(`dispose-done:${tab.id}`);
+          resolve();
+        };
+      });
+    },
+    createTab() {
+      events.push("create-unexpected");
+    },
+    attachActiveView() {
+      events.push("attach-unexpected");
+    },
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["dispose-start:background-tab"]);
+  assert.deepEqual(panel.tabs, [{ id: "active-tab" }]);
+  assert.equal(panel.activeTabId, "active-tab");
+  assert.equal(panel.attachedTabId, "active-tab");
+
+  resolveDispose();
+  assert.equal(await closePromise, true);
+  assert.deepEqual(events, [
+    "dispose-start:background-tab",
+    "dispose-done:background-tab",
+  ]);
+  assert.equal(panel.activeTabId, "active-tab");
+  assert.equal(panel.attachedTabId, "active-tab");
 });
 
 test("browser panel native view lifecycle raises only on explicit show or tab actions", () => {
@@ -313,21 +477,48 @@ test("closing Browser tabs destroys webContents before replacement tabs navigate
       mainSource.indexOf("function disposeBrowserPanelTab(panel, tab)"),
     ),
   );
+  const destroyTabWebContentsFunction = mainSource.slice(
+    mainSource.indexOf("function destroyBrowserPanelTabWebContents(tab)"),
+    mainSource.indexOf(
+      "function attachActiveBrowserPanelView",
+      mainSource.indexOf("function destroyBrowserPanelTabWebContents(tab)"),
+    ),
+  );
 
   assert.match(
+    mainSource,
+    /ipcMain\.handle\("codex:browser:closeTab"[\s\S]*await closeBrowserPanelTab\(panel, tabId\)/,
+    "close-tab IPC must wait for old WebContents teardown before returning replacement state",
+  );
+  assert.match(
+    mainSource,
+    /async function closeBrowserPanelTab\(panel, tabId\)/,
+    "closeBrowserPanelTab must be async so callers can await tab disposal",
+  );
+  assert.match(
     closeFunction,
-    /panel\.tabs\.splice\(index, 1\);[\s\S]*disposeBrowserPanelTab\(panel, tab\);[\s\S]*if \(panel\.tabs\.length === 0 && !panel\.destroying\) \{[\s\S]*createBrowserPanelTab\(panel, \{ activate: true \}\);/,
-    "closed tabs must be disposed before an automatic replacement tab can be created",
+    /return closeBrowserPanelTabLifecycle\(panel, tabId, \{[\s\S]*disposeTab: disposeBrowserPanelTab,[\s\S]*createTab: createBrowserPanelTab,[\s\S]*attachActiveView: attachActiveBrowserPanelView,/,
+    "closed tabs must use the async lifecycle helper so replacement/selection waits for disposal",
   );
   assert.match(
     destroyPanelFunction,
-    /for \(const tab of \[\.\.\.panel\.tabs\]\) \{[\s\S]*disposeBrowserPanelTab\(panel, tab\);[\s\S]*\}/,
-    "window teardown must dispose a tab snapshot because destroy events can mutate panel.tabs",
+    /for \(const tab of \[\.\.\.panel\.tabs\]\) \{[\s\S]*void disposeBrowserPanelTab\(panel, tab\)\.catch\(\(error\) => \{[\s\S]*console\.warn\(/,
+    "window teardown must dispose a tab snapshot with a rejection handler because destroy events can mutate panel.tabs",
+  );
+  assert.match(
+    destroyPanelFunction,
+    /failed to dispose Browser tab during window teardown/,
+    "window teardown disposal failures must leave bounded diagnostic evidence",
   );
   assert.match(
     disposeFunction,
-    /if \(panel\.attachedTabId === tab\.id\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}[\s\S]*stopBrowserPanelNavigation\(tab\);[\s\S]*tab\.view\.webContents\.destroy\(\);/,
-    "Browser tab disposal must detach native views, cancel pending navigation, and destroy the WebContents",
+    /if \(panel\.attachedTabId === tab\.id\) \{[\s\S]*detachAttachedBrowserPanelView\(panel\);[\s\S]*\}[\s\S]*stopBrowserPanelNavigation\(tab\);[\s\S]*await destroyBrowserPanelTabWebContents\(tab\);/,
+    "Browser tab disposal must detach native views, cancel pending navigation, and await WebContents destruction",
+  );
+  assert.match(
+    destroyTabWebContentsFunction,
+    /webContents\.once\("destroyed", cleanup\);[\s\S]*webContents\.destroy\(\);[\s\S]*if \(webContents\.isDestroyed\(\)\) \{[\s\S]*cleanup\(\);[\s\S]*\}/,
+    "Browser tab disposal must resolve only after the old WebContents has reached destroyed state",
   );
   assert.doesNotMatch(
     disposeFunction,
