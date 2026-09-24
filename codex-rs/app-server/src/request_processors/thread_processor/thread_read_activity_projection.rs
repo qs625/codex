@@ -45,6 +45,7 @@ fn restore_persisted_flat_compaction_display_turns(thread: &mut Thread, persiste
             .iter_mut()
             .find(|turn| turn.id == persisted_turn.id)
         {
+            remove_unmatched_marker_only_compactions(live_turn, &compact_items);
             let mut insert_index = live_turn
                 .items
                 .iter()
@@ -61,6 +62,43 @@ fn restore_persisted_flat_compaction_display_turns(thread: &mut Thread, persiste
         thread
             .turns
             .insert(persisted_index.min(thread.turns.len()), compact_turn);
+    }
+}
+
+fn remove_unmatched_marker_only_compactions(live_turn: &mut Turn, compact_items: &[ThreadItem]) {
+    if matches!(live_turn.status, TurnStatus::InProgress) {
+        return;
+    }
+
+    let persisted_compaction_ids = compact_items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::ContextCompaction { id } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+
+    let mut index = 0;
+    while index < live_turn.items.len() {
+        let should_remove = match &live_turn.items[index] {
+            ThreadItem::ContextCompaction { id }
+                if !persisted_compaction_ids.contains(id.as_str()) =>
+            {
+                let summary_id = format!("{id}:summary");
+                !live_turn.items.get(index + 1).is_some_and(|item| {
+                    matches!(
+                        item,
+                        ThreadItem::AgentMessage { id, .. } if id == &summary_id
+                    )
+                })
+            }
+            _ => false,
+        };
+        if should_remove {
+            live_turn.items.remove(index);
+        } else {
+            index += 1;
+        }
     }
 }
 
