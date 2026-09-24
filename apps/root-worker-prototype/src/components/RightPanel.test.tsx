@@ -1516,8 +1516,14 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assert.match(browserPanelSource, /const lastAddressTabIdRef = useRef<string \| null>\(null\)/);
   assert.match(browserPanelSource, /const syncAddressFromTab = \(/);
   assert.match(browserPanelSource, /addressInputFocusedRef\.current && !tabChanged/);
+  assert.match(browserPanelSource, /const handleAddressInputBlur = \(event: React\.FocusEvent<HTMLInputElement>\) => \{/);
+  assert.match(
+    browserPanelSource,
+    /event\.currentTarget\.form\?\.contains\(nextFocusedElement\)[\s\S]*return;[\s\S]*syncAddressFromTab\(activeTab\)/,
+  );
   assert.match(browserPanelSource, /onFocus=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = true/);
-  assert.match(browserPanelSource, /onBlur=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = false;[\s\S]*syncAddressFromTab\(activeTab\)/);
+  assert.match(browserPanelSource, /aria-label="Browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/);
+  assert.match(browserPanelSource, /aria-label="Workspace browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/);
   assert.match(surfaceApplySource, /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/);
   assert.match(surfaceApplySource, /surface\.managerSelectedBrowserTabId/);
   assert.match(surfaceApplySource, /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/);

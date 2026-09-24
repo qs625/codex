@@ -1182,6 +1182,18 @@ export function BrowserPanel({
     }
     setAddress(tab?.url ?? "");
   };
+  const handleAddressInputBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    addressInputFocusedRef.current = false;
+    const nextFocusedElement = event.relatedTarget;
+    if (
+      typeof Node !== "undefined" &&
+      nextFocusedElement instanceof Node &&
+      event.currentTarget.form?.contains(nextFocusedElement)
+    ) {
+      return;
+    }
+    syncAddressFromTab(activeTab);
+  };
 
   const applyBrowserState = (nextState: BrowserPanelState) => {
     const normalizedState = normalizeBrowserPanelState(nextState);
@@ -1766,10 +1778,7 @@ export function BrowserPanel({
                   onFocus={() => {
                     addressInputFocusedRef.current = true;
                   }}
-                  onBlur={() => {
-                    addressInputFocusedRef.current = false;
-                    syncAddressFromTab(activeTab);
-                  }}
+                  onBlur={handleAddressInputBlur}
                   onChange={(event) => setAddress(event.target.value)}
                 />
                 <button
@@ -1854,10 +1863,7 @@ export function BrowserPanel({
             onFocus={() => {
               addressInputFocusedRef.current = true;
             }}
-            onBlur={() => {
-              addressInputFocusedRef.current = false;
-              syncAddressFromTab(activeTab);
-            }}
+            onBlur={handleAddressInputBlur}
             onChange={(event) => setAddress(event.target.value)}
           />
           <button
