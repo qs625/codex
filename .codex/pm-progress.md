@@ -13,7 +13,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
 ## Active Work
 
 - id: compact-read-duplicate-user-input-tail
-  status: dispatched_to_owner
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -22,9 +22,9 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   depends_on: installed capsule `sha256:d763bb85838e6f30adfe96c56a853007f950e75e77b82e39bb83bc91aaf7fadf`; user report that after compact, read user input appears duplicated and one duplicate stays pinned at the tail; selected thread `01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b`
   files: likely `codex-rs/app-server/src/request_processors/thread_processor/thread_read_activity_projection.rs`, `codex-rs/thread-history/src/lifecycle.rs`, and possibly `apps/root-worker-prototype/src/lib/thread.ts` / conversation virtualization tests if frontend reconciliation contributes
   base_commit: `38473d6fc`
-  next_action: Owner dispatched to root-cause and fix before any client cleanup/performance work. PM self-debug evidence shows `readThread(id)` returns `{ thread: { turns } }`; userMessage id/text are not duplicated, but the compact head turn is `inProgress`, contains 72 tail items, starts with `contextCompaction`, and later user inputs are separate `rollout-*` turns. Focus on turn-boundary/status/restore merge rather than text-level userMessage dedupe.
-  validation: pending owner fix/review. Required: read/reload compact head turn must not aggregate later active tail incorrectly; compact summary/raw inter-agent filters still pass; same-text distinct user inputs remain preserved; installed self-debug must show no fixed tail duplicate user input.
-  commit: pending
+  next_action: No immediate action. Resume Browser workspace/right-manager bug before cleanup/performance.
+  validation: Owner root-caused stale live active snapshot with the same turn id merging into a historical compact display turn. Fix in `thread_resume_projection.rs` only merges active turns into the persisted tail turn; same-id matches in older persisted turns are treated as stale. PM validation on dev-2 and main: new stale-active compact regression passed, legal tail merge passed, compact display restore tests passed, raw inter-agent compact filter passed, app-server debug build passed, `git diff --check` passed. PM built Runtime Capsule `sha256:12323d512225593bf08504ac5df8a62a93e3eb961f18ee004e0871a6a9a23f60` from sourceCommit `56e85ebceeb9853df5cb549155b0520b1dc5d9fa`; restart `call_MY2I0O47kJSlvKfk4hYpAy9K` recovered. Installed self-debug confirmed renderer URL from artifact `12323d...`; `readThread(01a08b3c-f5de-7ae3-99e3-b72f4f0a6c7b)` now has compact head status `completed`, current active work in a separate final inProgress turn, and no repeated userMessage text/id.
+  commit: owner `7635bef6e`; merge `56e85ebce`; installed capsule `sha256:12323d512225593bf08504ac5df8a62a93e3eb961f18ee004e0871a6a9a23f60`; restart `call_MY2I0O47kJSlvKfk4hYpAy9K`
 
 - id: inter-agent-child-completion-raw-message
   status: merged_pending_capsule_delivery
@@ -41,7 +41,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   commit: owner `d99968048`; merge `348be10a5`; installed in final capsule `sha256:8f74ea828c182703459aeee43f63fe552c57d9ec50cae60dae8e01e2196ffa51`; restart `call_1MsYFwDjVR7iZc42O57TgTeg`; owner compact fallback fix `7ad221bb`; merge `a2c55f84`; pending capsule delivery
 
 - id: browser-workspace-right-manager-independence
-  status: paused_wip_not_mergeable
+  status: resumed_to_owner
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -50,7 +50,7 @@ Current installed Runtime Capsule release id remains `sha256:617c9dbe08dbd34c79c
   depends_on: main `cc5c11da1`; installed Browser base navigation effective in capsule `sha256:d763bb85838e6f30adfe96c56a853007f950e75e77b82e39bb83bc91aaf7fadf`; user report that after dragging Browser to center, right Browser new tab cannot display page and right Browser tabs cannot close while center tab can close
   files: likely `apps/root-worker-prototype/src/components/RightPanel.tsx`, `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/lib/workspaceTabs.ts`, Browser/native view ownership paths in `apps/root-worker-prototype/electron/main.cjs`, and related tests
   base_commit: `cc5c11da1`
-  next_action: Paused because user prioritized compact/read duplicate bug before all cleanup/performance work. WIP save commit `99865697a` exists but is explicitly not mergeable, unreviewed, and may have type/runtime errors. When resumed, continue per-surface BrowserView ownership design; do not merge WIP directly.
+  next_action: Resume now that compact/read duplicate bug is installed effective. Continue from or replace WIP save commit `99865697a`, but do not merge it directly until reviewed/tested. Required: per-surface BrowserView ownership; center Browser close closes underlying tab and does not return it to right manager; drag-back is the only release/return; right manager remains able to new/select/close/display right-owned tabs while center Browser exists.
   validation: PM installed self-debug confirmed ordinary right Browser close works when no center Browser ownership condition is being exercised: clicking right `Close Example Domain` removed the tab and CDP target, leaving 百度/Google right tabs. Therefore owner should focus on the dragged-to-center ownership state, not basic close. User says center Browser can close but right Browser cannot after drag, and right new tab cannot display page.
   commit: WIP save `99865697a` not mergeable
 
