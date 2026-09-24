@@ -823,6 +823,7 @@ ipcMain.handle("codex:browser:reload", async (event) => {
     tab.pendingDeferredFailure = null;
     tab.pendingNavigationSequence = navigationSequence;
     tab.pendingNavigationRequiresVisiblePanel = true;
+    tab.pendingNavigationStartUrl = tab.state.url || null;
     tab.pendingNavigationTarget = tab.view.webContents.getURL() || null;
     scheduleBrowserPanelPendingNavigationTimeout(panel, tab, navigationSequence);
     tab.state.error = null;
@@ -1907,6 +1908,7 @@ function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
     finishedUrl: null,
     pendingNavigationSequence: null,
     pendingNavigationRequiresVisiblePanel: true,
+    pendingNavigationStartUrl: null,
     pendingNavigationTarget: null,
     pendingNavigationTimeout: null,
     pendingDeferredFailure: null,
@@ -1940,10 +1942,12 @@ async function loadBrowserPanelTabUrl(
     throw new Error(normalized.reason);
   }
   const navigationSequence = ++tab.navigationSequence;
+  const navigationStartUrl = tab.view.webContents.getURL() || tab.state.url || null;
   tab.pendingDeferredFailure = null;
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = navigationSequence;
   tab.pendingNavigationRequiresVisiblePanel = requireVisiblePanel;
+  tab.pendingNavigationStartUrl = navigationStartUrl;
   tab.pendingNavigationTarget = normalized.url;
   tab.state.error = null;
   tab.state.loading = true;
@@ -2052,6 +2056,7 @@ function bindBrowserPanelTab(panel, tab) {
         const navigationSequence = ++tab.navigationSequence;
         tab.pendingNavigationSequence = navigationSequence;
         tab.pendingNavigationRequiresVisiblePanel = true;
+        tab.pendingNavigationStartUrl = tab.state.url || null;
         tab.pendingNavigationTarget = currentUrl || null;
         scheduleBrowserPanelPendingNavigationTimeout(panel, tab, navigationSequence);
       }
@@ -2286,6 +2291,7 @@ function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
   tab.pendingNavigationRequiresVisiblePanel = true;
+  tab.pendingNavigationStartUrl = null;
   tab.pendingNavigationTarget = null;
   updateBrowserPanelLocationState(tab);
   tab.finishedNavigationSequence = navigationSequence ?? tab.navigationSequence;
@@ -2323,6 +2329,7 @@ function failBrowserPanelNavigation(panel, tab, failure) {
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
   tab.pendingNavigationRequiresVisiblePanel = true;
+  tab.pendingNavigationStartUrl = null;
   tab.pendingNavigationTarget = null;
   tab.state.url = failure.validatedUrl || tab.state.url;
   tab.state.loading = false;
@@ -2338,6 +2345,7 @@ function stopBrowserPanelNavigation(tab) {
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationSequence = null;
   tab.pendingNavigationRequiresVisiblePanel = true;
+  tab.pendingNavigationStartUrl = null;
   tab.pendingNavigationTarget = null;
   stopBrowserPanelWebContentsLoad(tab);
   updateBrowserPanelLocationState(tab);
@@ -2462,6 +2470,7 @@ function browserPanelTabHasCommittedTarget(tab, target) {
   updateBrowserPanelLocationState(tab);
   return shouldCompleteBrowserPanelTimedOutNavigation({
     currentUrl: tab.state.url,
+    startUrl: tab.pendingNavigationStartUrl,
     targetUrl: target,
   });
 }

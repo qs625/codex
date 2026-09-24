@@ -6,6 +6,7 @@ const { join } = require("node:path");
 const {
   browserPanelLoadErrorMessage,
   browserPanelNavigationTimeoutMessage,
+  browserPanelUrlIsSafeCommittedHttpUrl,
   browserPanelUrlsEqual,
   shouldAcceptBrowserPanelCommittedNavigation,
   shouldCompleteBrowserPanelStoppedNavigation,
@@ -152,16 +153,46 @@ test("shouldCompleteBrowserPanelTimedOutNavigation accepts committed target URL"
   assert.equal(
     shouldCompleteBrowserPanelTimedOutNavigation({
       currentUrl: "https://example.com",
+      startUrl: "about:blank",
       targetUrl: "https://example.com/",
     }),
     true,
   );
 });
 
-test("shouldCompleteBrowserPanelTimedOutNavigation rejects non-target timeout state", () => {
+test("shouldCompleteBrowserPanelTimedOutNavigation accepts safe committed redirects", () => {
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: "https://www.baidu.com/",
+      startUrl: "about:blank",
+      targetUrl: "https://baidu.com/",
+    }),
+    true,
+  );
+});
+
+test("shouldCompleteBrowserPanelTimedOutNavigation requires start evidence for redirects", () => {
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: "https://www.baidu.com/",
+      targetUrl: "https://baidu.com/",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: "https://example.com/",
+      targetUrl: "https://example.com/",
+    }),
+    true,
+  );
+});
+
+test("shouldCompleteBrowserPanelTimedOutNavigation rejects non-committed timeout state", () => {
   assert.equal(
     shouldCompleteBrowserPanelTimedOutNavigation({
       currentUrl: "about:blank",
+      startUrl: "about:blank",
       targetUrl: "https://example.com/",
     }),
     false,
@@ -169,10 +200,44 @@ test("shouldCompleteBrowserPanelTimedOutNavigation rejects non-target timeout st
   assert.equal(
     shouldCompleteBrowserPanelTimedOutNavigation({
       currentUrl: "https://previous.example/",
+      startUrl: "https://previous.example/",
       targetUrl: "https://example.com/",
     }),
     false,
   );
+});
+
+test("shouldCompleteBrowserPanelTimedOutNavigation rejects unsafe timeout URLs", () => {
+  for (const currentUrl of [
+    "file:///tmp/index.html",
+    "data:text/html,hello",
+    "custom-scheme:foo",
+  ]) {
+    assert.equal(
+      shouldCompleteBrowserPanelTimedOutNavigation({
+        currentUrl,
+        startUrl: "about:blank",
+        targetUrl: "https://example.com/",
+      }),
+      false,
+    );
+  }
+  assert.equal(
+    shouldCompleteBrowserPanelTimedOutNavigation({
+      currentUrl: "https://example.com/",
+      startUrl: "about:blank",
+      targetUrl: "file:///tmp/index.html",
+    }),
+    false,
+  );
+});
+
+test("browserPanelUrlIsSafeCommittedHttpUrl accepts only committed http URLs", () => {
+  assert.equal(browserPanelUrlIsSafeCommittedHttpUrl("https://example.com/"), true);
+  assert.equal(browserPanelUrlIsSafeCommittedHttpUrl("http://localhost:5173/"), true);
+  assert.equal(browserPanelUrlIsSafeCommittedHttpUrl("about:blank"), false);
+  assert.equal(browserPanelUrlIsSafeCommittedHttpUrl("file:///tmp/index.html"), false);
+  assert.equal(browserPanelUrlIsSafeCommittedHttpUrl("custom-scheme:foo"), false);
 });
 
 test("shouldAcceptBrowserPanelCommittedNavigation accepts redirected committed URLs", () => {
@@ -444,6 +509,33 @@ test("main browser navigation completes timed out visible load when target commi
   assert.ok(
     committedTargetIndex < stopLoadIndex,
     "timeout handling must check committed native URL before stopping the BrowserView load",
+  );
+});
+
+test("main browser navigation records start URL for timeout fallback", () => {
+  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
+  const loadUrlIndex = mainSource.indexOf("async function loadBrowserPanelTabUrl");
+  const timeoutTargetIndex = mainSource.indexOf(
+    "function browserPanelTabHasCommittedTarget",
+  );
+
+  assert.notEqual(loadUrlIndex, -1);
+  assert.notEqual(timeoutTargetIndex, -1);
+  assert.notEqual(
+    mainSource.indexOf("pendingNavigationStartUrl: null"),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("const navigationStartUrl =", loadUrlIndex),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("tab.pendingNavigationStartUrl = navigationStartUrl", loadUrlIndex),
+    -1,
+  );
+  assert.notEqual(
+    mainSource.indexOf("startUrl: tab.pendingNavigationStartUrl", timeoutTargetIndex),
+    -1,
   );
 });
 
