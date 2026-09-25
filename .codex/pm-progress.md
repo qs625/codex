@@ -8,9 +8,23 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Final bugfix + code-organization + performance tranche is installed effective in Runtime Capsule `sha256:94cc19243366382a979b2e022c7f5d14d733c1d67aa977cdb52d93460f9111a4` from canonical main `4b5dfb200`; Runtime Capsule restart `call_T3IiLBOlK7vSEYrAON5JKZFM` recovered/completed. Installed renderer URL points to the final artifact. Installed self-debug confirmed RightPanel lazy chunk renders the Browser panel without being stuck in `Loading panel...`, and Browser right/workspace surfaces can independently show/navigate/close test tabs.
+Active goal: backend code organization tranche focused on reducing code size without behavior changes. Scope starts from Rust backend/runtime crates under `codex-rs/`, prioritizing dead code removal, duplicate helper consolidation, and narrower architecture boundaries. This is a global exclusive refactor on canonical main via `/self/owner_main`; no Runtime Capsule delivery decision until after PM validation.
 
 ## Active Work
+
+- id: backend-code-reduction-refactor
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/backend-code-reduction
+  task_type: backend_code_cleanup_refactor
+  depends_on: main `c3793e913`; user request to organize backend code, reduce unused code, improve architecture, with the explicit goal of reducing code quantity; follow-up explicitly allows larger architecture cleanup when it reduces code and maintenance surface
+  files: Rust backend/runtime crates under `codex-rs/`, exact files pending owner inventory; architecture-level cleanup allowed across backend/runtime crates, but avoid frontend UI and Electron renderer changes unless needed only for compile fallout
+  base_commit: `c3793e913`
+  next_action: Owner to inventory and rank multiple code-reduction/architecture candidates, implement a coherent first tranche, reuse fixed reviewer, run focused tests/build, and report net code-size delta plus risk.
+  validation: Pending owner delivery. PM acceptance requires measurable net line/code reduction, no behavior/protocol weakening, focused tests/debug backend build, and design review against architecture boundaries; larger architecture cleanup must make final code smaller rather than adding abstraction.
+  commit: pending
 
 - id: compact-read-duplicate-user-input-tail
   status: installed_effective
