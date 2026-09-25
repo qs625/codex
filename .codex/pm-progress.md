@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: backend code organization tranche focused on reducing code size without behavior changes. Scope starts from Rust backend/runtime crates under `codex-rs/`, prioritizing dead code removal, duplicate helper consolidation, and narrower architecture boundaries. This is a global exclusive refactor on canonical main via `/self/owner_main`; no Runtime Capsule delivery decision until after PM validation.
+Active goal: second backend architecture reduction tranche focused on materially larger code reduction than the first small helper pass. User explicitly asked to do more and not ask for further confirmation. Scope is Rust backend/runtime crates under `codex-rs/`, allowing cross-module architecture cleanup that reduces code and maintenance surface while preserving protocol/schema/history/runtime semantics. This is a global exclusive refactor on canonical main via `/self/owner_main`.
 
 ## Active Work
 
@@ -25,6 +25,20 @@ Active goal: backend code organization tranche focused on reducing code size wit
   next_action: No immediate Runtime Capsule restart; low-risk backend refactor with no protocol/schema/behavior target change, to be delivered with the next runtime capsule batch unless follow-up changes require earlier delivery.
   validation: Owner ranked directions and implemented the first coherent tranche: shared app-server usage replay turn attribution/fallback helpers and a parent-module config reload helper, while preserving `config_processor` special error semantics. Reviewer approved. Net diff before merge: `8 files changed, 94 insertions(+), 162 deletions(-)`, Rust/source net -68 lines. PM design validation confirmed event-before-handle attribution, id-first/position-fallback semantics, and config reload error text preservation. PM validation passed: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server request_processors::context_usage_replay -- --nocapture` (4 passed), `cargo test --manifest-path codex-rs/Cargo.toml -p app-server request_processors::token_usage_replay -- --nocapture` (3 passed), `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`, and `git diff --check HEAD~1..HEAD`; only existing linker `__eh_frame` and future-incompat warnings observed.
   commit: owner `04811a88e`; dispatch `a7dd86daa`; merge `3517b04db`; pending capsule delivery
+
+- id: backend-architecture-reduction-tranche-2
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/backend-architecture-reduction-2
+  task_type: backend_architecture_cleanup_refactor
+  depends_on: main `9cc1f1c42`; user feedback that prior tranche was too small and instruction to execute end-to-end without asking
+  files: Rust backend/runtime crates under `codex-rs/`, exact architecture seam pending owner inventory; avoid frontend UI and Electron renderer changes unless compile fallout requires trivial type-only updates
+  base_commit: `9cc1f1c42`
+  next_action: Owner to find and implement a materially larger architecture/code-reduction tranche, aiming for hundreds of lines net reduction if safely available, with ranked candidate analysis and reviewer validation.
+  validation: Pending owner delivery. PM acceptance requires a real architecture simplification, not only local wrappers; measurable net code reduction; no protocol/schema/history/runtime semantic weakening; focused tests and app-server debug build.
+  commit: pending
 
 - id: compact-read-duplicate-user-input-tail
   status: installed_effective
