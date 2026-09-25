@@ -13,7 +13,7 @@ Active goal: backend code organization tranche focused on reducing code size wit
 ## Active Work
 
 - id: backend-code-reduction-refactor
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -22,9 +22,9 @@ Active goal: backend code organization tranche focused on reducing code size wit
   depends_on: main `c3793e913`; user request to organize backend code, reduce unused code, improve architecture, with the explicit goal of reducing code quantity; follow-up explicitly allows larger architecture cleanup when it reduces code and maintenance surface
   files: Rust backend/runtime crates under `codex-rs/`, exact files pending owner inventory; architecture-level cleanup allowed across backend/runtime crates, but avoid frontend UI and Electron renderer changes unless needed only for compile fallout
   base_commit: `c3793e913`
-  next_action: Owner to inventory and rank multiple code-reduction/architecture candidates, implement a coherent first tranche, reuse fixed reviewer, run focused tests/build, and report net code-size delta plus risk.
-  validation: Pending owner delivery. PM acceptance requires measurable net line/code reduction, no behavior/protocol weakening, focused tests/debug backend build, and design review against architecture boundaries; larger architecture cleanup must make final code smaller rather than adding abstraction.
-  commit: pending
+  next_action: No immediate Runtime Capsule restart; low-risk backend refactor with no protocol/schema/behavior target change, to be delivered with the next runtime capsule batch unless follow-up changes require earlier delivery.
+  validation: Owner ranked directions and implemented the first coherent tranche: shared app-server usage replay turn attribution/fallback helpers and a parent-module config reload helper, while preserving `config_processor` special error semantics. Reviewer approved. Net diff before merge: `8 files changed, 94 insertions(+), 162 deletions(-)`, Rust/source net -68 lines. PM design validation confirmed event-before-handle attribution, id-first/position-fallback semantics, and config reload error text preservation. PM validation passed: `cargo test --manifest-path codex-rs/Cargo.toml -p app-server request_processors::context_usage_replay -- --nocapture` (4 passed), `cargo test --manifest-path codex-rs/Cargo.toml -p app-server request_processors::token_usage_replay -- --nocapture` (3 passed), `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`, and `git diff --check HEAD~1..HEAD`; only existing linker `__eh_frame` and future-incompat warnings observed.
+  commit: owner `04811a88e`; dispatch `a7dd86daa`; merge `3517b04db`; pending capsule delivery
 
 - id: compact-read-duplicate-user-input-tail
   status: installed_effective
