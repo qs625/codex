@@ -3050,118 +3050,80 @@ impl thread_service_api::LiveThreadStateRuntimeSource for ThreadServiceState {
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
-    fn submit_live_thread_op(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        thread_service_api::LiveThreadCommandRuntime::submit_live_thread_op(
-            self.state.as_ref(),
-            thread_id,
-            op,
-        )
-    }
+macro_rules! delegate_thread_service_state_runtime {
+    (
+        $runtime:path {
+            $(
+                fn $method:ident($($arg:ident : $arg_ty:ty),* $(,)?) -> $ret:ty;
+            )*
+        }
+    ) => {
+        #[allow(clippy::manual_async_fn)]
+        impl $runtime for ThreadService {
+            $(
+                fn $method(&self, $($arg: $arg_ty),*) -> $ret {
+                    <ThreadServiceState as $runtime>::$method(self.state.as_ref() $(, $arg)*)
+                }
+            )*
+        }
+    };
+}
 
-    fn submit_live_thread_op_with_trace(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<W3cTraceContext>,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        thread_service_api::LiveThreadCommandRuntime::submit_live_thread_op_with_trace(
-            self.state.as_ref(),
-            thread_id,
-            op,
-            trace,
-        )
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadCommandRuntime {
+        fn submit_live_thread_op(thread_id: ThreadId, op: Op)
+            -> impl std::future::Future<Output = CodexResult<String>> + Send + '_;
 
-    fn set_live_thread_app_server_client_info(
-        &self,
-        thread_id: ThreadId,
-        info: thread_service_api::AppServerClientInfo,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadCommandRuntime::set_live_thread_app_server_client_info(
-            self.state.as_ref(),
-            thread_id,
-            info,
-        )
+        fn submit_live_thread_op_with_trace(
+            thread_id: ThreadId,
+            op: Op,
+            trace: Option<W3cTraceContext>,
+        ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_;
+
+        fn set_live_thread_app_server_client_info(
+            thread_id: ThreadId,
+            info: thread_service_api::AppServerClientInfo,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadTerminalRuntime for ThreadService {
-    fn update_live_thread_preferred_terminal_size(
-        &self,
-        thread_id: ThreadId,
-        size: thread_service_api::PreferredTerminalSize,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadTerminalRuntime::update_live_thread_preferred_terminal_size(
-            self.state.as_ref(),
-            thread_id,
-            size,
-        )
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadTerminalRuntime {
+        fn update_live_thread_preferred_terminal_size(
+            thread_id: ThreadId,
+            size: thread_service_api::PreferredTerminalSize,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadConversationRuntime for ThreadService {
-    fn append_live_thread_conversation_item(
-        &self,
-        thread_id: ThreadId,
-        item: ResponseItem,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        thread_service_api::LiveThreadConversationRuntime::append_live_thread_conversation_item(
-            self.state.as_ref(),
-            thread_id,
-            item,
-        )
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadConversationRuntime {
+        fn append_live_thread_conversation_item(
+            thread_id: ThreadId,
+            item: ResponseItem,
+        ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadClientRecoveryRuntime for ThreadService {
-    fn record_live_thread_client_recovery(
-        &self,
-        thread_id: ThreadId,
-        event: protocol::protocol::ClientRecoveryEvent,
-    ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_ {
-        thread_service_api::LiveThreadClientRecoveryRuntime::record_live_thread_client_recovery(
-            self.state.as_ref(),
-            thread_id,
-            event,
-        )
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadClientRecoveryRuntime {
+        fn record_live_thread_client_recovery(
+            thread_id: ThreadId,
+            event: protocol::protocol::ClientRecoveryEvent,
+        ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadHistoryRuntime for ThreadService {
-    fn live_thread_history(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_ {
-        thread_service_api::LiveThreadHistoryRuntime::live_thread_history(
-            self.state.as_ref(),
-            thread_id,
-            include_archived,
-        )
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadHistoryRuntime {
+        fn live_thread_history(thread_id: ThreadId, include_archived: bool)
+            -> impl std::future::Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
 
-    fn read_live_thread(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-        include_history: bool,
-    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThread>> + Send + '_ {
-        thread_service_api::LiveThreadHistoryRuntime::read_live_thread(
-            self.state.as_ref(),
-            thread_id,
-            include_archived,
-            include_history,
-        )
+        fn read_live_thread(
+            thread_id: ThreadId,
+            include_archived: bool,
+            include_history: bool,
+        ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThread>> + Send + '_;
     }
 }
 
@@ -3180,112 +3142,51 @@ impl thread_service_api::LiveThreadListenerRuntime for ThreadService {
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
-    fn validate_live_thread_turn_context_overrides(
-        &self,
-        thread_id: ThreadId,
-        overrides: thread_service_api::CodexThreadTurnContextOverrides,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadTurnRuntime::validate_live_thread_turn_context_overrides(
-            self.state.as_ref(),
-            thread_id,
-            overrides,
-        )
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadTurnRuntime {
+        fn validate_live_thread_turn_context_overrides(
+            thread_id: ThreadId,
+            overrides: thread_service_api::CodexThreadTurnContextOverrides,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
 
-    fn apply_live_thread_persisted_resume_metadata(
-        &self,
-        thread_id: ThreadId,
-        resume_config: thread_service_api::LiveThreadResumeConfig,
-        cwd: AbsolutePathBuf,
-        root_agent_path: Option<String>,
-        root_agent_role: Option<String>,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadTurnRuntime::apply_live_thread_persisted_resume_metadata(
-            self.state.as_ref(),
-            thread_id,
-            resume_config,
-            cwd,
-            root_agent_path,
-            root_agent_role,
-        )
+        fn apply_live_thread_persisted_resume_metadata(
+            thread_id: ThreadId,
+            resume_config: thread_service_api::LiveThreadResumeConfig,
+            cwd: AbsolutePathBuf,
+            root_agent_path: Option<String>,
+            root_agent_role: Option<String>,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadInspectionRuntime for ThreadService {
-    fn list_live_thread_ids(&self) -> impl std::future::Future<Output = Vec<ThreadId>> + Send + '_ {
-        thread_service_api::LiveThreadInspectionRuntime::list_live_thread_ids(self.state.as_ref())
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadInspectionRuntime {
+        fn list_live_thread_ids() -> impl std::future::Future<Output = Vec<ThreadId>> + Send + '_;
 
-    fn is_live_thread_loaded(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        thread_service_api::LiveThreadInspectionRuntime::is_live_thread_loaded(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn is_live_thread_loaded(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = bool> + Send + '_;
 
-    fn live_thread_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadInfo>> + Send + '_
-    {
-        thread_service_api::LiveThreadInspectionRuntime::live_thread_info(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn live_thread_info(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadInfo>> + Send + '_;
 
-    fn live_thread_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadSnapshot>> + Send + '_
-    {
-        thread_service_api::LiveThreadInspectionRuntime::live_thread_snapshot(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn live_thread_snapshot(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadSnapshot>> + Send + '_;
 
-    fn live_thread_config_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadConfigSnapshot>>
-    + Send
-    + '_ {
-        thread_service_api::LiveThreadInspectionRuntime::live_thread_config_snapshot(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn live_thread_config_snapshot(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadConfigSnapshot>> + Send + '_;
 
-    fn live_thread_config_refresh_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<
-        Output = CodexResult<thread_service_api::LiveThreadConfigRefreshSnapshot>,
-    > + Send
-    + '_ {
-        thread_service_api::LiveThreadInspectionRuntime::live_thread_config_refresh_snapshot(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn live_thread_config_refresh_snapshot(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadConfigRefreshSnapshot>> + Send + '_;
 
-    fn live_thread_feature_enabled(
-        &self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_ {
-        thread_service_api::LiveThreadInspectionRuntime::live_thread_feature_enabled(
-            self.state.as_ref(),
-            thread_id,
-            feature,
-        )
+        fn live_thread_feature_enabled(
+            thread_id: ThreadId,
+            feature: Feature,
+        ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_;
     }
 }
 
@@ -3317,117 +3218,60 @@ impl thread_service_api::LiveThreadFeedbackRuntime for ThreadService {
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadSkillWatchRuntime for ThreadService {
-    fn thread_skill_watch_paths(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_ {
-        thread_service_api::LiveThreadSkillWatchRuntime::thread_skill_watch_paths(
-            self.state.as_ref(),
-            thread_id,
-        )
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadSkillWatchRuntime {
+        fn thread_skill_watch_paths(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadUsageRuntime for ThreadService {
-    fn thread_token_usage_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_ {
-        thread_service_api::LiveThreadUsageRuntime::thread_token_usage_info(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadUsageRuntime {
+        fn thread_token_usage_info(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_;
 
-    fn thread_context_usage(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<ThreadContextUsage>> + Send + '_ {
-        thread_service_api::LiveThreadUsageRuntime::thread_context_usage(
-            self.state.as_ref(),
-            thread_id,
-        )
+        fn thread_context_usage(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<ThreadContextUsage>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadGoalRuntime for ThreadService {
-    fn prepare_thread_external_goal_mutation(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadGoalRuntime::prepare_thread_external_goal_mutation(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadGoalRuntime {
+        fn prepare_thread_external_goal_mutation(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
 
-    fn apply_thread_external_goal_set(
-        &self,
-        thread_id: ThreadId,
-        external_set: ExternalGoalSet,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_set(
-            self.state.as_ref(),
-            thread_id,
-            external_set,
-        )
-    }
+        fn apply_thread_external_goal_set(
+            thread_id: ThreadId,
+            external_set: ExternalGoalSet,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
 
-    fn apply_thread_external_goal_clear(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_clear(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn apply_thread_external_goal_clear(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
 
-    fn apply_thread_goal_resume_runtime_effects(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+        fn apply_thread_goal_resume_runtime_effects(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
 
-    fn continue_thread_active_goal_if_idle(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        thread_service_api::LiveThreadGoalRuntime::continue_thread_active_goal_if_idle(
-            self.state.as_ref(),
-            thread_id,
-        )
+        fn continue_thread_active_goal_if_idle(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_;
     }
 }
 
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadElicitationRuntime for ThreadService {
-    fn increment_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
-        thread_service_api::LiveThreadElicitationRuntime::increment_thread_out_of_band_elicitation_count(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
+delegate_thread_service_state_runtime! {
+    thread_service_api::LiveThreadElicitationRuntime {
+        fn increment_thread_out_of_band_elicitation_count(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_;
 
-    fn decrement_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
-        thread_service_api::LiveThreadElicitationRuntime::decrement_thread_out_of_band_elicitation_count(
-            self.state.as_ref(),
-            thread_id,
-        )
+        fn decrement_thread_out_of_band_elicitation_count(
+            thread_id: ThreadId,
+        ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_;
     }
 }
 

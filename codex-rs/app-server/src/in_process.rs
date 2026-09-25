@@ -791,32 +791,10 @@ mod tests {
     use app_server_protocol::TurnCompletedNotification;
     use app_server_protocol::TurnItemsView;
     use app_server_protocol::TurnStatus;
+    use app_test_support::run_current_thread_test_with_stack_named;
     use pretty_assertions::assert_eq;
-    use std::future::Future;
     use std::path::Path;
     use tempfile::TempDir;
-
-    fn run_current_thread_test_with_stack<F>(name: &str, future: F) -> Result<()>
-    where
-        F: Future<Output = Result<()>> + Send + 'static,
-    {
-        const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
-
-        let handle = std::thread::Builder::new()
-            .name(name.to_string())
-            .stack_size(TEST_STACK_SIZE_BYTES)
-            .spawn(move || -> Result<()> {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                runtime.block_on(Box::pin(future))
-            })?;
-
-        match handle.join() {
-            Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!("{name} thread panicked")),
-        }
-    }
 
     async fn build_test_config(codex_home: &Path) -> Config {
         match crate::config_builder()
@@ -879,7 +857,7 @@ mod tests {
 
     #[test]
     fn in_process_start_initializes_and_handles_typed_v2_request() -> Result<()> {
-        run_current_thread_test_with_stack("in-process-config-requirements-read", async move {
+        run_current_thread_test_with_stack_named("in-process-config-requirements-read", async move {
             let client = start_test_client(SessionSource::Cli).await;
             let response = client
                 .request(ClientRequest::ConfigRequirementsRead {
@@ -903,7 +881,7 @@ mod tests {
 
     #[test]
     fn in_process_start_uses_requested_session_source_for_thread_start() -> Result<()> {
-        run_current_thread_test_with_stack("in-process-thread-start-session-source", async move {
+        run_current_thread_test_with_stack_named("in-process-thread-start-session-source", async move {
             for (requested_source, expected_source) in [
                 (SessionSource::Cli, ApiSessionSource::Cli),
                 (SessionSource::Exec, ApiSessionSource::Exec),
@@ -934,7 +912,7 @@ mod tests {
 
     #[test]
     fn in_process_start_clamps_zero_channel_capacity() -> Result<()> {
-        run_current_thread_test_with_stack("in-process-zero-channel-capacity", async move {
+        run_current_thread_test_with_stack_named("in-process-zero-channel-capacity", async move {
             let client =
                 start_test_client_with_capacity(SessionSource::Cli, /*channel_capacity*/ 0).await;
             let response = loop {
