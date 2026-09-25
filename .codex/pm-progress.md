@@ -27,7 +27,7 @@ Active goal: second backend architecture reduction tranche focused on materially
   commit: owner `04811a88e`; dispatch `a7dd86daa`; merge `3517b04db`; pending capsule delivery
 
 - id: backend-architecture-reduction-tranche-2
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -36,9 +36,9 @@ Active goal: second backend architecture reduction tranche focused on materially
   depends_on: main `9cc1f1c42`; user feedback that prior tranche was too small and instruction to execute end-to-end without asking
   files: Rust backend/runtime crates under `codex-rs/`, exact architecture seam pending owner inventory; avoid frontend UI and Electron renderer changes unless compile fallout requires trivial type-only updates
   base_commit: `9cc1f1c42`
-  next_action: Owner to find and implement a materially larger architecture/code-reduction tranche, aiming for hundreds of lines net reduction if safely available, with ranked candidate analysis and reviewer validation.
-  validation: Pending owner delivery. PM acceptance requires a real architecture simplification, not only local wrappers; measurable net code reduction; no protocol/schema/history/runtime semantic weakening; focused tests and app-server debug build.
-  commit: pending
+  next_action: No immediate Runtime Capsule restart; backend architecture cleanup has no protocol/schema/history/Capsule behavior target change, so deliver with the next runtime capsule batch unless a later change requires earlier install.
+  validation: Owner implemented a larger architecture cleanup: `delegate_thread_service_state_runtime!` consolidates pure `ThreadService -> ThreadServiceState` live runtime trait delegation while leaving `LiveThreadListenerRuntime` associated type and `LiveThreadFeedbackRuntime::list_agent_subtree_thread_ids` special `agent_control()` path hand-written; app-server test support now centralizes current-thread + 4MB stack runner used by in-process, mcp-resource, remote-thread-store, and thread-unarchive tests. Net owner diff: `6 files changed, 175 insertions(+), 372 deletions(-)`, net -197 lines. Reviewer approved multiple rounds after requiring trait-qualified macro dispatch and confirming removed `thread_read`/tracing-test attempts were out of scope. PM validation passed: `git diff --check HEAD~1..HEAD`; `cargo build --manifest-path codex-rs/Cargo.toml -p thread-service`; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server in_process::tests -- --nocapture` (4 passed); `thread_start_with_non_local_thread_store_does_not_create_local_persistence`; `thread_unarchive_preserves_pathless_store_metadata`; `mcp_resource_read_returns_error_for_unknown_thread`; only existing linker/future-incompat warnings observed.
+  commit: owner `5435ef4cb`; dispatch `930324712`; merge `9816e7c89`; pending capsule delivery
 
 - id: compact-read-duplicate-user-input-tail
   status: installed_effective
