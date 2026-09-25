@@ -1,6 +1,4 @@
-use std::future::Future;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -18,6 +16,7 @@ use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
+use app_test_support::run_current_thread_test_with_stack;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use axum::Router;
@@ -250,22 +249,6 @@ fn mcp_resource_read_returns_error_for_unknown_thread() -> Result<()> {
 
         Ok(())
     })
-}
-
-fn run_current_thread_test_with_stack<Fut>(future: Fut) -> Result<()>
-where
-    Fut: Future<Output = Result<()>> + Send + 'static,
-{
-    thread::Builder::new()
-        .stack_size(4 * 1024 * 1024)
-        .spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?
-                .block_on(future)
-        })?
-        .join()
-        .unwrap_or_else(|err| panic!("mcp_resource test thread should not panic: {err:?}"))
 }
 
 async fn start_resource_apps_mcp_server() -> Result<(String, JoinHandle<()>)> {

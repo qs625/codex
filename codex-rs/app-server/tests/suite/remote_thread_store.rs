@@ -14,10 +14,8 @@
 //! in unnoticed.
 
 use std::collections::BTreeSet;
-use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::thread;
 
 use anyhow::Result;
 use app_server::in_process;
@@ -35,6 +33,7 @@ use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::run_current_thread_test_with_stack;
 use codex_arg0::Arg0DispatchPaths;
 use config_service::CloudRequirementsLoader;
 use config_service::LoaderOverrides;
@@ -193,22 +192,6 @@ fn thread_start_with_non_local_thread_store_does_not_create_local_persistence() 
 
         Ok(())
     })
-}
-
-fn run_current_thread_test_with_stack<Fut>(future: Fut) -> Result<()>
-where
-    Fut: Future<Output = Result<()>> + Send + 'static,
-{
-    thread::Builder::new()
-        .stack_size(4 * 1024 * 1024)
-        .spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?
-                .block_on(future)
-        })?
-        .join()
-        .unwrap_or_else(|err| panic!("remote_thread_store test thread should not panic: {err:?}"))
 }
 
 fn assert_no_local_persistence_artifacts(codex_home: &Path) -> Result<()> {

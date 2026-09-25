@@ -44,9 +44,42 @@ pub use rollout::create_fake_rollout_with_text_elements;
 pub use rollout::create_fake_rollout_with_token_usage;
 pub use rollout::rollout_path;
 use serde::de::DeserializeOwned;
+use std::future::Future;
+
+const DEFAULT_CURRENT_THREAD_TEST_STACK_SIZE: usize = 4 * 1024 * 1024;
 
 pub fn to_response<T: DeserializeOwned>(response: JSONRPCResponse) -> anyhow::Result<T> {
     let value = serde_json::to_value(response.result)?;
     let codex_response = serde_json::from_value(value)?;
     Ok(codex_response)
+}
+
+pub fn run_current_thread_test_with_stack<Fut>(future: Fut) -> anyhow::Result<()>
+where
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    run_current_thread_test_with_stack_named("app-server-suite", future)
+}
+
+pub fn run_current_thread_test_with_stack_named<Fut>(
+    name: &str,
+    future: Fut,
+) -> anyhow::Result<()>
+where
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(DEFAULT_CURRENT_THREAD_TEST_STACK_SIZE)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(future)
+        })?;
+
+    match handle.join() {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("{name} test thread panicked")),
+    }
 }

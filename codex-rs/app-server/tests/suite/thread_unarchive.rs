@@ -20,6 +20,7 @@ use app_server_protocol::TurnStartResponse;
 use app_server_protocol::UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::run_current_thread_test_with_stack_named;
 use app_test_support::to_response;
 use codex_arg0::Arg0DispatchPaths;
 use config_service::CloudRequirementsLoader;
@@ -36,10 +37,8 @@ use rollout::find_thread_path_by_id_str;
 use serde_json::Value;
 use std::fs::FileTimes;
 use std::fs::OpenOptions;
-use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
 use tempfile::TempDir;
@@ -201,7 +200,7 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
 
 #[test]
 fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
-    run_current_thread_test_with_stack(async {
+    run_current_thread_test_with_stack_named("thread_unarchive_test", async {
         let codex_home = TempDir::new()?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_in_memory_thread_store(codex_home.path(), &store_id)?;
@@ -294,23 +293,6 @@ fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
         client.shutdown().await?;
         Ok(())
     })
-}
-
-fn run_current_thread_test_with_stack<F>(future: F) -> Result<()>
-where
-    F: Future<Output = Result<()>> + Send + 'static,
-{
-    thread::Builder::new()
-        .name("thread_unarchive_test".to_string())
-        .stack_size(4 * 1024 * 1024)
-        .spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?
-                .block_on(future)
-        })?
-        .join()
-        .unwrap_or_else(|err| panic!("thread_unarchive test thread should not panic: {err:?}"))
 }
 
 fn create_config_toml(codex_home: &Path, server_uri: &str) -> std::io::Result<()> {
