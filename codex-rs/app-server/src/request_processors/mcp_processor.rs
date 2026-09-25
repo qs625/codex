@@ -218,16 +218,6 @@ impl McpRequestProcessor {
         Ok(McpServerRefreshResponse {})
     }
 
-    async fn load_latest_config(
-        &self,
-        fallback_cwd: Option<PathBuf>,
-    ) -> Result<Config, JSONRPCErrorError> {
-        self.config_manager
-            .load_latest_config(fallback_cwd)
-            .await
-            .map_err(|err| internal_error(format!("failed to reload config: {err}")))
-    }
-
     fn parse_thread_id(thread_id: &str) -> Result<ThreadId, JSONRPCErrorError> {
         ThreadId::from_string(thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))
@@ -237,7 +227,8 @@ impl McpRequestProcessor {
         &self,
         params: McpServerOauthLoginParams,
     ) -> Result<McpServerOauthLoginResponse, JSONRPCErrorError> {
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let McpServerOauthLoginParams {
             name,
             scopes,
@@ -319,7 +310,8 @@ impl McpRequestProcessor {
         let request = request_id.clone();
 
         let outgoing = Arc::clone(&self.outgoing);
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let mcp_config = self.runtime.mcp_config(&config).await;
         let auth = self.auth_manager.auth().await;
         let environment_manager = Arc::clone(&self.environment_manager);
@@ -494,7 +486,8 @@ impl McpRequestProcessor {
             return Ok(());
         }
 
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let mcp_config = self.runtime.mcp_config(&config).await;
         let auth = self.auth_manager.auth().await;
         let runtime_environment = {

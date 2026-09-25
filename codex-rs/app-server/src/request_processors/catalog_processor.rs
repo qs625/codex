@@ -305,16 +305,6 @@ impl CatalogRequestProcessor {
         Ok((cwd_abs, config_layer_stack))
     }
 
-    async fn load_latest_config(
-        &self,
-        fallback_cwd: Option<PathBuf>,
-    ) -> Result<Config, JSONRPCErrorError> {
-        self.config_manager
-            .load_latest_config(fallback_cwd)
-            .await
-            .map_err(|err| internal_error(format!("failed to reload config: {err}")))
-    }
-
     async fn workspace_codex_plugins_enabled(
         &self,
         config: &Config,
@@ -346,7 +336,8 @@ impl CatalogRequestProcessor {
             cursor,
             include_hidden,
         } = params;
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let mut models = supported_models(
             self.catalog_runtime.as_ref(),
             &config,
@@ -396,7 +387,7 @@ impl CatalogRequestProcessor {
         params: AgentTypeListParams,
     ) -> Result<AgentTypeListResponse, JSONRPCErrorError> {
         let AgentTypeListParams { cwd } = params;
-        let config = self.load_latest_config(cwd).await?;
+        let config = load_latest_config_for_request(&self.config_manager, cwd).await?;
         Ok(AgentTypeListResponse {
             data: native_agent_types(&config),
         })
@@ -407,7 +398,7 @@ impl CatalogRequestProcessor {
         params: ThreadProviderListParams,
     ) -> Result<ThreadProviderListResponse, JSONRPCErrorError> {
         let ThreadProviderListParams { cwd } = params;
-        let config = self.load_latest_config(cwd).await?;
+        let config = load_latest_config_for_request(&self.config_manager, cwd).await?;
         let mut models = supported_models(
             self.catalog_runtime.as_ref(),
             &config,
@@ -479,7 +470,8 @@ impl CatalogRequestProcessor {
         params: ExperimentalFeatureListParams,
     ) -> Result<ExperimentalFeatureListResponse, JSONRPCErrorError> {
         let ExperimentalFeatureListParams { cursor, limit } = params;
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let auth = self.auth_manager.auth().await;
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
@@ -582,7 +574,8 @@ impl CatalogRequestProcessor {
             cwds
         };
 
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let auth = self.auth_manager.auth().await;
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())

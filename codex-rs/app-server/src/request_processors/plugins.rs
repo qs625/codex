@@ -432,16 +432,6 @@ impl PluginRequestProcessor {
         self.skill_service.clear_cache();
     }
 
-    async fn load_latest_config(
-        &self,
-        fallback_cwd: Option<PathBuf>,
-    ) -> Result<Config, JSONRPCErrorError> {
-        self.config_manager
-            .load_latest_config(fallback_cwd)
-            .await
-            .map_err(|err| internal_error(format!("failed to reload config: {err}")))
-    }
-
     async fn workspace_codex_plugins_enabled(
         &self,
         config: &Config,
@@ -479,7 +469,8 @@ impl PluginRequestProcessor {
             marketplace_kinds.unwrap_or_else(|| vec![PluginListMarketplaceKind::Local]);
         let include_local = marketplace_kinds.contains(&PluginListMarketplaceKind::Local);
 
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let empty_response = || PluginListResponse {
             marketplaces: Vec::new(),
             marketplace_load_errors: Vec::new(),
@@ -709,7 +700,7 @@ impl PluginRequestProcessor {
             marketplace_path.as_path().parent().map(Path::to_path_buf)
         });
 
-        let config = self.load_latest_config(config_cwd).await?;
+        let config = load_latest_config_for_request(&self.config_manager, config_cwd).await?;
         let plugins_input = config.plugins_config_input();
 
         let plugin = match read_source {
@@ -892,7 +883,8 @@ impl PluginRequestProcessor {
             skill_name,
         } = params;
 
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request(format!(
                 "remote plugin skill read is not enabled for marketplace {remote_marketplace_name}"
@@ -1129,7 +1121,8 @@ impl PluginRequestProcessor {
     async fn load_plugin_share_config_and_auth(
         &self,
     ) -> Result<(Config, Option<RemotePluginAuth>), JSONRPCErrorError> {
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request("plugin sharing is not enabled"));
         }
@@ -1160,7 +1153,8 @@ impl PluginRequestProcessor {
             }
         };
         let config_cwd = marketplace_path.as_path().parent().map(Path::to_path_buf);
-        let config = self.load_latest_config(config_cwd.clone()).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, config_cwd.clone()).await?;
         let auth = self.auth_manager.auth().await;
 
         if !self
@@ -1182,7 +1176,7 @@ impl PluginRequestProcessor {
             .install_plugin(request)
             .await
             .map_err(Self::plugin_install_error)?;
-        let config = match self.load_latest_config(config_cwd).await {
+        let config = match load_latest_config_for_request(&self.config_manager, config_cwd).await {
             Ok(config) => config,
             Err(err) => {
                 warn!(
@@ -1223,7 +1217,8 @@ impl PluginRequestProcessor {
         remote_marketplace_name: String,
         remote_plugin_id: String,
     ) -> Result<PluginInstallResponse, JSONRPCErrorError> {
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request(format!(
                 "remote plugin install is not enabled for marketplace {remote_marketplace_name}"
@@ -1515,7 +1510,7 @@ impl PluginRequestProcessor {
             .uninstall_plugin(plugin_id)
             .await
             .map_err(Self::plugin_uninstall_error)?;
-        match self.load_latest_config(/*fallback_cwd*/ None).await {
+        match load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await {
             Ok(_) => self.on_effective_plugins_changed(),
             Err(err) => {
                 warn!(
@@ -1585,7 +1580,8 @@ impl PluginRequestProcessor {
         &self,
         plugin_id: String,
     ) -> Result<PluginUninstallResponse, JSONRPCErrorError> {
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request("remote plugin uninstall is not enabled"));
         }

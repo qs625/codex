@@ -72,7 +72,8 @@ impl MarketplaceRequestProcessor {
         &self,
         params: MarketplaceUpgradeParams,
     ) -> Result<MarketplaceUpgradeResponse, JSONRPCErrorError> {
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let MarketplaceUpgradeParams { marketplace_name } = params;
         let plugins_input = config.plugins_config_input();
@@ -123,15 +124,5 @@ impl MarketplaceRequestProcessor {
             MarketplaceAddError::InvalidRequest(message) => invalid_request(message),
             MarketplaceAddError::Internal(message) => internal_error(message),
         })
-    }
-
-    async fn load_latest_config(
-        &self,
-        fallback_cwd: Option<PathBuf>,
-    ) -> Result<Config, JSONRPCErrorError> {
-        self.config_manager
-            .load_latest_config(fallback_cwd)
-            .await
-            .map_err(|err| internal_error(format!("failed to reload config: {err}")))
     }
 }
