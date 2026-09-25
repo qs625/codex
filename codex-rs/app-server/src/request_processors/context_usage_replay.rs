@@ -96,7 +96,7 @@ pub(super) async fn send_thread_context_usage_update_to_connection(
             rollout_items,
             thread.turns.as_slice(),
         )
-        .unwrap_or_else(|| latest_context_usage_turn_id(thread)),
+        .unwrap_or_else(|| latest_completed_or_last_turn_id(thread)),
         token_usage,
         context_usage: context_usage.into(),
     };
@@ -123,6 +123,46 @@ pub(super) async fn thread_context_usage_from_rollout_or_conversation(
     }
 }
 
+pub(super) fn latest_usage_turn_id_from_rollout_items(
+    rollout_items: &[RolloutItem],
+    turns: &[Turn],
+    is_usage_event: impl Fn(&EventMsg) -> bool,
+) -> Option<String> {
+    let mut builder = ThreadHistoryBuilder::new();
+    let mut turn_owner = None;
+
+    for item in rollout_items {
+        if matches!(item, RolloutItem::EventMsg(event) if is_usage_event(event)) {
+            turn_owner = builder.active_turn_snapshot().map(|turn| UsageTurnOwner {
+                id: turn.id,
+                position: builder.active_turn_position(),
+            });
+        }
+        builder.handle_rollout_item(item);
+    }
+
+    let owner = turn_owner?;
+    if turns.iter().any(|turn| turn.id == owner.id) {
+        Some(owner.id)
+    } else {
+        owner
+            .position
+            .and_then(|position| turns.get(position))
+            .map(|turn| turn.id.clone())
+    }
+}
+
+pub(super) fn latest_completed_or_last_turn_id(thread: &Thread) -> String {
+    thread
+        .turns
+        .iter()
+        .rev()
+        .find(|turn| matches!(turn.status, TurnStatus::Completed | TurnStatus::Failed))
+        .or_else(|| thread.turns.last())
+        .map(|turn| turn.id.clone())
+        .unwrap_or_default()
+}
+
 fn empty_thread_context_usage() -> ThreadContextUsage {
     ThreadContextUsage {
         total_bytes: 0,
@@ -146,7 +186,7 @@ fn empty_thread_context_usage() -> ThreadContextUsage {
     }
 }
 
-struct ContextUsageTurnOwner {
+struct UsageTurnOwner {
     id: String,
     position: Option<usize>,
 }
@@ -155,33 +195,9 @@ pub(super) fn latest_context_usage_turn_id_from_rollout_items(
     rollout_items: &[RolloutItem],
     turns: &[Turn],
 ) -> Option<String> {
-    let mut builder = ThreadHistoryBuilder::new();
-    let mut turn_owner = None;
-
-    for item in rollout_items {
-        if matches!(
-            item,
-            RolloutItem::EventMsg(EventMsg::ThreadContextUsageUpdated(_))
-        ) {
-            turn_owner = builder
-                .active_turn_snapshot()
-                .map(|turn| ContextUsageTurnOwner {
-                    id: turn.id,
-                    position: builder.active_turn_position(),
-                });
-        }
-        builder.handle_rollout_item(item);
-    }
-
-    let owner = turn_owner?;
-    if turns.iter().any(|turn| turn.id == owner.id) {
-        Some(owner.id)
-    } else {
-        owner
-            .position
-            .and_then(|position| turns.get(position))
-            .map(|turn| turn.id.clone())
-    }
+    latest_usage_turn_id_from_rollout_items(rollout_items, turns, |event| {
+        matches!(event, EventMsg::ThreadContextUsageUpdated(_))
+    })
 }
 
 pub(super) fn latest_thread_context_usage_from_rollout_items(
@@ -308,17 +324,6 @@ fn context_budget_percent(token_info: Option<&TokenUsageInfo>) -> Option<i64> {
             }
         })
     })
-}
-
-fn latest_context_usage_turn_id(thread: &Thread) -> String {
-    thread
-        .turns
-        .iter()
-        .rev()
-        .find(|turn| matches!(turn.status, TurnStatus::Completed | TurnStatus::Failed))
-        .or_else(|| thread.turns.last())
-        .map(|turn| turn.id.clone())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

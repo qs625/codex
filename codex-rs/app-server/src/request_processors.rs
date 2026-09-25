@@ -512,6 +512,16 @@ use context_usage_replay::send_thread_context_usage_update_to_connection;
 use token_usage_replay::latest_token_usage_turn_id_from_rollout_items;
 use token_usage_replay::send_thread_token_usage_update_to_connection;
 
+async fn load_latest_config_for_request(
+    config_manager: &ConfigManager,
+    fallback_cwd: Option<PathBuf>,
+) -> Result<Config, JSONRPCErrorError> {
+    config_manager
+        .load_latest_config(fallback_cwd)
+        .await
+        .map_err(|err| internal_error(format!("failed to reload config: {err}")))
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 struct ConversationGitInfo {

@@ -63,7 +63,8 @@ impl AppsRequestProcessor {
         request_id: &ConnectionRequestId,
         params: AppsListParams,
     ) -> Result<Option<AppsListResponse>, JSONRPCErrorError> {
-        let mut config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let mut config =
+            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
 
         if let Some(thread_id) = params.thread_id.as_deref() {
             let thread_id = ThreadId::from_string(thread_id)
@@ -284,16 +285,6 @@ impl AppsRequestProcessor {
                 return paginate_apps(merged.as_slice(), start, limit);
             }
         }
-    }
-
-    async fn load_latest_config(
-        &self,
-        fallback_cwd: Option<PathBuf>,
-    ) -> Result<Config, JSONRPCErrorError> {
-        self.config_manager
-            .load_latest_config(fallback_cwd)
-            .await
-            .map_err(|err| internal_error(format!("failed to reload config: {err}")))
     }
 
     async fn workspace_codex_plugins_enabled(
