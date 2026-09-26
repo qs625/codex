@@ -97,7 +97,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `75cc9e070`; dispatch `4be97ff9d`; merge `61d0152d2`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-9
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -106,7 +106,21 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `851bce1d1`; user asked for multiple continuous cleanup rounds
   files: prefer frontend React tests, tool-service/spec helper, or app-server request tests not yet cleaned
   base_commit: `851bce1d1`
-  next_action: Owner to implement another cleanup tranche on a new seam, preferably frontend React tests, tool-service/spec helpers, or app-server request tests not yet cleaned.
+  next_action: No immediate Runtime Capsule restart; frontend test fixture refactor only, no production/runtime semantic change.
+  validation: Owner consolidated RightPanel React test fixture/setup/source-contract helpers, including source/CSS block helpers, batch regex assertions, renderRightPanel extension, and preview/schedule/git/runtime fixture helpers. Net owner diff: `1 file changed, 916 insertions(+), 982 deletions(-)`, net -66 lines. Reviewer approved and confirmed assertion coverage/default behavior equivalent. PM validation passed: `git diff --check HEAD~1..HEAD`; `pnpm --dir apps/root-worker-prototype exec prettier --check src/components/RightPanel.test.tsx`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx` (exit 0; existing Node deprecation warning).
+  commit: owner `5c68d9b1a`; dispatch `b8d84d979`; merge `ab7f272eb`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-10
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-10
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `ab7f272eb`; user asked for multiple continuous cleanup rounds
+  files: prefer higher-yield production-safe or test-support seam not yet cleaned; avoid another low-yield single React test helper pass unless clearly worthwhile
+  base_commit: pending
+  next_action: Dispatch immediately after recording tranche 9; require stronger code reduction target or explain exhaustion.
   validation: pending
   commit: pending
 
