@@ -1,14 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import {
+  readSource,
+  sourceIndex,
+  sourceSlice,
+} from "../test/sourceAssertions";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const terminalPanelSource = () => readSource(new URL("./TerminalPanel.tsx", import.meta.url));
+const stylesSource = () => readSource(new URL("../styles.css", import.meta.url));
 
 test("TerminalPanel header uses the compact single-title panel style", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const source = terminalPanelSource();
 
   assert.match(source, /className="panel-content-header terminal-header"/);
   assert.doesNotMatch(source, /panel-eyebrow/);
@@ -16,21 +18,20 @@ test("TerminalPanel header uses the compact single-title panel style", () => {
 });
 
 test("TerminalPanel attaches xterm input forwarding before replay writes", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const onDataIndex = source.indexOf("dataSubscription = terminal.onData");
-  const onBinaryIndex = source.indexOf("binarySubscription = terminal.onBinary");
-  const recordedSizeIndex = source.indexOf("resizeToRecordedReplaySize();");
-  const replayWriteIndex = source.indexOf("terminal.write(decodeBase64(activeTab.replayBase64))");
-  const postReplayFitIndex = source.indexOf(
+  const source = terminalPanelSource();
+  const onDataIndex = sourceIndex(source, "dataSubscription = terminal.onData");
+  const onBinaryIndex = sourceIndex(source, "binarySubscription = terminal.onBinary");
+  const recordedSizeIndex = sourceIndex(source, "resizeToRecordedReplaySize();");
+  const replayWriteIndex = sourceIndex(
+    source,
+    "terminal.write(decodeBase64(activeTab.replayBase64))",
+  );
+  const postReplayFitIndex = sourceIndex(
+    source,
     "if (shouldReplayAtRecordedSize) {\n          sendSize();",
     replayWriteIndex,
   );
 
-  assert.notEqual(onDataIndex, -1);
-  assert.notEqual(onBinaryIndex, -1);
-  assert.notEqual(recordedSizeIndex, -1);
-  assert.notEqual(replayWriteIndex, -1);
-  assert.notEqual(postReplayFitIndex, -1);
   assert.ok(
     onDataIndex < replayWriteIndex,
     "xterm responses generated while parsing replay output must be forwarded to the PTY",
@@ -50,8 +51,9 @@ test("TerminalPanel attaches xterm input forwarding before replay writes", () =>
 });
 
 test("TerminalPanel keeps xterm runtime modules behind one dynamic import boundary", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const importBlockIndex = source.indexOf(
+  const source = terminalPanelSource();
+  sourceIndex(
+    source,
     'Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])',
   );
   const runtimeAddonImports = source.match(/import\("@xterm\/addon-fit"\)/g) ?? [];
@@ -60,22 +62,17 @@ test("TerminalPanel keeps xterm runtime modules behind one dynamic import bounda
     source.includes('import { FitAddon } from "@xterm/addon-fit"'),
     false,
   );
-  assert.notEqual(importBlockIndex, -1);
   assert.equal(runtimeAddonImports.length, 1);
   assert.match(source, /import type \{ FitAddon as XTermFitAddon \} from "@xterm\/addon-fit"/);
 });
 
 test("TerminalPanel publishes fitted size as thread preferred terminal size", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const fitIndex = source.indexOf("const next = { rows: terminal.rows, cols: terminal.cols };");
-  const preferredIndex = source.indexOf("publishPreferredTerminalSize(next);");
-  const resizeIndex = source.indexOf(".resizeTerminal({ tabId: mountedTabId, size: next })");
-  const dedupeIndex = source.indexOf("previousPreferred?.threadId !== threadId");
+  const source = terminalPanelSource();
+  const fitIndex = sourceIndex(source, "const next = { rows: terminal.rows, cols: terminal.cols };");
+  const preferredIndex = sourceIndex(source, "publishPreferredTerminalSize(next);");
+  sourceIndex(source, ".resizeTerminal({ tabId: mountedTabId, size: next })");
+  sourceIndex(source, "previousPreferred?.threadId !== threadId");
 
-  assert.notEqual(fitIndex, -1);
-  assert.notEqual(preferredIndex, -1);
-  assert.notEqual(resizeIndex, -1);
-  assert.notEqual(dedupeIndex, -1);
   assert.ok(
     fitIndex < preferredIndex,
     "preferred terminal size must come from the fitted xterm viewport",
@@ -83,46 +80,38 @@ test("TerminalPanel publishes fitted size as thread preferred terminal size", ()
 });
 
 test("TerminalPanel converts LF-only output only for read-only command views", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const helperIndex = source.indexOf("function shouldConvertTerminalEol");
-  const readOnlyIndex = source.indexOf("tab.readOnlyOutput === true", helperIndex);
-  const fixedOutputIndex = source.indexOf("!tab.canWrite && !tab.canResize", helperIndex);
-  const constructorIndex = source.indexOf("terminal = new Terminal({");
-  const convertIndex = source.indexOf(
+  const source = terminalPanelSource();
+  const helperIndex = sourceIndex(source, "function shouldConvertTerminalEol");
+  sourceIndex(source, "tab.readOnlyOutput === true", helperIndex);
+  sourceIndex(source, "!tab.canWrite && !tab.canResize", helperIndex);
+  const constructorIndex = sourceIndex(source, "terminal = new Terminal({");
+  sourceIndex(
+    source,
     "convertEol: shouldConvertTerminalEol(activeTab)",
     constructorIndex,
   );
-
-  assert.notEqual(helperIndex, -1);
-  assert.notEqual(readOnlyIndex, -1);
-  assert.notEqual(fixedOutputIndex, -1);
-  assert.notEqual(convertIndex, -1);
 });
 
 test("TerminalPanel uses a light xterm surface theme", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const themeStart = source.indexOf("const TERMINAL_THEME = {");
-  const themeEnd = source.indexOf("};", themeStart);
-  const constructorIndex = source.indexOf("terminal = new Terminal({");
-  const appliedThemeIndex = source.indexOf("theme: TERMINAL_THEME", constructorIndex);
+  const source = terminalPanelSource();
+  const themeStart = sourceIndex(source, "const TERMINAL_THEME = {");
+  const themeEnd = sourceIndex(source, "};", themeStart);
+  const constructorIndex = sourceIndex(source, "terminal = new Terminal({");
+  sourceIndex(source, "theme: TERMINAL_THEME", constructorIndex);
   const themeSource = source.slice(themeStart, themeEnd);
 
-  assert.notEqual(themeStart, -1);
-  assert.notEqual(appliedThemeIndex, -1);
   assert.match(themeSource, /background: "#fbfaf8"/);
   assert.match(themeSource, /foreground: "#292524"/);
   assert.doesNotMatch(themeSource, /#111827/);
 });
 
 test("TerminalPanel viewport chrome uses the light panel surface", () => {
-  const source = readFileSync(join(__dirname, "../styles.css"), "utf8");
-  const shellStart = source.indexOf(".terminal-viewport-shell {");
-  const emptyStart = source.indexOf(".terminal-empty {", shellStart);
-  const emptyButtonEnd = source.indexOf(".preview-editor-shell {", emptyStart);
+  const source = stylesSource();
+  const shellStart = sourceIndex(source, ".terminal-viewport-shell {");
+  const emptyStart = sourceIndex(source, ".terminal-empty {", shellStart);
+  const emptyButtonEnd = sourceIndex(source, ".preview-editor-shell {", emptyStart);
   const terminalViewportSource = source.slice(shellStart, emptyButtonEnd);
 
-  assert.notEqual(shellStart, -1);
-  assert.notEqual(emptyStart, -1);
   assert.match(terminalViewportSource, /background: #fbfaf8/);
   assert.match(terminalViewportSource, /background: #f5f3f0/);
   assert.match(terminalViewportSource, /scrollbar-color: #d6d3d1 #fbfaf8/);
@@ -130,10 +119,11 @@ test("TerminalPanel viewport chrome uses the light panel surface", () => {
 });
 
 test("TerminalPanel rebuilds xterm when fallback upgrades to live capabilities", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");
-  const dependencyEnd = source.indexOf("  ]);", dependencyStart);
-  const dependencies = source.slice(dependencyStart, dependencyEnd);
+  const dependencies = sourceSlice(
+    terminalPanelSource(),
+    "  }, [\n    activeTab?.id,",
+    "  ]);",
+  );
 
   assert.match(dependencies, /activeTab\?\.canResize/);
   assert.match(dependencies, /activeTab\?\.canWrite/);
@@ -141,10 +131,11 @@ test("TerminalPanel rebuilds xterm when fallback upgrades to live capabilities",
 });
 
 test("TerminalPanel rebuilds xterm when a focused command receives replay output", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");
-  const dependencyEnd = source.indexOf("  ]);", dependencyStart);
-  const dependencies = source.slice(dependencyStart, dependencyEnd);
+  const dependencies = sourceSlice(
+    terminalPanelSource(),
+    "  }, [\n    activeTab?.id,",
+    "  ]);",
+  );
 
   assert.match(dependencies, /activeTab\?\.replayBase64/);
   assert.match(dependencies, /activeTab\?\.replayTruncated/);
@@ -152,110 +143,101 @@ test("TerminalPanel rebuilds xterm when a focused command receives replay output
 });
 
 test("TerminalPanel does not rebuild xterm for streaming output deltas", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const dependencyStart = source.indexOf("  }, [\n    activeTab?.id,");
-  const dependencyEnd = source.indexOf("  ]);", dependencyStart);
-  const dependencies = source.slice(dependencyStart, dependencyEnd);
-  const directDeltaWriteIndex = source.indexOf(
+  const source = terminalPanelSource();
+  const dependencies = sourceSlice(source, "  }, [\n    activeTab?.id,", "  ]);");
+  sourceIndex(
+    source,
     "terminalRef.current?.write(decodeBase64(event.deltaBase64));",
   );
 
-  assert.notEqual(directDeltaWriteIndex, -1);
   assert.doesNotMatch(dependencies, /activeTab\?\.replayThroughSequence/);
   assert.doesNotMatch(dependencies, /activeTab\?\.status/);
 });
 
 test("TerminalPanel input and resize handlers read the latest active tab runtime", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const runtimeRefIndex = source.indexOf("const activeTabRuntimeRef = useRef");
-  const runtimeUpdateIndex = source.indexOf("activeTabRuntimeRef.current = activeTab");
-  const sendSizeIndex = source.indexOf("sendSize = () => {");
-  const resizeCurrentTabIndex = source.indexOf(
+  const source = terminalPanelSource();
+  sourceIndex(source, "const activeTabRuntimeRef = useRef");
+  sourceIndex(source, "activeTabRuntimeRef.current = activeTab");
+  const sendSizeIndex = sourceIndex(source, "sendSize = () => {");
+  sourceIndex(
+    source,
     "const currentTab = activeTabRuntimeRef.current;",
     sendSizeIndex,
   );
-  const resizeGuardIndex = source.indexOf(
+  sourceIndex(
+    source,
     "currentTab?.id === mountedTabId",
-    resizeCurrentTabIndex,
+    sendSizeIndex,
   );
-  const dataIndex = source.indexOf("dataSubscription = terminal.onData");
-  const dataCurrentTabIndex = source.indexOf(
+  const dataIndex = sourceIndex(source, "dataSubscription = terminal.onData");
+  sourceIndex(
+    source,
     "const currentTab = activeTabRuntimeRef.current;",
     dataIndex,
   );
-  const dataGuardIndex = source.indexOf(
+  sourceIndex(
+    source,
     "currentTab?.id !== mountedTabId",
-    dataCurrentTabIndex,
+    dataIndex,
   );
-  const binaryIndex = source.indexOf("binarySubscription = terminal.onBinary");
-  const binaryCurrentTabIndex = source.indexOf(
+  const binaryIndex = sourceIndex(source, "binarySubscription = terminal.onBinary");
+  sourceIndex(
+    source,
     "const currentTab = activeTabRuntimeRef.current;",
     binaryIndex,
   );
-  const binaryGuardIndex = source.indexOf(
+  sourceIndex(
+    source,
     "currentTab?.id !== mountedTabId",
-    binaryCurrentTabIndex,
+    binaryIndex,
   );
-
-  assert.notEqual(runtimeRefIndex, -1);
-  assert.notEqual(runtimeUpdateIndex, -1);
-  assert.notEqual(resizeCurrentTabIndex, -1);
-  assert.notEqual(resizeGuardIndex, -1);
-  assert.notEqual(dataCurrentTabIndex, -1);
-  assert.notEqual(dataGuardIndex, -1);
-  assert.notEqual(binaryCurrentTabIndex, -1);
-  assert.notEqual(binaryGuardIndex, -1);
 });
 
 test("TerminalPanel writes terminal exit markers without remounting xterm", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const helperIndex = source.indexOf("function writeTerminalStatusMarker");
-  const mountMarkerIndex = source.indexOf(
+  const source = terminalPanelSource();
+  const helperIndex = sourceIndex(source, "function writeTerminalStatusMarker");
+  const mountMarkerIndex = sourceIndex(
+    source,
     "writeTerminalStatusMarker(terminal, activeTab, terminalStatusMarkerRef);",
   );
-  const statusEffectIndex = source.indexOf(
+  sourceIndex(
+    source,
     "terminal.options.cursorBlink = isInteractive(activeTab.status);",
   );
-  const lostMarkerIndex = source.indexOf(
+  sourceIndex(
+    source,
     "[Session disconnected from the runtime.]",
     helperIndex,
   );
-  const exitMarkerIndex = source.indexOf("[Process exited", helperIndex);
-  const cleanupMarkerIndex = source.indexOf(
+  sourceIndex(source, "[Process exited", helperIndex);
+  sourceIndex(
+    source,
     "terminalStatusMarkerRef.current = null;",
-    source.indexOf("return () => {", mountMarkerIndex),
+    sourceIndex(source, "return () => {", mountMarkerIndex),
   );
-
-  assert.notEqual(helperIndex, -1);
-  assert.notEqual(mountMarkerIndex, -1);
-  assert.notEqual(statusEffectIndex, -1);
-  assert.notEqual(lostMarkerIndex, -1);
-  assert.notEqual(exitMarkerIndex, -1);
-  assert.notEqual(cleanupMarkerIndex, -1);
 });
 
 test("TerminalPanel publishes preferred size while idle with no active tab", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const idleEffectIndex = source.indexOf(
+  const source = terminalPanelSource();
+  const idleEffectIndex = sourceIndex(
+    source,
     "if (activeTab) {\n      return undefined;",
   );
-  const measureIndex = source.indexOf(
+  const measureIndex = sourceIndex(
+    source,
     "measureTerminalViewportSize(viewport, displayPreferences)",
   );
-  const publishIndex = source.indexOf(
+  sourceIndex(
+    source,
     "publishPreferredTerminalSize(next);",
     measureIndex,
   );
-  const viewportIndex = source.indexOf(
+  const viewportIndex = sourceIndex(
+    source,
     "className={`terminal-viewport ${activeTab ? \"\" : \"idle\"}`}",
   );
-  const emptyIndex = source.indexOf("{!activeTab ? (");
+  const emptyIndex = sourceIndex(source, "{!activeTab ? (");
 
-  assert.notEqual(idleEffectIndex, -1);
-  assert.notEqual(measureIndex, -1);
-  assert.notEqual(publishIndex, -1);
-  assert.notEqual(viewportIndex, -1);
-  assert.notEqual(emptyIndex, -1);
   assert.ok(
     idleEffectIndex < measureIndex,
     "idle terminal effect should measure when there is no active tab",
@@ -267,80 +249,78 @@ test("TerminalPanel publishes preferred size while idle with no active tab", () 
 });
 
 test("TerminalPanel focuses xterm only from explicit focus requests", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const requestHelperIndex = source.indexOf(
+  const source = terminalPanelSource();
+  sourceIndex(
+    source,
     "const requestTerminalViewportFocus = useCallback",
   );
-  const applyHelperIndex = source.indexOf("const applyPendingTerminalFocus = useCallback");
-  const guardedFocusIndex = source.indexOf(
+  const applyHelperIndex = sourceIndex(source, "const applyPendingTerminalFocus = useCallback");
+  sourceIndex(
+    source,
     "lastAppliedTerminalFocusTokenRef.current = request.token;\n    terminal.focus();",
     applyHelperIndex,
   );
-  const targetGuardIndex = source.indexOf(
+  sourceIndex(
+    source,
     "shouldApplyTerminalViewportFocusRequest({",
     applyHelperIndex,
   );
-  const mountFocusIndex = source.indexOf("applyPendingTerminalFocus();");
+  sourceIndex(source, "applyPendingTerminalFocus();");
   const unconditionalMountFocusIndex = source.indexOf("terminal?.focus();");
-  const focusRequestEffectIndex = source.indexOf(
+  sourceIndex(
+    source,
     "requestTerminalViewportFocus(nextState.activeTabId);",
   );
-  const newShellFocusIndex = source.indexOf(
+  sourceIndex(
+    source,
     "requestTerminalViewportFocus(nextState.activeTabId);",
-    source.indexOf("const createTerminal = () => {"),
+    sourceIndex(source, "const createTerminal = () => {"),
   );
-  const liveCommandFocusIndex = source.indexOf(
+  const liveCommandFocusIndex = sourceIndex(
+    source,
     "const focusLiveCommand = (command: (typeof liveCommands)[number]) => {",
   );
-  const tabClickFocusIndex = source.indexOf(
+  sourceIndex(
+    source,
     "requestTerminalViewportFocus(tab.id);",
-    source.indexOf(".selectTerminalTab(tab.id)"),
+    sourceIndex(source, ".selectTerminalTab(tab.id)"),
   );
 
-  assert.notEqual(requestHelperIndex, -1);
-  assert.notEqual(applyHelperIndex, -1);
-  assert.notEqual(guardedFocusIndex, -1);
-  assert.notEqual(targetGuardIndex, -1);
-  assert.notEqual(mountFocusIndex, -1);
   assert.equal(
     unconditionalMountFocusIndex,
     -1,
     "terminal mount/replay updates must not unconditionally steal focus",
   );
-  assert.notEqual(focusRequestEffectIndex, -1);
-  assert.notEqual(newShellFocusIndex, -1);
-  assert.notEqual(liveCommandFocusIndex, -1);
-  assert.notEqual(
-    source.indexOf(
-      "requestTerminalViewportFocus(nextState.activeTabId);",
-      liveCommandFocusIndex,
-    ),
-    -1,
+  sourceIndex(
+    source,
+    "requestTerminalViewportFocus(nextState.activeTabId);",
+    liveCommandFocusIndex,
   );
-  assert.notEqual(tabClickFocusIndex, -1);
 });
 
 test("TerminalPanel passive state refreshes do not request xterm focus", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const subscriptionStart = source.indexOf(
+  const source = terminalPanelSource();
+  const subscriptionStart = sourceIndex(
+    source,
     "const unsubscribe = window.codexDesktop.subscribeTerminalState",
   );
-  const subscriptionEnd = source.indexOf(
+  const subscriptionEnd = sourceIndex(
+    source,
     "const requestSeq = terminalStateRequestSeqRef.current.begin();",
     subscriptionStart,
   );
   const subscriptionSource = source.slice(subscriptionStart, subscriptionEnd);
-  const statusEffectStart = source.indexOf(
+  const statusEffectStart = sourceIndex(
+    source,
     "terminal.options.cursorBlink = isInteractive(activeTab.status);",
   );
-  const statusEffectEnd = source.indexOf(
+  const statusEffectEnd = sourceIndex(
+    source,
     "  useEffect(() => {\n    queueMicrotask(applyPendingTerminalFocus);",
     statusEffectStart,
   );
   const statusEffectSource = source.slice(statusEffectStart, statusEffectEnd);
 
-  assert.notEqual(subscriptionStart, -1);
-  assert.notEqual(subscriptionEnd, -1);
   assert.match(subscriptionSource, /setState\(event\.state\)/);
   assert.match(
     subscriptionSource,
@@ -348,15 +328,13 @@ test("TerminalPanel passive state refreshes do not request xterm focus", () => {
   );
   assert.doesNotMatch(subscriptionSource, /requestTerminalViewportFocus/);
   assert.doesNotMatch(subscriptionSource, /terminal\.focus\(\)/);
-  assert.notEqual(statusEffectStart, -1);
-  assert.notEqual(statusEffectEnd, -1);
   assert.match(statusEffectSource, /writeTerminalStatusMarker/);
   assert.doesNotMatch(statusEffectSource, /requestTerminalViewportFocus/);
   assert.doesNotMatch(statusEffectSource, /terminal\.focus\(\)/);
 });
 
 test("TerminalPanel terminal tabs are concrete workspace drag sources", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const source = terminalPanelSource();
 
   assert.match(source, /terminalTabDragPayload/);
   assert.match(source, /terminalTabId: tab\.id/);
@@ -372,9 +350,9 @@ test("TerminalPanel terminal tabs are concrete workspace drag sources", () => {
 });
 
 test("TerminalPanel workspace variant renders only the detached session content surface", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const managerStart = source.indexOf("{isManagerVariant ? (");
-  const viewportIndex = source.indexOf('className="terminal-viewport-shell"', managerStart);
+  const source = terminalPanelSource();
+  const managerStart = sourceIndex(source, "{isManagerVariant ? (");
+  const viewportIndex = sourceIndex(source, 'className="terminal-viewport-shell"', managerStart);
   const managerSource = source.slice(managerStart, viewportIndex);
 
   assert.match(source, /variant = "manager"/);
@@ -383,8 +361,6 @@ test("TerminalPanel workspace variant renders only the detached session content 
     source,
     /isManagerVariant \? "terminal-panel-manager" : "terminal-panel-workspace"/,
   );
-  assert.notEqual(managerStart, -1);
-  assert.notEqual(viewportIndex, -1);
   assert.match(managerSource, /panel-content-header terminal-header/);
   assert.match(managerSource, /aria-label="Live Commands"/);
   assert.match(managerSource, /aria-label="Terminal tabs"/);
@@ -400,7 +376,7 @@ test("TerminalPanel workspace variant renders only the detached session content 
 );
 
 test("TerminalPanel manager excludes the terminal session owned by workspace", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
+  const source = terminalPanelSource();
 
   assert.match(source, /detachedTerminalTabIds\?: string\[\]/);
   assert.match(source, /const detachedTerminalTabIdSet = useMemo\([\s\S]*new Set\(detachedTerminalTabIds\)/);
@@ -417,13 +393,11 @@ test("TerminalPanel manager excludes the terminal session owned by workspace", (
 });
 
 test("TerminalPanel does not render a duplicate visible running status row below tabs", () => {
-  const source = readFileSync(join(__dirname, "TerminalPanel.tsx"), "utf8");
-  const tabStripIndex = source.indexOf('aria-label="Terminal tabs"');
-  const viewportIndex = source.indexOf('className="terminal-viewport-shell"', tabStripIndex);
+  const source = terminalPanelSource();
+  const tabStripIndex = sourceIndex(source, 'aria-label="Terminal tabs"');
+  const viewportIndex = sourceIndex(source, 'className="terminal-viewport-shell"', tabStripIndex);
   const betweenTabsAndViewport = source.slice(tabStripIndex, viewportIndex);
 
-  assert.notEqual(tabStripIndex, -1);
-  assert.notEqual(viewportIndex, -1);
   assert.doesNotMatch(
     betweenTabsAndViewport,
     /\$\{activeTab\.status\}|\$\{activeTab\?\.status/,
