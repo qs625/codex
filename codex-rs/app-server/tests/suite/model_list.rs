@@ -22,7 +22,9 @@ use protocol::openai_models::ModelInfo;
 use protocol::openai_models::ModelPreset;
 use protocol::openai_models::ModelsResponse;
 use protocol::openai_models::ReasoningEffort;
+use serde::de::DeserializeOwned;
 use serde_json::json;
+use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 use wiremock::MockServer;
@@ -99,32 +101,53 @@ fn expected_visible_models(model_provider_id: &str) -> Vec<Model> {
         .collect()
 }
 
-#[tokio::test]
-async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
-    let codex_home = TempDir::new()?;
-    write_models_cache(codex_home.path())?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
+async fn initialized_mcp(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new(codex_home).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
 
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
+async fn initialized_mcp_without_api_key(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new_with_env(codex_home, &[("OPENAI_API_KEY", None)]).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
 
+async fn read_response<T: DeserializeOwned>(mcp: &mut McpProcess, request_id: i64) -> Result<T> {
     let response: JSONRPCResponse = timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
     )
     .await??;
+    to_response(response)
+}
+
+async fn list_models(
+    mcp: &mut McpProcess,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    include_hidden: Option<bool>,
+) -> Result<ModelListResponse> {
+    let request_id = mcp
+        .send_list_models_request(ModelListParams {
+            limit,
+            cursor,
+            include_hidden,
+        })
+        .await?;
+    read_response(mcp, request_id).await
+}
+
+#[tokio::test]
+async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
 
     let expected_models = expected_visible_models("openai");
 
@@ -155,28 +178,12 @@ base_url = "https://example.invalid/v1"
 env_key = "CORP_API_KEY"
 "#,
     )?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
 
     let configured_model = items
         .iter()
@@ -229,28 +236,12 @@ base_url = "https://example.invalid/v1"
 env_key = "CORP_API_KEY"
 "#,
     )?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
 
     assert!(
         items
@@ -282,28 +273,12 @@ auto_compact_token_limit = 90000
 ak = "test-key"
 "#,
     )?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
 
     let configured_model = items
         .iter()
@@ -348,25 +323,10 @@ async fn list_models_includes_configured_bedrock_provider() -> Result<()> {
 profile = "codex-bedrock"
 "#,
     )?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-
-    let ModelListResponse { data: items, .. } = to_response::<ModelListResponse>(response)?;
+    let ModelListResponse { data: items, .. } =
+        list_models(&mut mcp, Some(100), None, None).await?;
 
     assert!(items.iter().any(|item| {
         item.model_provider.as_deref() == Some("amazon-bedrock")
@@ -406,28 +366,12 @@ env_key = "CORP_API_KEY"
             openai_model.model
         ),
     )?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
 
     assert!(items.iter().any(|item| item == &openai_model));
     assert!(!items.iter().any(|item| {
@@ -488,25 +432,10 @@ model_provider = "openai"
             configured_model.model
         ),
     )?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-
-    let ModelListResponse { data: items, .. } = to_response::<ModelListResponse>(response)?;
+    let ModelListResponse { data: items, .. } =
+        list_models(&mut mcp, Some(100), None, None).await?;
     let matches = items
         .iter()
         .filter(|item| item.model == configured_model.model)
@@ -522,28 +451,12 @@ model_provider = "openai"
 async fn list_models_includes_hidden_models() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_models_cache(codex_home.path())?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: Some(true),
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, Some(true)).await?;
 
     assert!(items.iter().any(|item| item.hidden));
     assert!(next_cursor.is_none());
@@ -607,27 +520,12 @@ openai_base_url = "{server_uri}/v1"
         AuthCredentialsStoreMode::File,
     )?;
 
-    let mut mcp = McpProcess::new_with_env(codex_home.path(), &[("OPENAI_API_KEY", None)]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = initialized_mcp_without_api_key(codex_home.path()).await?;
 
     let ModelListResponse {
         data: items,
         next_cursor,
-    } = to_response::<ModelListResponse>(response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
     let mut expected_presets: Vec<ModelPreset> = vec![remote_model.into()];
     ModelPreset::mark_default_by_picker_visibility(&mut expected_presets);
     let expected_openai_items = expected_presets
@@ -698,49 +596,20 @@ openai_base_url = "{server_uri}/v1"
 async fn list_models_pagination_works() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_models_cache(codex_home.path())?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-
-    let full_request_id = mcp
-        .send_list_models_request(ModelListParams {
-            limit: Some(100),
-            cursor: None,
-            include_hidden: None,
-        })
-        .await?;
-
-    let full_response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(full_request_id)),
-    )
-    .await??;
     let ModelListResponse {
         data: expected_models,
         ..
-    } = to_response::<ModelListResponse>(full_response)?;
+    } = list_models(&mut mcp, Some(100), None, None).await?;
     let mut cursor = None;
     let mut items = Vec::new();
 
     for _ in 0..expected_models.len() {
-        let request_id = mcp
-            .send_list_models_request(ModelListParams {
-                limit: Some(1),
-                cursor: cursor.clone(),
-                include_hidden: None,
-            })
-            .await?;
-
-        let response: JSONRPCResponse = timeout(
-            DEFAULT_TIMEOUT,
-            mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-        )
-        .await??;
-
         let ModelListResponse {
             data: page_items,
             next_cursor,
-        } = to_response::<ModelListResponse>(response)?;
+        } = list_models(&mut mcp, Some(1), cursor.clone(), None).await?;
 
         assert_eq!(page_items.len(), 1);
         items.extend(page_items);
@@ -763,9 +632,7 @@ async fn list_models_pagination_works() -> Result<()> {
 async fn list_models_rejects_invalid_cursor() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_models_cache(codex_home.path())?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let request_id = mcp
         .send_list_models_request(ModelListParams {
