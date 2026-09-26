@@ -69,7 +69,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `cb6c6b582`; dispatch `31b5b9aed`; merge `f656608e6`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-7
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -78,7 +78,21 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `d6bdde298`; user asked for multiple continuous cleanup rounds
   files: prefer a new untouched seam with production-safe code reduction; avoid repeating previous fixture/helper families
   base_commit: `d6bdde298`
-  next_action: Owner to implement another coherent cleanup tranche on a new seam, avoiding prior fixture/helper families.
+  next_action: No immediate Runtime Capsule restart; test builder refactor only, no production/runtime semantic change.
+  validation: Owner consolidated repeated app-server config manager and transport test builders, including config path/service/write-read params/feature requirement service/linear server params plus config warning/command approval/connection state routing helpers. Net owner diff: `2 files changed, 354 insertions(+), 457 deletions(-)`, net -103 lines. Reviewer approved after catching and owner fixing two `route_to_connection` connection id issues. PM validation passed: `git diff --check HEAD~1..HEAD`; `rustfmt --check --edition 2024 codex-rs/app-server/src/config_manager_service_tests.rs codex-rs/app-server/src/transport_tests.rs`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --lib write_value -- --nocapture` (10 passed); `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --lib transport::tests:: -- --nocapture` (10 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; only existing Rust warnings observed.
+  commit: owner `898644d1c`; dispatch `15f1aaa40`; merge `3d81ff45d`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-8
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-8
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `3d81ff45d`; user asked for multiple continuous cleanup rounds
+  files: prefer another new seam; avoid prior test helper families unless substantially larger
+  base_commit: pending
+  next_action: Dispatch immediately after recording tranche 7.
   validation: pending
   commit: pending
 
