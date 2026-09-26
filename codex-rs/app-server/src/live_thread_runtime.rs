@@ -35,6 +35,7 @@ use thread_service_api::LiveThreadListenerHandle;
 use thread_service_api::LiveThreadListenerRuntime;
 use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
+use thread_service_api::LiveThreadTerminalRuntime;
 use thread_service_api::LiveThreadTurnRuntime;
 use thread_service_api::LiveThreadUsageRuntime;
 use thread_service_api::ThreadAgentDirectoryRuntime;
@@ -95,6 +96,32 @@ where
     }
 }
 
+macro_rules! delegate_app_server_live_thread_runtime {
+    (
+        impl $target_trait:ident for $source_trait:path {
+            $(
+                fn $target_method:ident => $source_method:ident(
+                    $($arg:ident : $arg_ty:ty),* $(,)?
+                ) -> $ret:ty;
+            )*
+        }
+    ) => {
+        impl<T> $target_trait for T
+        where
+            T: $source_trait + Send + Sync,
+        {
+            $(
+                fn $target_method(
+                    &self,
+                    $($arg: $arg_ty),*
+                ) -> BoxFuture<'_, $ret> {
+                    Box::pin(<T as $source_trait>::$source_method(self $(, $arg)*))
+                }
+            )*
+        }
+    };
+}
+
 pub(crate) trait AppServerLiveThreadListenerRuntime: Send + Sync {
     fn live_thread_listener_handle(
         &self,
@@ -134,34 +161,18 @@ pub(crate) trait AppServerLiveThreadHistoryRuntime: Send + Sync {
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
 }
 
-impl<T> AppServerLiveThreadHistoryRuntime for T
-where
-    T: LiveThreadHistoryRuntime + Send + Sync,
-{
-    fn live_thread_history(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>> {
-        Box::pin(LiveThreadHistoryRuntime::live_thread_history(
-            self,
-            thread_id,
-            include_archived,
-        ))
-    }
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadHistoryRuntime for LiveThreadHistoryRuntime {
+        fn live_thread_history => live_thread_history(
+            thread_id: ThreadId,
+            include_archived: bool,
+        ) -> ThreadStoreResult<StoredThreadHistory>;
 
-    fn read_live_thread(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-        include_history: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>> {
-        Box::pin(LiveThreadHistoryRuntime::read_live_thread(
-            self,
-            thread_id,
-            include_archived,
-            include_history,
-        ))
+        fn read_live_thread => read_live_thread(
+            thread_id: ThreadId,
+            include_archived: bool,
+            include_history: bool,
+        ) -> ThreadStoreResult<StoredThread>;
     }
 }
 
@@ -177,26 +188,15 @@ pub(crate) trait AppServerLiveThreadUsageRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>>;
 }
 
-impl<T> AppServerLiveThreadUsageRuntime for T
-where
-    T: LiveThreadUsageRuntime + Send + Sync,
-{
-    fn thread_token_usage_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Option<TokenUsageInfo>>> {
-        Box::pin(LiveThreadUsageRuntime::thread_token_usage_info(
-            self, thread_id,
-        ))
-    }
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadUsageRuntime for LiveThreadUsageRuntime {
+        fn thread_token_usage_info => thread_token_usage_info(
+            thread_id: ThreadId,
+        ) -> CodexResult<Option<TokenUsageInfo>>;
 
-    fn thread_context_usage(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>> {
-        Box::pin(LiveThreadUsageRuntime::thread_context_usage(
-            self, thread_id,
-        ))
+        fn thread_context_usage => thread_context_usage(
+            thread_id: ThreadId,
+        ) -> CodexResult<ThreadContextUsage>;
     }
 }
 
@@ -207,17 +207,11 @@ pub(crate) trait AppServerLiveThreadSkillWatchRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>>;
 }
 
-impl<T> AppServerLiveThreadSkillWatchRuntime for T
-where
-    T: LiveThreadSkillWatchRuntime + Send + Sync,
-{
-    fn thread_skill_watch_paths(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>> {
-        Box::pin(LiveThreadSkillWatchRuntime::thread_skill_watch_paths(
-            self, thread_id,
-        ))
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadSkillWatchRuntime for LiveThreadSkillWatchRuntime {
+        fn thread_skill_watch_paths => thread_skill_watch_paths(
+            thread_id: ThreadId,
+        ) -> CodexResult<Vec<SkillWatchPath>>;
     }
 }
 
@@ -250,59 +244,34 @@ pub(crate) trait AppServerLiveThreadInspectionRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<bool>>;
 }
 
-impl<T> AppServerLiveThreadInspectionRuntime for T
-where
-    T: LiveThreadInspectionRuntime + Send + Sync,
-{
-    fn list_live_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
-        Box::pin(LiveThreadInspectionRuntime::list_live_thread_ids(self))
-    }
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadInspectionRuntime for LiveThreadInspectionRuntime {
+        fn list_live_thread_ids => list_live_thread_ids() -> Vec<ThreadId>;
 
-    fn is_live_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
-        Box::pin(LiveThreadInspectionRuntime::is_live_thread_loaded(
-            self, thread_id,
-        ))
-    }
+        fn is_live_thread_loaded => is_live_thread_loaded(
+            thread_id: ThreadId,
+        ) -> bool;
 
-    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
-        Box::pin(LiveThreadInspectionRuntime::live_thread_info(
-            self, thread_id,
-        ))
-    }
+        fn live_thread_info => live_thread_info(
+            thread_id: ThreadId,
+        ) -> CodexResult<LiveThreadInfo>;
 
-    fn live_thread_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>> {
-        Box::pin(LiveThreadInspectionRuntime::live_thread_snapshot(
-            self, thread_id,
-        ))
-    }
+        fn live_thread_snapshot => live_thread_snapshot(
+            thread_id: ThreadId,
+        ) -> CodexResult<LiveThreadSnapshot>;
 
-    fn live_thread_config_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<ThreadConfigSnapshot>> {
-        Box::pin(LiveThreadInspectionRuntime::live_thread_config_snapshot(
-            self, thread_id,
-        ))
-    }
+        fn live_thread_config_snapshot => live_thread_config_snapshot(
+            thread_id: ThreadId,
+        ) -> CodexResult<ThreadConfigSnapshot>;
 
-    fn live_thread_config_refresh_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<LiveThreadConfigRefreshSnapshot>> {
-        Box::pin(LiveThreadInspectionRuntime::live_thread_config_refresh_snapshot(self, thread_id))
-    }
+        fn live_thread_config_refresh_snapshot => live_thread_config_refresh_snapshot(
+            thread_id: ThreadId,
+        ) -> CodexResult<LiveThreadConfigRefreshSnapshot>;
 
-    fn live_thread_feature_enabled(
-        &self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> BoxFuture<'_, CodexResult<bool>> {
-        Box::pin(LiveThreadInspectionRuntime::live_thread_feature_enabled(
-            self, thread_id, feature,
-        ))
+        fn live_thread_feature_enabled => live_thread_feature_enabled(
+            thread_id: ThreadId,
+            feature: Feature,
+        ) -> CodexResult<bool>;
     }
 }
 
@@ -373,52 +342,28 @@ pub(crate) trait AppServerLiveThreadGoalRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<()>>;
 }
 
-impl<T> AppServerLiveThreadGoalRuntime for T
-where
-    T: LiveThreadGoalRuntime + Send + Sync,
-{
-    fn prepare_thread_external_goal_mutation(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::prepare_thread_external_goal_mutation(self, thread_id))
-    }
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadGoalRuntime for LiveThreadGoalRuntime {
+        fn prepare_thread_external_goal_mutation => prepare_thread_external_goal_mutation(
+            thread_id: ThreadId,
+        ) -> CodexResult<()>;
 
-    fn apply_thread_external_goal_set(
-        &self,
-        thread_id: ThreadId,
-        external_set: ExternalGoalSet,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::apply_thread_external_goal_set(
-            self,
-            thread_id,
-            external_set,
-        ))
-    }
+        fn apply_thread_external_goal_set => apply_thread_external_goal_set(
+            thread_id: ThreadId,
+            external_set: ExternalGoalSet,
+        ) -> CodexResult<()>;
 
-    fn apply_thread_external_goal_clear(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::apply_thread_external_goal_clear(
-            self, thread_id,
-        ))
-    }
+        fn apply_thread_external_goal_clear => apply_thread_external_goal_clear(
+            thread_id: ThreadId,
+        ) -> CodexResult<()>;
 
-    fn apply_thread_goal_resume_runtime_effects(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(self, thread_id))
-    }
+        fn apply_thread_goal_resume_runtime_effects => apply_thread_goal_resume_runtime_effects(
+            thread_id: ThreadId,
+        ) -> CodexResult<()>;
 
-    fn continue_thread_active_goal_if_idle(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadGoalRuntime::continue_thread_active_goal_if_idle(
-            self, thread_id,
-        ))
+        fn continue_thread_active_goal_if_idle => continue_thread_active_goal_if_idle(
+            thread_id: ThreadId,
+        ) -> CodexResult<()>;
     }
 }
 
@@ -434,30 +379,15 @@ pub(crate) trait AppServerLiveThreadElicitationRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<u64>>;
 }
 
-impl<T> AppServerLiveThreadElicitationRuntime for T
-where
-    T: LiveThreadElicitationRuntime + Send + Sync,
-{
-    fn increment_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<u64>> {
-        Box::pin(
-            LiveThreadElicitationRuntime::increment_thread_out_of_band_elicitation_count(
-                self, thread_id,
-            ),
-        )
-    }
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadElicitationRuntime for LiveThreadElicitationRuntime {
+        fn increment_thread_out_of_band_elicitation_count => increment_thread_out_of_band_elicitation_count(
+            thread_id: ThreadId,
+        ) -> CodexResult<u64>;
 
-    fn decrement_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<u64>> {
-        Box::pin(
-            LiveThreadElicitationRuntime::decrement_thread_out_of_band_elicitation_count(
-                self, thread_id,
-            ),
-        )
+        fn decrement_thread_out_of_band_elicitation_count => decrement_thread_out_of_band_elicitation_count(
+            thread_id: ThreadId,
+        ) -> CodexResult<u64>;
     }
 }
 
@@ -498,20 +428,12 @@ pub(crate) trait AppServerLiveThreadClientRecoveryRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<bool>>;
 }
 
-impl<T> AppServerLiveThreadClientRecoveryRuntime for T
-where
-    T: LiveThreadClientRecoveryRuntime + Send + Sync,
-{
-    fn record_live_thread_client_recovery(
-        &self,
-        thread_id: ThreadId,
-        event: protocol::protocol::ClientRecoveryEvent,
-    ) -> BoxFuture<'_, CodexResult<bool>> {
-        Box::pin(
-            LiveThreadClientRecoveryRuntime::record_live_thread_client_recovery(
-                self, thread_id, event,
-            ),
-        )
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadClientRecoveryRuntime for LiveThreadClientRecoveryRuntime {
+        fn record_live_thread_client_recovery => record_live_thread_client_recovery(
+            thread_id: ThreadId,
+            event: protocol::protocol::ClientRecoveryEvent,
+        ) -> CodexResult<bool>;
     }
 }
 
@@ -525,24 +447,14 @@ pub(crate) trait AppServerLiveThreadSteerRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<Result<String, SteerInputError>>>;
 }
 
-impl<T> AppServerLiveThreadSteerRuntime for T
-where
-    T: NativeThreadSteerRuntime + Send + Sync,
-{
-    fn steer_live_thread_input(
-        &self,
-        thread_id: ThreadId,
-        input: Vec<UserInput>,
-        expected_turn_id: Option<String>,
-        responsesapi_client_metadata: Option<HashMap<String, String>>,
-    ) -> BoxFuture<'_, CodexResult<Result<String, SteerInputError>>> {
-        Box::pin(NativeThreadSteerRuntime::steer_live_thread_input(
-            self,
-            thread_id,
-            input,
-            expected_turn_id,
-            responsesapi_client_metadata,
-        ))
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadSteerRuntime for NativeThreadSteerRuntime {
+        fn steer_live_thread_input => steer_live_thread_input(
+            thread_id: ThreadId,
+            input: Vec<UserInput>,
+            expected_turn_id: Option<String>,
+            responsesapi_client_metadata: Option<HashMap<String, String>>,
+        ) -> CodexResult<Result<String, SteerInputError>>;
     }
 }
 
@@ -600,55 +512,31 @@ where
     }
 }
 
-impl<T> AppServerLiveThreadCommandRuntime for T
-where
-    T: LiveThreadCommandRuntime + Send + Sync,
-{
-    fn submit_live_thread_op(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-    ) -> BoxFuture<'_, CodexResult<String>> {
-        Box::pin(LiveThreadCommandRuntime::submit_live_thread_op(
-            self, thread_id, op,
-        ))
-    }
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadCommandRuntime for LiveThreadCommandRuntime {
+        fn submit_live_thread_op => submit_live_thread_op(
+            thread_id: ThreadId,
+            op: Op,
+        ) -> CodexResult<String>;
 
-    fn submit_live_thread_op_with_trace(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<W3cTraceContext>,
-    ) -> BoxFuture<'_, CodexResult<String>> {
-        Box::pin(LiveThreadCommandRuntime::submit_live_thread_op_with_trace(
-            self, thread_id, op, trace,
-        ))
-    }
+        fn submit_live_thread_op_with_trace => submit_live_thread_op_with_trace(
+            thread_id: ThreadId,
+            op: Op,
+            trace: Option<W3cTraceContext>,
+        ) -> CodexResult<String>;
 
-    fn set_live_thread_app_server_client_info(
-        &self,
-        thread_id: ThreadId,
-        info: AppServerClientInfo,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(
-            LiveThreadCommandRuntime::set_live_thread_app_server_client_info(self, thread_id, info),
-        )
+        fn set_live_thread_app_server_client_info => set_live_thread_app_server_client_info(
+            thread_id: ThreadId,
+            info: AppServerClientInfo,
+        ) -> CodexResult<()>;
     }
 }
 
-impl<T> AppServerLiveThreadTerminalRuntime for T
-where
-    T: thread_service_api::LiveThreadTerminalRuntime + Send + Sync,
-{
-    fn update_live_thread_preferred_terminal_size(
-        &self,
-        thread_id: ThreadId,
-        size: thread_service_api::PreferredTerminalSize,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(
-            thread_service_api::LiveThreadTerminalRuntime::update_live_thread_preferred_terminal_size(
-                self, thread_id, size,
-            ),
-        )
+delegate_app_server_live_thread_runtime! {
+    impl AppServerLiveThreadTerminalRuntime for LiveThreadTerminalRuntime {
+        fn update_live_thread_preferred_terminal_size => update_live_thread_preferred_terminal_size(
+            thread_id: ThreadId,
+            size: thread_service_api::PreferredTerminalSize,
+        ) -> CodexResult<()>;
     }
 }

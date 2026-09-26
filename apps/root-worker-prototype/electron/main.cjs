@@ -525,6 +525,17 @@ appServerClient.on("status", (status) => {
   broadcast("codex:status", status);
 });
 
+function registerAppServerRequestHandler(channel, method, buildParams) {
+  ipcMain.handle(channel, async (_event, ...args) => {
+    await ensureDefaultWorkspace();
+    return appServerClient.request(method, buildParams(...args));
+  });
+}
+
+function registerIpcHandler(channel, handler) {
+  ipcMain.handle(channel, async (_event, ...args) => handler(...args));
+}
+
 ipcMain.handle("codex:health", async () => {
   await ensureDefaultWorkspace();
   await appServerClient.ready();
@@ -594,35 +605,27 @@ ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
   return { data: (await listThreads(cwd)).threads };
 });
 
-ipcMain.handle("codex:listModels", async () => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("model/list", { includeHidden: false });
-});
-
-ipcMain.handle("codex:readConfig", async (_event, payload = {}) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("config/read", {
-    includeLayers: Boolean(payload?.includeLayers),
-    cwd: payload?.cwd ?? null,
-  });
-});
-
-ipcMain.handle("codex:writeConfigValue", async (_event, payload) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("config/value/write", payload);
-});
-
-ipcMain.handle("codex:batchWriteConfig", async (_event, payload) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("config/batchWrite", payload);
-});
-
-ipcMain.handle("codex:readAccount", async (_event, payload = {}) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("account/read", {
-    refreshToken: Boolean(payload?.refreshToken),
-  });
-});
+[
+  ["codex:listModels", "model/list", () => ({ includeHidden: false })],
+  [
+    "codex:readConfig",
+    "config/read",
+    (payload = {}) => ({
+      includeLayers: Boolean(payload?.includeLayers),
+      cwd: payload?.cwd ?? null,
+    }),
+  ],
+  ["codex:writeConfigValue", "config/value/write", (payload) => payload],
+  ["codex:batchWriteConfig", "config/batchWrite", (payload) => payload],
+  ["codex:listWorkflows", "workflow/list", (cwd = defaultWorkspace) => ({ cwd })],
+  [
+    "codex:readAccount",
+    "account/read",
+    (payload = {}) => ({ refreshToken: Boolean(payload?.refreshToken) }),
+  ],
+].forEach(([channel, method, buildParams]) =>
+  registerAppServerRequestHandler(channel, method, buildParams),
+);
 
 ipcMain.handle("codex:androidConnectionInfo", async () => {
   await ensureDefaultWorkspace();
@@ -630,25 +633,18 @@ ipcMain.handle("codex:androidConnectionInfo", async () => {
   return appServerClient.getMobileConnectionInfo();
 });
 
-ipcMain.handle("codex:startAccountLogin", async (_event, payload) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("account/login/start", payload);
-});
-
-ipcMain.handle("codex:cancelAccountLogin", async (_event, payload) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("account/login/cancel", payload);
-});
-
-ipcMain.handle("codex:listAgentTypes", async (_event, cwd = defaultWorkspace) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("agentType/list", { cwd });
-});
-
-ipcMain.handle("codex:listThreadProviders", async (_event, cwd = defaultWorkspace) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("threadProvider/list", { cwd });
-});
+[
+  ["codex:startAccountLogin", "account/login/start", (payload) => payload],
+  ["codex:cancelAccountLogin", "account/login/cancel", (payload) => payload],
+  ["codex:listAgentTypes", "agentType/list", (cwd = defaultWorkspace) => ({ cwd })],
+  [
+    "codex:listThreadProviders",
+    "threadProvider/list",
+    (cwd = defaultWorkspace) => ({ cwd }),
+  ],
+].forEach(([channel, method, buildParams]) =>
+  registerAppServerRequestHandler(channel, method, buildParams),
+);
 
 ipcMain.handle("codex:selectProjectDirectory", async (event, defaultPath) => {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -665,11 +661,6 @@ ipcMain.handle("codex:selectProjectDirectory", async (event, defaultPath) => {
 ipcMain.handle("codex:listSkills", async (_event, cwd = defaultWorkspace) => {
   await ensureDefaultWorkspace();
   return listSkills(cwd);
-});
-
-ipcMain.handle("codex:listWorkflows", async (_event, cwd = defaultWorkspace) => {
-  await ensureDefaultWorkspace();
-  return appServerClient.request("workflow/list", { cwd });
 });
 
 ipcMain.handle("codex:createThread", async (_event, payload) => {
@@ -1136,53 +1127,26 @@ ipcMain.handle("codex:computerUse:state", async (event) => {
   return computerUseManagerForEvent(event).state();
 });
 
-ipcMain.handle("codex:readLocalFile", async (_event, target) => {
-  return readLocalFileTarget(target);
-});
-
-ipcMain.handle("codex:writeLocalFile", async (_event, target, content) => {
-  return writeLocalFileTarget(target, content, defaultWorkspace);
-});
-
-ipcMain.handle("codex:listLocalDirectory", async (_event, target) => {
-  return listLocalDirectoryTarget(target);
-});
-
-ipcMain.handle("codex:readLocalImage", async (_event, target) => {
-  return readLocalImageTarget(target);
-});
-
-ipcMain.handle("codex:readGitSnapshot", async (_event, cwd, options) => {
-  return readGitSnapshot(cwd, options);
-});
-
-ipcMain.handle("codex:readGitCommitFiles", async (_event, cwd, hash) => {
-  return readGitCommitFiles(cwd, hash);
-});
-
-ipcMain.handle("codex:readGitCommitFileDiff", async (_event, cwd, options) => {
-  return readGitCommitFileDiff(cwd, options);
-});
-
-ipcMain.handle("codex:readGitFileDiff", async (_event, cwd, options) => {
-  return readGitFileDiff(cwd, options);
-});
-
-ipcMain.handle("codex:readGitStatusSnapshot", async (_event, cwd) => {
-  return readGitStatusSnapshot(cwd);
-});
-
-ipcMain.handle("codex:lspDefinition", async (_event, payload) => {
-  return lspManager.definition({
+registerIpcHandler("codex:readLocalFile", readLocalFileTarget);
+registerIpcHandler("codex:writeLocalFile", (target, content) =>
+  writeLocalFileTarget(target, content, defaultWorkspace),
+);
+registerIpcHandler("codex:listLocalDirectory", listLocalDirectoryTarget);
+registerIpcHandler("codex:readLocalImage", readLocalImageTarget);
+registerIpcHandler("codex:readGitSnapshot", readGitSnapshot);
+registerIpcHandler("codex:readGitCommitFiles", readGitCommitFiles);
+registerIpcHandler("codex:readGitCommitFileDiff", readGitCommitFileDiff);
+registerIpcHandler("codex:readGitFileDiff", readGitFileDiff);
+registerIpcHandler("codex:readGitStatusSnapshot", readGitStatusSnapshot);
+registerIpcHandler("codex:lspDefinition", (payload) =>
+  lspManager.definition({
     filePath: payload.path,
     line: payload.line,
     column: payload.column,
-  });
-});
+  }),
+);
 
-ipcMain.handle("codex:lspStatus", async (_event, filePath) => {
-  return lspManager.status(filePath);
-});
+registerIpcHandler("codex:lspStatus", (filePath) => lspManager.status(filePath));
 
 ipcMain.handle("codex:sendMessage", async (_event, payload) => {
   const input = buildTurnInput(payload);
