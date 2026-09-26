@@ -27,7 +27,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `c585a52d3`; dispatch `dfe69d46a`; merge `57dc3a6d1`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-4
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -36,8 +36,22 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `d795805c6`; user asked to continue cleaning and not stop
   files: `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code; exact seam pending owner inventory
   base_commit: `d795805c6`
-  next_action: Owner to find another coherent large cleanup tranche, prefer untouched high-duplication areas, reuse reviewer, validate, and deliver.
-  validation: Pending owner delivery. PM acceptance requires measurable net code reduction, a coherent architecture simplification rather than small local edits, no product/protocol/schema/history/Capsule semantic weakening, and focused validation.
+  next_action: No immediate Runtime Capsule restart; pure test/helper refactor with no product/runtime semantic change, to be delivered with the next Runtime Capsule batch.
+  validation: Owner consolidated repeated source-structure assertion helpers across Electron BrowserPanel CJS tests and TerminalPanel TSX tests by adding shared `sourceAssertions` helpers. Net owner diff: `5 files changed, 324 insertions(+), 354 deletions(-)`, net -30 lines. Reviewer approved and confirmed helper semantics equivalent and coverage not reduced. PM accepted despite smaller-than-target reduction because it is safe/covered, and directed next tranche to pursue larger backend/request/test fixture cleanup. PM validation passed: `git diff --check HEAD~1..HEAD`; `node --check` sourceAssertions/browser panel tests; BrowserPanel Electron tests 52 passed; TerminalPanel TSX tests 19 passed.
+  commit: owner `6a805a5c3`; dispatch `04bf5d378`; merge `3e32bae51`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-5
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-5
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `3e32bae51`; user asked for multiple continuous rounds; previous tranche was safe but small
+  files: prefer backend app-server request processor/test fixture duplication or another higher-yield untouched architecture seam under `codex-rs/` / `apps/root-worker-prototype/`
+  base_commit: pending
+  next_action: Dispatch immediately after recording tranche 4; require larger code reduction and avoid another small source assertion helper pass.
+  validation: pending
   commit: pending
 
 - id: backend-code-reduction-refactor
