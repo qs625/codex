@@ -55,7 +55,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `4ddfb9113`; dispatch `1ecbd5d79`; merge `564894dd2`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-6
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -64,7 +64,21 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `bd77204e8`; user asked for multiple continuous cleanup rounds
   files: prefer a new untouched seam under `codex-rs/` or `apps/root-worker-prototype/`; avoid repeating thread_processor fixture cleanup or source assertion helper cleanup
   base_commit: `bd77204e8`
-  next_action: Owner to implement another high-yield coherent cleanup tranche on a new untouched seam, avoiding thread_processor fixture and source assertion helper repeats.
+  next_action: No immediate Runtime Capsule restart; test fixture refactor only, no production/runtime semantic change.
+  validation: Owner consolidated repeated external agent plugin migration fixtures in `external_agent_config_tests.rs`, replacing repeated settings/marketplace manifest/plugin manifest/migration details/expected item/success outcome construction across 6 tests. Net owner diff: `1 file changed, 130 insertions(+), 327 deletions(-)`, net -197 lines. Reviewer approved two rounds and confirmed JSON/manifest content and production logic unchanged. PM validation passed: `git diff --check HEAD~1..HEAD`; `rustfmt --check --edition 2024 codex-rs/app-server/src/config/external_agent_config_tests.rs`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server plugins -- --nocapture` (18 unit plugin tests plus suite plugin tests passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; only existing Rust warnings observed.
+  commit: owner `cb6c6b582`; dispatch `31b5b9aed`; merge `f656608e6`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-7
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-7
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `f656608e6`; user asked for multiple continuous cleanup rounds
+  files: prefer a new untouched seam with production-safe code reduction; avoid repeating previous fixture/helper families
+  base_commit: pending
+  next_action: Dispatch immediately after recording tranche 6; continue with another coherent cleanup tranche.
   validation: pending
   commit: pending
 
