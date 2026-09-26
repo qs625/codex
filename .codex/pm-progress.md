@@ -12,6 +12,20 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-13
+  status: owner_completed
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-13
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main `6127b837a`; user asked to do multiple more rounds until code quality is high
+  files: prefer a more systemic untouched cleanup seam under `codex-rs/` or `apps/root-worker-prototype/`; avoid prior cleanup families including tranche 12 `Panels.test.tsx` / `conversation.test.ts`
+  base_commit: `6127b837a`
+  next_action: PM to inspect owner commit and merge when ready. No immediate Runtime Capsule restart required; pure frontend test fixture refactor with no intended product/runtime/protocol/schema/provider-visible behavior change.
+  validation: Owner confirmed main/base `6127b837a` and created `refactor/continuous-code-organization-13` with PM dispatch diff preserved. Candidate ranking: selected `src/lib/thread.test.ts` active command/subscription fixture seam because duplicate command execution, command notification, schedule subscribe/unsubscribe item shells were repeated across live monitor/current-state tests and focused validation is local; deferred `threadAnalysis.test.ts` / `configSettings.test.ts` because helper payoff was smaller; deferred Rust app-server suite helpers because they are closer to JSONRPC/thread protocol/persisted semantics and carry higher validation cost. Implemented typed fixture builders for command execution, command notification, schedule subscribe, and schedule unsubscribe while leaving legacy placeholder and deliberately field-sparse command cases hand-written. Net diff before commit: `2 files changed, 210 insertions(+), 409 deletions(-)`, net -199 lines. Fixed reviewer `/self/owner_main/reviewer` approved with no blocking findings, confirming helper defaults preserve command/subscription semantics, special field omissions remain explicit, and no assertion weakening or provider/protocol/schema drift was found. Owner validation passed: `git diff --check -- .codex/pm-progress.md apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm exec prettier --check src/lib/thread.test.ts`; `pnpm exec tsx --test src/lib/thread.test.ts` (246 passed). Existing Node `[DEP0205] module.register()` deprecation warning observed in focused test.
+  commit: owner `08eadd22f`
+
 - id: continuous-code-organization-tranche-12
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
