@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use app_server_protocol::ConfigBatchWriteParams;
 use app_server_protocol::ConfigEdit;
+use app_server_protocol::ConfigWriteResponse;
 use app_server_protocol::HookEventName;
 use app_server_protocol::HookHandlerType;
 use app_server_protocol::HookMetadata;
@@ -27,6 +28,9 @@ use core_test_support::skip_if_windows;
 use pretty_assertions::assert_eq;
 use protocol::config_types::TrustLevel;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::path::Path;
+use std::path::PathBuf;
 use tempfile::TempDir;
 use thread_service::config::set_project_trust_level;
 use tokio::time::timeout;
@@ -130,26 +134,60 @@ timeout = 5
     Ok(())
 }
 
+async fn initialized_mcp(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new(codex_home).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn read_response<T: DeserializeOwned>(mcp: &mut McpProcess, request_id: i64) -> Result<T> {
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    to_response(response)
+}
+
+async fn list_hooks(mcp: &mut McpProcess, cwds: Vec<PathBuf>) -> Result<Vec<HooksListEntry>> {
+    let request_id = mcp
+        .send_hooks_list_request(HooksListParams { cwds })
+        .await?;
+    let HooksListResponse { data } = read_response(mcp, request_id).await?;
+    Ok(data)
+}
+
+async fn apply_config_edit(
+    mcp: &mut McpProcess,
+    key_path: &str,
+    value: serde_json::Value,
+    merge_strategy: MergeStrategy,
+) -> Result<()> {
+    let write_id = mcp
+        .send_config_batch_write_request(ConfigBatchWriteParams {
+            edits: vec![ConfigEdit {
+                key_path: key_path.to_string(),
+                value,
+                merge_strategy,
+            }],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
+        })
+        .await?;
+    let _: ConfigWriteResponse = read_response(mcp, write_id).await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn hooks_list_shows_discovered_hook() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     write_user_hook_config(codex_home.path())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![cwd.path().to_path_buf()]).await?;
     let config_path = AbsolutePathBuf::from_absolute_path(std::fs::canonicalize(
         codex_home.path().join("config.toml"),
     )?)?;
@@ -212,20 +250,9 @@ async fn hooks_list_shows_discovered_plugin_hook() -> Result<()> {
 }"#,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![cwd.path().to_path_buf()]).await?;
     let plugin_hooks_path = AbsolutePathBuf::from_absolute_path(std::fs::canonicalize(
         codex_home
             .path()
@@ -271,20 +298,9 @@ async fn hooks_list_shows_plugin_hook_load_warnings() -> Result<()> {
     let cwd = TempDir::new()?;
     write_plugin_hook_config(codex_home.path(), "{ not-json")?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![cwd.path().to_path_buf()]).await?;
 
     assert_eq!(data.len(), 1);
     assert_eq!(data[0].hooks, Vec::new());
@@ -327,23 +343,16 @@ timeout = 5
     )?;
     set_project_trust_level(codex_home.path(), workspace.path(), TrustLevel::Trusted)?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![
-                codex_home.path().to_path_buf(),
-                workspace.path().to_path_buf(),
-            ],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    let data = list_hooks(
+        &mut mcp,
+        vec![
+            codex_home.path().to_path_buf(),
+            workspace.path().to_path_buf(),
+        ],
     )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    .await?;
     let project_config_path =
         AbsolutePathBuf::try_from(workspace.path().join(".morpheus/config.toml"))?;
     assert_eq!(
@@ -409,20 +418,9 @@ async fn hooks_list_uses_root_repo_hooks_for_linked_worktrees() -> Result<()> {
     write_project_hook_config(&worktree_root.join(".morpheus"), "echo worktree hook")?;
     set_project_trust_level(codex_home.path(), &repo_root, TrustLevel::Trusted)?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let list_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![repo_root.clone(), worktree_root.clone()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![repo_root.clone(), worktree_root.clone()]).await?;
     let repo_hook = data[0].hooks[0].clone();
     let worktree_hook = data[1].hooks[0].clone();
     let repo_config_path =
@@ -434,40 +432,19 @@ async fn hooks_list_uses_root_repo_hooks_for_linked_worktrees() -> Result<()> {
     assert_eq!(repo_hook.source_path, repo_config_path);
     assert_eq!(worktree_hook.source_path, repo_config_path);
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.state".to_string(),
-                value: serde_json::json!({
-                    repo_hook.key.clone(): {
-                        "trusted_hash": repo_hook.current_hash.clone()
-                    }
-                }),
-                merge_strategy: MergeStrategy::Upsert,
-            }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    apply_config_edit(
+        &mut mcp,
+        "hooks.state",
+        serde_json::json!({
+            repo_hook.key.clone(): {
+                "trusted_hash": repo_hook.current_hash.clone()
+            }
+        }),
+        MergeStrategy::Upsert,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
-    let list_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![worktree_root],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![worktree_root]).await?;
     assert_eq!(data[0].hooks[0].trust_status, HookTrustStatus::Trusted);
 
     Ok(())
@@ -479,95 +456,42 @@ async fn config_batch_write_toggles_user_hook() -> Result<()> {
     let cwd = TempDir::new()?;
     write_user_hook_config(codex_home.path())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![cwd.path().to_path_buf()]).await?;
     let hook = &data[0].hooks[0];
     assert_eq!(hook.enabled, true);
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.state".to_string(),
-                value: serde_json::json!({
-                    hook.key.clone(): {
-                        "enabled": false
-                    }
-                }),
-                merge_strategy: MergeStrategy::Upsert,
-            }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    apply_config_edit(
+        &mut mcp,
+        "hooks.state",
+        serde_json::json!({
+            hook.key.clone(): {
+                "enabled": false
+            }
+        }),
+        MergeStrategy::Upsert,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![cwd.path().to_path_buf()]).await?;
     assert_eq!(data[0].hooks.len(), 1);
     assert_eq!(data[0].hooks[0].key, hook.key);
     assert_eq!(data[0].hooks[0].enabled, false);
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.state".to_string(),
-                value: serde_json::json!({
-                    hook.key.clone(): {
-                        "enabled": true
-                    }
-                }),
-                merge_strategy: MergeStrategy::Upsert,
-            }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    apply_config_edit(
+        &mut mcp,
+        "hooks.state",
+        serde_json::json!({
+            hook.key.clone(): {
+                "enabled": true
+            }
+        }),
+        MergeStrategy::Upsert,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
-    let request_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![cwd.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![cwd.path().to_path_buf()]).await?;
     assert_eq!(data[0].hooks[0].enabled, true);
     Ok(())
 }
@@ -630,20 +554,9 @@ command = "python3 {hook_script_path}"
         ),
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let hook_list_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![codex_home.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(hook_list_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![codex_home.path().to_path_buf()]).await?;
     let hook = data[0].hooks[0].clone();
     assert_eq!(hook.trust_status, HookTrustStatus::Untrusted);
 
@@ -653,12 +566,7 @@ command = "python3 {hook_script_path}"
             ..Default::default()
         })
         .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response(response)?;
+    let ThreadStartResponse { thread, .. } = read_response(&mut mcp, thread_start_id).await?;
 
     let first_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
@@ -682,40 +590,19 @@ command = "python3 {hook_script_path}"
     .await??;
     assert!(!std::fs::exists(&hook_log_path)?);
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.state".to_string(),
-                value: serde_json::json!({
-                    hook.key.clone(): {
-                        "trusted_hash": hook.current_hash.clone()
-                    }
-                }),
-                merge_strategy: MergeStrategy::Upsert,
-            }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    apply_config_edit(
+        &mut mcp,
+        "hooks.state",
+        serde_json::json!({
+            hook.key.clone(): {
+                "trusted_hash": hook.current_hash.clone()
+            }
+        }),
+        MergeStrategy::Upsert,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
-    let hook_list_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![codex_home.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(hook_list_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![codex_home.path().to_path_buf()]).await?;
     let trusted_hook = &data[0].hooks[0];
     assert_eq!(trusted_hook.key, hook.key);
     assert_eq!(trusted_hook.current_hash, hook.current_hash);
@@ -749,42 +636,21 @@ command = "python3 {hook_script_path}"
         1
     );
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.UserPromptSubmit".to_string(),
-                value: serde_json::json!([{
-                    "hooks": [{
-                        "type": "command",
-                        "command": format!("python3 {}", hook_script_path.display()),
-                        "statusMessage": "modified hook",
-                    }],
-                }]),
-                merge_strategy: MergeStrategy::Replace,
+    apply_config_edit(
+        &mut mcp,
+        "hooks.UserPromptSubmit",
+        serde_json::json!([{
+            "hooks": [{
+                "type": "command",
+                "command": format!("python3 {}", hook_script_path.display()),
+                "statusMessage": "modified hook",
             }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+        }]),
+        MergeStrategy::Replace,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
-    let hook_list_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![codex_home.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(hook_list_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![codex_home.path().to_path_buf()]).await?;
     let modified_hook = &data[0].hooks[0];
     assert_eq!(modified_hook.key, hook.key);
     assert_ne!(modified_hook.current_hash, hook.current_hash);
@@ -877,45 +743,23 @@ command = "python3 {hook_script_path}"
         ),
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let hook_list_id = mcp
-        .send_hooks_list_request(HooksListParams {
-            cwds: vec![codex_home.path().to_path_buf()],
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(hook_list_id)),
-    )
-    .await??;
-    let HooksListResponse { data } = to_response(response)?;
+    let data = list_hooks(&mut mcp, vec![codex_home.path().to_path_buf()]).await?;
     let hook = &data[0].hooks[0];
     assert_eq!(hook.enabled, true);
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.state".to_string(),
-                value: serde_json::json!({
-                    hook.key.clone(): {
-                        "trusted_hash": hook.current_hash.clone()
-                    }
-                }),
-                merge_strategy: MergeStrategy::Upsert,
-            }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    apply_config_edit(
+        &mut mcp,
+        "hooks.state",
+        serde_json::json!({
+            hook.key.clone(): {
+                "trusted_hash": hook.current_hash.clone()
+            }
+        }),
+        MergeStrategy::Upsert,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
     let thread_start_id = mcp
         .send_thread_start_request(ThreadStartParams {
@@ -923,12 +767,7 @@ command = "python3 {hook_script_path}"
             ..Default::default()
         })
         .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response(response)?;
+    let ThreadStartResponse { thread, .. } = read_response(&mut mcp, thread_start_id).await?;
 
     let first_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
@@ -958,28 +797,17 @@ command = "python3 {hook_script_path}"
         1
     );
 
-    let write_id = mcp
-        .send_config_batch_write_request(ConfigBatchWriteParams {
-            edits: vec![ConfigEdit {
-                key_path: "hooks.state".to_string(),
-                value: serde_json::json!({
-                    hook.key.clone(): {
-                        "enabled": false
-                    }
-                }),
-                merge_strategy: MergeStrategy::Upsert,
-            }],
-            file_path: None,
-            expected_version: None,
-            reload_user_config: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    apply_config_edit(
+        &mut mcp,
+        "hooks.state",
+        serde_json::json!({
+            hook.key.clone(): {
+                "enabled": false
+            }
+        }),
+        MergeStrategy::Upsert,
     )
-    .await??;
-    let _: app_server_protocol::ConfigWriteResponse = to_response(response)?;
+    .await?;
 
     let second_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
