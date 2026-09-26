@@ -8,9 +8,23 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: second backend architecture reduction tranche focused on materially larger code reduction than the first small helper pass. User explicitly asked to do more and not ask for further confirmation. Scope is Rust backend/runtime crates under `codex-rs/`, allowing cross-module architecture cleanup that reduces code and maintenance surface while preserving protocol/schema/history/runtime semantics. This is a global exclusive refactor on canonical main via `/self/owner_main`.
+Active goal: larger front+backend code organization tranche. User asked to organize both frontend and backend code, do more larger cleanup, and execute end-to-end without asking. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing architecture-level duplication removal and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics.
 
 ## Active Work
+
+- id: frontend-backend-large-code-organization
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/frontend-backend-large-code-organization
+  task_type: frontend_backend_architecture_cleanup_refactor
+  depends_on: main `7316a3ac0`; previous backend cleanup tranches merged/pending capsule delivery; user requested more/larger front+backend cleanup and explicitly asked PM to execute end-to-end without asking
+  files: `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code; exact architecture seam pending owner inventory
+  base_commit: `7316a3ac0`
+  next_action: Owner to inventory and implement a larger coherent front/back cleanup tranche with measurable code reduction, reuse fixed reviewer, validate, and deliver commit.
+  validation: Pending owner delivery. PM acceptance requires large-enough architecture cleanup rather than small helper edits, measurable net code reduction, no behavior/schema/protocol/history/Capsule semantic weakening, and focused frontend/backend validation.
+  commit: pending
 
 - id: backend-code-reduction-refactor
   status: merged_pending_capsule_delivery
