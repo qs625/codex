@@ -111,7 +111,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `5c68d9b1a`; dispatch `b8d84d979`; merge `ab7f272eb`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-10
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -120,7 +120,21 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `5af59284d`; user asked for multiple continuous cleanup rounds
   files: prefer higher-yield production-safe or test-support seam not yet cleaned; avoid another low-yield single React test helper pass unless clearly worthwhile
   base_commit: `5af59284d`
-  next_action: Owner to implement a higher-yield cleanup tranche or explain safe-candidate exhaustion; avoid another low-yield single React test helper pass unless clearly worthwhile.
+  next_action: No immediate Runtime Capsule restart; app-server test fixture refactor only, no production/runtime semantic change.
+  validation: Owner consolidated additional thread processor test fixture helpers for rollout events, `ThreadItem`, `Turn`, stored-thread fixtures, item id extraction, and flat compaction display assertions while preserving timestamps/process ids/wait/subagent/lifecycle differences. Net owner diff: `1 file changed, 366 insertions(+), 717 deletions(-)`, net -351 lines. Reviewer approved two rounds after catching timestamp semantic flattening, which owner fixed with `turn_started_at`. PM validation passed: `git diff --check HEAD~1..HEAD`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server thread_processor_behavior_tests -- --nocapture` (75 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; only existing Rust warnings observed.
+  commit: owner `e22b2520b`; dispatch `b1f4c8f5f`; merge `b90f07bd1`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-11
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-11
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `b90f07bd1`; user asked for multiple continuous cleanup rounds
+  files: prefer tool-service/spec helpers, frontend/Electron untouched tests, or app-server request tests outside thread_processor/config/external-agent/transport
+  base_commit: pending
+  next_action: Dispatch after recording tranche 10; avoid continuing to churn the same thread_processor test file.
   validation: pending
   commit: pending
 
