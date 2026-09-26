@@ -83,7 +83,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `898644d1c`; dispatch `15f1aaa40`; merge `3d81ff45d`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-8
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -92,7 +92,21 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `25cd66d87`; user asked for multiple continuous cleanup rounds
   files: prefer another new seam; avoid prior test helper families unless substantially larger
   base_commit: `25cd66d87`
-  next_action: Owner to implement another cleanup tranche on a new seam, preferably frontend/Electron tests or tool-service/spec helpers, avoiding previous app-server fixture families.
+  next_action: No immediate Runtime Capsule restart; Electron test fixture refactor only, no production/runtime semantic change.
+  validation: Owner consolidated Electron Browser/Computer Use test fixtures: Browser close lifecycle panel/callback mocks, repeated navigation state objects, and AX element/perception candidate builders. Net owner diff: `3 files changed, 289 insertions(+), 391 deletions(-)`, net -102 lines. Reviewer approved and confirmed close lifecycle/navigation/AX helper semantics remained equivalent. PM validation passed: `git diff --check HEAD~1..HEAD`; `node --check` for all touched tests; `node --test apps/root-worker-prototype/electron/browserPanelTabs.test.cjs apps/root-worker-prototype/electron/browserPanelNavigationState.test.cjs apps/root-worker-prototype/electron/computerUse.test.cjs` (116 passed).
+  commit: owner `75cc9e070`; dispatch `4be97ff9d`; merge `61d0152d2`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-9
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-9
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `61d0152d2`; user asked for multiple continuous cleanup rounds
+  files: prefer frontend React tests, tool-service/spec helper, or app-server request tests not yet cleaned
+  base_commit: pending
+  next_action: Dispatch immediately after recording tranche 8.
   validation: pending
   commit: pending
 
