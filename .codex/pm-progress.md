@@ -125,7 +125,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `e22b2520b`; dispatch `b1f4c8f5f`; merge `b90f07bd1`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-11
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -134,9 +134,9 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `4ede9a577`; user asked for multiple continuous cleanup rounds
   files: prefer tool-service/spec helpers, frontend/Electron untouched tests, or app-server request tests outside thread_processor/config/external-agent/transport
   base_commit: `4ede9a577`
-  next_action: Owner to implement another coherent cleanup tranche on a new seam, avoiding further thread_processor_tests churn.
-  validation: pending
-  commit: pending
+  next_action: No immediate Runtime Capsule restart; Electron test fixture refactor only, no production/runtime semantic change.
+  validation: Owner consolidated Electron `threadSnapshots.test.cjs` fixture helpers for turns, agent message items, and collab agent message items while preserving special cases (`notLoaded`, placeholder null timing, `childCompletion`, running reasoning). Net owner diff: `1 file changed, 87 insertions(+), 233 deletions(-)`, net -146 lines. Reviewer approved and confirmed helper defaults aligned with previous fixture semantics. PM validation passed: `git diff --check HEAD~1..HEAD`; `node --check apps/root-worker-prototype/electron/threadSnapshots.test.cjs`; `node --test apps/root-worker-prototype/electron/threadSnapshots.test.cjs` (24 passed).
+  commit: owner `b60af029e`; dispatch `11cf0d0fa`; merge `d3a46283f`; pending capsule delivery
 
 - id: backend-code-reduction-refactor
   status: merged_pending_capsule_delivery
