@@ -29,7 +29,9 @@ use protocol::config_types::WebSearchContextSize;
 use protocol::config_types::WebSearchLocation;
 use protocol::config_types::WebSearchToolConfig;
 use protocol::openai_models::ReasoningEffort;
+use serde::de::DeserializeOwned;
 use serde_json::json;
+use std::path::Path;
 use tempfile::TempDir;
 use thread_service::config::set_project_trust_level;
 use tokio::time::timeout;
@@ -45,6 +47,38 @@ fn write_config(codex_home: &TempDir, contents: &str) -> Result<()> {
     )?)
 }
 
+async fn init_mcp(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new(codex_home).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn read_response<T>(mcp: &mut McpProcess, request_id: i64) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    to_response(resp)
+}
+
+async fn read_config(
+    mcp: &mut McpProcess,
+    include_layers: bool,
+    cwd: Option<String>,
+) -> Result<ConfigReadResponse> {
+    let request_id = mcp
+        .send_config_read_request(ConfigReadParams {
+            include_layers,
+            cwd,
+        })
+        .await?;
+    read_response(mcp, request_id).await
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn config_read_returns_effective_and_layers() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -58,25 +92,12 @@ sandbox_mode = "workspace-write"
     let codex_home_path = codex_home.path().canonicalize()?;
     let user_file = AbsolutePathBuf::try_from(codex_home_path.join("config.toml"))?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: true,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
     let ConfigReadResponse {
         config,
         origins,
         layers,
-    } = to_response(resp)?;
+    } = read_config(&mut mcp, true, None).await?;
 
     assert_eq!(config.model.as_deref(), Some("gpt-user"));
     assert_eq!(
@@ -108,25 +129,12 @@ allowed_domains = ["example.com"]
     let codex_home_path = codex_home.path().canonicalize()?;
     let user_file = AbsolutePathBuf::try_from(codex_home_path.join("config.toml"))?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: true,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
     let ConfigReadResponse {
         config,
         origins,
         layers,
-    } = to_response(resp)?;
+    } = read_config(&mut mcp, true, None).await?;
 
     let tools = config.tools.expect("tools present");
     assert_eq!(
@@ -179,21 +187,8 @@ forced_chatgpt_workspace_id = "{WORKSPACE_ID}"
         ),
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let ConfigReadResponse { config, .. } = to_response(resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ConfigReadResponse { config, .. } = read_config(&mut mcp, false, None).await?;
 
     assert_eq!(
         config.forced_chatgpt_workspace_id,
@@ -218,21 +213,8 @@ forced_chatgpt_workspace_id = ["{WORKSPACE_ID_A}", "{WORKSPACE_ID_B}"]
         ),
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let ConfigReadResponse { config, .. } = to_response(resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ConfigReadResponse { config, .. } = read_config(&mut mcp, false, None).await?;
 
     assert_eq!(
         config.forced_chatgpt_workspace_id,
@@ -260,21 +242,8 @@ location = { country = "US", city = "New York", timezone = "America/New_York" }
 "#,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let ConfigReadResponse { config, .. } = to_response(resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ConfigReadResponse { config, .. } = read_config(&mut mcp, false, None).await?;
 
     assert_eq!(
         config.tools.expect("tools present").web_search,
@@ -304,21 +273,8 @@ web_search = true
 "#,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let ConfigReadResponse { config, .. } = to_response(resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ConfigReadResponse { config, .. } = read_config(&mut mcp, false, None).await?;
 
     assert_eq!(config.tools.expect("tools present").web_search, None,);
 
@@ -340,25 +296,12 @@ default_tools_approval_mode = "prompt"
     let codex_home_path = codex_home.path().canonicalize()?;
     let user_file = AbsolutePathBuf::try_from(codex_home_path.join("config.toml"))?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: true,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
     let ConfigReadResponse {
         config,
         origins,
         layers,
-    } = to_response(resp)?;
+    } = read_config(&mut mcp, true, None).await?;
 
     assert_eq!(
         config.apps,
@@ -427,21 +370,8 @@ width = 320
 "#,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let ConfigReadResponse { config, .. } = to_response(resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ConfigReadResponse { config, .. } = read_config(&mut mcp, false, None).await?;
 
     let desktop = config.desktop.expect("desktop settings present");
     assert_eq!(desktop.get("appearanceTheme"), Some(&json!("dark")));
@@ -474,23 +404,15 @@ model_reasoning_effort = "high"
     set_project_trust_level(codex_home.path(), workspace.path(), TrustLevel::Trusted)?;
     let project_config = AbsolutePathBuf::try_from(project_config_dir)?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: true,
-            cwd: Some(workspace.path().to_string_lossy().into_owned()),
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
     let ConfigReadResponse {
         config, origins, ..
-    } = to_response(resp)?;
+    } = read_config(
+        &mut mcp,
+        true,
+        Some(workspace.path().to_string_lossy().into_owned()),
+    )
+    .await?;
 
     assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));
     assert_eq!(
@@ -554,22 +476,11 @@ writable_roots = [{}]
     .await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 
-    let request_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: true,
-            cwd: None,
-        })
-        .await?;
-    let resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
     let ConfigReadResponse {
         config,
         origins,
         layers,
-    } = to_response(resp)?;
+    } = read_config(&mut mcp, true, None).await?;
 
     assert_eq!(config.model.as_deref(), Some("gpt-system"));
     assert_eq!(
@@ -640,21 +551,9 @@ model = "gpt-old"
 "#,
     )?;
 
-    let mut mcp = McpProcess::new(&codex_home).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(&codex_home).await?;
 
-    let read_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let read_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
-    )
-    .await??;
-    let read: ConfigReadResponse = to_response(read_resp)?;
+    let read = read_config(&mut mcp, false, None).await?;
     let expected_version = read.origins.get("model").map(|m| m.version.clone());
 
     let write_id = mcp
@@ -666,30 +565,14 @@ model = "gpt-old"
             expected_version,
         })
         .await?;
-    let write_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
-    )
-    .await??;
-    let write: ConfigWriteResponse = to_response(write_resp)?;
+    let write: ConfigWriteResponse = read_response(&mut mcp, write_id).await?;
     let expected_file_path = AbsolutePathBuf::resolve_path_against_base("config.toml", codex_home);
 
     assert_eq!(write.status, WriteStatus::Ok);
     assert_eq!(write.file_path, expected_file_path);
     assert!(write.overridden_metadata.is_none());
 
-    let verify_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let verify_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(verify_id)),
-    )
-    .await??;
-    let verify: ConfigReadResponse = to_response(verify_resp)?;
+    let verify = read_config(&mut mcp, false, None).await?;
     assert_eq!(verify.config.model.as_deref(), Some("gpt-new"));
 
     Ok(())
@@ -701,8 +584,7 @@ async fn config_value_write_updates_desktop_settings() -> Result<()> {
     let codex_home = temp_dir.path().canonicalize()?;
     write_config(&temp_dir, "")?;
 
-    let mut mcp = McpProcess::new(&codex_home).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(&codex_home).await?;
 
     let write_id = mcp
         .send_config_value_write_request(ConfigValueWriteParams {
@@ -713,26 +595,10 @@ async fn config_value_write_updates_desktop_settings() -> Result<()> {
             expected_version: None,
         })
         .await?;
-    let write_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
-    )
-    .await??;
-    let write: ConfigWriteResponse = to_response(write_resp)?;
+    let write: ConfigWriteResponse = read_response(&mut mcp, write_id).await?;
     assert_eq!(write.status, WriteStatus::Ok);
 
-    let read_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let read_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
-    )
-    .await??;
-    let read: ConfigReadResponse = to_response(read_resp)?;
+    let read = read_config(&mut mcp, false, None).await?;
     let desktop = read.config.desktop.expect("desktop settings present");
     assert_eq!(desktop.get("appearanceTheme"), Some(&json!("dark")));
 
@@ -750,8 +616,7 @@ model = "gpt-old"
 "#,
     )?;
 
-    let mut mcp = McpProcess::new(&codex_home).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(&codex_home).await?;
 
     let write_id = mcp
         .send_config_value_write_request(ConfigValueWriteParams {
@@ -769,20 +634,10 @@ model = "gpt-old"
         })
         .await?;
 
-    let write_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
-    )
-    .await??;
-    let write: ConfigWriteResponse = to_response(write_resp)?;
+    let write: ConfigWriteResponse = read_response(&mut mcp, write_id).await?;
     assert_eq!(write.status, WriteStatus::Ok);
 
-    let read_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
-    )
-    .await??;
-    let read: ConfigReadResponse = to_response(read_resp)?;
+    let read: ConfigReadResponse = read_response(&mut mcp, read_id).await?;
     assert_eq!(read.config.model.as_deref(), Some("gpt-new"));
 
     Ok(())
@@ -798,8 +653,7 @@ model = "gpt-old"
 "#,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
 
     let write_id = mcp
         .send_config_value_write_request(ConfigValueWriteParams {
@@ -833,8 +687,7 @@ async fn config_batch_write_applies_multiple_edits() -> Result<()> {
     let codex_home = tmp_dir.path().canonicalize()?;
     write_config(&tmp_dir, "")?;
 
-    let mut mcp = McpProcess::new(&codex_home).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(&codex_home).await?;
 
     let writable_root = test_tmp_path_buf();
     let batch_id = mcp
@@ -859,28 +712,12 @@ async fn config_batch_write_applies_multiple_edits() -> Result<()> {
             reload_user_config: false,
         })
         .await?;
-    let batch_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(batch_id)),
-    )
-    .await??;
-    let batch_write: ConfigWriteResponse = to_response(batch_resp)?;
+    let batch_write: ConfigWriteResponse = read_response(&mut mcp, batch_id).await?;
     assert_eq!(batch_write.status, WriteStatus::Ok);
     let expected_file_path = AbsolutePathBuf::resolve_path_against_base("config.toml", codex_home);
     assert_eq!(batch_write.file_path, expected_file_path);
 
-    let read_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let read_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
-    )
-    .await??;
-    let read: ConfigReadResponse = to_response(read_resp)?;
+    let read = read_config(&mut mcp, false, None).await?;
     assert_eq!(read.config.sandbox_mode, Some(SandboxMode::WorkspaceWrite));
     let sandbox = read
         .config
@@ -899,8 +736,7 @@ async fn config_batch_write_updates_multiple_desktop_settings() -> Result<()> {
     let codex_home = tmp_dir.path().canonicalize()?;
     write_config(&tmp_dir, "")?;
 
-    let mut mcp = McpProcess::new(&codex_home).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(&codex_home).await?;
 
     let batch_id = mcp
         .send_config_batch_write_request(ConfigBatchWriteParams {
@@ -924,26 +760,10 @@ async fn config_batch_write_updates_multiple_desktop_settings() -> Result<()> {
             reload_user_config: false,
         })
         .await?;
-    let batch_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(batch_id)),
-    )
-    .await??;
-    let batch_write: ConfigWriteResponse = to_response(batch_resp)?;
+    let batch_write: ConfigWriteResponse = read_response(&mut mcp, batch_id).await?;
     assert_eq!(batch_write.status, WriteStatus::Ok);
 
-    let read_id = mcp
-        .send_config_read_request(ConfigReadParams {
-            include_layers: false,
-            cwd: None,
-        })
-        .await?;
-    let read_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
-    )
-    .await??;
-    let read: ConfigReadResponse = to_response(read_resp)?;
+    let read = read_config(&mut mcp, false, None).await?;
     let desktop = read.config.desktop.expect("desktop settings present");
     assert_eq!(desktop.get("selected-avatar-id"), Some(&json!("codex")));
     assert_eq!(
