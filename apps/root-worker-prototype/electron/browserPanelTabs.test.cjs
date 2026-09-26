@@ -17,6 +17,65 @@ const tabs = [{ id: "tab-a" }, { id: "tab-b" }, { id: "tab-c" }];
 const mainSource = readSource("main.cjs");
 const surfaceSource = readSource("browserPanelSurface.cjs");
 
+function createPanel({ tabIds, activeTabId, attachedTabId = activeTabId }) {
+  return {
+    tabs: tabIds.map((id) => ({ id })),
+    activeTabId,
+    attachedTabId,
+    visible: true,
+    destroying: false,
+  };
+}
+
+function createCloseLifecycleHooks(events, options = {}) {
+  let replacementCounter = 0;
+  let resolveDispose;
+  return {
+    hooks: {
+      detachAttachedView(targetPanel) {
+        events.push(`detach:${targetPanel.attachedTabId}`);
+        targetPanel.attachedTabId = null;
+      },
+      disposeTab(_targetPanel, tab) {
+        events.push(`dispose-start:${tab.id}`);
+        return new Promise((resolve) => {
+          resolveDispose = () => {
+            events.push(`dispose-done:${tab.id}`);
+            resolve();
+          };
+        });
+      },
+      createTab(targetPanel, { activate } = {}) {
+        if (options.createReplacement) {
+          const replacement = { id: `replacement-${++replacementCounter}` };
+          events.push(`create:${replacement.id}:activate=${activate}`);
+          targetPanel.tabs.push(replacement);
+          if (activate) {
+            targetPanel.activeTabId = replacement.id;
+            targetPanel.attachedTabId = replacement.id;
+          }
+          return replacement;
+        }
+        events.push("create-unexpected");
+        return undefined;
+      },
+      attachActiveView(targetPanel, { raise } = {}) {
+        if (options.expectAttach === false) {
+          events.push("attach-unexpected");
+          return false;
+        }
+        events.push(`attach:${targetPanel.activeTabId}:raise=${raise}`);
+        targetPanel.attachedTabId = targetPanel.activeTabId;
+        return true;
+      },
+    },
+    resolveDispose() {
+      assert.equal(typeof resolveDispose, "function");
+      resolveDispose();
+    },
+  };
+}
+
 test("nextBrowserTabIdAfterClose keeps active tab when closing background tab", () => {
   assert.equal(nextBrowserTabIdAfterClose(tabs, "tab-a", "tab-b"), "tab-a");
 });
@@ -157,46 +216,19 @@ test("isBrowserPanelTabAlreadyAttached detects stable same-tab refreshes", () =>
 
 test("closeBrowserPanelTabLifecycle waits for loaded tab disposal before replacement", async () => {
   const events = [];
-  let replacementCounter = 0;
-  let resolveDispose;
-  const panel = {
-    tabs: [{ id: "loaded-tab" }],
+  const panel = createPanel({
+    tabIds: ["loaded-tab"],
     activeTabId: "loaded-tab",
-    attachedTabId: "loaded-tab",
-    visible: true,
-    destroying: false,
-  };
-
-  const closePromise = closeBrowserPanelTabLifecycle(panel, "loaded-tab", {
-    detachAttachedView(targetPanel) {
-      events.push(`detach:${targetPanel.attachedTabId}`);
-      targetPanel.attachedTabId = null;
-    },
-    disposeTab(_targetPanel, tab) {
-      events.push(`dispose-start:${tab.id}`);
-      return new Promise((resolve) => {
-        resolveDispose = () => {
-          events.push(`dispose-done:${tab.id}`);
-          resolve();
-        };
-      });
-    },
-    createTab(targetPanel, { activate }) {
-      const replacement = { id: `replacement-${++replacementCounter}` };
-      events.push(`create:${replacement.id}:activate=${activate}`);
-      targetPanel.tabs.push(replacement);
-      if (activate) {
-        targetPanel.activeTabId = replacement.id;
-        targetPanel.attachedTabId = replacement.id;
-      }
-      return replacement;
-    },
-    attachActiveView(targetPanel, { raise }) {
-      events.push(`attach:${targetPanel.activeTabId}:raise=${raise}`);
-      targetPanel.attachedTabId = targetPanel.activeTabId;
-      return true;
-    },
   });
+  const lifecycle = createCloseLifecycleHooks(events, {
+    createReplacement: true,
+  });
+
+  const closePromise = closeBrowserPanelTabLifecycle(
+    panel,
+    "loaded-tab",
+    lifecycle.hooks,
+  );
 
   await Promise.resolve();
   assert.deepEqual(events, ["detach:loaded-tab", "dispose-start:loaded-tab"]);
@@ -204,7 +236,7 @@ test("closeBrowserPanelTabLifecycle waits for loaded tab disposal before replace
   assert.equal(panel.activeTabId, null);
   assert.equal(panel.attachedTabId, null);
 
-  resolveDispose();
+  lifecycle.resolveDispose();
   assert.equal(await closePromise, true);
   assert.deepEqual(events, [
     "detach:loaded-tab",
@@ -219,38 +251,17 @@ test("closeBrowserPanelTabLifecycle waits for loaded tab disposal before replace
 
 test("closeBrowserPanelTabLifecycle waits for active tab disposal before attaching neighbor", async () => {
   const events = [];
-  let resolveDispose;
-  const panel = {
-    tabs: [{ id: "loaded-tab" }, { id: "blank-tab" }],
+  const panel = createPanel({
+    tabIds: ["loaded-tab", "blank-tab"],
     activeTabId: "loaded-tab",
-    attachedTabId: "loaded-tab",
-    visible: true,
-    destroying: false,
-  };
-
-  const closePromise = closeBrowserPanelTabLifecycle(panel, "loaded-tab", {
-    detachAttachedView(targetPanel) {
-      events.push(`detach:${targetPanel.attachedTabId}`);
-      targetPanel.attachedTabId = null;
-    },
-    disposeTab(_targetPanel, tab) {
-      events.push(`dispose-start:${tab.id}`);
-      return new Promise((resolve) => {
-        resolveDispose = () => {
-          events.push(`dispose-done:${tab.id}`);
-          resolve();
-        };
-      });
-    },
-    createTab() {
-      events.push("create-unexpected");
-    },
-    attachActiveView(targetPanel, { raise }) {
-      events.push(`attach:${targetPanel.activeTabId}:raise=${raise}`);
-      targetPanel.attachedTabId = targetPanel.activeTabId;
-      return true;
-    },
   });
+  const lifecycle = createCloseLifecycleHooks(events);
+
+  const closePromise = closeBrowserPanelTabLifecycle(
+    panel,
+    "loaded-tab",
+    lifecycle.hooks,
+  );
 
   await Promise.resolve();
   assert.deepEqual(events, ["detach:loaded-tab", "dispose-start:loaded-tab"]);
@@ -258,7 +269,7 @@ test("closeBrowserPanelTabLifecycle waits for active tab disposal before attachi
   assert.equal(panel.activeTabId, "blank-tab");
   assert.equal(panel.attachedTabId, null);
 
-  resolveDispose();
+  lifecycle.resolveDispose();
   assert.equal(await closePromise, true);
   assert.deepEqual(events, [
     "detach:loaded-tab",
@@ -272,13 +283,10 @@ test("closeBrowserPanelTabLifecycle waits for active tab disposal before attachi
 
 test("closeBrowserPanelTabLifecycle passes the active closing tab to detach", async () => {
   const detached = [];
-  const panel = {
-    tabs: [{ id: "tab-a" }, { id: "tab-b" }],
+  const panel = createPanel({
+    tabIds: ["tab-a", "tab-b"],
     activeTabId: "tab-a",
-    attachedTabId: "tab-a",
-    visible: true,
-    destroying: false,
-  };
+  });
 
   assert.equal(
     await closeBrowserPanelTabLifecycle(panel, "tab-a", {
@@ -295,35 +303,19 @@ test("closeBrowserPanelTabLifecycle passes the active closing tab to detach", as
 
 test("closeBrowserPanelTabLifecycle leaves the active visible tab alone when closing background", async () => {
   const events = [];
-  let resolveDispose;
-  const panel = {
-    tabs: [{ id: "active-tab" }, { id: "background-tab" }],
+  const panel = createPanel({
+    tabIds: ["active-tab", "background-tab"],
     activeTabId: "active-tab",
-    attachedTabId: "active-tab",
-    visible: true,
-    destroying: false,
-  };
-
-  const closePromise = closeBrowserPanelTabLifecycle(panel, "background-tab", {
-    detachAttachedView() {
-      events.push("detach-unexpected");
-    },
-    disposeTab(_targetPanel, tab) {
-      events.push(`dispose-start:${tab.id}`);
-      return new Promise((resolve) => {
-        resolveDispose = () => {
-          events.push(`dispose-done:${tab.id}`);
-          resolve();
-        };
-      });
-    },
-    createTab() {
-      events.push("create-unexpected");
-    },
-    attachActiveView() {
-      events.push("attach-unexpected");
-    },
   });
+  const lifecycle = createCloseLifecycleHooks(events, {
+    expectAttach: false,
+  });
+
+  const closePromise = closeBrowserPanelTabLifecycle(
+    panel,
+    "background-tab",
+    lifecycle.hooks,
+  );
 
   await Promise.resolve();
   assert.deepEqual(events, ["dispose-start:background-tab"]);
@@ -331,7 +323,7 @@ test("closeBrowserPanelTabLifecycle leaves the active visible tab alone when clo
   assert.equal(panel.activeTabId, "active-tab");
   assert.equal(panel.attachedTabId, "active-tab");
 
-  resolveDispose();
+  lifecycle.resolveDispose();
   assert.equal(await closePromise, true);
   assert.deepEqual(events, [
     "dispose-start:background-tab",

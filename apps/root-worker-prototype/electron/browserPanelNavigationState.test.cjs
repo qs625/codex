@@ -22,6 +22,57 @@ const {
 } = require("./browserPanelNavigationState.cjs");
 
 const mainSource = readSource("main.cjs");
+const EXAMPLE_URL = "https://example.com/";
+
+function deferredFailureState(overrides = {}) {
+  return {
+    errorCode: -2,
+    validatedUrl: EXAMPLE_URL,
+    loading: true,
+    currentUrl: "about:blank",
+    ...overrides,
+  };
+}
+
+function rejectedNavigationState(overrides = {}) {
+  return {
+    navigationSequence: 4,
+    finishedNavigationSequence: 4,
+    finishedUrl: EXAMPLE_URL,
+    currentUrl: "https://example.com",
+    targetUrl: EXAMPLE_URL,
+    ...overrides,
+  };
+}
+
+function stoppedNavigationState(overrides = {}) {
+  return {
+    navigationSequence: 4,
+    pendingNavigationSequence: 4,
+    currentUrl: "https://example.com",
+    targetUrl: EXAMPLE_URL,
+    ...overrides,
+  };
+}
+
+function timedOutNavigationState(overrides = {}) {
+  return {
+    currentUrl: "https://example.com",
+    startUrl: "about:blank",
+    targetUrl: EXAMPLE_URL,
+    ...overrides,
+  };
+}
+
+function committedNavigationState(overrides = {}) {
+  return {
+    navigationSequence: 4,
+    pendingNavigationSequence: 4,
+    navigationStarted: true,
+    currentUrl: "https://www.baidu.com/",
+    ...overrides,
+  };
+}
 
 test("browserPanelUrlsEqual compares normalized URL hrefs", () => {
   assert.equal(
@@ -36,179 +87,138 @@ test("browserPanelUrlsEqual compares normalized URL hrefs", () => {
 
 test("shouldDeferBrowserPanelFailure defers in-flight ERR_FAILED before target commits", () => {
   assert.equal(
-    shouldDeferBrowserPanelFailure({
-      errorCode: -2,
-      validatedUrl: "https://example.com/",
-      loading: true,
-      currentUrl: "about:blank",
-    }),
+    shouldDeferBrowserPanelFailure(deferredFailureState()),
     true,
   );
 });
 
 test("shouldDeferBrowserPanelFailure keeps real failures immediate once target is current", () => {
   assert.equal(
-    shouldDeferBrowserPanelFailure({
-      errorCode: -2,
-      validatedUrl: "https://example.com/",
-      loading: true,
+    shouldDeferBrowserPanelFailure(deferredFailureState({
       currentUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
 });
 
 test("shouldDeferBrowserPanelFailure does not defer non-transient failures", () => {
   assert.equal(
-    shouldDeferBrowserPanelFailure({
+    shouldDeferBrowserPanelFailure(deferredFailureState({
       errorCode: -105,
       validatedUrl: "https://offline.invalid/",
-      loading: true,
-      currentUrl: "about:blank",
-    }),
+    })),
     false,
   );
 });
 
 test("shouldCompleteRejectedBrowserPanelNavigation requires finish evidence", () => {
   assert.equal(
-    shouldCompleteRejectedBrowserPanelNavigation({
-      navigationSequence: 4,
+    shouldCompleteRejectedBrowserPanelNavigation(rejectedNavigationState({
       finishedNavigationSequence: 0,
       finishedUrl: null,
       currentUrl: "https://example.com/",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
 });
 
 test("shouldCompleteRejectedBrowserPanelNavigation accepts matching finished target", () => {
   assert.equal(
-    shouldCompleteRejectedBrowserPanelNavigation({
-      navigationSequence: 4,
-      finishedNavigationSequence: 4,
-      finishedUrl: "https://example.com/",
-      currentUrl: "https://example.com",
-      targetUrl: "https://example.com/",
-    }),
+    shouldCompleteRejectedBrowserPanelNavigation(rejectedNavigationState()),
     true,
   );
 });
 
 test("shouldCompleteRejectedBrowserPanelNavigation rejects stale finish evidence", () => {
   assert.equal(
-    shouldCompleteRejectedBrowserPanelNavigation({
-      navigationSequence: 4,
+    shouldCompleteRejectedBrowserPanelNavigation(rejectedNavigationState({
       finishedNavigationSequence: 3,
-      finishedUrl: "https://example.com/",
       currentUrl: "https://example.com/",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
 });
 
 test("shouldCompleteRejectedBrowserPanelNavigation rejects same-sequence non-target finish", () => {
   assert.equal(
-    shouldCompleteRejectedBrowserPanelNavigation({
-      navigationSequence: 4,
-      finishedNavigationSequence: 4,
+    shouldCompleteRejectedBrowserPanelNavigation(rejectedNavigationState({
       finishedUrl: "https://previous.example/",
       currentUrl: "https://example.com/",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
 });
 
 test("shouldCompleteBrowserPanelStoppedNavigation accepts matching stopped target", () => {
   assert.equal(
-    shouldCompleteBrowserPanelStoppedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
-      currentUrl: "https://example.com",
-      targetUrl: "https://example.com/",
-    }),
+    shouldCompleteBrowserPanelStoppedNavigation(stoppedNavigationState()),
     true,
   );
 });
 
 test("shouldCompleteBrowserPanelStoppedNavigation rejects stale or non-target stop evidence", () => {
   assert.equal(
-    shouldCompleteBrowserPanelStoppedNavigation({
-      navigationSequence: 4,
+    shouldCompleteBrowserPanelStoppedNavigation(stoppedNavigationState({
       pendingNavigationSequence: 3,
       currentUrl: "https://example.com/",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldCompleteBrowserPanelStoppedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
+    shouldCompleteBrowserPanelStoppedNavigation(stoppedNavigationState({
       currentUrl: "https://previous.example/",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
 });
 
 test("shouldCompleteBrowserPanelTimedOutNavigation accepts committed target URL", () => {
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
-      currentUrl: "https://example.com",
-      startUrl: "about:blank",
-      targetUrl: "https://example.com/",
-    }),
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState()),
     true,
   );
 });
 
 test("shouldCompleteBrowserPanelTimedOutNavigation accepts safe committed redirects", () => {
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
       currentUrl: "https://www.baidu.com/",
-      startUrl: "about:blank",
       targetUrl: "https://baidu.com/",
-    }),
+    })),
     true,
   );
 });
 
 test("shouldCompleteBrowserPanelTimedOutNavigation requires start evidence for redirects", () => {
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
       currentUrl: "https://www.baidu.com/",
+      startUrl: undefined,
       targetUrl: "https://baidu.com/",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
       currentUrl: "https://example.com/",
-      targetUrl: "https://example.com/",
-    }),
+      startUrl: undefined,
+    })),
     true,
   );
 });
 
 test("shouldCompleteBrowserPanelTimedOutNavigation rejects non-committed timeout state", () => {
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
       currentUrl: "about:blank",
-      startUrl: "about:blank",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
       currentUrl: "https://previous.example/",
       startUrl: "https://previous.example/",
-      targetUrl: "https://example.com/",
-    }),
+    })),
     false,
   );
 });
@@ -220,20 +230,17 @@ test("shouldCompleteBrowserPanelTimedOutNavigation rejects unsafe timeout URLs",
     "custom-scheme:foo",
   ]) {
     assert.equal(
-      shouldCompleteBrowserPanelTimedOutNavigation({
+      shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
         currentUrl,
-        startUrl: "about:blank",
-        targetUrl: "https://example.com/",
-      }),
+      })),
       false,
     );
   }
   assert.equal(
-    shouldCompleteBrowserPanelTimedOutNavigation({
+    shouldCompleteBrowserPanelTimedOutNavigation(timedOutNavigationState({
       currentUrl: "https://example.com/",
-      startUrl: "about:blank",
       targetUrl: "file:///tmp/index.html",
-    }),
+    })),
     false,
   );
 });
@@ -248,62 +255,42 @@ test("browserPanelUrlIsSafeCommittedHttpUrl accepts only committed http URLs", (
 
 test("shouldAcceptBrowserPanelCommittedNavigation accepts redirected committed URLs", () => {
   assert.equal(
-    shouldAcceptBrowserPanelCommittedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
-      navigationStarted: true,
-      currentUrl: "https://www.baidu.com/",
-    }),
+    shouldAcceptBrowserPanelCommittedNavigation(committedNavigationState()),
     true,
   );
 });
 
 test("shouldAcceptBrowserPanelCommittedNavigation requires current started navigation", () => {
   assert.equal(
-    shouldAcceptBrowserPanelCommittedNavigation({
-      navigationSequence: 4,
+    shouldAcceptBrowserPanelCommittedNavigation(committedNavigationState({
       pendingNavigationSequence: 3,
-      navigationStarted: true,
-      currentUrl: "https://www.baidu.com/",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldAcceptBrowserPanelCommittedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
+    shouldAcceptBrowserPanelCommittedNavigation(committedNavigationState({
       navigationStarted: false,
-      currentUrl: "https://www.baidu.com/",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldAcceptBrowserPanelCommittedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
-      navigationStarted: true,
+    shouldAcceptBrowserPanelCommittedNavigation(committedNavigationState({
       currentUrl: "about:blank",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldAcceptBrowserPanelCommittedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
-      navigationStarted: true,
+    shouldAcceptBrowserPanelCommittedNavigation(committedNavigationState({
       committedUrl: "https://www.baidu.com/",
       currentUrl: "https://previous.example/",
-    }),
+    })),
     false,
   );
   assert.equal(
-    shouldAcceptBrowserPanelCommittedNavigation({
-      navigationSequence: 4,
-      pendingNavigationSequence: 4,
-      navigationStarted: true,
+    shouldAcceptBrowserPanelCommittedNavigation(committedNavigationState({
       committedUrl: "https://www.baidu.com/",
       currentUrl: "https://www.baidu.com",
-    }),
+    })),
     true,
   );
 });

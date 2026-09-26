@@ -212,6 +212,59 @@ function fakeOverlayController() {
   };
 }
 
+function axButton(title, bounds = { x: 10, y: 10, width: 80, height: 30 }) {
+  return {
+    role: "AXButton",
+    title,
+    bounds,
+    center: {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    },
+  };
+}
+
+function axPressableButton(title, bounds = { x: 80, y: 90, width: 80, height: 30 }) {
+  return {
+    ...axButton(title, bounds),
+    pressable: true,
+  };
+}
+
+function axTextField(title, bounds = { x: 80, y: 90, width: 200, height: 30 }) {
+  return {
+    role: "AXTextField",
+    title,
+    writable: true,
+    bounds,
+    center: {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    },
+  };
+}
+
+function axStaticText(title, overrides = {}) {
+  const bounds = overrides.bounds ?? { x: 80, y: 90, width: 80, height: 30 };
+  return {
+    role: "AXStaticText",
+    title,
+    bounds,
+    center: {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    },
+    ...overrides,
+  };
+}
+
+function frontmostPerceptionObservation(perception) {
+  return {
+    targetVisibility: "frontmost",
+    perception,
+  };
+}
+
 test("computer use session starts with observe evidence", async () => {
   const nativeClient = fakeNativeClient();
   const overlayController = fakeOverlayController();
@@ -308,13 +361,7 @@ test("background target observe accepts real window and AX perception evidence",
             bounds: { x: 40, y: 50, width: 500, height: 400 },
           },
           accessibilityElements: [
-            {
-              role: "AXTextField",
-              title: "Search",
-              writable: true,
-              bounds: { x: 80, y: 90, width: 200, height: 30 },
-              center: { x: 180, y: 105 },
-            },
+            axTextField("Search"),
           ],
         },
       },
@@ -348,19 +395,9 @@ test("background target observe accepts real window and AX perception evidence",
 test("clickText requires a unique accessibility match before native click", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
-      {
-        targetVisibility: "frontmost",
-        perception: {
-          accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Open",
-              bounds: { x: 10, y: 10, width: 80, height: 30 },
-              center: { x: 50, y: 25 },
-            },
-          ],
-        },
-      },
+      frontmostPerceptionObservation({
+        accessibilityElements: [axButton("Open")],
+      }),
     ],
   });
   const manager = createComputerUseManager({ nativeClient });
@@ -382,25 +419,12 @@ test("clickText requires a unique accessibility match before native click", asyn
 test("clickText blocks ambiguous accessibility matches before native click", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
-      {
-        targetVisibility: "frontmost",
-        perception: {
-          accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Open",
-              bounds: { x: 10, y: 10, width: 80, height: 30 },
-              center: { x: 50, y: 25 },
-            },
-            {
-              role: "AXButton",
-              title: "Open Recent",
-              bounds: { x: 110, y: 10, width: 100, height: 30 },
-              center: { x: 160, y: 25 },
-            },
-          ],
-        },
-      },
+      frontmostPerceptionObservation({
+        accessibilityElements: [
+          axButton("Open"),
+          axButton("Open Recent", { x: 110, y: 10, width: 100, height: 30 }),
+        ],
+      }),
     ],
   });
   const manager = createComputerUseManager({ nativeClient });
@@ -417,25 +441,12 @@ test("clickText blocks ambiguous accessibility matches before native click", asy
 test("confirmed clickText still blocks multiple matches before native click", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
-      {
-        targetVisibility: "frontmost",
-        perception: {
-          accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Delete",
-              bounds: { x: 10, y: 10, width: 80, height: 30 },
-              center: { x: 50, y: 25 },
-            },
-            {
-              role: "AXButton",
-              title: "Delete Message",
-              bounds: { x: 110, y: 10, width: 120, height: 30 },
-              center: { x: 170, y: 25 },
-            },
-          ],
-        },
-      },
+      frontmostPerceptionObservation({
+        accessibilityElements: [
+          axButton("Delete"),
+          axButton("Delete Message", { x: 110, y: 10, width: 120, height: 30 }),
+        ],
+      }),
     ],
   });
   const manager = createComputerUseManager({
@@ -458,25 +469,12 @@ test("confirmed clickText still blocks multiple matches before native click", as
 test("clickText maxMatches only limits evidence and cannot hide ambiguity", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
-      {
-        targetVisibility: "frontmost",
-        perception: {
-          accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Open",
-              bounds: { x: 10, y: 10, width: 80, height: 30 },
-              center: { x: 50, y: 25 },
-            },
-            {
-              role: "AXButton",
-              title: "Open Recent",
-              bounds: { x: 110, y: 10, width: 100, height: 30 },
-              center: { x: 160, y: 25 },
-            },
-          ],
-        },
-      },
+      frontmostPerceptionObservation({
+        accessibilityElements: [
+          axButton("Open"),
+          axButton("Open Recent", { x: 110, y: 10, width: 100, height: 30 }),
+        ],
+      }),
     ],
   });
   const manager = createComputerUseManager({ nativeClient });
@@ -498,25 +496,15 @@ test("clickText maxMatches only limits evidence and cannot hide ambiguity", asyn
 test("clickText fails when perception candidates are truncated", async () => {
   const nativeClient = fakeNativeClient({
     observations: [
-      {
-        targetVisibility: "frontmost",
-        perception: {
-          limitations: [
-            {
-              code: "accessibility-elements-truncated",
-              message: "Accessibility element output reached the configured candidate limit before traversal completed.",
-            },
-          ],
-          accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Open",
-              bounds: { x: 10, y: 10, width: 80, height: 30 },
-              center: { x: 50, y: 25 },
-            },
-          ],
-        },
-      },
+      frontmostPerceptionObservation({
+        limitations: [
+          {
+            code: "accessibility-elements-truncated",
+            message: "Accessibility element output reached the configured candidate limit before traversal completed.",
+          },
+        ],
+        accessibilityElements: [axButton("Open")],
+      }),
     ],
   });
   const manager = createComputerUseManager({ nativeClient });
@@ -552,13 +540,7 @@ test("background setText writes one unique writable AX element without activatio
         targetVisibility: "background",
         perception: {
           accessibilityElements: [
-            {
-              role: "AXTextField",
-              title: "Search",
-              writable: true,
-              bounds: { x: 80, y: 90, width: 200, height: 30 },
-              center: { x: 180, y: 105 },
-            },
+            axTextField("Search"),
           ],
         },
       },
@@ -629,13 +611,7 @@ test("background pressText presses one unique pressable AX element without activ
         targetVisibility: "background",
         perception: {
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Send",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axPressableButton("Send"),
           ],
         },
       },
@@ -679,13 +655,7 @@ test("failed semantic native action does not leave completed visual proof", asyn
         targetVisibility: "frontmost",
         perception: {
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Send",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axPressableButton("Send"),
           ],
         },
       },
@@ -717,13 +687,7 @@ test("frontmost pressText shows target-bound proxy cursor proof without real cur
         targetVisibility: "frontmost",
         perception: {
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Send",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axPressableButton("Send"),
           ],
         },
       },
@@ -759,13 +723,7 @@ test("semantic native success remains completed when overlay proof update fails"
         targetVisibility: "frontmost",
         perception: {
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Send",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axPressableButton("Send"),
           ],
         },
       },
@@ -812,20 +770,8 @@ test("background pressText blocks ambiguous pressable matches before native acti
         },
         perception: {
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Send",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
-            {
-              role: "AXButton",
-              title: "Send feedback",
-              pressable: true,
-              bounds: { x: 180, y: 90, width: 120, height: 30 },
-              center: { x: 240, y: 105 },
-            },
+            axPressableButton("Send"),
+            axPressableButton("Send feedback", { x: 180, y: 90, width: 120, height: 30 }),
           ],
         },
       },
@@ -854,13 +800,7 @@ test("background pressText blocks non-pressable matches before native action", a
         },
         perception: {
           accessibilityElements: [
-            {
-              role: "AXStaticText",
-              title: "Send",
-              pressable: false,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axStaticText("Send", { pressable: false }),
           ],
         },
       },
@@ -889,13 +829,7 @@ test("background pressText blocks no-match before native action", async () => {
         },
         perception: {
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "New chat",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axPressableButton("New chat"),
           ],
         },
       },
@@ -930,13 +864,7 @@ test("background pressText fails when perception candidates are truncated", asyn
             },
           ],
           accessibilityElements: [
-            {
-              role: "AXButton",
-              title: "Send",
-              pressable: true,
-              bounds: { x: 80, y: 90, width: 80, height: 30 },
-              center: { x: 120, y: 105 },
-            },
+            axPressableButton("Send"),
           ],
         },
       },
@@ -970,13 +898,10 @@ test("background setText blocks non-writable matches before native action", asyn
         },
         perception: {
           accessibilityElements: [
-            {
-              role: "AXStaticText",
-              title: "Search",
+            axStaticText("Search", {
               writable: false,
               bounds: { x: 80, y: 90, width: 200, height: 30 },
-              center: { x: 180, y: 105 },
-            },
+            }),
           ],
         },
       },
@@ -1009,13 +934,7 @@ test("high-risk background setText requires confirmation before native action", 
         },
         perception: {
           accessibilityElements: [
-            {
-              role: "AXTextField",
-              title: "Token",
-              writable: true,
-              bounds: { x: 80, y: 90, width: 200, height: 30 },
-              center: { x: 180, y: 105 },
-            },
+            axTextField("Token"),
           ],
         },
       },
