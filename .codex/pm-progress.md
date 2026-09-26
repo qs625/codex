@@ -13,7 +13,7 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: continuous-code-organization-tranche-12
-  status: owner_completed
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -22,9 +22,9 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `b0f28fe15`; user agreed to continue after tranches 4-11
   files: prefer a new untouched coherent seam under `codex-rs/` or `apps/root-worker-prototype/`; avoid repeating already-cleaned thread processor/config/external-agent/transport/BrowserPanel/ComputerUse/threadSnapshots/RightPanel fixture families
   base_commit: `b0f28fe15`
-  next_action: PM to inspect owner commit and merge when ready. No immediate Runtime Capsule restart required; pure frontend test fixture refactor with no intended product/runtime/protocol/schema/installed-state behavior change.
-  validation: Owner resumed after Runtime Capsule restart `runtime-restart:call_T3IiLBOlK7vSEYrAON5JKZFM`, confirmed branch/worktree persisted, reran necessary checks, and completed a frontend test fixture cleanup across `Panels.test.tsx` and `conversation.test.ts`. Net owner diff before commit: `3 files changed, 308 insertions(+), 419 deletions(-)`, net -111 lines. Fixed reviewer `/self/owner_main/reviewer` approved with no blocking findings, confirming helper defaults preserve turn/sidebar semantics and no assertion weakening was found. Owner validation passed: `git diff --check -- .codex/pm-progress.md apps/root-worker-prototype/src/components/Panels.test.tsx apps/root-worker-prototype/src/lib/conversation.test.ts`; `pnpm exec prettier --check src/components/Panels.test.tsx src/lib/conversation.test.ts`; `pnpm exec tsx --test src/components/Panels.test.tsx` (24 passed); `pnpm exec tsx --test src/lib/conversation.test.ts` (77 passed). Existing Node `[DEP0205] module.register()` deprecation warning observed in focused tests.
-  commit: owner `c3a1d0654`
+  next_action: No immediate Runtime Capsule restart; pure frontend test fixture refactor with no intended product/runtime/protocol/schema/installed-state behavior change, to be delivered with the next Runtime Capsule batch.
+  validation: Owner resumed after Runtime Capsule restart `runtime-restart:call_T3IiLBOlK7vSEYrAON5JKZFM`, confirmed branch/worktree persisted, reran necessary checks, and completed a frontend test fixture cleanup across `Panels.test.tsx` and `conversation.test.ts`. Net owner diff before commit: `3 files changed, 308 insertions(+), 419 deletions(-)`, net -111 lines. Fixed reviewer `/self/owner_main/reviewer` approved with no blocking findings, confirming helper defaults preserve turn/sidebar semantics and no assertion weakening was found. Owner validation passed: `git diff --check -- .codex/pm-progress.md apps/root-worker-prototype/src/components/Panels.test.tsx apps/root-worker-prototype/src/lib/conversation.test.ts`; `pnpm exec prettier --check src/components/Panels.test.tsx src/lib/conversation.test.ts`; `pnpm exec tsx --test src/components/Panels.test.tsx` (24 passed); `pnpm exec tsx --test src/lib/conversation.test.ts` (77 passed). PM validation after merge passed: `git diff --check b0f28fe15..HEAD`; `pnpm --dir apps/root-worker-prototype exec prettier --check src/components/Panels.test.tsx src/lib/conversation.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Panels.test.tsx` (24 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed). Existing Node `[DEP0205] module.register()` deprecation warning observed in focused tests.
+  commit: owner `c3a1d0654`; progress `456cc950f`; merge `fca111acf`; pending capsule delivery
 
 - id: frontend-backend-large-code-organization
   status: merged_pending_capsule_delivery
