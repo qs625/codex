@@ -55,16 +55,16 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `4ddfb9113`; dispatch `1ecbd5d79`; merge `564894dd2`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-6
-  status: queued
+  status: dispatched
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-6
   task_type: continuous_frontend_backend_architecture_cleanup
-  depends_on: main after `564894dd2`; user asked for multiple continuous cleanup rounds
+  depends_on: main `bd77204e8`; user asked for multiple continuous cleanup rounds
   files: prefer a new untouched seam under `codex-rs/` or `apps/root-worker-prototype/`; avoid repeating thread_processor fixture cleanup or source assertion helper cleanup
-  base_commit: pending
-  next_action: Dispatch immediately after recording tranche 5; prioritize another high-yield coherent cleanup tranche with net code reduction.
+  base_commit: `bd77204e8`
+  next_action: Owner to implement another high-yield coherent cleanup tranche on a new untouched seam, avoiding thread_processor fixture and source assertion helper repeats.
   validation: pending
   commit: pending
 
