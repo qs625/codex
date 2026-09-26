@@ -82,6 +82,53 @@ const FEATURE_DEV_WORKFLOW: WorkflowSummary = {
   inputs: {},
 };
 
+const SOURCE_PATHS = {
+  agentTree: "./AgentTree.tsx",
+  app: "../App.tsx",
+  browserPanel: "./BrowserPanel.tsx",
+  panels: "./Panels.tsx",
+  rightPanel: "./RightPanel.tsx",
+  styles: "../styles.css",
+  terminalPanel: "./TerminalPanel.tsx",
+} as const;
+
+type SourceName = keyof typeof SOURCE_PATHS;
+type SourceMap<T extends SourceName> = { [K in T as `${K}Source`]: string };
+
+function readSource<T extends SourceName>(name: T): string {
+  return readFileSync(new URL(SOURCE_PATHS[name], import.meta.url), "utf8");
+}
+
+function readSources<T extends SourceName>(names: readonly T[]): SourceMap<T> {
+  return Object.fromEntries(
+    names.map((name) => [`${name}Source`, readSource(name)]),
+  ) as SourceMap<T>;
+}
+
+function sourceSlice(source: string, start: string, end: string): string {
+  return source.slice(source.indexOf(start), source.indexOf(end));
+}
+
+function assertMatches(source: string, patterns: RegExp[]): void {
+  for (const pattern of patterns) {
+    assert.match(source, pattern);
+  }
+}
+
+function assertDoesNotMatchAny(source: string, patterns: RegExp[]): void {
+  for (const pattern of patterns) {
+    assert.doesNotMatch(source, pattern);
+  }
+}
+
+function cssBlock(
+  stylesSource: string,
+  selector: string,
+  nextSelector: string,
+): string {
+  return sourceSlice(stylesSource, selector, nextSelector);
+}
+
 function makeThread(
   items: Thread["turns"][number]["items"],
   lifecycleStatus: ThreadLifecycleStatus = { type: "complete" },
@@ -126,9 +173,15 @@ function makeThread(
 function makeWorkflowProgressItem(
   kind: ThreadWorkflowRunProgressKind,
   overrides: Partial<
-    Extract<Thread["turns"][number]["items"][number], { type: "workflowRunProgress" }>["event"]
+    Extract<
+      Thread["turns"][number]["items"][number],
+      { type: "workflowRunProgress" }
+    >["event"]
   > = {},
-): Extract<Thread["turns"][number]["items"][number], { type: "workflowRunProgress" }> {
+): Extract<
+  Thread["turns"][number]["items"][number],
+  { type: "workflowRunProgress" }
+> {
   return {
     id: `workflow-${kind}-${overrides.runId ?? "wf_1"}`,
     type: "workflowRunProgress",
@@ -152,6 +205,7 @@ function renderRightPanel(
   options?: {
     filePanelView?: FilePanelView;
     fileTreeEntriesByPath?: Record<string, FileTreeEntry[]>;
+    fileTreeErrorsByPath?: Record<string, string>;
     expandedTreeDirectories?: string[];
     isCollapsed?: boolean;
     preview?: FilePreview | null;
@@ -172,7 +226,7 @@ function renderRightPanel(
         expandedTreeDirectories={options?.expandedTreeDirectories ?? []}
         filePanelView="preview"
         fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
-        fileTreeErrorsByPath={{}}
+        fileTreeErrorsByPath={options?.fileTreeErrorsByPath ?? {}}
         fileTreeLoadingPath={null}
         gitDiffPreview={null}
         gitDiffPreviewError={null}
@@ -201,7 +255,7 @@ function renderRightPanel(
       expandedTreeDirectories={options?.expandedTreeDirectories ?? []}
       filePanelView={options?.filePanelView ?? "preview"}
       fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
-      fileTreeErrorsByPath={{}}
+      fileTreeErrorsByPath={options?.fileTreeErrorsByPath ?? {}}
       fileTreeLoadingPath={null}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
@@ -231,6 +285,10 @@ function renderRightPanel(
   );
 }
 
+function renderPreviewPanel(options?: Parameters<typeof renderRightPanel>[3]) {
+  return renderRightPanel(makeThread([]), "preview", null, options);
+}
+
 function makePreview(overrides: Partial<FilePreview> = {}): FilePreview {
   return {
     path: "/tmp/README.md",
@@ -256,6 +314,109 @@ function makePreview(overrides: Partial<FilePreview> = {}): FilePreview {
   };
 }
 
+function makeTypescriptPreview(
+  overrides: Partial<FilePreview> = {},
+): FilePreview {
+  return makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+    ...overrides,
+  });
+}
+
+function makeMarkdownPreview(
+  overrides: Partial<FilePreview> = {},
+): FilePreview {
+  return makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+    ...overrides,
+  });
+}
+
+function makeImagePreview(overrides: Partial<FilePreview> = {}): FilePreview {
+  return makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+    ...overrides,
+  });
+}
+
+function makePdfPreview(overrides: Partial<FilePreview> = {}): FilePreview {
+  return makePreview({
+    path: "/tmp/spec.pdf",
+    displayPath: "spec.pdf",
+    content: "",
+    language: "pdf",
+    pdf: {
+      path: "/tmp/spec.pdf",
+      mimeType: "application/pdf",
+      name: "spec.pdf",
+      byteSize: 512,
+      url: "morpheus-file-preview://pdf/token-1/spec.pdf",
+    },
+    ...overrides,
+  });
+}
+
+function previewHeaderControlsVisible(
+  options: Partial<
+    Parameters<typeof filePreviewHeaderEditControlsVisible>[0]
+  > = {},
+) {
+  return filePreviewHeaderEditControlsVisible({
+    filePanelView: "preview",
+    preview: makeMarkdownPreview(),
+    previewError: null,
+    previewLoading: false,
+    ...options,
+  });
+}
+
+function previewOpenInBrowserVisible(
+  options: Partial<
+    Parameters<typeof filePreviewOpenInBrowserActionVisible>[0]
+  > = {},
+) {
+  return filePreviewOpenInBrowserActionVisible({
+    filePanelView: "preview",
+    preview: null,
+    previewError: null,
+    previewLoading: false,
+    ...options,
+  });
+}
+
+function makeRuntimeRestartProgress(
+  overrides: Partial<RuntimeRestartProgress> = {},
+): RuntimeRestartProgress {
+  return {
+    status: "active",
+    requestId: "restart-1",
+    originThreadId: "thread-1",
+    stage: "shuttingDownAppServer",
+    stageLabel: "Stopping app-server",
+    message: "Stopping the current app-server before switching capsules.",
+    reason: null,
+    activationId: "activation-1",
+    releaseId: "release-1",
+    updatedAtMs: 123,
+    ...overrides,
+  };
+}
+
 function makeGitCommit(
   graph: string,
   hash: string,
@@ -273,6 +434,36 @@ function makeGitCommit(
     author: "Author",
     relativeTime: "now",
   };
+}
+
+type GitDiffPreview = React.ComponentProps<typeof GitDiffPreviewPanel>["diff"];
+
+function makeGitDiffPreview(
+  overrides: Partial<GitDiffPreview> = {},
+): GitDiffPreview {
+  return {
+    available: true,
+    root: "/repo",
+    path: "src/App.tsx",
+    originalPath: null,
+    staged: false,
+    status: "M",
+    language: "typescript",
+    oldLabel: "Index",
+    newLabel: "Working tree",
+    oldContent: "",
+    newContent: "",
+    unifiedDiff: "",
+    error: null,
+    binary: false,
+    ...overrides,
+  };
+}
+
+function renderGitDiffPreview(diff: GitDiffPreview) {
+  return renderToStaticMarkup(
+    <GitDiffPreviewPanel diff={diff} error={null} loading={false} />,
+  );
 }
 
 function makeScheduleAgendaGroups() {
@@ -308,25 +499,63 @@ function makeScheduleAgendaGroups() {
   ];
 }
 
+function makeScheduleAgendaGroup(index: number) {
+  return makeScheduleAgendaGroups()[index]!;
+}
+
+function renderScheduleAgendaLayout(collapsed: boolean) {
+  return renderToStaticMarkup(
+    <ScheduleAgendaLayout
+      groups={makeScheduleAgendaGroups()}
+      collapsed={collapsed}
+      collapsedDateKeys={new Set()}
+      onToggleCollapsed={() => {}}
+      onToggleDateKey={() => {}}
+    />,
+  );
+}
+
+function renderScheduleAgendaDateGroup(index: number, collapsed: boolean) {
+  return renderToStaticMarkup(
+    <ScheduleAgendaDateGroup
+      group={makeScheduleAgendaGroup(index)}
+      collapsed={collapsed}
+      onToggle={() => {}}
+    />,
+  );
+}
+
 test("resolves markdown preview relative links from the current file directory", () => {
   assert.equal(
     resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "./other.md"),
     "/tmp/docs/other.md",
   );
   assert.equal(
-    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/guides/README.md", "../other.md"),
+    resolveMarkdownPreviewLocalFileTarget(
+      "/tmp/docs/guides/README.md",
+      "../other.md",
+    ),
     "/tmp/docs/other.md",
   );
   assert.equal(
-    resolveMarkdownPreviewLocalFileTarget("C:\\repo\\docs\\README.markdown", ".\\other.md"),
+    resolveMarkdownPreviewLocalFileTarget(
+      "C:\\repo\\docs\\README.markdown",
+      ".\\other.md",
+    ),
     "C:\\repo\\docs\\other.md",
   );
   assert.equal(
-    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "/tmp/other.md"),
+    resolveMarkdownPreviewLocalFileTarget(
+      "/tmp/docs/README.md",
+      "/tmp/other.md",
+    ),
     "/tmp/other.md",
   );
   assert.equal(
-    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "file:///tmp/other.md"),
+    resolveMarkdownPreviewLocalFileTarget(
+      "/tmp/docs/README.md",
+      "file:///tmp/other.md",
+    ),
     "file:///tmp/other.md",
   );
   assert.equal(
@@ -465,7 +694,10 @@ test("BrowserPanel workspace variant renders a minimal URL toolbar without manag
   assert.match(markup, /aria-label="Go forward"/);
   assert.match(markup, /aria-label="Reload"/);
   assert.match(markup, /aria-label="Workspace browser URL"/);
-  assert.doesNotMatch(markup, /aria-label="Workspace browser URL"[^>]*disabled/);
+  assert.doesNotMatch(
+    markup,
+    /aria-label="Workspace browser URL"[^>]*disabled/,
+  );
   assert.match(markup, /class="browser-go-button" disabled=""/);
   assert.doesNotMatch(markup, /browser-tab-strip/);
   assert.doesNotMatch(markup, /aria-label="New browser tab"/);
@@ -497,7 +729,8 @@ test("browser and terminal rail entries are real workspace drag sources", () => 
   assert.deepEqual(JSON.parse(writes[0]?.[1] ?? "{}"), { kind: "browser" });
   assert.deepEqual(
     readWorkspaceObjectDragData({
-      getData: (type: string) => (type === WORKSPACE_OBJECT_DRAG_TYPE ? "browser" : ""),
+      getData: (type: string) =>
+        type === WORKSPACE_OBJECT_DRAG_TYPE ? "browser" : "",
     }),
     { kind: "browser" },
   );
@@ -566,22 +799,17 @@ test("workspace object drag data carries concrete browser and terminal tab ident
 });
 
 test("detached workspace objects are hidden from the right panel until their workspace tab closes", () => {
-  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const rightPanelSource = readFileSync(
-    new URL("./RightPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  const browserPanelSource = readFileSync(
-    new URL("./BrowserPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  const terminalPanelSource = readFileSync(
-    new URL("./TerminalPanel.tsx", import.meta.url),
-    "utf8",
-  );
+  const { appSource, browserPanelSource, terminalPanelSource } = readSources([
+    "app",
+    "browserPanel",
+    "terminalPanel",
+  ]);
   const detachedOwnershipSource = appSource.slice(
     appSource.indexOf("const detachedWorkspaceBrowserTabIds = useMemo"),
-    appSource.indexOf("return (", appSource.indexOf("const detachedWorkspaceBrowserTabIds = useMemo")),
+    appSource.indexOf(
+      "return (",
+      appSource.indexOf("const detachedWorkspaceBrowserTabIds = useMemo"),
+    ),
   );
 
   assert.match(
@@ -615,19 +843,12 @@ test("detached workspace objects are hidden from the right panel until their wor
 });
 
 test("workspace Browser and Terminal tabs can be returned to the right panel", () => {
-  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const rightPanelSource = readFileSync(
-    new URL("./RightPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  const browserPanelSource = readFileSync(
-    new URL("./BrowserPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  const terminalPanelSource = readFileSync(
-    new URL("./TerminalPanel.tsx", import.meta.url),
-    "utf8",
-  );
+  const {
+    appSource,
+    rightPanelSource,
+    browserPanelSource,
+    terminalPanelSource,
+  } = readSources(["app", "rightPanel", "browserPanel", "terminalPanel"]);
 
   assert.match(
     appSource,
@@ -649,11 +870,26 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
     appSource,
     /function handleReturnWorkspaceObjectToRightPanel[\s\S]*payload\.kind === "terminal"[\s\S]*item\.terminalTabId === payload\.terminalTabId[\s\S]*closeWorkspaceTab\(tab\.id\)[\s\S]*setRightPanelView\("terminal"\)[\s\S]*setRightPanelTerminalTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.terminalTabId/,
   );
-  assert.match(appSource, /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/);
-  assert.match(appSource, /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/);
-  assert.match(appSource, /setRightPanelBrowserTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.browserTabId,[\s\S]*token: \(current\?\.token \?\? 0\) \+ 1/);
-  assert.match(appSource, /setRightPanelTerminalTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.terminalTabId,[\s\S]*token: \(current\?\.token \?\? 0\) \+ 1/);
-  assert.match(appSource, /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/);
+  assert.match(
+    appSource,
+    /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/,
+  );
+  assert.match(
+    appSource,
+    /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/,
+  );
+  assert.match(
+    appSource,
+    /setRightPanelBrowserTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.browserTabId,[\s\S]*token: \(current\?\.token \?\? 0\) \+ 1/,
+  );
+  assert.match(
+    appSource,
+    /setRightPanelTerminalTabFocusRequest\(\(current\) => \(\{[\s\S]*tabId: payload\.terminalTabId,[\s\S]*token: \(current\?\.token \?\? 0\) \+ 1/,
+  );
+  assert.match(
+    appSource,
+    /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/,
+  );
   assert.match(
     rightPanelSource,
     /function getReturnableWorkspaceObject[\s\S]*view: RightPanelView \| null = null[\s\S]*payload\.kind !== "browser" && payload\.kind !== "terminal"[\s\S]*view != null && payload\.kind !== workspaceObjectKindForView\(view\)[\s\S]*return payload;/,
@@ -666,12 +902,18 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
     rightPanelSource,
     /className=\{`panel-rail-button[\s\S]*onDragOver=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDragOver\(event, item\.view\)[\s\S]*onDrop=\{\(event\) =>[\s\S]*handleWorkspaceObjectReturnDrop\(event, item\.view\)/,
   );
-  assert.match(browserPanelSource, /focusBrowserTabRequest\?: \{ tabId: string; token: number \} \| null/);
+  assert.match(
+    browserPanelSource,
+    /focusBrowserTabRequest\?: \{ tabId: string; token: number \} \| null/,
+  );
   assert.match(
     browserPanelSource,
     /!renderedTabs\.some\(\(tab\) => tab\.id === focusBrowserTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusBrowserTabRequest\.tabId === state\.activeTabId[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*currentBrowserPanelApi\(\)[\s\S]*lastBrowserTabFocusRequestTokenRef\.current = focusBrowserTabRequest\.token;[\s\S]*selectBrowserTab\(focusBrowserTabRequest\.tabId\)/,
   );
-  assert.match(terminalPanelSource, /focusTerminalTabRequest\?: \{ tabId: string; token: number \} \| null/);
+  assert.match(
+    terminalPanelSource,
+    /focusTerminalTabRequest\?: \{ tabId: string; token: number \} \| null/,
+  );
   assert.match(
     terminalPanelSource,
     /!visibleTabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusTerminalTabRequest\.tabId === state\.activeTabId[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*selectTerminalTab\(focusTerminalTabRequest\.tabId\)/,
@@ -728,11 +970,10 @@ test("browserBoundsMatch ignores sequence and detects layout movement", () => {
 });
 
 test("browser native view hides under app overlays and restores with measured bounds", () => {
-  const browserPanelSource = readFileSync(
-    new URL("./BrowserPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  const { appSource, browserPanelSource } = readSources([
+    "app",
+    "browserPanel",
+  ]);
 
   assert.match(
     browserPanelSource,
@@ -775,7 +1016,10 @@ test("browser native view hides under app overlays and restores with measured bo
     /await showNativeBrowserView\(browserApi\);[\s\S]*await browserApi\.navigateBrowserView\(\{[\s\S]*target: normalized\.url,[\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: activeTab\?\.id \?\? null/,
   );
   const showBranch = browserPanelSource.slice(
-    browserPanelSource.indexOf("} else {", browserPanelSource.indexOf("if (shouldHideNativeView)")),
+    browserPanelSource.indexOf(
+      "} else {",
+      browserPanelSource.indexOf("if (shouldHideNativeView)"),
+    ),
     browserPanelSource.indexOf("scheduleBoundsUpdate();"),
   );
   assert.doesNotMatch(showBranch, /lastSentBounds = bounds/);
@@ -870,10 +1114,7 @@ test("browser tab helpers preserve active tab state and readable labels", () => 
 });
 
 test("browser panel header stays product chrome while tabs use page titles", () => {
-  const browserPanelSource = readFileSync(
-    new URL("./BrowserPanel.tsx", import.meta.url),
-    "utf8",
-  );
+  const browserPanelSource = readSource("browserPanel");
   const baiduTab = {
     id: "tab-baidu",
     url: "https://www.baidu.com/",
@@ -888,7 +1129,10 @@ test("browser panel header stays product chrome while tabs use page titles", () 
   assert.equal(labels.headerTitle, "Browser");
   assert.equal(labels.activeTabTitle, "百度一下，你就知道");
   assert.equal(browserTabLabel(baiduTab), "百度一下，你就知道");
-  assert.match(browserPanelSource, /<h2>\{panelChromeLabels\.headerTitle\}<\/h2>/);
+  assert.match(
+    browserPanelSource,
+    /<h2>\{panelChromeLabels\.headerTitle\}<\/h2>/,
+  );
   assert.match(
     browserPanelSource,
     /<span className="browser-tab-title">\{browserTabLabel\(tab\)\}<\/span>/,
@@ -911,7 +1155,10 @@ test("browser successful state clears stale local errors", () => {
     ],
   });
 
-  assert.equal(shouldClearBrowserLocalError(state, state.tabs[0] ?? null), true);
+  assert.equal(
+    shouldClearBrowserLocalError(state, state.tabs[0] ?? null),
+    true,
+  );
 });
 
 test("browser real tab error keeps local error visible", () => {
@@ -930,7 +1177,10 @@ test("browser real tab error keeps local error visible", () => {
     ],
   });
 
-  assert.equal(shouldClearBrowserLocalError(state, state.tabs[0] ?? null), false);
+  assert.equal(
+    shouldClearBrowserLocalError(state, state.tabs[0] ?? null),
+    false,
+  );
 });
 
 test("browser API detection requires tab actions", () => {
@@ -1270,153 +1520,124 @@ test("rejects stale terminal focus requests from another thread", () => {
 });
 
 test("workspace conversation tabs use concrete thread labels and preserve layout affordances", () => {
-  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const rightPanelSource = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
-  const browserPanelSource = readFileSync(new URL("./BrowserPanel.tsx", import.meta.url), "utf8");
-  const terminalPanelSource = readFileSync(new URL("./TerminalPanel.tsx", import.meta.url), "utf8");
-  const panelsSource = readFileSync(new URL("./Panels.tsx", import.meta.url), "utf8");
-  const agentTreeSource = readFileSync(new URL("./AgentTree.tsx", import.meta.url), "utf8");
-  const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
-  const cssBlock = (selector: string, nextSelector: string) =>
-    stylesSource.slice(stylesSource.indexOf(selector), stylesSource.indexOf(nextSelector));
+  const {
+    appSource,
+    rightPanelSource,
+    browserPanelSource,
+    terminalPanelSource,
+    panelsSource,
+    agentTreeSource,
+    stylesSource,
+  } = readSources([
+    "app",
+    "rightPanel",
+    "browserPanel",
+    "terminalPanel",
+    "panels",
+    "agentTree",
+    "styles",
+  ]);
 
-  assert.match(appSource, /workspaceTabForThread/);
-  assert.match(appSource, /workspaceTabForFile/);
-  assert.match(appSource, /workspaceTabForBrowser/);
-  assert.match(appSource, /workspaceTabForTerminal/);
-  assert.match(appSource, /browserWorkspaceTabId\(tab\?\.browserTabId/);
-  assert.match(appSource, /terminalWorkspaceTabId\(tab\?\.terminalTabId/);
-  assert.match(appSource, /browserTabId: tab\?\.browserTabId/);
-  assert.match(appSource, /terminalTabId: tab\?\.terminalTabId/);
-  assert.match(appSource, /readWorkspaceObjectDragData\(event\.dataTransfer\)/);
-  assert.match(appSource, /aria-label="Workspace object tabs"/);
-  assert.match(appSource, /getWorkspaceTabThread/);
-  assert.match(appSource, /getRootThreadConversationTitle\(thread\)/);
-  assert.match(appSource, /getAgentRoleLabel\(thread\)/);
-  assert.match(appSource, /isRootThread\(thread\)[\s\S]*\? getAgentRoleLabel\(thread\)[\s\S]*: getThreadPresenceLabel\(thread\)/);
-  assert.match(appSource, /getThreadPath\(thread\)/);
-  assert.match(appSource, /storedWorkspaceTabOrderRef/);
-  assert.match(appSource, /applyStoredWorkspaceTabOrder\([\s\S]*storedWorkspaceTabOrderRef\.current/);
-  assert.doesNotMatch(appSource, /storeWorkspaceTabOrder\(workspaceTabs/);
-  assert.match(appSource, /storedWorkspaceTabOrderRef\.current = storeWorkspaceTabOrder/);
-  assert.match(appSource, /current\.flatMap\(\(tab\) =>/);
-  assert.match(appSource, /return thread \? \[workspaceTabForThread\(thread\)\] : \[\]/);
-  assert.match(appSource, /current\.map\(\(item\) => \(item\.id === tab\.id \? tab : item\)\)/);
-  assert.match(appSource, /function openConversationWorkspaceTab\(threadId: string\)/);
-  assert.match(appSource, /openConversationWorkspaceTab\(threadId\);[\s\S]*setSelectedThreadId\(threadId\);/);
-  assert.match(appSource, /useEffect\(\(\) => \{\s*if \(selectedThreadId\)/);
-  assert.doesNotMatch(appSource, /setActiveWorkspaceTabId\(tab\.id\);\s*\}, \[selectedThread\]\)/);
-  assert.match(appSource, /workspaceTabs\.some\(\(tab\) => tab\.id === current\)/);
-  assert.match(appSource, /threads\.some\(\(thread\) => thread\.id === tab\.threadId\)/);
-  assert.match(appSource, /const tabThread = getWorkspaceTabThread\(tab, threads\)/);
-  assert.match(appSource, /workspace-tab-dot \$\{threadDisplayStatusClass\(tabThread\)\}/);
-  assert.doesNotMatch(appSource, /workspace-tab-dot \$\{tab\.kind\}/);
-  assert.match(appSource, /closeWorkspaceTabById\(currentTabs, tabId\)/);
-  assert.match(
-    appSource,
+  assertMatches(appSource, [
+    /workspaceTabForThread/,
+    /workspaceTabForFile/,
+    /workspaceTabForBrowser/,
+    /workspaceTabForTerminal/,
+    /browserWorkspaceTabId\(tab\?\.browserTabId/,
+    /terminalWorkspaceTabId\(tab\?\.terminalTabId/,
+    /browserTabId: tab\?\.browserTabId/,
+    /terminalTabId: tab\?\.terminalTabId/,
+    /readWorkspaceObjectDragData\(event\.dataTransfer\)/,
+    /aria-label="Workspace object tabs"/,
+    /getWorkspaceTabThread/,
+    /getRootThreadConversationTitle\(thread\)/,
+    /getAgentRoleLabel\(thread\)/,
+    /isRootThread\(thread\)[\s\S]*\? getAgentRoleLabel\(thread\)[\s\S]*: getThreadPresenceLabel\(thread\)/,
+    /getThreadPath\(thread\)/,
+    /storedWorkspaceTabOrderRef/,
+    /applyStoredWorkspaceTabOrder\([\s\S]*storedWorkspaceTabOrderRef\.current/,
+    /storedWorkspaceTabOrderRef\.current = storeWorkspaceTabOrder/,
+    /current\.flatMap\(\(tab\) =>/,
+    /return thread \? \[workspaceTabForThread\(thread\)\] : \[\]/,
+    /current\.map\(\(item\) => \(item\.id === tab\.id \? tab : item\)\)/,
+    /function openConversationWorkspaceTab\(threadId: string\)/,
+    /openConversationWorkspaceTab\(threadId\);[\s\S]*setSelectedThreadId\(threadId\);/,
+    /useEffect\(\(\) => \{\s*if \(selectedThreadId\)/,
+    /workspaceTabs\.some\(\(tab\) => tab\.id === current\)/,
+    /threads\.some\(\(thread\) => thread\.id === tab\.threadId\)/,
+    /const tabThread = getWorkspaceTabThread\(tab, threads\)/,
+    /workspace-tab-dot \$\{threadDisplayStatusClass\(tabThread\)\}/,
+    /closeWorkspaceTabById\(currentTabs, tabId\)/,
     /event\.stopPropagation\(\);\s*closeWorkspaceTab\(tab\.id, \{ closeOwnedBrowserTab: true \}\)/,
-  );
-  assert.match(appSource, /async function openFilePathInWorkspace\(target: string\)/);
-  assert.match(appSource, /return \{ preview, rootId: requestRootId \}/);
-  assert.match(appSource, /const result = await loadFilePreview\(target, \{ preserveRightPanel: true \}\)/);
-  assert.match(appSource, /workspaceTabForFile\(result\.preview, result\.rootId\)/);
-  assert.doesNotMatch(appSource, /workspaceTabForFile\(preview, selectedTreeRootIdRef\.current\)/);
-  assert.match(appSource, /title: displayPath\.split\("\/"\)\.filter\(Boolean\)\.at\(-1\) \?\? displayPath/);
-  assert.match(appSource, /kind: "terminal",[\s\S]*title: "Terminal"/);
-  assert.doesNotMatch(appSource, /<span className="workspace-tab-subtitle">/);
-  assert.match(appSource, /filePanelView="preview"/);
-  assert.match(appSource, /\[target\]: payload\.entries/);
-  assert.match(appSource, /\[payload\.path\]: payload\.entries/);
-  assert.doesNotMatch(appSource, /filePanelViewRef/);
-  assert.doesNotMatch(appSource, /filePanelViewRef\.current === "tree"/);
-  assert.match(
-    appSource,
+    /async function openFilePathInWorkspace\(target: string\)/,
+    /return \{ preview, rootId: requestRootId \}/,
+    /const result = await loadFilePreview\(target, \{ preserveRightPanel: true \}\)/,
+    /workspaceTabForFile\(result\.preview, result\.rootId\)/,
+    /title: displayPath\.split\("\/"\)\.filter\(Boolean\)\.at\(-1\) \?\? displayPath/,
+    /kind: "terminal",[\s\S]*title: "Terminal"/,
+    /filePanelView="preview"/,
+    /\[target\]: payload\.entries/,
+    /\[payload\.path\]: payload\.entries/,
     /setExpandedTreeDirectories\(\[\]\);[\s\S]*if \(rightPanelView === "preview" && selectedThread\?\.cwd\) \{[\s\S]*loadFileTreeDirectory\(selectedThread\.cwd\)/,
-  );
-  assert.match(
-    appSource,
     /const previousRightPanelViewRef = useRef<RightPanelView>\(rightPanelView\)/,
-  );
-  assert.match(
-    appSource,
     /useEffect\(\(\) => \{[\s\S]*const previousRightPanelView = previousRightPanelViewRef\.current;[\s\S]*previousRightPanelViewRef\.current = rightPanelView;[\s\S]*previousRightPanelView !== "preview"[\s\S]*rightPanelView === "preview"[\s\S]*ensureFileTreeDirectoryLoaded\(selectedThread\.cwd\)/,
-  );
-  assert.doesNotMatch(
-    appSource,
-    /function handleSetRightPanelView\(view: RightPanelView\) \{[\s\S]*ensureFileTreeDirectoryLoaded\(selectedThread\.cwd\)[\s\S]*if \(activeWorkspaceTab\?\.kind === "browser"/,
-  );
-  assert.match(appSource, /fileTreeEntriesByPath\[target\] \|\| fileTreeLoadingPath === target/);
-  assert.match(appSource, /function handleOpenTreeFile\(target: string\) \{[\s\S]*openFilePathInWorkspace\(target\)/);
-  assert.match(appSource, /if \(rightPanelView === "preview"\) \{[\s\S]*setRightPanelView\("skills"\)/);
-  assert.match(appSource, /activeWorkspaceTab\?\.kind !== "file"/);
-  assert.match(appSource, /activeWorkspaceTab\?\.kind !== "browser"/);
-  assert.match(appSource, /activeWorkspaceTab\?\.kind !== "terminal"/);
-  assert.match(appSource, /const activeTerminalThread =/);
-  assert.match(appSource, /thread=\{activeTerminalThread\}/);
-  assert.match(
-    appSource,
+    /fileTreeEntriesByPath\[target\] \|\| fileTreeLoadingPath === target/,
+    /function handleOpenTreeFile\(target: string\) \{[\s\S]*openFilePathInWorkspace\(target\)/,
+    /if \(rightPanelView === "preview"\) \{[\s\S]*setRightPanelView\("skills"\)/,
+    /activeWorkspaceTab\?\.kind !== "file"/,
+    /activeWorkspaceTab\?\.kind !== "browser"/,
+    /activeWorkspaceTab\?\.kind !== "terminal"/,
+    /const activeTerminalThread =/,
+    /thread=\{activeTerminalThread\}/,
     /activeWorkspaceTab\?\.kind === "browser"[\s\S]*<BrowserPanel[\s\S]*variant="workspace"[\s\S]*activeBrowserTabId=\{activeWorkspaceTab\.browserTabId \?\? null\}/,
-  );
-  assert.match(
-    appSource,
     /activeWorkspaceTab\?\.kind === "terminal"[\s\S]*<TerminalPanel[\s\S]*variant="workspace"[\s\S]*activeTerminalTabId=\{activeWorkspaceTab\.terminalTabId \?\? null\}/,
-  );
-  assert.match(appSource, /function gitDiffWorkspaceTabId\(targetId: string\)/);
-  assert.match(appSource, /function workspaceTabForGitDiff\(state: GitDiffPreviewState\)/);
-  assert.match(appSource, /kind: "diff"/);
-  assert.match(appSource, /gitDiffWorkspaceStateById/);
-  assert.match(appSource, /onGitDiffPreviewChange=\{handleGitDiffPreviewChange\}/);
-  assert.match(
-    appSource,
+    /function gitDiffWorkspaceTabId\(targetId: string\)/,
+    /function workspaceTabForGitDiff\(state: GitDiffPreviewState\)/,
+    /kind: "diff"/,
+    /gitDiffWorkspaceStateById/,
+    /onGitDiffPreviewChange=\{handleGitDiffPreviewChange\}/,
     /if \(state\.loading \|\| workspaceTabsRef\.current\.some\(\(item\) => item\.id === tab\.id\)\) \{[\s\S]*upsertWorkspaceObjectTab\(tab, \{ activate: state\.loading \}\)/,
-  );
-  assert.match(
-    appSource,
     /activeWorkspaceTab\?\.kind === "diff"[\s\S]*<GitDiffPreviewPanel[\s\S]*diff=\{activeWorkspaceDiffState\.diff\}/,
-  );
-  assert.match(
-    appSource,
     /activeWorkspaceTab\?\.kind !== "file"[\s\S]*<FilePreviewPanel[\s\S]*variant="workspace"[\s\S]*gitDiffPreview=\{null\}/,
-  );
-  const workspaceBrowserPanelSource = appSource.slice(
-    appSource.indexOf('activeWorkspaceTab?.kind === "browser"'),
-    appSource.indexOf('activeWorkspaceTab?.kind === "terminal"'),
-  );
-  assert.doesNotMatch(workspaceBrowserPanelSource, /rightPanelView/);
-  assert.doesNotMatch(workspaceBrowserPanelSource, /effectiveActiveView/);
-  assert.doesNotMatch(
+  ]);
+  assertDoesNotMatchAny(appSource, [
+    /storeWorkspaceTabOrder\(workspaceTabs/,
+    /setActiveWorkspaceTabId\(tab\.id\);\s*\}, \[selectedThread\]\)/,
+    /workspace-tab-dot \$\{tab\.kind\}/,
+    /workspaceTabForFile\(preview, selectedTreeRootIdRef\.current\)/,
+    /<span className="workspace-tab-subtitle">/,
+    /filePanelViewRef/,
+    /filePanelViewRef\.current === "tree"/,
+    /function handleSetRightPanelView\(view: RightPanelView\) \{[\s\S]*ensureFileTreeDirectoryLoaded\(selectedThread\.cwd\)[\s\S]*if \(activeWorkspaceTab\?\.kind === "browser"/,
+  ]);
+  const workspaceBrowserPanelSource = sourceSlice(
     appSource,
+    'activeWorkspaceTab?.kind === "browser"',
+    'activeWorkspaceTab?.kind === "terminal"',
+  );
+  assertDoesNotMatchAny(workspaceBrowserPanelSource, [
+    /rightPanelView/,
+    /effectiveActiveView/,
+  ]);
+  assertDoesNotMatchAny(appSource, [
     /function openBrowserInWorkspace[\s\S]*setRightPanelView\("skills"\)/,
-  );
-  assert.doesNotMatch(
-    appSource,
     /function openTerminalInWorkspace[\s\S]*setRightPanelView\("skills"\)/,
-  );
-  assert.doesNotMatch(appSource, /setRightPanelViewWithWorkspaceFallback/);
-  assert.match(appSource, /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\[workspaceTabs\]/);
-  assert.match(appSource, /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\[workspaceTabs\]/);
-  assert.match(appSource, /detachedBrowserTabIds=\{detachedWorkspaceBrowserTabIds\}/);
-  assert.match(appSource, /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/);
-  assert.match(appSource, /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/);
-  assert.match(appSource, /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/);
-  assert.doesNotMatch(appSource, /browserNativeViewSuppressed/);
-  assert.match(appSource, /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/);
-  assert.match(
-    appSource,
+    /setRightPanelViewWithWorkspaceFallback/,
+    /browserNativeViewSuppressed/,
+  ]);
+  assertMatches(appSource, [
+    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\[workspaceTabs\]/,
+    /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\[workspaceTabs\]/,
+    /detachedBrowserTabIds=\{detachedWorkspaceBrowserTabIds\}/,
+    /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/,
+    /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/,
+    /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/,
+    /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/,
     /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelView\("browser"\)/,
-  );
-  assert.match(
-    appSource,
     /function closeWorkspaceTab\([\s\S]*options: \{ closeOwnedBrowserTab\?: boolean \} = \{\}[\s\S]*options\.closeOwnedBrowserTab[\s\S]*closingTab\?\.kind === "browser"[\s\S]*window\.codexDesktop[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
-  );
-  assert.match(
-    appSource,
     /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id, \{ closeOwnedBrowserTab: true \}\);[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id, \{ closeOwnedBrowserTab: true \}\);/,
-  );
-  assert.match(
-    appSource,
     /function handleReturnWorkspaceObjectToRightPanel\([\s\S]*payload\.kind === "browser"[\s\S]*closeWorkspaceTab\(tab\.id\);[\s\S]*setRightPanelView\("browser"\)[\s\S]*setRightPanelBrowserTabFocusRequest/,
-  );
+  ]);
   assert.doesNotMatch(
     appSource.slice(
       appSource.indexOf("function handleReturnWorkspaceObjectToRightPanel"),
@@ -1424,316 +1645,331 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     ),
     /closeOwnedBrowserTab/,
   );
-  assert.match(
-    appSource,
+  assertMatches(appSource, [
     /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelView\("terminal"\)/,
-  );
-  assert.match(appSource, /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/);
-  assert.match(appSource, /function lazyRightPanelComponent\(exportName: LazyRightPanelExport\)/);
-  assert.match(appSource, /await import\("\.\/components\/RightPanel"\)/);
-  assert.match(appSource, /const RightPanel = lazyRightPanelComponent\("RightPanel"\)/);
-  assert.match(appSource, /<Suspense[\s\S]*Loading panel\.\.\.[\s\S]*<RightPanel/);
+    /onOpenWorkspaceObject=\{openRightPanelObjectInWorkspace\}/,
+    /function lazyRightPanelComponent\(exportName: LazyRightPanelExport\)/,
+    /await import\("\.\/components\/RightPanel"\)/,
+    /const RightPanel = lazyRightPanelComponent\("RightPanel"\)/,
+    /<Suspense[\s\S]*Loading panel\.\.\.[\s\S]*<RightPanel/,
+  ]);
   assert.deepEqual(
-    appSource.match(/^import\s+\{[^}]*\}\s+from "\.\/components\/RightPanel";/gm),
-    ['import {\n  type GitDiffPreviewState,\n} from "./components/RightPanel";'],
+    appSource.match(
+      /^import\s+\{[^}]*\}\s+from "\.\/components\/RightPanel";/gm,
+    ),
+    [
+      'import {\n  type GitDiffPreviewState,\n} from "./components/RightPanel";',
+    ],
   );
   assert.doesNotMatch(appSource, /^import "\.\/components\/RightPanel";/m);
-  assert.match(appSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
-  assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
-  assert.match(appSource, /revealThreadInSidebarState\(\{/);
-  assert.match(appSource, /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/);
-  assert.match(
-    appSource,
+  assertMatches(appSource, [
+    /hasWorkspaceObjectDragData\(event\.dataTransfer\)/,
+    /const PANEL_RESIZER_WIDTH = 4/,
+    /revealThreadInSidebarState\(\{/,
+    /touchedProjectCollapseIdsRef\.current\.add\(next\.expandedProjectId\)/,
     /const conversationCells = useMemo\(\(\) => \{[\s\S]*buildConversationState\([\s\S]*selectedThread[\s\S]*filterConversationCellsForDisplay\(nextConversationState\.cells\);[\s\S]*\}, \[selectedThread\]\);/,
-  );
-  assert.match(rightPanelSource, /type WorkspaceOpenableRightPanelObject/);
-  assert.doesNotMatch(rightPanelSource, /panel-eyebrow/);
-  assert.doesNotMatch(rightPanelSource, /preview-mode-toggle/);
-  assert.doesNotMatch(rightPanelSource, /Context mix/);
-  assert.doesNotMatch(rightPanelSource, /aria-label="Show current file"/);
-  assert.doesNotMatch(rightPanelSource, /aria-label="Show file tree"/);
-  assert.doesNotMatch(rightPanelSource, /file-object-toolbar/);
-  assert.match(rightPanelSource, /draggable=\{workspaceObjectKindForView\(item\.view\) != null\}/);
-  assert.match(rightPanelSource, /writeWorkspaceObjectDragData\(event\.dataTransfer, kind\)/);
-  assert.match(rightPanelSource, /onOpenWorkspaceObject\?\.\(kind\)/);
-  assert.match(rightPanelSource, /hasWorkspaceObjectDragData\(event\.dataTransfer\)/);
-  assert.match(browserPanelSource, /browserTabDragPayload/);
-  assert.match(browserPanelSource, /browserTabId: tab\.id/);
-  assert.match(browserPanelSource, /onOpenBrowserTabInWorkspace/);
-  assert.match(rightPanelSource, /detachedBrowserTabIds\?: string\[\]/);
-  assert.match(rightPanelSource, /detachedTerminalTabIds\?: string\[\]/);
-  assert.match(rightPanelSource, /onReturnWorkspaceObject\?: \(payload: WorkspaceObjectDragPayload\) => void/);
-  assert.match(browserPanelSource, /activeBrowserTabId\?: string \| null/);
-  assert.match(rightPanelSource, /browserTabFocusRequest\?: \{ tabId: string; token: number \} \| null/);
-  assert.doesNotMatch(rightPanelSource, /browserNativeViewSuppressed\?: boolean/);
-  assert.doesNotMatch(rightPanelSource, /suppressNativeView/);
-  assert.match(rightPanelSource, /terminalTabFocusRequest\?: \{ tabId: string; token: number \} \| null/);
+  ]);
+  assertMatches(rightPanelSource, [
+    /type WorkspaceOpenableRightPanelObject/,
+    /draggable=\{workspaceObjectKindForView\(item\.view\) != null\}/,
+    /writeWorkspaceObjectDragData\(event\.dataTransfer, kind\)/,
+    /onOpenWorkspaceObject\?\.\(kind\)/,
+    /hasWorkspaceObjectDragData\(event\.dataTransfer\)/,
+    /detachedBrowserTabIds\?: string\[\]/,
+    /detachedTerminalTabIds\?: string\[\]/,
+    /onReturnWorkspaceObject\?: \(payload: WorkspaceObjectDragPayload\) => void/,
+    /browserTabFocusRequest\?: \{ tabId: string; token: number \} \| null/,
+    /terminalTabFocusRequest\?: \{ tabId: string; token: number \} \| null/,
+    /detachedBrowserTabIds=\{detachedBrowserTabIds\}/,
+    /detachedTerminalTabIds=\{detachedTerminalTabIds\}/,
+  ]);
+  assertDoesNotMatchAny(rightPanelSource, [
+    /panel-eyebrow/,
+    /preview-mode-toggle/,
+    /Context mix/,
+    /aria-label="Show current file"/,
+    /aria-label="Show file tree"/,
+    /file-object-toolbar/,
+    /browserNativeViewSuppressed\?: boolean/,
+    /suppressNativeView/,
+  ]);
+  assertMatches(browserPanelSource, [
+    /browserTabDragPayload/,
+    /browserTabId: tab\.id/,
+    /onOpenBrowserTabInWorkspace/,
+    /activeBrowserTabId\?: string \| null/,
+    /variant = "manager"/,
+    /variant\?: "manager" \| "workspace"/,
+  ]);
   assert.match(terminalPanelSource, /activeTerminalTabId\?: string \| null/);
-  assert.match(rightPanelSource, /detachedBrowserTabIds=\{detachedBrowserTabIds\}/);
-  assert.match(rightPanelSource, /detachedTerminalTabIds=\{detachedTerminalTabIds\}/);
-  assert.match(browserPanelSource, /variant = "manager"/);
-  assert.match(browserPanelSource, /variant\?: "manager" \| "workspace"/);
-  const browserSelectionSource = browserPanelSource.slice(
-    browserPanelSource.indexOf("export function resolveBrowserPanelTabSelection"),
-    browserPanelSource.indexOf("export function BrowserPanel"),
+  const browserSelectionSource = sourceSlice(
+    browserPanelSource,
+    "export function resolveBrowserPanelTabSelection",
+    "export function BrowserPanel",
   );
   const selectForSurfaceSource = browserPanelSource.slice(
     browserPanelSource.indexOf("const selectBrowserTabForSurfaceIfNeeded"),
-    browserPanelSource.indexOf("useEffect(() => {", browserPanelSource.indexOf("const selectBrowserTabForSurfaceIfNeeded")),
+    browserPanelSource.indexOf(
+      "useEffect(() => {",
+      browserPanelSource.indexOf("const selectBrowserTabForSurfaceIfNeeded"),
+    ),
   );
   const navigationRequestSource = browserPanelSource.slice(
     browserPanelSource.indexOf("if (!navigationRequest)"),
-    browserPanelSource.indexOf("}, [", browserPanelSource.indexOf("if (!navigationRequest)")),
+    browserPanelSource.indexOf(
+      "}, [",
+      browserPanelSource.indexOf("if (!navigationRequest)"),
+    ),
   );
   const focusBrowserRequestSource = browserPanelSource.slice(
-    browserPanelSource.lastIndexOf("useEffect(() => {", browserPanelSource.indexOf("!focusBrowserTabRequest")),
-    browserPanelSource.indexOf("}, [", browserPanelSource.indexOf("!focusBrowserTabRequest")),
+    browserPanelSource.lastIndexOf(
+      "useEffect(() => {",
+      browserPanelSource.indexOf("!focusBrowserTabRequest"),
+    ),
+    browserPanelSource.indexOf(
+      "}, [",
+      browserPanelSource.indexOf("!focusBrowserTabRequest"),
+    ),
   );
-  const navigateSource = browserPanelSource.slice(
-    browserPanelSource.indexOf("const navigate = () => {"),
-    browserPanelSource.indexOf("const runCommand = ("),
-  );
-  const runCommandSource = browserPanelSource.slice(
-    browserPanelSource.indexOf("const runCommand = ("),
-    browserPanelSource.indexOf("const createTab = () => {"),
-  );
-  const createTabSource = browserPanelSource.slice(
-    browserPanelSource.indexOf("const createTab = () => {"),
-    browserPanelSource.indexOf("const selectTab = ("),
-  );
-  const managerNewTabButtonSource = browserPanelSource.slice(
-    browserPanelSource.indexOf("browser-new-tab-button"),
-    browserPanelSource.indexOf("{activeTab ? ("),
-  );
-  const surfaceApplySource = browserPanelSource.slice(
-    browserPanelSource.indexOf("const applyBrowserState ="),
-    browserPanelSource.indexOf("const showNativeBrowserView ="),
-  );
-  const managerChromeSource = browserPanelSource.slice(
-    browserPanelSource.indexOf("{isManagerVariant ? ("),
-    browserPanelSource.indexOf("{!isManagerVariant ? ("),
-  );
-  assert.match(browserPanelSource, /function resolveBrowserPanelTabSelection/);
-  assert.match(browserSelectionSource, /const detachedBrowserTabIdSet = new Set\(detachedBrowserTabIds\)/);
-  assert.match(browserSelectionSource, /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/);
-  assert.match(browserSelectionSource, /managerSelectedBrowserTabId \?\? activeTabId/);
-  assert.match(browserPanelSource, /resolveBrowserPanelTabSelection\(\{/);
-  assert.match(browserPanelSource, /activeTabId: state\.activeTabId/);
-  assert.match(browserPanelSource, /managerSelectedBrowserTabId/);
-  assert.match(browserPanelSource, /const tabs = useMemo\(/);
-  assert.match(browserPanelSource, /const \{[\s\S]*renderedTabs,[\s\S]*activeTab,[\s\S]*managerHasDetachedTabs,[\s\S]*managerActiveTabDetached,[\s\S]*\} = useMemo\(/);
-  assert.match(browserPanelSource, /const browserTabDragPayload = useCallback\(/);
-  assert.doesNotMatch(rightPanelSource, /nativeViewSuppressed/);
-  assert.doesNotMatch(browserPanelSource, /nativeViewSuppressed/);
-  assert.match(browserPanelSource, /const managerNativeViewBlocked =\s*managerActiveTabDetached \|\|/);
-  assert.match(browserPanelSource, /managerHasDetachedTabs && activeTab == null/);
-  assert.match(selectForSurfaceSource, /if \(!isManagerVariant\) \{[\s\S]*return;[\s\S]*\}/);
-  assert.match(selectForSurfaceSource, /selectBrowserTab\(targetTabId\)/);
-  assert.doesNotMatch(selectForSurfaceSource, /activeBrowserTabId/);
-  assert.doesNotMatch(focusBrowserRequestSource, /nativeViewSuppressed/);
-  assert.match(
+  const navigateSource = sourceSlice(
     browserPanelSource,
-    /if \(isManagerVariant && managerHasDetachedTabs && !activeTab\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
+    "const navigate = () => {",
+    "const runCommand = (",
   );
-  assert.doesNotMatch(navigationRequestSource, /nativeViewSuppressed/);
-  assert.doesNotMatch(navigateSource, /nativeViewSuppressed/);
-  assert.doesNotMatch(runCommandSource, /nativeViewSuppressed/);
+  const runCommandSource = sourceSlice(
+    browserPanelSource,
+    "const runCommand = (",
+    "const createTab = () => {",
+  );
+  const createTabSource = sourceSlice(
+    browserPanelSource,
+    "const createTab = () => {",
+    "const selectTab = (",
+  );
+  const managerNewTabButtonSource = sourceSlice(
+    browserPanelSource,
+    "browser-new-tab-button",
+    "{activeTab ? (",
+  );
+  const surfaceApplySource = sourceSlice(
+    browserPanelSource,
+    "const applyBrowserState =",
+    "const showNativeBrowserView =",
+  );
+  const managerChromeSource = sourceSlice(
+    browserPanelSource,
+    "{isManagerVariant ? (",
+    "{!isManagerVariant ? (",
+  );
+  assertMatches(browserSelectionSource, [
+    /const detachedBrowserTabIdSet = new Set\(detachedBrowserTabIds\)/,
+    /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/,
+    /managerSelectedBrowserTabId \?\? activeTabId/,
+  ]);
+  assertMatches(browserPanelSource, [
+    /function resolveBrowserPanelTabSelection/,
+    /resolveBrowserPanelTabSelection\(\{/,
+    /activeTabId: state\.activeTabId/,
+    /managerSelectedBrowserTabId/,
+    /const tabs = useMemo\(/,
+    /const \{[\s\S]*renderedTabs,[\s\S]*activeTab,[\s\S]*managerHasDetachedTabs,[\s\S]*managerActiveTabDetached,[\s\S]*\} = useMemo\(/,
+    /const browserTabDragPayload = useCallback\(/,
+    /const managerNativeViewBlocked =\s*managerActiveTabDetached \|\|/,
+    /managerHasDetachedTabs && activeTab == null/,
+    /if \(isManagerVariant && managerHasDetachedTabs && !activeTab\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
+    /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/,
+    /function nextBrowserPanelSurfaceId\(\)/,
+    /const browserSurfaceIdRef = useRef\(nextBrowserPanelSurfaceId\(\)\)/,
+    /hideBrowserView\(\{ surfaceId \}\)/,
+    /Browser content is open in workspace\./,
+    /const browserSurfaceRef = useRef\(\{/,
+    /detachedBrowserTabIds/,
+    /const addressInputFocusedRef = useRef\(false\)/,
+    /const lastAddressTabIdRef = useRef<string \| null>\(null\)/,
+    /const syncAddressFromTab = \(/,
+    /addressInputFocusedRef\.current && !tabChanged/,
+    /const handleAddressInputBlur = \(event: React\.FocusEvent<HTMLInputElement>\) => \{/,
+    /event\.currentTarget\.form\?\.contains\(nextFocusedElement\)[\s\S]*return;[\s\S]*syncAddressFromTab\(activeTab\)/,
+    /onFocus=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = true/,
+    /aria-label="Browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/,
+    /aria-label="Workspace browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/,
+    /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/,
+    /!isManagerVariant \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/,
+    /<div ref=\{viewportRef\} className="browser-native-viewport">/,
+  ]);
+  assertDoesNotMatchAny(rightPanelSource, [/nativeViewSuppressed/]);
+  assertDoesNotMatchAny(browserPanelSource, [
+    /nativeViewSuppressed/,
+    /runCommand\([\s\S]*selectBrowserTab\(activeBrowserTabId\)/,
+  ]);
+  assertMatches(selectForSurfaceSource, [
+    /if \(!isManagerVariant\) \{[\s\S]*return;[\s\S]*\}/,
+    /selectBrowserTab\(targetTabId\)/,
+  ]);
+  assertDoesNotMatchAny(selectForSurfaceSource, [/activeBrowserTabId/]);
+  assertDoesNotMatchAny(focusBrowserRequestSource, [/nativeViewSuppressed/]);
+  assertDoesNotMatchAny(navigationRequestSource, [/nativeViewSuppressed/]);
+  assertDoesNotMatchAny(navigateSource, [/nativeViewSuppressed/]);
+  assertDoesNotMatchAny(runCommandSource, [/nativeViewSuppressed/]);
   assert.match(createTabSource, /createBrowserTab\(\)/);
   assert.match(managerNewTabButtonSource, /disabled=\{!hasBrowserApi\}/);
-  assert.match(browserPanelSource, /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/);
-  assert.match(browserPanelSource, /function nextBrowserPanelSurfaceId\(\)/);
-  assert.match(browserPanelSource, /const browserSurfaceIdRef = useRef\(nextBrowserPanelSurfaceId\(\)\)/);
-  assert.match(browserPanelSource, /hideBrowserView\(\{ surfaceId \}\)/);
-  assert.match(browserPanelSource, /Browser content is open in workspace\./);
-  assert.doesNotMatch(
-    browserPanelSource,
-    /runCommand\([\s\S]*selectBrowserTab\(activeBrowserTabId\)/,
-  );
-  assert.match(browserPanelSource, /const browserSurfaceRef = useRef\(\{/);
-  assert.match(browserPanelSource, /detachedBrowserTabIds/);
-  assert.match(browserPanelSource, /const addressInputFocusedRef = useRef\(false\)/);
-  assert.match(browserPanelSource, /const lastAddressTabIdRef = useRef<string \| null>\(null\)/);
-  assert.match(browserPanelSource, /const syncAddressFromTab = \(/);
-  assert.match(browserPanelSource, /addressInputFocusedRef\.current && !tabChanged/);
-  assert.match(browserPanelSource, /const handleAddressInputBlur = \(event: React\.FocusEvent<HTMLInputElement>\) => \{/);
-  assert.match(
-    browserPanelSource,
-    /event\.currentTarget\.form\?\.contains\(nextFocusedElement\)[\s\S]*return;[\s\S]*syncAddressFromTab\(activeTab\)/,
-  );
-  assert.match(browserPanelSource, /onFocus=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = true/);
-  assert.match(browserPanelSource, /aria-label="Browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/);
-  assert.match(browserPanelSource, /aria-label="Workspace browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/);
-  assert.match(surfaceApplySource, /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/);
-  assert.match(surfaceApplySource, /surface\.managerSelectedBrowserTabId/);
-  assert.match(surfaceApplySource, /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/);
-  assert.match(surfaceApplySource, /syncAddressFromTab\(surfaceActiveTab\)/);
-  assert.match(navigateSource, /await selectBrowserTabForSurfaceIfNeeded\(browserApi\)/);
-  assert.match(navigateSource, /await showNativeBrowserView\(browserApi\)/);
-  assert.match(navigateSource, /navigateBrowserView\(\{[\s\S]*target: normalized\.url,[\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: activeTab\?\.id \?\? null/);
-  assert.match(browserPanelSource, /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/);
-  assert.match(managerChromeSource, /browser-tab-strip/);
-  assert.match(managerChromeSource, /\{activeTab \? \(/);
-  assert.match(managerChromeSource, /browser-toolbar/);
-  assert.match(managerChromeSource, /browser-status-row/);
-  assert.match(browserPanelSource, /!isManagerVariant \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/);
-  assert.match(browserPanelSource, /<div ref=\{viewportRef\} className="browser-native-viewport">/);
-  assert.match(rightPanelSource, /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/);
-  assert.match(rightPanelSource, /!workspaceTabsEnabled &&[\s\S]*gitDiffPreview\.loading/);
-  assert.match(rightPanelSource, /gitDiffRequestScopeByTargetRef/);
-  assert.match(
-    rightPanelSource,
+  assertMatches(surfaceApplySource, [
+    /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/,
+    /surface\.managerSelectedBrowserTabId/,
+    /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/,
+    /syncAddressFromTab\(surfaceActiveTab\)/,
+  ]);
+  assertMatches(navigateSource, [
+    /await selectBrowserTabForSurfaceIfNeeded\(browserApi\)/,
+    /await showNativeBrowserView\(browserApi\)/,
+    /navigateBrowserView\(\{[\s\S]*target: normalized\.url,[\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: activeTab\?\.id \?\? null/,
+  ]);
+  assertMatches(managerChromeSource, [
+    /browser-tab-strip/,
+    /\{activeTab \? \(/,
+    /browser-toolbar/,
+    /browser-status-row/,
+  ]);
+  assertMatches(rightPanelSource, [
+    /const fileSourcePanelView: FilePanelView =[\s\S]*\? "preview"[\s\S]*: "tree"/,
+    /!workspaceTabsEnabled &&[\s\S]*gitDiffPreview\.loading/,
+    /gitDiffRequestScopeByTargetRef/,
     /function clearGitDiffPreview\(\) \{[\s\S]*if \(!workspaceTabsEnabled\) \{[\s\S]*gitDiffRequestScopeByTargetRef\.current\.clear\(\)/,
-  );
-  assert.match(rightPanelSource, /function beginGitDiffRequest\(targetId: string/);
-  assert.match(rightPanelSource, /function isCurrentGitDiffRequest\(targetId: string, scope: number\)/);
-  assert.match(rightPanelSource, /const targetId = `worktree:\$\{thread\.cwd\}:\$\{mode\}:\$\{change\.originalPath \?\? ""\}:\$\{change\.path\}`/);
-  assert.match(rightPanelSource, /const targetId = `commit:\$\{thread\.cwd\}:\$\{commit\.hash\}:\$\{file\.originalPath \?\? ""\}:\$\{file\.path\}`/);
-  assert.match(rightPanelSource, /beginGitDiffRequest\(targetId, \{ exclusive: !workspaceTabsEnabled \}\)/);
-  assert.match(rightPanelSource, /isCurrentGitDiffRequest\(targetId, scope\)/);
-  assert.match(rightPanelSource, /if \(!workspaceTabsEnabled\) \{[\s\S]*onSetActiveView\("preview"\)/);
-  assert.match(rightPanelSource, /gitDiffPreview=\{workspaceTabsEnabled \? null : gitDiffPreview\.diff\}/);
-  assert.match(rightPanelSource, /filePanelView=\{fileSourcePanelView\}/);
-  assert.match(rightPanelSource, /variant = "manager"/);
-  assert.match(rightPanelSource, /variant\?: "manager" \| "workspace"/);
-  assert.match(rightPanelSource, /preview-workspace-status-bar/);
-  assert.match(rightPanelSource, /!isWorkspaceVariant \? \([\s\S]*panel-content-header preview-header/);
-  assert.match(panelsSource, /data-thread-id/);
-  assert.match(panelsSource, /className="chat-list-row"[\s\S]*data-thread-id=\{node\.threadId\}/);
-  assert.match(panelsSource, /scrollIntoView\(\{ block: "nearest" \}\)/);
+    /function beginGitDiffRequest\(targetId: string/,
+    /function isCurrentGitDiffRequest\(targetId: string, scope: number\)/,
+    /const targetId = `worktree:\$\{thread\.cwd\}:\$\{mode\}:\$\{change\.originalPath \?\? ""\}:\$\{change\.path\}`/,
+    /const targetId = `commit:\$\{thread\.cwd\}:\$\{commit\.hash\}:\$\{file\.originalPath \?\? ""\}:\$\{file\.path\}`/,
+    /beginGitDiffRequest\(targetId, \{ exclusive: !workspaceTabsEnabled \}\)/,
+    /isCurrentGitDiffRequest\(targetId, scope\)/,
+    /if \(!workspaceTabsEnabled\) \{[\s\S]*onSetActiveView\("preview"\)/,
+    /gitDiffPreview=\{workspaceTabsEnabled \? null : gitDiffPreview\.diff\}/,
+    /filePanelView=\{fileSourcePanelView\}/,
+    /variant = "manager"/,
+    /variant\?: "manager" \| "workspace"/,
+    /preview-workspace-status-bar/,
+    /!isWorkspaceVariant \? \([\s\S]*panel-content-header preview-header/,
+  ]);
+  assertMatches(panelsSource, [
+    /data-thread-id/,
+    /className="chat-list-row"[\s\S]*data-thread-id=\{node\.threadId\}/,
+    /scrollIntoView\(\{ block: "nearest" \}\)/,
+  ]);
   assert.match(agentTreeSource, /data-thread-id=\{node\.threadId\}/);
   assert.doesNotMatch(appSource, /WORKSPACE_TAB_LABELS/);
-  assert.match(appSource, /<FilePreviewPanel/);
-  assert.match(appSource, /<BrowserPanel/);
-  assert.match(appSource, /<TerminalPanel/);
-  assert.match(appSource, /gridTemplateColumns: `\$\{sidebarWidth\}px \$\{PANEL_RESIZER_WIDTH\}px minmax\(0, 1fr\) \$\{PANEL_RESIZER_WIDTH\}px/);
-  assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel/);
-  assert.match(stylesSource, /width: 100%;/);
-  assert.match(stylesSource, /\.workspace-tab-panel > \.conversation-panel,[\s\S]*\.workspace-tab-panel > \.browser-panel \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;[\s\S]*background-image: none;/);
-  assert.match(stylesSource, /\.workspace-tab-strip \{[\s\S]*gap: 6px;[\s\S]*border-bottom: 0;[\s\S]*box-shadow: none;/);
-  assert.match(stylesSource, /\.workspace-tab \{[\s\S]*border: 0;[\s\S]*border-radius: 999px;[\s\S]*background: rgba\(28, 25, 23, 0\.045\);/);
-  assert.match(stylesSource, /\.workspace-tab\.active \{[\s\S]*background: rgba\(15, 118, 110, 0\.12\);[\s\S]*box-shadow: inset 0 0 0 1px/);
-  assert.doesNotMatch(cssBlock(".workspace-tab {", ".workspace-tab:hover"), /cursor:/);
-  assert.doesNotMatch(cssBlock(".workspace-tab-close {", ".workspace-tab-close:hover"), /cursor:/);
-  assert.doesNotMatch(stylesSource, /\.workspace-tab:active \{[\s\S]*cursor:/);
-  assert.match(stylesSource, /\.browser-panel-workspace \{[\s\S]*background: #ffffff;/);
-  assert.match(stylesSource, /\.browser-toolbar-workspace \{[\s\S]*border-bottom: 0;[\s\S]*box-shadow: none;/);
-  assert.match(stylesSource, /\.browser-panel-workspace \.browser-native-viewport \{[\s\S]*min-height: 0;/);
-  assert.match(stylesSource, /\.terminal-panel-workspace \{[\s\S]*background: #f5f3f0;/);
-  assert.match(stylesSource, /\.terminal-panel-workspace \.terminal-viewport-shell \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/);
-  assert.match(stylesSource, /\.preview-workspace-status-bar \{[\s\S]*min-height: 34px;/);
-  assert.match(stylesSource, /\.preview-panel-workspace > \.preview-editor-shell > \.preview-utility-strip,[\s\S]*display: none;/);
-  assert.match(stylesSource, /\.git-panel \{[\s\S]*--git-surface: rgba\(252, 251, 249, 0\.58\);[\s\S]*background: var\(--git-surface\);/);
-  assert.match(stylesSource, /\.git-graph-section \{[\s\S]*background: var\(--git-surface\);/);
-  assert.match(stylesSource, /\.git-section-header \{[\s\S]*background: var\(--git-surface-raised\);/);
-  assert.match(stylesSource, /\.git-graph-row:hover \{[\s\S]*background: var\(--git-surface-hover\);/);
-  assert.doesNotMatch(cssBlock(".git-section-toggle {", ".git-section-toggle:hover"), /cursor:/);
-  assert.doesNotMatch(cssBlock(".git-icon-button {", ".git-icon-button:hover"), /cursor:/);
-  assert.doesNotMatch(cssBlock(".drag-scroll-region {", ".drag-scroll-region.is-dragging"), /cursor:/);
-  assert.doesNotMatch(cssBlock(".git-graph-row-main {", ".git-graph-lanes"), /cursor:/);
-  assert.doesNotMatch(cssBlock(".git-change-group-header {", ".git-change-group-header[aria-expanded"), /cursor:/);
-  assert.doesNotMatch(cssBlock(".git-change-row.clickable:hover", ".git-change-row.clickable:focus-visible"), /cursor:/);
-  assert.match(stylesSource, /\.workspace-tab-strip \{[\s\S]*border-bottom: 0;/);
-  assert.match(
-    stylesSource,
+  assertMatches(appSource, [
+    /<FilePreviewPanel/,
+    /<BrowserPanel/,
+    /<TerminalPanel/,
+    /gridTemplateColumns: `\$\{sidebarWidth\}px \$\{PANEL_RESIZER_WIDTH\}px minmax\(0, 1fr\) \$\{PANEL_RESIZER_WIDTH\}px/,
+  ]);
+  assertMatches(stylesSource, [
+    /\.workspace-tab-panel > \.conversation-panel/,
+    /width: 100%;/,
+    /\.workspace-tab-panel > \.conversation-panel,[\s\S]*\.workspace-tab-panel > \.browser-panel \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;[\s\S]*background-image: none;/,
+    /\.workspace-tab-strip \{[\s\S]*gap: 6px;[\s\S]*border-bottom: 0;[\s\S]*box-shadow: none;/,
+    /\.workspace-tab \{[\s\S]*border: 0;[\s\S]*border-radius: 999px;[\s\S]*background: rgba\(28, 25, 23, 0\.045\);/,
+    /\.workspace-tab\.active \{[\s\S]*background: rgba\(15, 118, 110, 0\.12\);[\s\S]*box-shadow: inset 0 0 0 1px/,
+    /\.browser-panel-workspace \{[\s\S]*background: #ffffff;/,
+    /\.browser-toolbar-workspace \{[\s\S]*border-bottom: 0;[\s\S]*box-shadow: none;/,
+    /\.browser-panel-workspace \.browser-native-viewport \{[\s\S]*min-height: 0;/,
+    /\.terminal-panel-workspace \{[\s\S]*background: #f5f3f0;/,
+    /\.terminal-panel-workspace \.terminal-viewport-shell \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/,
+    /\.preview-workspace-status-bar \{[\s\S]*min-height: 34px;/,
+    /\.preview-panel-workspace > \.preview-editor-shell > \.preview-utility-strip,[\s\S]*display: none;/,
+    /\.git-panel \{[\s\S]*--git-surface: rgba\(252, 251, 249, 0\.58\);[\s\S]*background: var\(--git-surface\);/,
+    /\.git-graph-section \{[\s\S]*background: var\(--git-surface\);/,
+    /\.git-section-header \{[\s\S]*background: var\(--git-surface-raised\);/,
+    /\.git-graph-row:hover \{[\s\S]*background: var\(--git-surface-hover\);/,
+    /\.workspace-tab-strip \{[\s\S]*border-bottom: 0;/,
+  ]);
+  assertDoesNotMatchAny(stylesSource, [
+    /\.workspace-tab:active \{[\s\S]*cursor:/,
+  ]);
+  for (const [selector, nextSelector] of [
+    [".workspace-tab {", ".workspace-tab:hover"],
+    [".workspace-tab-close {", ".workspace-tab-close:hover"],
+    [".git-section-toggle {", ".git-section-toggle:hover"],
+    [".git-icon-button {", ".git-icon-button:hover"],
+    [".drag-scroll-region {", ".drag-scroll-region.is-dragging"],
+    [".git-graph-row-main {", ".git-graph-lanes"],
+    [".git-change-group-header {", ".git-change-group-header[aria-expanded"],
+    [
+      ".git-change-row.clickable:hover",
+      ".git-change-row.clickable:focus-visible",
+    ],
+  ] as const) {
+    assert.doesNotMatch(
+      cssBlock(stylesSource, selector, nextSelector),
+      /cursor:/,
+    );
+  }
+  assertMatches(stylesSource, [
     /UI polish: right panel content keeps structure without extra 1px separator lines\./,
-  );
-  assert.match(
-    stylesSource,
     /\.right-panel \.panel-rail,[\s\S]*\.right-panel \.terminal-viewport-shell \{[\s\S]*border-top: 0;[\s\S]*border-bottom: 0;/,
-  );
-  assert.match(stylesSource, /\.right-panel \.panel-rail \{[\s\S]*border-left: 0;/);
-  assert.match(
-    stylesSource,
+    /\.right-panel \.panel-rail \{[\s\S]*border-left: 0;/,
     /\.right-panel \.overview-metric,[\s\S]*\.right-panel \.workflow-status-pill \{[\s\S]*border: 0;/,
-  );
-  assert.match(stylesSource, /\.panel-rail-button\.active \{[\s\S]*background: rgba\(28, 25, 23, 0\.05\);/);
-  assert.match(stylesSource, /\.panel-rail-button\.active::after \{[\s\S]*background: #d97706;/);
-  assert.match(
-    stylesSource,
+    /\.panel-rail-button\.active \{[\s\S]*background: rgba\(28, 25, 23, 0\.05\);/,
+    /\.panel-rail-button\.active::after \{[\s\S]*background: #d97706;/,
     /\.workspace-tab-panel > \.conversation-panel,\s*\.conversation-panel,\s*\.conversation-scroll \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;/,
-  );
-  assert.match(stylesSource, /\.sidebar \{[\s\S]*border-right: 0;/);
-  assert.match(stylesSource, /\.conversation-scroll \{[\s\S]*background: #ffffff;[\s\S]*background-image: none;/);
-  assert.match(
-    stylesSource,
+    /\.sidebar \{[\s\S]*border-right: 0;/,
+    /\.conversation-scroll \{[\s\S]*background: #ffffff;[\s\S]*background-image: none;/,
     /\.compact-row::before,\s*\.archive-row::before \{[\s\S]*display: none;/,
-  );
-  assert.match(stylesSource, /\.panel-resizer \{[\s\S]*background: transparent;/);
-  assert.match(stylesSource, /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
-  assert.match(stylesSource, /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.42\);/);
-  assert.match(stylesSource, /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.68\);/);
+    /\.panel-resizer \{[\s\S]*background: transparent;/,
+    /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/,
+    /\.panel-resizer:hover::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.42\);/,
+    /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.68\);/,
+  ]);
   assert.match(appSource, /const PANEL_RESIZER_WIDTH = 4/);
-  assert.match(stylesSource, /\.panel-content-header \{[\s\S]*min-height: 34px;[\s\S]*padding: 6px 10px;/);
-  assert.doesNotMatch(stylesSource, /\.file-object-toolbar/);
-  assert.doesNotMatch(stylesSource, /\.panel-eyebrow/);
-  assert.doesNotMatch(stylesSource, /\.preview-mode-toggle/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.doing/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.waiting-subagent/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.waiting-eventtool/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.waiting-subscription/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.blocked/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.active/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.running/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.completed/);
-  assert.match(stylesSource, /\.workspace-tab-dot\.inactive/);
-  assert.match(stylesSource, /\.workspace-tab-close \{[\s\S]*-webkit-app-region: no-drag;/);
-  assert.doesNotMatch(stylesSource, /\.conversation-header/);
-  assert.doesNotMatch(
-    stylesSource,
+  assertMatches(stylesSource, [
+    /\.panel-content-header \{[\s\S]*min-height: 34px;[\s\S]*padding: 6px 10px;/,
+    /\.workspace-tab-dot\.doing/,
+    /\.workspace-tab-dot\.waiting-subagent/,
+    /\.workspace-tab-dot\.waiting-eventtool/,
+    /\.workspace-tab-dot\.waiting-subscription/,
+    /\.workspace-tab-dot\.blocked/,
+    /\.workspace-tab-dot\.active/,
+    /\.workspace-tab-dot\.running/,
+    /\.workspace-tab-dot\.completed/,
+    /\.workspace-tab-dot\.inactive/,
+    /\.workspace-tab-close \{[\s\S]*-webkit-app-region: no-drag;/,
+  ]);
+  assertDoesNotMatchAny(stylesSource, [
+    /\.file-object-toolbar/,
+    /\.panel-eyebrow/,
+    /\.preview-mode-toggle/,
+    /\.conversation-header/,
     /\.conversation-panel[^{]*\{[^}]*border-right:/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.conversation-panel[^{]*\{[^}]*border-top:(?![ \t]*0[ \t]*;)/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.conversation-panel[^{]*\{[^}]*box-shadow:(?![ \t]*none[ \t]*;)/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.conversation-scroll[^{]*\{[^}]*border-top:(?![ \t]*0[ \t]*;)/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.conversation-scroll[^{]*\{[^}]*box-shadow:(?![ \t]*none[ \t]*;)/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.workspace-tab-panel[^{]*\{[^}]*border-right:/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.workspace-tab-panel\s*\{[^}]*border-top:/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.workspace-tab-panel\s*\{[^}]*box-shadow:/,
-  );
-  assert.doesNotMatch(
-    stylesSource,
     /\.workspace-tab-strip\s*\{[^}]*border-bottom:(?![ \t]*0[ \t]*;)/,
-  );
+  ]);
   assert.doesNotMatch(
-    cssBlock(".compact-row::before,", ".compact-icon"),
+    cssBlock(stylesSource, ".compact-row::before,", ".compact-icon"),
     /(?:top:|height:|background: linear-gradient)/,
   );
-  assert.doesNotMatch(stylesSource, /\.workspace-main \{[^}]*border-right:/);
-  assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*border-top:/);
-  assert.doesNotMatch(stylesSource, /\.composer-shell \{[^}]*box-shadow:/);
-  assert.doesNotMatch(stylesSource, /scrollbar[^{}]*(?::focus|:focus-within|:active)[^{]*\{/);
-  assert.doesNotMatch(stylesSource, /(?::focus|:focus-within|:active)[^{]*::-[^{]*scrollbar/);
+  assertDoesNotMatchAny(stylesSource, [
+    /\.workspace-main \{[^}]*border-right:/,
+    /\.composer-shell \{[^}]*border-top:/,
+    /\.composer-shell \{[^}]*box-shadow:/,
+    /scrollbar[^{}]*(?::focus|:focus-within|:active)[^{]*\{/,
+    /(?::focus|:focus-within|:active)[^{]*::-[^{]*scrollbar/,
+  ]);
 });
 
 test("right panel terminal rail click is the explicit terminal panel focus source", () => {
-  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const source = readSource("rightPanel");
   const tokenStateIndex = source.indexOf(
     "const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken]",
   );
   const propIndex = source.indexOf(
     "focusPanelRequestToken={terminalPanelFocusRequestToken}",
   );
-  const railClickIndex = source.indexOf("if (item.view === \"terminal\") {");
+  const railClickIndex = source.indexOf('if (item.view === "terminal") {');
   const railClickSource = source.slice(
     railClickIndex,
     source.indexOf("onSetActiveView(next.nextView);", railClickIndex),
@@ -1834,26 +2070,7 @@ test("renders backend tool I/O buckets as top-level context categories", () => {
 });
 
 test("renders schedule agenda groups expanded by default", () => {
-  const markup = renderToStaticMarkup(
-    <ScheduleAgendaDateGroup
-      group={{
-        dateKey: "2026-07-13",
-        dateLabel: "Today",
-        items: [
-          {
-            id: "schedule-1:2026-07-13T09:00:00.000Z",
-            subscriptionId: "schedule-1",
-            label: "standup ping",
-            rule: "Every 6 hours",
-            startsAt: "2026-07-13T09:00:00.000Z",
-            timeLabel: "09:00",
-          },
-        ],
-      }}
-      collapsed={false}
-      onToggle={() => {}}
-    />,
-  );
+  const markup = renderScheduleAgendaDateGroup(0, false);
 
   assert.match(markup, /aria-expanded="true"/);
   assert.match(markup, /aria-controls="schedule-agenda-items-2026-07-13"/);
@@ -1864,18 +2081,7 @@ test("renders schedule agenda groups expanded by default", () => {
 
 test("renders runtime restart progress in thread analysis", () => {
   const markup = renderRightPanel(makeThread([]), "skills", null, {
-    runtimeRestartProgress: {
-      status: "active",
-      requestId: "restart-1",
-      originThreadId: "thread-1",
-      stage: "shuttingDownAppServer",
-      stageLabel: "Stopping app-server",
-      message: "Stopping the current app-server before switching capsules.",
-      reason: null,
-      activationId: "activation-1",
-      releaseId: "release-1",
-      updatedAtMs: 123,
-    },
+    runtimeRestartProgress: makeRuntimeRestartProgress(),
   });
 
   assert.match(markup, /Runtime Restart/);
@@ -1892,18 +2098,16 @@ test("hides runtime restart progress while idle and surfaces failures", () => {
   assert.doesNotMatch(idleMarkup, /Runtime Restart/);
 
   const failedMarkup = renderRightPanel(makeThread([]), "skills", null, {
-    runtimeRestartProgress: {
+    runtimeRestartProgress: makeRuntimeRestartProgress({
       status: "failed",
       requestId: "restart-failed",
-      originThreadId: "thread-1",
       stage: "failed",
       stageLabel: "Failed",
       message: "Build failed",
       reason: "Build failed",
       activationId: null,
       releaseId: null,
-      updatedAtMs: 123,
-    },
+    }),
   });
 
   assert.match(failedMarkup, /Runtime Restart/);
@@ -1913,15 +2117,7 @@ test("hides runtime restart progress while idle and surfaces failures", () => {
 });
 
 test("renders schedule agenda with an overall disclosure header", () => {
-  const markup = renderToStaticMarkup(
-    <ScheduleAgendaLayout
-      groups={makeScheduleAgendaGroups()}
-      collapsed={false}
-      collapsedDateKeys={new Set()}
-      onToggleCollapsed={() => {}}
-      onToggleDateKey={() => {}}
-    />,
-  );
+  const markup = renderScheduleAgendaLayout(false);
 
   assert.match(markup, /aria-label="Upcoming schedule events"/);
   assert.match(markup, /aria-expanded="true"/);
@@ -1935,15 +2131,7 @@ test("renders schedule agenda with an overall disclosure header", () => {
 });
 
 test("collapses the whole schedule agenda without rendering date rows", () => {
-  const markup = renderToStaticMarkup(
-    <ScheduleAgendaLayout
-      groups={makeScheduleAgendaGroups()}
-      collapsed={true}
-      collapsedDateKeys={new Set()}
-      onToggleCollapsed={() => {}}
-      onToggleDateKey={() => {}}
-    />,
-  );
+  const markup = renderScheduleAgendaLayout(true);
 
   assert.match(markup, /aria-expanded="false"/);
   assert.match(markup, /Upcoming/);
@@ -1979,20 +2167,7 @@ test("toggles the whole schedule agenda from the agenda header", () => {
 test("toggles schedule agenda groups from the date header", () => {
   let clicked = false;
   const element = ScheduleAgendaDateGroup({
-    group: {
-      dateKey: "2026-07-13",
-      dateLabel: "Today",
-      items: [
-        {
-          id: "schedule-1:2026-07-13T09:00:00.000Z",
-          subscriptionId: "schedule-1",
-          label: "standup ping",
-          rule: "Every 6 hours",
-          startsAt: "2026-07-13T09:00:00.000Z",
-          timeLabel: "09:00",
-        },
-      ],
-    },
+    group: makeScheduleAgendaGroup(0),
     collapsed: false,
     onToggle: () => {
       clicked = true;
@@ -2007,46 +2182,8 @@ test("toggles schedule agenda groups from the date header", () => {
 });
 
 test("collapses one schedule agenda date without hiding other dates", () => {
-  const collapsedMarkup = renderToStaticMarkup(
-    <ScheduleAgendaDateGroup
-      group={{
-        dateKey: "2026-07-13",
-        dateLabel: "Today",
-        items: [
-          {
-            id: "schedule-1:2026-07-13T09:00:00.000Z",
-            subscriptionId: "schedule-1",
-            label: "standup ping",
-            rule: "Every 6 hours",
-            startsAt: "2026-07-13T09:00:00.000Z",
-            timeLabel: "09:00",
-          },
-        ],
-      }}
-      collapsed={true}
-      onToggle={() => {}}
-    />,
-  );
-  const expandedMarkup = renderToStaticMarkup(
-    <ScheduleAgendaDateGroup
-      group={{
-        dateKey: "2026-07-14",
-        dateLabel: "Tomorrow",
-        items: [
-          {
-            id: "schedule-2:2026-07-14T10:00:00.000Z",
-            subscriptionId: "schedule-2",
-            label: "daily digest",
-            rule: "Daily 10:00 UTC",
-            startsAt: "2026-07-14T10:00:00.000Z",
-            timeLabel: "10:00",
-          },
-        ],
-      }}
-      collapsed={false}
-      onToggle={() => {}}
-    />,
-  );
+  const collapsedMarkup = renderScheduleAgendaDateGroup(0, true);
+  const expandedMarkup = renderScheduleAgendaDateGroup(1, false);
 
   assert.match(collapsedMarkup, /aria-expanded="false"/);
   assert.doesNotMatch(collapsedMarkup, /standup ping/);
@@ -2067,51 +2204,47 @@ test("renders the current thread plan in thread analysis", () => {
       { step: "Run validation", status: "pending" },
     ],
   } satisfies ThreadPlanUpdate;
-  const markup = renderRightPanel(
-    makeThread([]),
-    "skills",
-    planUpdate,
-  );
+  const markup = renderRightPanel(makeThread([]), "skills", planUpdate);
 
-  assert.match(markup, /Thread Analysis/);
-  assert.match(markup, /context-section-card current-plan-card/);
-  assert.match(markup, /Keep the change scoped\./);
-  assert.match(markup, /Filter direct child tasks/);
-  assert.match(markup, /Render current thread plan/);
-  assert.match(markup, /Validate parallel owner/);
-  assert.match(markup, /Wait for release approval/);
-  assert.match(markup, /Run validation/);
-  assert.match(markup, /In progress/);
-  assert.match(markup, /Blocked/);
-  assert.match(markup, /plan-status-label blocked/);
+  assertMatches(markup, [
+    /Thread Analysis/,
+    /context-section-card current-plan-card/,
+    /Keep the change scoped\./,
+    /Filter direct child tasks/,
+    /Render current thread plan/,
+    /Validate parallel owner/,
+    /Wait for release approval/,
+    /Run validation/,
+    /In progress/,
+    /Blocked/,
+    /plan-status-label blocked/,
+  ]);
   assert.equal(markup.match(/plan-status-label inProgress/g)?.length, 2);
-  assert.doesNotMatch(markup, /Plan Work/);
-  assert.doesNotMatch(markup, /Execution Queue/);
-  assert.doesNotMatch(markup, /Todo List/);
+  assertDoesNotMatchAny(markup, [/Plan Work/, /Execution Queue/, /Todo List/]);
 });
 
 test("keeps plan and monitor activity on compact right panel layout rules", () => {
-  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
-  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const { rightPanelSource, stylesSource } = readSources([
+    "rightPanel",
+    "styles",
+  ]);
 
   assert.match(
-    source,
+    rightPanelSource,
     /className="context-section-card current-plan-card"/,
   );
-  assert.doesNotMatch(css, /\.current-plan-card\s*\{[^}]*margin:/);
-  assert.match(
-    css,
+  assertMatches(stylesSource, [
     /\.context-section-card\.current-plan-card\s*\{[\s\S]*padding: 10px 12px;/,
-  );
-  assert.match(css, /\.plan-status-dot\.blocked/);
-  assert.match(css, /\.plan-status-label\.blocked/);
-  assert.match(
-    css,
+    /\.plan-status-dot\.blocked/,
+    /\.plan-status-label\.blocked/,
     /\.monitor-section\s*\{[\s\S]*padding-top: 10px;/,
-  );
-  assert.match(css, /\.right-panel \.monitor-section,[\s\S]*border-top: 0;/);
-  assert.match(css, /\.monitor-kind-dot\.command,\s*\.monitor-kind-dot\.process/);
-  assert.doesNotMatch(css, /\.monitor-empty\s*\{[^}]*border-top:/);
+    /\.right-panel \.monitor-section,[\s\S]*border-top: 0;/,
+    /\.monitor-kind-dot\.command,\s*\.monitor-kind-dot\.process/,
+  ]);
+  assertDoesNotMatchAny(stylesSource, [
+    /\.current-plan-card\s*\{[^}]*margin:/,
+    /\.monitor-empty\s*\{[^}]*border-top:/,
+  ]);
 });
 
 test("renders long current plan steps without dropping status labels", () => {
@@ -2154,12 +2287,14 @@ test("does not render todo items inside thread analysis", () => {
   });
 
   assert.match(markup, /Thread Analysis/);
-  assert.doesNotMatch(markup, /Wire plan into analysis/);
-  assert.doesNotMatch(markup, /Move the existing work queue into the analysis view\./);
-  assert.doesNotMatch(markup, /\/my_codex\/owner_dev/);
-  assert.doesNotMatch(markup, /No tasks for this filter/);
-  assert.doesNotMatch(markup, /Todo List/);
-  assert.doesNotMatch(markup, /Todo Board/);
+  assertDoesNotMatchAny(markup, [
+    /Wire plan into analysis/,
+    /Move the existing work queue into the analysis view\./,
+    /\/my_codex\/owner_dev/,
+    /No tasks for this filter/,
+    /Todo List/,
+    /Todo Board/,
+  ]);
 });
 
 test("renders git panel with deduped thread file changes", () => {
@@ -2178,30 +2313,32 @@ test("renders git panel with deduped thread file changes", () => {
         type: "fileChange",
         id: "change-2",
         status: "completed",
-        changes: [
-          { path: "/tmp/src/app.tsx", kind: "deleted" },
-        ],
+        changes: [{ path: "/tmp/src/app.tsx", kind: "deleted" }],
       },
     ]),
     "git",
   );
 
-  assert.match(markup, /Git graph/);
-  assert.match(markup, /Graph/);
-  assert.match(markup, /graph-toolbar/);
-  assert.match(markup, />Auto</);
-  assert.doesNotMatch(markup, /Focus current Git ref/);
-  assert.doesNotMatch(markup, /Fetch Git refs/);
-  assert.doesNotMatch(markup, /Pull Git refs/);
-  assert.doesNotMatch(markup, /More Git actions/);
-  assert.match(markup, /Changes/);
-  assert.match(markup, /aria-expanded="true"/);
-  assert.match(markup, /Collapse Changes/);
-  assert.match(markup, /Select Git branch or ref/);
-  assert.match(markup, /Refresh Git view/);
-  assert.match(markup, /Resize Git graph and changes panes/);
-  assert.match(markup, /panel-rail-badge">2/);
-  assert.doesNotMatch(markup, /Thread File Deltas/);
+  assertMatches(markup, [
+    /Git graph/,
+    /Graph/,
+    /graph-toolbar/,
+    />Auto</,
+    /Changes/,
+    /aria-expanded="true"/,
+    /Collapse Changes/,
+    /Select Git branch or ref/,
+    /Refresh Git view/,
+    /Resize Git graph and changes panes/,
+    /panel-rail-badge">2/,
+  ]);
+  assertDoesNotMatchAny(markup, [
+    /Focus current Git ref/,
+    /Fetch Git refs/,
+    /Pull Git refs/,
+    /More Git actions/,
+    /Thread File Deltas/,
+  ]);
 });
 
 test("git change groups hide rows when collapsed and expose row diff navigation semantics", () => {
@@ -2262,11 +2399,11 @@ test("git commit file rows expose commit diff navigation without toggling the co
     },
   }) as React.ReactElement<{
     "aria-label": string;
-    className: string;
-    onClick: (event: { stopPropagation: () => void }) => void;
-    onKeyDown: (event: { stopPropagation: () => void }) => void;
-    title: string;
-    type: string;
+    "className": string;
+    "onClick": (event: { stopPropagation: () => void }) => void;
+    "onKeyDown": (event: { stopPropagation: () => void }) => void;
+    "title": string;
+    "type": string;
   }>;
   const markup = renderToStaticMarkup(
     <GitCommitFileRow file={file} onOpenDiff={() => {}} />,
@@ -2296,27 +2433,12 @@ test("git commit file rows expose commit diff navigation without toggling the co
 });
 
 test("git diff previews render as read-only preview content without edit controls", () => {
-  const markup = renderToStaticMarkup(
-    <GitDiffPreviewPanel
-      diff={{
-        available: false,
-        root: "/repo",
-        path: "src/App.tsx",
-        originalPath: null,
-        staged: false,
-        status: "M",
-        language: "typescript",
-        oldLabel: "Index",
-        newLabel: "Working tree",
-        oldContent: "",
-        newContent: "",
-        unifiedDiff: "",
-        error: "Binary files cannot be previewed as side-by-side text.",
-        binary: true,
-      }}
-      error={null}
-      loading={false}
-    />,
+  const markup = renderGitDiffPreview(
+    makeGitDiffPreview({
+      available: false,
+      error: "Binary files cannot be previewed as side-by-side text.",
+      binary: true,
+    }),
   );
 
   assert.match(markup, />DIFF</);
@@ -2325,30 +2447,17 @@ test("git diff previews render as read-only preview content without edit control
 });
 
 test("git diff previews label commit file diffs as commit scope", () => {
-  const markup = renderToStaticMarkup(
-    <GitDiffPreviewPanel
-      diff={{
-        available: true,
-        root: "/repo",
-        path: "src/thread.ts",
-        originalPath: null,
-        staged: false,
-        status: "M",
-        language: "typescript",
-        oldLabel: "abc1234^",
-        newLabel: "abc1234",
-        oldContent: "before\n",
-        newContent: "after\n",
-        unifiedDiff: "",
-        error: null,
-        binary: false,
-        modeLabel: "commit",
-        commit: "abc1234",
-        parent: "abc1234^",
-      }}
-      error={null}
-      loading={false}
-    />,
+  const markup = renderGitDiffPreview(
+    makeGitDiffPreview({
+      path: "src/thread.ts",
+      oldLabel: "abc1234^",
+      newLabel: "abc1234",
+      oldContent: "before\n",
+      newContent: "after\n",
+      modeLabel: "commit",
+      commit: "abc1234",
+      parent: "abc1234^",
+    }),
   );
 
   assert.match(markup, />commit</);
@@ -2422,12 +2531,14 @@ test("cwd tree file opens stay on normal file preview routing", () => {
 });
 
 test("cwd tree file routing does not keep changed-file diff status lookups", () => {
-  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const source = readSource("rightPanel");
 
-  assert.doesNotMatch(source, /readGitStatusSnapshot/);
-  assert.doesNotMatch(source, /resolveGitTreeFileOpen/);
-  assert.doesNotMatch(source, /gitDiffTargetForTreePath/);
-  assert.doesNotMatch(source, /onGitSnapshotChange/);
+  assertDoesNotMatchAny(source, [
+    /readGitStatusSnapshot/,
+    /resolveGitTreeFileOpen/,
+    /gitDiffTargetForTreePath/,
+    /onGitSnapshotChange/,
+  ]);
 });
 
 test("builds a commit-level git graph visual model with a spine and curved branches", () => {
@@ -2478,7 +2589,10 @@ test("builds a commit-level git graph visual model with a spine and curved branc
   });
   assert.equal(expandedVisualModel.height, 188);
   assert.deepEqual(
-    expandedVisualModel.commits.map((commit) => ({ hash: commit.commit.hash, y: commit.y })),
+    expandedVisualModel.commits.map((commit) => ({
+      hash: commit.commit.hash,
+      y: commit.y,
+    })),
     [
       { hash: "merge-a", y: 21 },
       { hash: "side-a", y: 125 },
@@ -2488,28 +2602,35 @@ test("builds a commit-level git graph visual model with a spine and curved branc
 });
 
 test("git graph styles keep a light theme and full-size visible rail overlay", () => {
-  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
-  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const { rightPanelSource, stylesSource } = readSources([
+    "rightPanel",
+    "styles",
+  ]);
 
-  assert.match(css, /\.git-panel \{[\s\S]*--git-surface: rgba\(252, 251, 249, 0\.58\);[\s\S]*background: var\(--git-surface\);/);
-  assert.match(css, /\.git-graph-section \{[\s\S]*background: var\(--git-surface\);/);
-  assert.doesNotMatch(css, /\.git-panel \{[\s\S]*background: #0f1419;/);
-  assert.match(css, /\.git-graph-overlay \{[\s\S]*width: var\(--git-graph-visual-width, 58px\);/);
-  assert.match(css, /\.git-graph-overlay \{[\s\S]*height: var\(--git-graph-visual-height, 42px\);/);
-  assert.match(css, /\.git-graph-row-main \{[\s\S]*min-height: 42px;/);
-  assert.match(css, /\.git-graph-list,[\s\S]*\.git-changes-list \{[\s\S]*overflow-x: hidden;/);
-  assert.match(css, /\.git-graph-visual-stack \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/);
-  assert.match(
-    css,
+  assertMatches(stylesSource, [
+    /\.git-panel \{[\s\S]*--git-surface: rgba\(252, 251, 249, 0\.58\);[\s\S]*background: var\(--git-surface\);/,
+    /\.git-graph-section \{[\s\S]*background: var\(--git-surface\);/,
+    /\.git-graph-overlay \{[\s\S]*width: var\(--git-graph-visual-width, 58px\);/,
+    /\.git-graph-overlay \{[\s\S]*height: var\(--git-graph-visual-height, 42px\);/,
+    /\.git-graph-row-main \{[\s\S]*min-height: 42px;/,
+    /\.git-graph-list,[\s\S]*\.git-changes-list \{[\s\S]*overflow-x: hidden;/,
+    /\.git-graph-visual-stack \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/,
     /\.git-graph-row-main \{[\s\S]*grid-template-columns: var\(--git-graph-visual-width, 58px\) minmax\(0, 1fr\) 28px;/,
+    /\.git-graph-copy \{[\s\S]*overflow: hidden;/,
+    /\.git-commit-file-row \{[\s\S]*grid-template-columns: 20px minmax\(0, 1fr\) 22px;/,
+    /\.git-change-row \{[\s\S]*grid-template-columns: 22px minmax\(0, 1fr\) 20px;/,
+    /\.git-graph-dot\.main \{[\s\S]*fill: #fbfaf8;[\s\S]*stroke-width: 3\.4;/,
+    /\.git-graph-dot\.branch \{[\s\S]*fill: currentColor;/,
+    /\.git-head-ref \{[\s\S]*background: #2563eb;/,
+  ]);
+  assert.doesNotMatch(
+    stylesSource,
+    /\.git-panel \{[\s\S]*background: #0f1419;/,
   );
-  assert.match(css, /\.git-graph-copy \{[\s\S]*overflow: hidden;/);
-  assert.match(css, /\.git-commit-file-row \{[\s\S]*grid-template-columns: 20px minmax\(0, 1fr\) 22px;/);
-  assert.match(css, /\.git-change-row \{[\s\S]*grid-template-columns: 22px minmax\(0, 1fr\) 20px;/);
-  assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #fbfaf8;[\s\S]*stroke-width: 3\.4;/);
-  assert.match(css, /\.git-graph-dot\.branch \{[\s\S]*fill: currentColor;/);
-  assert.match(css, /\.git-head-ref \{[\s\S]*background: #2563eb;/);
-  assert.match(source, /"--git-graph-visual-height": `\$\{visualModel\.height\}px`/);
+  assert.match(
+    rightPanelSource,
+    /"--git-graph-visual-height": `\$\{visualModel\.height\}px`/,
+  );
 });
 
 test("renders cwd tree inside the preview panel", () => {
@@ -2522,48 +2643,42 @@ test("renders cwd tree inside the preview panel", () => {
         { path: "/tmp/src", name: "src", kind: "directory" },
         { path: "/tmp/README.md", name: "README.md", kind: "file" },
       ],
-      "/tmp/src": [
-        { path: "/tmp/src/App.tsx", name: "App.tsx", kind: "file" },
-      ],
+      "/tmp/src": [{ path: "/tmp/src/App.tsx", name: "App.tsx", kind: "file" }],
     },
   });
 
-  assert.doesNotMatch(markup, /aria-label="Show current file"/);
-  assert.doesNotMatch(markup, /aria-label="Show file tree"/);
-  assert.doesNotMatch(markup, /CWD Tree/);
-  assert.match(markup, /Thread cwd file tree/);
-  assert.match(markup, /README\.md/);
-  assert.match(markup, /App\.tsx/);
-  assert.match(markup, /title="\/tmp\/src"/);
-  assert.match(markup, /title="\/tmp\/src\/App\.tsx"/);
+  assertDoesNotMatchAny(markup, [
+    /aria-label="Show current file"/,
+    /aria-label="Show file tree"/,
+    /CWD Tree/,
+  ]);
+  assertMatches(markup, [
+    /Thread cwd file tree/,
+    /README\.md/,
+    /App\.tsx/,
+    /title="\/tmp\/src"/,
+    /title="\/tmp\/src\/App\.tsx"/,
+  ]);
 });
 
 test("renders markdown file previews as markdown content", () => {
-  const markup = renderRightPanel(makeThread([]), "preview", null, {
+  const markup = renderPreviewPanel({
     preview: makePreview({
       content: "# Title\n\nThis is **bold**.\n\n[Other](./other.md)",
       language: "markdown",
     }),
   });
 
-  assert.match(markup, /<h1>Title<\/h1>/);
-  assert.match(markup, /This is <strong>bold<\/strong>\./);
-  assert.match(markup, /href="#"/);
+  assertMatches(markup, [
+    /<h1>Title<\/h1>/,
+    /This is <strong>bold<\/strong>\./,
+    /href="#"/,
+  ]);
   assert.doesNotMatch(markup, /Loading editor/);
 });
 
 test("keeps non-markdown file previews on the editor render path", () => {
-  assert.equal(
-    filePreviewRenderMode(
-      makePreview({
-        path: "/tmp/src/App.tsx",
-        displayPath: "src/App.tsx",
-        content: "export const value = 1;",
-        language: "typescript",
-      }),
-    ),
-    "editor",
-  );
+  assert.equal(filePreviewRenderMode(makeTypescriptPreview()), "editor");
   assert.equal(
     filePreviewRenderMode(
       makePreview({
@@ -2578,51 +2693,18 @@ test("keeps non-markdown file previews on the editor render path", () => {
 });
 
 test("enables edit actions for editable text previews while keeping image and PDF read-only", () => {
-  const editorPreview = makePreview({
-    path: "/tmp/src/App.tsx",
-    displayPath: "src/App.tsx",
-    content: "export const value = 1;",
-    language: "typescript",
-  });
-  const markdownPreview = makePreview({
-    path: "/tmp/README.md",
-    displayPath: "README.md",
-    content: "# Title",
-    language: "markdown",
-  });
-  const imagePreview = makePreview({
-    path: "/tmp/diagram.png",
-    displayPath: "diagram.png",
-    content: "",
-    language: "plaintext",
-    image: {
-      path: "/tmp/diagram.png",
-      mimeType: "image/png",
-      name: "diagram.png",
-      byteSize: 2048,
-    },
-  });
-  const pdfPreview = makePreview({
-    path: "/tmp/spec.pdf",
-    displayPath: "spec.pdf",
-    content: "",
-    language: "pdf",
-    pdf: {
-      path: "/tmp/spec.pdf",
-      mimeType: "application/pdf",
-      name: "spec.pdf",
-      byteSize: 512,
-      url: "morpheus-file-preview://pdf/token-1/spec.pdf",
-    },
-  });
+  const editorPreview = makeTypescriptPreview();
+  const markdownPreview = makeMarkdownPreview();
+  const imagePreview = makeImagePreview();
+  const pdfPreview = makePdfPreview();
 
-  const markdownMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const markdownMarkup = renderPreviewPanel({
     preview: markdownPreview,
   });
-  const imageMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const imageMarkup = renderPreviewPanel({
     preview: imagePreview,
   });
-  const pdfMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const pdfMarkup = renderPreviewPanel({
     preview: pdfPreview,
   });
 
@@ -2635,110 +2717,35 @@ test("enables edit actions for editable text previews while keeping image and PD
     /<div class="preview-header-actions">[\s\S]*preview-edit-action[\s\S]*<\/header>/,
   );
   assert.match(markdownMarkup, />Edit<\/button>/);
-  assert.doesNotMatch(markdownMarkup, /preview-utility-strip[\s\S]*preview-edit-action/);
+  assert.doesNotMatch(
+    markdownMarkup,
+    /preview-utility-strip[\s\S]*preview-edit-action/,
+  );
   assert.doesNotMatch(imageMarkup, /preview-edit-action/);
   assert.doesNotMatch(pdfMarkup, /preview-edit-action/);
 });
 
 test("header edit controls appear only for loaded editable previews", () => {
-  const markdownPreview = makePreview({
-    path: "/tmp/README.md",
-    displayPath: "README.md",
-    content: "# Title",
-    language: "markdown",
-  });
-  const editorPreview = makePreview({
-    path: "/tmp/src/App.tsx",
-    displayPath: "src/App.tsx",
-    content: "export const value = 1;",
-    language: "typescript",
-  });
-  const imagePreview = makePreview({
-    path: "/tmp/diagram.png",
-    displayPath: "diagram.png",
-    content: "",
-    language: "plaintext",
-    image: {
-      path: "/tmp/diagram.png",
-      mimeType: "image/png",
-      name: "diagram.png",
-      byteSize: 2048,
-    },
-  });
+  const editorPreview = makeTypescriptPreview();
+  const imagePreview = makeImagePreview();
 
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "preview",
-      preview: markdownPreview,
-      previewError: null,
-      previewLoading: false,
-    }),
-    true,
-  );
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "preview",
-      preview: editorPreview,
-      previewError: null,
-      previewLoading: false,
-    }),
-    true,
-  );
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "tree",
-      preview: markdownPreview,
-      previewError: null,
-      previewLoading: false,
-    }),
-    false,
-  );
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "preview",
-      preview: markdownPreview,
-      previewError: null,
-      previewLoading: true,
-    }),
-    false,
-  );
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "preview",
-      preview: markdownPreview,
-      previewError: "Failed",
-      previewLoading: false,
-    }),
-    false,
-  );
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "preview",
-      preview: imagePreview,
-      previewError: null,
-      previewLoading: false,
-    }),
-    false,
-  );
-  assert.equal(
-    filePreviewHeaderEditControlsVisible({
-      filePanelView: "preview",
-      preview: null,
-      previewError: null,
-      previewLoading: false,
-    }),
-    false,
-  );
+  assert.equal(previewHeaderControlsVisible(), true);
+  assert.equal(previewHeaderControlsVisible({ preview: editorPreview }), true);
+  assert.equal(previewHeaderControlsVisible({ filePanelView: "tree" }), false);
+  assert.equal(previewHeaderControlsVisible({ previewLoading: true }), false);
+  assert.equal(previewHeaderControlsVisible({ previewError: "Failed" }), false);
+  assert.equal(previewHeaderControlsVisible({ preview: imagePreview }), false);
+  assert.equal(previewHeaderControlsVisible({ preview: null }), false);
 
-  const loadingMarkup = renderRightPanel(makeThread([]), "preview", null, {
-    preview: markdownPreview,
+  const loadingMarkup = renderPreviewPanel({
+    preview: makeMarkdownPreview(),
     previewLoading: true,
   });
-  const errorMarkup = renderRightPanel(makeThread([]), "preview", null, {
-    preview: markdownPreview,
+  const errorMarkup = renderPreviewPanel({
+    preview: makeMarkdownPreview(),
     previewError: "Failed to load",
   });
-  const emptyMarkup = renderRightPanel(makeThread([]), "preview", null);
+  const emptyMarkup = renderPreviewPanel();
 
   assert.doesNotMatch(loadingMarkup, /preview-edit-action/);
   assert.doesNotMatch(errorMarkup, /preview-edit-action/);
@@ -2758,7 +2765,7 @@ test("shows the Browser open action only for loaded HTML previews", () => {
     language: "plaintext",
     content: "<main>Hello</main>",
   });
-  const nonHtmlMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const nonHtmlMarkup = renderPreviewPanel({
     preview: makePreview({
       path: "/tmp/docs/share.md",
       displayPath: "docs/share.md",
@@ -2766,7 +2773,7 @@ test("shows the Browser open action only for loaded HTML previews", () => {
       content: "# Share",
     }),
   });
-  const loadingMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const loadingMarkup = renderPreviewPanel({
     preview: makePreview({
       path: "/tmp/docs/share.html",
       displayPath: "docs/share.html",
@@ -2774,7 +2781,7 @@ test("shows the Browser open action only for loaded HTML previews", () => {
     }),
     previewLoading: true,
   });
-  const errorMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const errorMarkup = renderPreviewPanel({
     preview: makePreview({
       path: "/tmp/docs/share.html",
       displayPath: "docs/share.html",
@@ -2782,7 +2789,7 @@ test("shows the Browser open action only for loaded HTML previews", () => {
     }),
     previewError: "Failed to load",
   });
-  const treeMarkup = renderRightPanel(makeThread([]), "preview", null, {
+  const treeMarkup = renderPreviewPanel({
     filePanelView: "tree",
     preview: makePreview({
       path: "/tmp/docs/share.html",
@@ -2791,90 +2798,47 @@ test("shows the Browser open action only for loaded HTML previews", () => {
     }),
   });
 
-  assert.equal(
-    filePreviewOpenInBrowserActionVisible({
-      filePanelView: "preview",
-      preview: htmlPreview,
-      previewError: null,
-      previewLoading: false,
-    }),
-    true,
-  );
-  assert.equal(
-    filePreviewOpenInBrowserActionVisible({
-      filePanelView: "preview",
-      preview: htmPreview,
-      previewError: null,
-      previewLoading: false,
-    }),
-    true,
-  );
+  assert.equal(previewOpenInBrowserVisible({ preview: htmlPreview }), true);
+  assert.equal(previewOpenInBrowserVisible({ preview: htmPreview }), true);
   assert.doesNotMatch(nonHtmlMarkup, /Open preview in Browser/);
   assert.match(nonHtmlMarkup, /aria-label="Open preview in system editor"/);
   assert.doesNotMatch(loadingMarkup, /Open preview in Browser/);
   assert.doesNotMatch(errorMarkup, /Open preview in Browser/);
   assert.doesNotMatch(treeMarkup, /Open preview in Browser/);
-  assert.equal(
-    filePreviewOpenInBrowserActionVisible({
-      filePanelView: "preview",
-      preview: null,
-      previewError: null,
-      previewLoading: false,
-    }),
-    false,
-  );
+  assert.equal(previewOpenInBrowserVisible(), false);
 });
 
 test("markdown previews keep rendered readonly mode until editing or saving", () => {
-  const markdownPreview = makePreview({
-    path: "/tmp/README.md",
-    displayPath: "README.md",
-    content: "# Title",
-    language: "markdown",
-  });
-  const editorPreview = makePreview({
-    path: "/tmp/src/App.tsx",
-    displayPath: "src/App.tsx",
-    content: "export const value = 1;",
-    language: "typescript",
-  });
-  const imagePreview = makePreview({
-    path: "/tmp/diagram.png",
-    displayPath: "diagram.png",
-    content: "",
-    language: "plaintext",
-    image: {
-      path: "/tmp/diagram.png",
-      mimeType: "image/png",
-      name: "diagram.png",
-      byteSize: 2048,
-    },
-  });
-  const markup = renderRightPanel(makeThread([]), "preview", null, {
+  const markdownPreview = makeMarkdownPreview();
+  const editorPreview = makeTypescriptPreview();
+  const imagePreview = makeImagePreview();
+  const markup = renderPreviewPanel({
     preview: markdownPreview,
   });
 
   assert.match(markup, /<h1>Title<\/h1>/);
   assert.doesNotMatch(markup, /Loading editor/);
-  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "readonly"), false);
-  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "editing"), true);
+  assert.equal(
+    filePreviewSourceEditorVisible(markdownPreview, "readonly"),
+    false,
+  );
+  assert.equal(
+    filePreviewSourceEditorVisible(markdownPreview, "editing"),
+    true,
+  );
   assert.equal(filePreviewSourceEditorVisible(markdownPreview, "saving"), true);
   assert.equal(filePreviewSourceEditorVisible(editorPreview, "readonly"), true);
   assert.equal(filePreviewSourceEditorVisible(imagePreview, "editing"), false);
 });
 
 test("file preview edit state saves, cancels, keeps failures, and resets on file switch", () => {
-  const preview = makePreview({
-    path: "/tmp/src/App.tsx",
-    displayPath: "src/App.tsx",
+  const preview = makeTypescriptPreview({
     content: "const value = 1;",
-    language: "typescript",
   });
-  const nextPreview = makePreview({
+  const nextPreview = makeTypescriptPreview({
     path: "/tmp/src/Other.tsx",
     displayPath: "src/Other.tsx",
     content: "const other = 1;",
-    language: "typescript",
   });
 
   let state = syncFilePreviewEditState(
@@ -2919,20 +2883,20 @@ test("file preview edit state saves, cancels, keeps failures, and resets on file
 });
 
 test("file preview save button and Cmd+S use the same save handler", () => {
-  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+  const source = readSource("rightPanel");
 
-  assert.match(source, /onClick=\{\(\) => void savePreviewDraft\(\)\}/);
-  assert.match(source, /monaco\.KeyMod\.CtrlCmd \| monaco\.KeyCode\.KeyS/);
-  assert.match(source, /savePreviewDraftRef\.current\(\)/);
+  assertMatches(source, [
+    /onClick=\{\(\) => void savePreviewDraft\(\)\}/,
+    /monaco\.KeyMod\.CtrlCmd \| monaco\.KeyCode\.KeyS/,
+    /savePreviewDraftRef\.current\(\)/,
+  ]);
 });
 
 test("renders PDF file previews with an embedded PDF object", () => {
-  const markup = renderRightPanel(makeThread([]), "preview", null, {
-    preview: makePreview({
+  const markup = renderPreviewPanel({
+    preview: makePdfPreview({
       path: "/tmp/Project Docs/spec.PDF",
       displayPath: "Project Docs/spec.PDF",
-      content: "",
-      language: "pdf",
       pdf: {
         path: "/tmp/Project Docs/spec.PDF",
         mimeType: "application/pdf",
@@ -2945,7 +2909,7 @@ test("renders PDF file previews with an embedded PDF object", () => {
 
   assert.equal(
     filePreviewRenderMode(
-      makePreview({
+      makePdfPreview({
         language: "markdown",
         pdf: {
           path: "/tmp/spec.pdf",
@@ -2962,7 +2926,10 @@ test("renders PDF file previews with an embedded PDF object", () => {
   assert.match(markup, /application\/pdf/);
   assert.match(markup, /4\.0 KB/);
   assert.match(markup, /aria-label="PDF preview for spec\.PDF"/);
-  assert.match(markup, /data="morpheus-file-preview:\/\/pdf\/token-1\/spec\.PDF"/);
+  assert.match(
+    markup,
+    /data="morpheus-file-preview:\/\/pdf\/token-1\/spec\.PDF"/,
+  );
   assert.doesNotMatch(markup, /Loading editor/);
 });
 
@@ -2992,24 +2959,11 @@ test("resolves preview definition clicks to a column inside the current word", (
 });
 
 test("keeps image file previews on the image path", () => {
-  const markup = renderRightPanel(makeThread([]), "preview", null, {
-    preview: makePreview({
-      path: "/tmp/diagram.png",
-      displayPath: "diagram.png",
-      content: "",
-      language: "plaintext",
-      image: {
-        path: "/tmp/diagram.png",
-        mimeType: "image/png",
-        name: "diagram.png",
-        byteSize: 2048,
-      },
-    }),
+  const markup = renderPreviewPanel({
+    preview: makeImagePreview(),
   });
 
-  assert.match(markup, /IMAGE/);
-  assert.match(markup, /image\/png/);
-  assert.match(markup, /diagram\.png/);
+  assertMatches(markup, [/IMAGE/, /image\/png/, /diagram\.png/]);
   assert.doesNotMatch(markup, /markdown-content/);
 });
 
@@ -3021,55 +2975,35 @@ test("hides chat compat cwd from the preview tree", () => {
   const markup = renderRightPanel(thread, "preview", null, {
     filePanelView: "tree",
     fileTreeEntriesByPath: {
-      [thread.cwd]: [{ path: `${thread.cwd}/scratch.txt`, name: "scratch.txt", kind: "file" }],
+      [thread.cwd]: [
+        {
+          path: `${thread.cwd}/scratch.txt`,
+          name: "scratch.txt",
+          kind: "file",
+        },
+      ],
     },
   });
 
-  assert.doesNotMatch(markup, /aria-label="Show file tree"/);
-  assert.doesNotMatch(markup, /CWD Tree/);
   assert.match(markup, /This chat has no project cwd to browse\./);
-  assert.doesNotMatch(markup, /Thread cwd file tree/);
-  assert.doesNotMatch(markup, /scratch\.txt/);
+  assertDoesNotMatchAny(markup, [
+    /aria-label="Show file tree"/,
+    /CWD Tree/,
+    /Thread cwd file tree/,
+    /scratch\.txt/,
+  ]);
 });
 
 test("renders directory-specific cwd tree errors instead of empty state", () => {
   const thread = makeThread([]);
-  const markup = renderToStaticMarkup(
-    <RightPanel
-      activeView="preview"
-      availableSkillCount={0}
-      availableWorkflows={[FEATURE_DEV_WORKFLOW]}
-      isCollapsed={false}
-      expandedTreeDirectories={["/tmp/src"]}
-      filePanelView="tree"
-      fileTreeEntriesByPath={{
-        "/tmp": [{ path: "/tmp/src", name: "src", kind: "directory" }],
-      }}
-      fileTreeErrorsByPath={{ "/tmp/src": "Permission denied" }}
-      fileTreeLoadingPath={null}
-      onNavigateToSymbol={() => {}}
-      onOpenPreviewExternally={() => {}}
-      onOpenPreviewInBrowser={() => {}}
-      onOpenTreeFile={() => {}}
-      onSetActiveView={() => {}}
-      onSetCollapsed={() => {}}
-      onSetFilePanelView={() => {}}
-      onToggleTreeDirectory={() => {}}
-      onCancelGoal={() => {}}
-      onPauseGoal={() => {}}
-      onResumeGoal={() => {}}
-      planUpdate={null}
-      goal={null}
-      goalAction={null}
-      goalActionError={null}
-      preview={null}
-      previewError={null}
-      previewLoading={false}
-      skills={[]}
-      thread={thread}
-      todoItems={[]}
-    />,
-  );
+  const markup = renderRightPanel(thread, "preview", null, {
+    expandedTreeDirectories: ["/tmp/src"],
+    filePanelView: "tree",
+    fileTreeEntriesByPath: {
+      "/tmp": [{ path: "/tmp/src", name: "src", kind: "directory" }],
+    },
+    fileTreeErrorsByPath: { "/tmp/src": "Permission denied" },
+  });
 
   assert.match(markup, /Permission denied/);
   assert.doesNotMatch(markup, /Empty directory/);
