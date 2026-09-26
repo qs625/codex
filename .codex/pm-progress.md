@@ -83,16 +83,16 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `898644d1c`; dispatch `15f1aaa40`; merge `3d81ff45d`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-8
-  status: queued
+  status: dispatched
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-8
   task_type: continuous_frontend_backend_architecture_cleanup
-  depends_on: main after `3d81ff45d`; user asked for multiple continuous cleanup rounds
+  depends_on: main `25cd66d87`; user asked for multiple continuous cleanup rounds
   files: prefer another new seam; avoid prior test helper families unless substantially larger
-  base_commit: pending
-  next_action: Dispatch immediately after recording tranche 7.
+  base_commit: `25cd66d87`
+  next_action: Owner to implement another cleanup tranche on a new seam, preferably frontend/Electron tests or tool-service/spec helpers, avoiding previous app-server fixture families.
   validation: pending
   commit: pending
 
