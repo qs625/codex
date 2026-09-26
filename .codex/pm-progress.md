@@ -24,7 +24,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   base_commit: `b0f28fe15`
   next_action: PM to inspect owner commit and merge when ready. No immediate Runtime Capsule restart required; pure frontend test fixture refactor with no intended product/runtime/protocol/schema/installed-state behavior change.
   validation: Owner resumed after Runtime Capsule restart `runtime-restart:call_T3IiLBOlK7vSEYrAON5JKZFM`, confirmed branch/worktree persisted, reran necessary checks, and completed a frontend test fixture cleanup across `Panels.test.tsx` and `conversation.test.ts`. Net owner diff before commit: `3 files changed, 308 insertions(+), 419 deletions(-)`, net -111 lines. Fixed reviewer `/self/owner_main/reviewer` approved with no blocking findings, confirming helper defaults preserve turn/sidebar semantics and no assertion weakening was found. Owner validation passed: `git diff --check -- .codex/pm-progress.md apps/root-worker-prototype/src/components/Panels.test.tsx apps/root-worker-prototype/src/lib/conversation.test.ts`; `pnpm exec prettier --check src/components/Panels.test.tsx src/lib/conversation.test.ts`; `pnpm exec tsx --test src/components/Panels.test.tsx` (24 passed); `pnpm exec tsx --test src/lib/conversation.test.ts` (77 passed). Existing Node `[DEP0205] module.register()` deprecation warning observed in focused tests.
-  commit: pending
+  commit: owner `c3a1d0654`
 
 - id: frontend-backend-large-code-organization
   status: merged_pending_capsule_delivery
