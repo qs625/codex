@@ -1,7 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
-const { join } = require("node:path");
+const {
+  readSource,
+  sourceSlice,
+} = require("./sourceAssertions.cjs");
 
 const {
   closeBrowserPanelTabLifecycle,
@@ -12,6 +14,8 @@ const {
 } = require("./browserPanelTabs.cjs");
 
 const tabs = [{ id: "tab-a" }, { id: "tab-b" }, { id: "tab-c" }];
+const mainSource = readSource("main.cjs");
+const surfaceSource = readSource("browserPanelSurface.cjs");
 
 test("nextBrowserTabIdAfterClose keeps active tab when closing background tab", () => {
   assert.equal(nextBrowserTabIdAfterClose(tabs, "tab-a", "tab-b"), "tab-a");
@@ -338,9 +342,6 @@ test("closeBrowserPanelTabLifecycle leaves the active visible tab alone when clo
 });
 
 test("browser panel native view lifecycle raises only on explicit show or tab actions", () => {
-  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
-  const surfaceSource = readFileSync(join(__dirname, "browserPanelSurface.cjs"), "utf8");
-
   assert.match(
     mainSource,
     /ipcMain\.handle\("codex:browser:show"[\s\S]*const surfaceId = browserSurfaceIdFromPayload\(bounds\);[\s\S]*const tabId = browserTabIdFromPayload\(bounds\);[\s\S]*setBrowserPanelBounds\(panel, browserBoundsFromPayload\(bounds\), \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);[\s\S]*attachBrowserPanel\(panel, \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);/,
@@ -370,10 +371,7 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     /function setBrowserPanelBounds\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*tabId = null[\s\S]*panel\.boundsBySurfaceId\.set\(surfaceId, update\.bounds\);[\s\S]*panel\.visibleSurfaceIds\.has\(surfaceId\)[\s\S]*attachBrowserPanelTabView\(panel, \{ surfaceId, tab \}\);/,
   );
   assert.doesNotMatch(
-    mainSource.slice(
-      mainSource.indexOf("function setBrowserPanelBounds("),
-      mainSource.indexOf("function sendBrowserPanelState(panel)", mainSource.indexOf("function setBrowserPanelBounds(")),
-    ),
+    sourceSlice(mainSource, "function setBrowserPanelBounds(", "function sendBrowserPanelState(panel)"),
     /attachActiveBrowserPanelView\(panel, \{ raise: true \}\)/,
     "passive Browser bounds refresh must not raise the native view and steal focus",
   );
@@ -381,9 +379,10 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     mainSource,
     /function attachActiveBrowserPanelView\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID/,
   );
-  const attachFunction = mainSource.slice(
-    mainSource.indexOf("function attachBrowserPanelTabView("),
-    mainSource.indexOf("function ensureBrowserPanelTabAttachedForNavigation", mainSource.indexOf("function attachBrowserPanelTabView(")),
+  const attachFunction = sourceSlice(
+    mainSource,
+    "function attachBrowserPanelTabView(",
+    "function ensureBrowserPanelTabAttachedForNavigation",
   );
   assert.match(
     attachFunction,
@@ -420,9 +419,10 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     mainSource,
     /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*browserPanelBoundsAreVisible\(browserPanelBoundsForSurface\(panel, surfaceId\)\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
   );
-  const visibleNavigationTargetFunction = mainSource.slice(
-    mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget("),
-    mainSource.indexOf("async function waitForBrowserPanelNavigationTarget", mainSource.indexOf("async function waitForBrowserPanelVisibleNavigationTarget(")),
+  const visibleNavigationTargetFunction = sourceSlice(
+    mainSource,
+    "async function waitForBrowserPanelVisibleNavigationTarget(",
+    "async function waitForBrowserPanelNavigationTarget",
   );
   assert.match(
     visibleNavigationTargetFunction,
@@ -463,10 +463,10 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
 });
 
 test("direct CDP-created Browser tabs do not force native attach while hidden", () => {
-  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
-  const createTargetFunction = mainSource.slice(
-    mainSource.indexOf("async function createBrowserPanelDebugTarget(target)"),
-    mainSource.indexOf("async function loadBrowserPanelTabAboutBlankBootstrap", mainSource.indexOf("async function createBrowserPanelDebugTarget(target)")),
+  const createTargetFunction = sourceSlice(
+    mainSource,
+    "async function createBrowserPanelDebugTarget(target)",
+    "async function loadBrowserPanelTabAboutBlankBootstrap",
   );
 
   assert.match(
@@ -492,34 +492,25 @@ test("direct CDP-created Browser tabs do not force native attach while hidden", 
 });
 
 test("closing Browser tabs destroys webContents before replacement tabs navigate", () => {
-  const mainSource = readFileSync(join(__dirname, "main.cjs"), "utf8");
-  const closeFunction = mainSource.slice(
-    mainSource.indexOf("function closeBrowserPanelTab(panel, tabId)"),
-    mainSource.indexOf(
-      "function removeDestroyedBrowserPanelTab",
-      mainSource.indexOf("function closeBrowserPanelTab(panel, tabId)"),
-    ),
+  const closeFunction = sourceSlice(
+    mainSource,
+    "function closeBrowserPanelTab(panel, tabId)",
+    "function removeDestroyedBrowserPanelTab",
   );
-  const destroyPanelFunction = mainSource.slice(
-    mainSource.indexOf("function destroyBrowserPanel(window)"),
-    mainSource.indexOf(
-      "function setBrowserPanelBounds",
-      mainSource.indexOf("function destroyBrowserPanel(window)"),
-    ),
+  const destroyPanelFunction = sourceSlice(
+    mainSource,
+    "function destroyBrowserPanel(window)",
+    "function setBrowserPanelBounds",
   );
-  const disposeFunction = mainSource.slice(
-    mainSource.indexOf("function disposeBrowserPanelTab(panel, tab)"),
-    mainSource.indexOf(
-      "function attachActiveBrowserPanelView",
-      mainSource.indexOf("function disposeBrowserPanelTab(panel, tab)"),
-    ),
+  const disposeFunction = sourceSlice(
+    mainSource,
+    "function disposeBrowserPanelTab(panel, tab)",
+    "function attachActiveBrowserPanelView",
   );
-  const destroyTabWebContentsFunction = mainSource.slice(
-    mainSource.indexOf("function destroyBrowserPanelTabWebContents(tab)"),
-    mainSource.indexOf(
-      "function attachActiveBrowserPanelView",
-      mainSource.indexOf("function destroyBrowserPanelTabWebContents(tab)"),
-    ),
+  const destroyTabWebContentsFunction = sourceSlice(
+    mainSource,
+    "function destroyBrowserPanelTabWebContents(tab)",
+    "function attachActiveBrowserPanelView",
   );
 
   assert.match(
