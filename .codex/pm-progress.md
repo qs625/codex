@@ -41,7 +41,7 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `6a805a5c3`; dispatch `04bf5d378`; merge `3e32bae51`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-5
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -50,7 +50,21 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `9b5267b5a`; user asked for multiple continuous rounds; previous tranche was safe but small
   files: prefer backend app-server request processor/test fixture duplication or another higher-yield untouched architecture seam under `codex-rs/` / `apps/root-worker-prototype/`
   base_commit: `9b5267b5a`
-  next_action: Owner to implement a larger code reduction tranche, preferably backend app-server/request/test fixture or another higher-yield untouched seam; avoid another small source assertion helper pass.
+  next_action: No immediate Runtime Capsule restart; pure test fixture refactor with no production/runtime semantic change, to be delivered with the next Runtime Capsule batch.
+  validation: Owner consolidated repeated `Thread` fixtures in `thread_processor_behavior_tests` behind `test_thread`, `completed_thread`, `active_thread`, and `waiting_command_thread`, replacing 13 repeated manual fixtures while preserving persisted items, turn contents, ids, lifecycle status, and assertions. Net owner diff: `1 file changed, 59 insertions(+), 371 deletions(-)`, net -312 lines. Reviewer approved and confirmed helper defaults/lifecycle semantics and `StoredThread` fixtures were not misapplied. PM validation passed: `git diff --check HEAD~1..HEAD`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server thread_processor_behavior_tests -- --nocapture` (75 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; `rustfmt --check --edition 2024 codex-rs/app-server/src/request_processors/thread_processor_tests.rs`; only existing Rust warnings observed.
+  commit: owner `4ddfb9113`; dispatch `1ecbd5d79`; merge `564894dd2`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-6
+  status: queued
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-6
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main after `564894dd2`; user asked for multiple continuous cleanup rounds
+  files: prefer a new untouched seam under `codex-rs/` or `apps/root-worker-prototype/`; avoid repeating thread_processor fixture cleanup or source assertion helper cleanup
+  base_commit: pending
+  next_action: Dispatch immediately after recording tranche 5; prioritize another high-yield coherent cleanup tranche with net code reduction.
   validation: pending
   commit: pending
 
