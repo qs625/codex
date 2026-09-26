@@ -74,26 +74,53 @@ function eventDrivenToolMarker(
 function makeCollabMessageTurn(overrides = {}) {
   return {
     id: "turn-1",
-    items: [
-      {
-        type: "collabAgentMessage",
-        id: "item-1",
-        operation: "sendMessage",
-        senderThreadId: "thread-2",
-        senderPath: "/root/worker",
-        recipientThreadId: "thread-1",
-        recipientPath: "/root",
-        otherRecipientPaths: [],
-        content: "same backend message",
-        triggerTurn: true,
-      },
-    ],
+    items: [makeCollabAgentMessageItem()],
     itemsView: "full",
     status: "running",
     error: null,
     startedAt: 10,
     completedAt: null,
     durationMs: null,
+    ...overrides,
+  };
+}
+
+function makeTurn(overrides = {}) {
+  return {
+    id: "turn-1",
+    items: [],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+    ...overrides,
+  };
+}
+
+function makeAgentMessageItem(id, text) {
+  return {
+    type: "agentMessage",
+    id,
+    text,
+    phase: null,
+    memoryCitation: null,
+  };
+}
+
+function makeCollabAgentMessageItem(overrides = {}) {
+  return {
+    type: "collabAgentMessage",
+    id: "item-1",
+    operation: "sendMessage",
+    senderThreadId: "thread-2",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    otherRecipientPaths: [],
+    content: "same backend message",
+    triggerTurn: true,
     ...overrides,
   };
 }
@@ -199,31 +226,12 @@ test("mergeThreadSnapshots applies newer active subscription items when present"
 });
 
 test("mergeThreadSnapshots preserves same-content items with different ids", () => {
-  const turn = {
-    id: "turn-1",
+  const turn = makeTurn({
     items: [
-      {
-        type: "agentMessage",
-        id: "item-1",
-        text: "same response",
-        phase: null,
-        memoryCitation: null,
-      },
-      {
-        type: "agentMessage",
-        id: "item-2",
-        text: "same response",
-        phase: null,
-        memoryCitation: null,
-      },
+      makeAgentMessageItem("item-1", "same response"),
+      makeAgentMessageItem("item-2", "same response"),
     ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  });
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
@@ -231,38 +239,13 @@ test("mergeThreadSnapshots preserves same-content items with different ids", () 
 });
 
 test("mergeThreadSnapshots merges duplicate item ids without reordering the turn", () => {
-  const turn = {
-    id: "turn-1",
+  const turn = makeTurn({
     items: [
-      {
-        type: "agentMessage",
-        id: "item-1",
-        text: "partial",
-        phase: null,
-        memoryCitation: null,
-      },
-      {
-        type: "agentMessage",
-        id: "item-2",
-        text: "middle",
-        phase: null,
-        memoryCitation: null,
-      },
-      {
-        type: "agentMessage",
-        id: "item-1",
-        text: "partial plus tail",
-        phase: null,
-        memoryCitation: null,
-      },
+      makeAgentMessageItem("item-1", "partial"),
+      makeAgentMessageItem("item-2", "middle"),
+      makeAgentMessageItem("item-1", "partial plus tail"),
     ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  });
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
@@ -276,8 +259,7 @@ test("mergeThreadSnapshots merges duplicate item ids without reordering the turn
 });
 
 test("mergeThreadSnapshots preserves repeated terminal collab status updates", () => {
-  const turn = {
-    id: "turn-1",
+  const turn = makeTurn({
     items: [
       {
         type: "collabAgentStatusUpdate",
@@ -306,13 +288,7 @@ test("mergeThreadSnapshots preserves repeated terminal collab status updates", (
         },
       },
     ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  });
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
@@ -364,24 +340,9 @@ test("mergeThreadSnapshots preserves live-derived turns with different item ids 
 });
 
 test("mergeThreadSnapshots preserves raw process exit marker messages in history", () => {
-  const turn = {
-    id: "turn-1",
-    items: [
-      {
-        type: "agentMessage",
-        id: "raw-item",
-        text: eventDrivenToolMarker(),
-        phase: null,
-        memoryCitation: null,
-      },
-    ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  const turn = makeTurn({
+    items: [makeAgentMessageItem("raw-item", eventDrivenToolMarker())],
+  });
 
   const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
@@ -390,29 +351,19 @@ test("mergeThreadSnapshots preserves raw process exit marker messages in history
 
 for (const operation of ["sendMessage", "send_message"]) {
   test(`mergeThreadSnapshots preserves raw ${operation} assistant envelope`, () => {
-    const turn = {
-      id: "turn-1",
+    const turn = makeTurn({
       items: [
-        {
-          type: "agentMessage",
-          id: `raw-${operation}`,
-          text: JSON.stringify({
+        makeAgentMessageItem(
+          `raw-${operation}`,
+          JSON.stringify({
             author: "/root/worker",
             recipient: "/root",
             content: "legacy message",
             operation,
           }),
-          phase: null,
-          memoryCitation: null,
-        },
+        ),
       ],
-      itemsView: "full",
-      status: "completed",
-      error: null,
-      startedAt: 10,
-      completedAt: 12,
-      durationMs: 2000,
-    };
+    });
 
     const merged = mergeThreadSnapshots(null, makeThread({ turns: [turn] }));
 
@@ -421,25 +372,12 @@ for (const operation of ["sendMessage", "send_message"]) {
 }
 
 test("mergeThreadSnapshots preserves restored raw process exit when read has structured event item", () => {
-  const restoredTurn = {
+  const restoredTurn = makeTurn({
     id: "restored-turn",
-    items: [
-      {
-        type: "agentMessage",
-        id: "raw-item",
-        text: eventDrivenToolMarker(),
-        phase: null,
-        memoryCitation: null,
-      },
-    ],
+    items: [makeAgentMessageItem("raw-item", eventDrivenToolMarker())],
     itemsView: "notLoaded",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
-  const readTurn = {
+  });
+  const readTurn = makeTurn({
     id: "read-turn",
     items: [
       {
@@ -450,13 +388,7 @@ test("mergeThreadSnapshots preserves restored raw process exit when read has str
         text: "Session 42 exited with code 0",
       },
     ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  });
 
   const merged = mergeThreadSnapshots(
     makeThread({ turns: [restoredTurn] }),
@@ -479,21 +411,11 @@ test("mergeThreadSnapshots keeps resume-only in-flight items missing from a stal
 test("mergeThreadSnapshots preserves same-content in-flight items with different ids", () => {
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",
-    items: [
-      {
-        ...makeCollabMessageTurn().items[0],
-        id: "restored-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "restored-item" })],
   });
   const readTurn = makeCollabMessageTurn({
     id: "read-turn",
-    items: [
-      {
-        ...restoredTurn.items[0],
-        id: "read-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "read-item" })],
     status: "completed",
     completedAt: 12,
     durationMs: 2000,
@@ -508,24 +430,11 @@ test("mergeThreadSnapshots preserves same-content in-flight items with different
 });
 
 test("mergeThreadSnapshots preserves same-content completed live agent turns with different ids", () => {
-  const restoredTurn = {
+  const restoredTurn = makeTurn({
     id: "restored-turn",
-    items: [
-      {
-        type: "agentMessage",
-        id: "restored-item",
-        text: "same response",
-        phase: null,
-        memoryCitation: null,
-      },
-    ],
+    items: [makeAgentMessageItem("restored-item", "same response")],
     itemsView: "notLoaded",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  });
   const readTurn = {
     ...restoredTurn,
     id: "read-turn",
@@ -547,11 +456,10 @@ test("mergeThreadSnapshots preserves same-content completed live agent turns wit
 });
 
 test("mergeThreadSnapshots preserves same-content completed child completion turns with different ids", () => {
-  const restoredTurn = {
+  const restoredTurn = makeTurn({
     id: "restored-turn",
     items: [
-      {
-        type: "collabAgentMessage",
+      makeCollabAgentMessageItem({
         id: "restored-child-completion",
         operation: "childCompletion",
         senderThreadId: "thread-child",
@@ -561,15 +469,9 @@ test("mergeThreadSnapshots preserves same-content completed child completion tur
         otherRecipientPaths: [],
         content: "done",
         triggerTurn: true,
-      },
+      }),
     ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+  });
   const readTurn = {
     ...restoredTurn,
     id: "read-turn",
@@ -590,24 +492,10 @@ test("mergeThreadSnapshots preserves same-content completed child completion tur
 });
 
 test("mergeThreadSnapshots preserves completed full agent turns with matching content", () => {
-  const restoredTurn = {
+  const restoredTurn = makeTurn({
     id: "restored-turn",
-    items: [
-      {
-        type: "agentMessage",
-        id: "restored-item",
-        text: "same response",
-        phase: null,
-        memoryCitation: null,
-      },
-    ],
-    itemsView: "full",
-    status: "completed",
-    error: null,
-    startedAt: 10,
-    completedAt: 12,
-    durationMs: 2000,
-  };
+    items: [makeAgentMessageItem("restored-item", "same response")],
+  });
   const readTurn = {
     ...restoredTurn,
     id: "read-turn",
@@ -631,24 +519,13 @@ test("mergeThreadSnapshots preserves every same-content item with a distinct id"
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",
     items: [
-      {
-        ...makeCollabMessageTurn().items[0],
-        id: "restored-item-1",
-      },
-      {
-        ...makeCollabMessageTurn().items[0],
-        id: "restored-item-2",
-      },
+      makeCollabAgentMessageItem({ id: "restored-item-1" }),
+      makeCollabAgentMessageItem({ id: "restored-item-2" }),
     ],
   });
   const readTurn = makeCollabMessageTurn({
     id: "read-turn",
-    items: [
-      {
-        ...restoredTurn.items[0],
-        id: "read-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "read-item" })],
     status: "completed",
     completedAt: 12,
     durationMs: 2000,
@@ -671,21 +548,11 @@ test("mergeThreadSnapshots preserves placeholder turns with no timing metadata w
     startedAt: null,
     completedAt: null,
     durationMs: null,
-    items: [
-      {
-        ...makeCollabMessageTurn().items[0],
-        id: "restored-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "restored-item" })],
   });
   const readTurn = makeCollabMessageTurn({
     id: "read-turn",
-    items: [
-      {
-        ...restoredTurn.items[0],
-        id: "read-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "read-item" })],
     status: "completed",
     startedAt: 10,
     completedAt: 12,
@@ -703,24 +570,14 @@ test("mergeThreadSnapshots preserves placeholder turns with no timing metadata w
 test("mergeThreadSnapshots preserves distinct in-flight items with matching content", () => {
   const readTurn = makeCollabMessageTurn({
     id: "read-turn",
-    items: [
-      {
-        ...makeCollabMessageTurn().items[0],
-        id: "read-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "read-item" })],
     status: "completed",
     completedAt: 12,
     durationMs: 2000,
   });
   const liveTurn = makeCollabMessageTurn({
     id: "live-turn",
-    items: [
-      {
-        ...readTurn.items[0],
-        id: "live-item",
-      },
-    ],
+    items: [makeCollabAgentMessageItem({ id: "live-item" })],
     startedAt: 20,
   });
 
@@ -733,7 +590,7 @@ test("mergeThreadSnapshots preserves distinct in-flight items with matching cont
 });
 
 test("mergeThreadSnapshots keeps older restored reasoning before newer live tool items", () => {
-  const existingTurn = {
+  const existingTurn = makeTurn({
     id: "turn-1",
     items: [
       {
@@ -743,13 +600,10 @@ test("mergeThreadSnapshots keeps older restored reasoning before newer live tool
         startedAtMs: 2000,
       },
     ],
-    itemsView: "full",
     status: "running",
-    error: null,
-    startedAt: 10,
     completedAt: null,
     durationMs: null,
-  };
+  });
   const nextTurn = {
     ...existingTurn,
     items: [
