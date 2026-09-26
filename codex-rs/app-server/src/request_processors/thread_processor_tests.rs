@@ -638,134 +638,223 @@ mod thread_processor_behavior_tests {
         })
     }
 
-    #[test]
-    fn populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn() {
-        let mut thread = completed_thread();
-        let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
-                protocol::protocol::ExecCommandEndEvent {
-                    call_id: "exec-1".to_string(),
-                    process_id: Some("pid-1".to_string()),
-                    turn_id: "turn-1".to_string(),
-                    completed_at_ms: 123,
-                    command: vec!["rtk".to_string(), "cargo".to_string(), "test".to_string()],
-                    cwd: test_path_buf("/tmp").abs(),
-                    parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
-                        cmd: "rtk cargo test".to_string(),
-                    }],
-                    source: protocol::protocol::ExecCommandSource::Agent,
-                    interaction_input: None,
-                    initial_wait_ms: None,
-                    notify_on: None,
-                    stdout: "ok\n".to_string(),
-                    stderr: String::new(),
-                    aggregated_output: "ok\n".to_string(),
-                    exit_code: 0,
-                    duration: std::time::Duration::from_millis(12),
-                    formatted_output: "ok\n".to_string(),
-                    status: protocol::protocol::ExecCommandStatus::Completed,
-                },
-            )),
-        ];
-
-        populate_thread_turns_from_history(&mut thread, &persisted_items, None);
-
-        assert_eq!(thread.turns.len(), 1);
-        assert_eq!(
-            thread.turns[0].items,
-            vec![ThreadItem::CommandExecution {
-                id: "exec-1".to_string(),
-                command: "rtk cargo test".to_string(),
-                cwd: test_path_buf("/tmp").abs(),
-                process_id: Some("pid-1".to_string()),
-                source: CommandExecutionSource::Agent,
-                status: CommandExecutionStatus::Completed,
-                initial_wait_ms: None,
-                notify_on: None,
-                command_actions: vec![CommandAction::Unknown {
-                    command: "rtk cargo test".to_string(),
-                }],
-                aggregated_output: Some("ok\n".to_string()),
-                exit_code: Some(0),
-                duration_ms: Some(12),
-            }]
-        );
+    fn turn_started(turn_id: &str) -> RolloutItem {
+        turn_started_at(turn_id, 1)
     }
 
-    #[test]
-    fn populate_thread_turns_from_history_preserves_persisted_prefix_when_merging_active_turn() {
-        let mut thread = completed_thread();
-        let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::UserMessage(
-                protocol::protocol::UserMessageEvent {
-                    message: "recovered restart prompt".to_string(),
-                    images: Some(Vec::new()),
-                    local_images: Vec::new(),
-                    skills: Vec::new(),
-                    text_elements: Vec::new(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "continuing after restart".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
-        ];
-        let active_turn = Turn {
-            id: "turn-1".to_string(),
-            items: vec![
-                ThreadItem::AgentMessage {
-                    id: "item-1".to_string(),
-                    text: "live agent suffix".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                },
-                ThreadItem::AgentMessage {
-                    id: "item-2".to_string(),
-                    text: "second live agent suffix".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                },
-                ThreadItem::CommandExecution {
-                    id: "exec-live".to_string(),
-                    command: "rtk cargo test".to_string(),
-                    cwd: test_path_buf("/tmp").abs(),
-                    process_id: Some("pid-1".to_string()),
-                    source: CommandExecutionSource::Agent,
-                    status: CommandExecutionStatus::InProgress,
-                    initial_wait_ms: None,
-                    notify_on: None,
-                    command_actions: vec![CommandAction::Unknown {
-                        command: "rtk cargo test".to_string(),
-                    }],
-                    aggregated_output: None,
-                    exit_code: None,
-                    duration_ms: None,
-                },
-            ],
+    fn turn_started_at(turn_id: &str, started_at: i64) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+            turn_id: turn_id.to_string(),
+            started_at: Some(started_at),
+            model_context_window: None,
+            collaboration_mode_kind: Default::default(),
+        }))
+    }
+
+    fn turn_complete(turn_id: &str, completed_at: i64) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::TurnComplete(
+            protocol::protocol::TurnCompleteEvent {
+                turn_id: turn_id.to_string(),
+                last_agent_message: None,
+                completed_at: Some(completed_at),
+                duration_ms: Some(1),
+                time_to_first_token_ms: None,
+            },
+        ))
+    }
+
+    fn user_message(message: &str) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::UserMessage(
+            protocol::protocol::UserMessageEvent {
+                message: message.to_string(),
+                images: Some(Vec::new()),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+                text_elements: Vec::new(),
+            },
+        ))
+    }
+
+    fn agent_message(message: &str) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+            message: message.to_string(),
+            phase: None,
+            memory_citation: None,
+        }))
+    }
+
+    fn compacted(message: &str) -> RolloutItem {
+        RolloutItem::Compacted(CompactedItem {
+            message: message.to_string(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        })
+    }
+
+    fn command_execution_item(
+        id: &str,
+        command: &str,
+        status: CommandExecutionStatus,
+    ) -> ThreadItem {
+        command_execution_item_with_options(id, command, status, Some("pid-1"), None)
+    }
+
+    fn command_execution_item_with_options(
+        id: &str,
+        command: &str,
+        status: CommandExecutionStatus,
+        process_id: Option<&str>,
+        initial_wait_ms: Option<i64>,
+    ) -> ThreadItem {
+        ThreadItem::CommandExecution {
+            id: id.to_string(),
+            command: command.to_string(),
+            cwd: test_path_buf("/tmp").abs(),
+            process_id: process_id.map(ToString::to_string),
+            source: CommandExecutionSource::Agent,
+            status,
+            initial_wait_ms,
+            notify_on: None,
+            command_actions: vec![CommandAction::Unknown {
+                command: command.to_string(),
+            }],
+            aggregated_output: None,
+            exit_code: None,
+            duration_ms: None,
+        }
+    }
+
+    fn completed_command_rollout_item() -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
+            protocol::protocol::ExecCommandEndEvent {
+                call_id: "exec-1".to_string(),
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-1".to_string(),
+                completed_at_ms: 123,
+                command: vec!["rtk".to_string(), "cargo".to_string(), "test".to_string()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                    cmd: "rtk cargo test".to_string(),
+                }],
+                source: protocol::protocol::ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
+                stdout: "ok\n".to_string(),
+                stderr: String::new(),
+                aggregated_output: "ok\n".to_string(),
+                exit_code: 0,
+                duration: std::time::Duration::from_millis(12),
+                formatted_output: "ok\n".to_string(),
+                status: protocol::protocol::ExecCommandStatus::Completed,
+            },
+        ))
+    }
+
+    fn completed_command_item() -> ThreadItem {
+        ThreadItem::CommandExecution {
+            id: "exec-1".to_string(),
+            command: "rtk cargo test".to_string(),
+            cwd: test_path_buf("/tmp").abs(),
+            process_id: Some("pid-1".to_string()),
+            source: CommandExecutionSource::Agent,
+            status: CommandExecutionStatus::Completed,
+            initial_wait_ms: None,
+            notify_on: None,
+            command_actions: vec![CommandAction::Unknown {
+                command: "rtk cargo test".to_string(),
+            }],
+            aggregated_output: Some("ok\n".to_string()),
+            exit_code: Some(0),
+            duration_ms: Some(12),
+        }
+    }
+
+    fn agent_message_item(id: &str, text: &str) -> ThreadItem {
+        ThreadItem::AgentMessage {
+            id: id.to_string(),
+            text: text.to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+    }
+
+    fn context_compaction_item(id: &str) -> ThreadItem {
+        ThreadItem::ContextCompaction { id: id.to_string() }
+    }
+
+    fn in_progress_turn(id: &str, items: Vec<ThreadItem>) -> Turn {
+        Turn {
+            id: id.to_string(),
+            items,
             items_view: TurnItemsView::Full,
             error: None,
             status: TurnStatus::InProgress,
             started_at: Some(1),
             completed_at: None,
             duration_ms: None,
-        };
+        }
+    }
+
+    fn completed_turn(id: &str, items: Vec<ThreadItem>) -> Turn {
+        Turn {
+            id: id.to_string(),
+            items,
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::Completed,
+            started_at: Some(1),
+            completed_at: Some(2),
+            duration_ms: Some(1),
+        }
+    }
+
+    fn item_ids<'a>(items: impl IntoIterator<Item = &'a ThreadItem>) -> Vec<&'a str> {
+        items.into_iter().map(ThreadItem::id).collect()
+    }
+
+    fn turn_item_ids(turn: &Turn) -> Vec<&str> {
+        item_ids(&turn.items)
+    }
+
+    fn all_turn_item_ids(turns: &[Turn]) -> Vec<&str> {
+        turns
+            .iter()
+            .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
+            .collect()
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn() {
+        let mut thread = completed_thread();
+        let persisted_items = vec![turn_started("turn-1"), completed_command_rollout_item()];
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, None);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(thread.turns[0].items, vec![completed_command_item()]);
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_preserves_persisted_prefix_when_merging_active_turn() {
+        let mut thread = completed_thread();
+        let persisted_items = vec![
+            turn_started("turn-1"),
+            user_message("recovered restart prompt"),
+            agent_message("continuing after restart"),
+        ];
+        let active_turn = in_progress_turn(
+            "turn-1",
+            vec![
+                agent_message_item("item-1", "live agent suffix"),
+                agent_message_item("item-2", "second live agent suffix"),
+                command_execution_item(
+                    "exec-live",
+                    "rtk cargo test",
+                    CommandExecutionStatus::InProgress,
+                ),
+            ],
+        );
 
         populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
 
@@ -773,11 +862,7 @@ mod thread_processor_behavior_tests {
         assert_eq!(thread.turns[0].id, "turn-1");
         assert_eq!(thread.turns[0].status, TurnStatus::InProgress);
         assert_eq!(
-            thread.turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
+            turn_item_ids(&thread.turns[0]),
             vec![
                 "item-1",
                 "item-2",
@@ -810,47 +895,19 @@ mod thread_processor_behavior_tests {
     fn live_wait_command_turn_snapshot_overlays_persisted_read_without_command_items() {
         let mut thread = waiting_command_thread();
         let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::UserMessage(
-                protocol::protocol::UserMessageEvent {
-                    message: "run tests".to_string(),
-                    images: Some(Vec::new()),
-                    local_images: Vec::new(),
-                    skills: Vec::new(),
-                    text_elements: Vec::new(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "starting tests".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
+            turn_started("turn-1"),
+            user_message("run tests"),
+            agent_message("starting tests"),
         ];
         let live_wait_command_turn = Turn {
             id: "turn-1".to_string(),
-            items: vec![ThreadItem::CommandExecution {
-                id: "exec-live".to_string(),
-                command: "pnpm test".to_string(),
-                cwd: test_path_buf("/tmp").abs(),
-                process_id: Some("pid-1".to_string()),
-                source: CommandExecutionSource::Agent,
-                status: CommandExecutionStatus::InProgress,
-                initial_wait_ms: Some(1_000),
-                notify_on: None,
-                command_actions: vec![CommandAction::Unknown {
-                    command: "pnpm test".to_string(),
-                }],
-                aggregated_output: None,
-                exit_code: None,
-                duration_ms: None,
-            }],
+            items: vec![command_execution_item_with_options(
+                    "exec-live",
+                    "pnpm test",
+                    CommandExecutionStatus::InProgress,
+                    Some("pid-1"),
+                    Some(1_000),
+                )],
             items_view: TurnItemsView::Full,
             error: None,
             status: TurnStatus::Completed,
@@ -893,56 +950,19 @@ mod thread_processor_behavior_tests {
     #[test]
     fn populate_thread_turns_from_history_prefers_stable_active_agent_message_duplicate() {
         let mut thread = active_thread();
-        let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "same assistant message".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
-        ];
-        let active_turn = Turn {
-            id: "turn-1".to_string(),
-            items: vec![
-                ThreadItem::AgentMessage {
-                    id: "msg_123".to_string(),
-                    text: "same assistant message".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                },
-                ThreadItem::AgentMessage {
-                    id: "msg_456".to_string(),
-                    text: "next assistant message".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                },
+        let persisted_items = vec![turn_started("turn-1"), agent_message("same assistant message")];
+        let active_turn = in_progress_turn(
+            "turn-1",
+            vec![
+                agent_message_item("msg_123", "same assistant message"),
+                agent_message_item("msg_456", "next assistant message"),
             ],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
-            started_at: Some(1),
-            completed_at: None,
-            duration_ms: None,
-        };
+        );
 
         populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
 
         assert_eq!(thread.turns.len(), 1);
-        assert_eq!(
-            thread.turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
-            vec!["msg_123", "msg_456"]
-        );
+        assert_eq!(turn_item_ids(&thread.turns[0]), vec!["msg_123", "msg_456"]);
         assert_eq!(
             thread.turns[0]
                 .items
@@ -960,34 +980,15 @@ mod thread_processor_behavior_tests {
     fn populate_thread_turns_from_history_keeps_same_text_across_turns() {
         let mut thread = active_thread();
         let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "repeated assistant message".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
+            turn_started("turn-1"),
+            agent_message("repeated assistant message"),
         ];
         let active_turn = Turn {
-            id: "turn-2".to_string(),
-            items: vec![ThreadItem::AgentMessage {
-                id: "msg_123".to_string(),
-                text: "repeated assistant message".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
             started_at: Some(2),
-            completed_at: None,
-            duration_ms: None,
+            ..in_progress_turn(
+                "turn-2",
+                vec![agent_message_item("msg_123", "repeated assistant message")],
+            )
         };
 
         populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
@@ -1013,67 +1014,30 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn merge_turn_history_with_active_turn_does_not_dedupe_tool_items_by_generated_id() {
-        let mut turns = vec![Turn {
-            id: "turn-1".to_string(),
-            items: vec![ThreadItem::CommandExecution {
-                id: "item-1".to_string(),
-                command: "cargo test".to_string(),
-                cwd: test_path_buf("/tmp").abs(),
-                process_id: Some("persisted-process".to_string()),
-                source: CommandExecutionSource::Agent,
-                status: CommandExecutionStatus::InProgress,
-                initial_wait_ms: None,
-                notify_on: None,
-                command_actions: vec![CommandAction::Unknown {
-                    command: "cargo test".to_string(),
-                }],
-                aggregated_output: None,
-                exit_code: None,
-                duration_ms: None,
-            }],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
-            started_at: Some(1),
-            completed_at: None,
-            duration_ms: None,
-        }];
-        let active_turn = Turn {
-            id: "turn-1".to_string(),
-            items: vec![ThreadItem::CommandExecution {
-                id: "exec-1".to_string(),
-                command: "cargo test".to_string(),
-                cwd: test_path_buf("/tmp").abs(),
-                process_id: Some("live-process".to_string()),
-                source: CommandExecutionSource::Agent,
-                status: CommandExecutionStatus::InProgress,
-                initial_wait_ms: None,
-                notify_on: None,
-                command_actions: vec![CommandAction::Unknown {
-                    command: "cargo test".to_string(),
-                }],
-                aggregated_output: None,
-                exit_code: None,
-                duration_ms: None,
-            }],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
-            started_at: Some(1),
-            completed_at: None,
-            duration_ms: None,
-        };
+        let mut turns = vec![in_progress_turn(
+            "turn-1",
+            vec![command_execution_item_with_options(
+                "item-1",
+                "cargo test",
+                CommandExecutionStatus::InProgress,
+                Some("persisted-process"),
+                None,
+            )],
+        )];
+        let active_turn = in_progress_turn(
+            "turn-1",
+            vec![command_execution_item_with_options(
+                "exec-1",
+                "cargo test",
+                CommandExecutionStatus::InProgress,
+                Some("live-process"),
+                None,
+            )],
+        );
 
         merge_turn_history_with_active_turn(&mut turns, active_turn);
 
-        assert_eq!(
-            turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
-            vec!["item-1", "exec-1"]
-        );
+        assert_eq!(turn_item_ids(&turns[0]), vec!["item-1", "exec-1"]);
     }
 
     #[test]
@@ -1081,49 +1045,17 @@ mod thread_processor_behavior_tests {
     {
         let mut thread = completed_thread();
         let persisted_items = vec![
-            RolloutItem::Compacted(CompactedItem {
-                message: "summary".to_string(),
-                replacement_history: None,
-                visible_replacement_history_len: None,
-            }),
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::UserMessage(
-                protocol::protocol::UserMessageEvent {
-                    message: "recovered restart prompt after compact".to_string(),
-                    images: Some(Vec::new()),
-                    local_images: Vec::new(),
-                    skills: Vec::new(),
-                    text_elements: Vec::new(),
-                },
-            )),
+            compacted("summary"),
+            turn_started("turn-1"),
+            user_message("recovered restart prompt after compact"),
         ];
-        let active_turn = Turn {
-            id: "turn-1".to_string(),
-            items: vec![
-                ThreadItem::ContextCompaction {
-                    id: "item-1".to_string(),
-                },
-                ThreadItem::AgentMessage {
-                    id: "item-2".to_string(),
-                    text: "live agent suffix".to_string(),
-                    phase: None,
-                    memory_citation: None,
-                },
+        let active_turn = in_progress_turn(
+            "turn-1",
+            vec![
+                context_compaction_item("item-1"),
+                agent_message_item("item-2", "live agent suffix"),
             ],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
-            started_at: Some(1),
-            completed_at: None,
-            duration_ms: None,
-        };
+        );
 
         populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
 
@@ -1138,11 +1070,7 @@ mod thread_processor_behavior_tests {
         assert_eq!(thread.turns[1].id, "turn-1");
         assert_eq!(thread.turns[1].status, TurnStatus::InProgress);
         assert_eq!(
-            thread.turns[1]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
+            turn_item_ids(&thread.turns[1]),
             vec!["item-2", "item-1", "live-item-1"]
         );
         assert!(matches!(
@@ -1168,44 +1096,14 @@ mod thread_processor_behavior_tests {
     #[test]
     fn thread_turns_list_reconstruction_preserves_persisted_prefix_on_active_id_collision() {
         let persisted_items = vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "turn-1".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::UserMessage(
-                protocol::protocol::UserMessageEvent {
-                    message: "recovered restart prompt".to_string(),
-                    images: Some(Vec::new()),
-                    local_images: Vec::new(),
-                    skills: Vec::new(),
-                    text_elements: Vec::new(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "persisted agent prefix".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
+            turn_started("turn-1"),
+            user_message("recovered restart prompt"),
+            agent_message("persisted agent prefix"),
         ];
-        let active_turn = Turn {
-            id: "turn-1".to_string(),
-            items: vec![ThreadItem::AgentMessage {
-                id: "item-2".to_string(),
-                text: "live agent suffix".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
-            started_at: Some(1),
-            completed_at: None,
-            duration_ms: None,
-        };
+        let active_turn = in_progress_turn(
+            "turn-1",
+            vec![agent_message_item("item-2", "live agent suffix")],
+        );
 
         let turns = reconstruct_thread_turns_for_turns_list(
             &persisted_items,
@@ -1241,18 +1139,10 @@ mod thread_processor_behavior_tests {
     #[test]
     fn restore_persisted_display_turns_replaces_loaded_marker_only_compaction_with_summary() {
         let mut thread = completed_thread();
-        thread.turns = vec![Turn {
-            id: "compact-turn".to_string(),
-            items: vec![ThreadItem::ContextCompaction {
-                id: "item-2".to_string(),
-            }],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::Completed,
-            started_at: Some(1),
-            completed_at: Some(2),
-            duration_ms: Some(1),
-        }];
+        thread.turns = vec![completed_turn(
+            "compact-turn",
+            vec![context_compaction_item("item-2")],
+        )];
 
         restore_persisted_display_turns_from_rollout_items(
             &mut thread,
@@ -1261,11 +1151,7 @@ mod thread_processor_behavior_tests {
         prune_turns_to_latest_compaction_boundary(&mut thread.turns);
 
         assert_eq!(
-            thread.turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
+            turn_item_ids(&thread.turns[0]),
             vec!["item-3", "item-3:summary", "ctx-1"]
         );
         assert!(matches!(
@@ -1401,86 +1287,22 @@ mod thread_processor_behavior_tests {
 
     fn compacted_display_history_items() -> Vec<RolloutItem> {
         vec![
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "old-turn".to_string(),
-                    started_at: Some(1),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "old answer".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::EventMsg(EventMsg::TurnComplete(
-                protocol::protocol::TurnCompleteEvent {
-                    turn_id: "old-turn".to_string(),
-                    last_agent_message: None,
-                    completed_at: Some(2),
-                    duration_ms: Some(1),
-                    time_to_first_token_ms: None,
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "compact-turn".to_string(),
-                    started_at: Some(3),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "pre compact".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::Compacted(CompactedItem {
-                message: "summary".to_string(),
-                replacement_history: None,
-                visible_replacement_history_len: None,
-            }),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "after compact suffix".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
-            RolloutItem::EventMsg(EventMsg::TurnComplete(
-                protocol::protocol::TurnCompleteEvent {
-                    turn_id: "compact-turn".to_string(),
-                    last_agent_message: None,
-                    completed_at: Some(4),
-                    duration_ms: Some(1),
-                    time_to_first_token_ms: None,
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::TurnStarted(
-                protocol::protocol::TurnStartedEvent {
-                    turn_id: "new-turn".to_string(),
-                    started_at: Some(5),
-                    model_context_window: None,
-                    collaboration_mode_kind: Default::default(),
-                },
-            )),
-            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
-                message: "new answer".to_string(),
-                phase: None,
-                memory_citation: None,
-            })),
+            turn_started("old-turn"),
+            agent_message("old answer"),
+            turn_complete("old-turn", 2),
+            turn_started_at("compact-turn", 3),
+            agent_message("pre compact"),
+            compacted("summary"),
+            agent_message("after compact suffix"),
+            turn_complete("compact-turn", 4),
+            turn_started_at("new-turn", 5),
+            agent_message("new answer"),
         ]
     }
 
     fn repeated_same_turn_compacted_display_history_items() -> Vec<RolloutItem> {
         let mut items = compacted_display_history_items();
-        items.insert(
-            6,
-            RolloutItem::Compacted(CompactedItem {
-                message: "retry summary".to_string(),
-                replacement_history: None,
-                visible_replacement_history_len: None,
-            }),
-        );
+        items.insert(6, compacted("retry summary"));
         items
     }
 
@@ -1508,6 +1330,25 @@ mod thread_processor_behavior_tests {
         items
     }
 
+    fn assert_flat_compaction_display_items(items: &[ThreadItem]) {
+        assert_eq!(
+            item_ids(items),
+            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
+        );
+        assert_eq!(items[0], context_compaction_item("item-3"));
+        assert!(matches!(
+            &items[1],
+            ThreadItem::AgentMessage { text, .. } if text == "summary"
+        ));
+        assert!(matches!(
+            &items[2],
+            ThreadItem::InjectedContext { sections, .. }
+                if sections
+                    .iter()
+                    .any(|section| section.text.contains("Project body"))
+        ));
+    }
+
     #[test]
     fn populate_thread_turns_from_history_prunes_compact_prefix() {
         let mut thread = completed_thread();
@@ -1523,11 +1364,7 @@ mod thread_processor_behavior_tests {
             vec!["compact-turn", "new-turn"]
         );
         assert_eq!(
-            thread
-                .turns
-                .iter()
-                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
-                .collect::<Vec<_>>(),
+            all_turn_item_ids(&thread.turns),
             vec!["item-3", "item-3:summary", "item-4", "item-5"]
         );
         assert!(matches!(
@@ -1550,62 +1387,22 @@ mod thread_processor_behavior_tests {
             None,
         );
 
-        assert_eq!(
-            thread.turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
-            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
-        );
-        assert_eq!(
-            thread.turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                id: "item-3".to_string(),
-            }
-        );
-        assert!(matches!(
-            &thread.turns[0].items[1],
-            ThreadItem::AgentMessage { text, .. } if text == "summary"
-        ));
-        assert!(matches!(
-            &thread.turns[0].items[2],
-            ThreadItem::InjectedContext { sections, .. }
-                if sections
-                    .iter()
-                    .any(|section| section.text.contains("Project body"))
-        ));
+        assert_flat_compaction_display_items(&thread.turns[0].items);
     }
 
     #[test]
     fn populate_thread_turns_from_history_ignores_stale_active_compact_turn_collision() {
         let mut thread = active_thread();
         let active_turn = Turn {
-            id: "compact-turn".to_string(),
-            items: vec![ThreadItem::AgentMessage {
-                id: "live-tail".to_string(),
-                text: "stale live tail".to_string(),
-                phase: None,
-                memory_citation: None,
-            }],
-            items_view: TurnItemsView::Full,
-            error: None,
-            status: TurnStatus::InProgress,
             started_at: Some(3),
-            completed_at: None,
-            duration_ms: None,
+            ..in_progress_turn(
+                "compact-turn",
+                vec![agent_message_item("live-tail", "stale live tail")],
+            )
         };
 
         let mut persisted_items = compacted_display_history_items();
-        persisted_items.push(RolloutItem::EventMsg(EventMsg::TurnComplete(
-            protocol::protocol::TurnCompleteEvent {
-                turn_id: "new-turn".to_string(),
-                last_agent_message: None,
-                completed_at: Some(6),
-                duration_ms: Some(1),
-                time_to_first_token_ms: None,
-            },
-        )));
+        persisted_items.push(turn_complete("new-turn", 6));
 
         populate_thread_turns_from_history(&mut thread, &persisted_items, Some(&active_turn));
 
@@ -1621,11 +1418,7 @@ mod thread_processor_behavior_tests {
             ]
         );
         assert_eq!(
-            thread.turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
+            turn_item_ids(&thread.turns[0]),
             vec!["item-3", "item-3:summary", "item-4"]
         );
         assert!(
@@ -1647,31 +1440,7 @@ mod thread_processor_behavior_tests {
             &compacted_flat_context_display_history_items(),
         );
 
-        assert_eq!(
-            thread.turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
-            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
-        );
-        assert_eq!(
-            thread.turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                id: "item-3".to_string(),
-            }
-        );
-        assert!(matches!(
-            &thread.turns[0].items[1],
-            ThreadItem::AgentMessage { text, .. } if text == "summary"
-        ));
-        assert!(matches!(
-            &thread.turns[0].items[2],
-            ThreadItem::InjectedContext { sections, .. }
-                if sections
-                    .iter()
-                    .any(|section| section.text.contains("Project body"))
-        ));
+        assert_flat_compaction_display_items(&thread.turns[0].items);
     }
 
     #[test]
@@ -1689,11 +1458,7 @@ mod thread_processor_behavior_tests {
             Some(2)
         );
         assert_eq!(
-            thread
-                .turns
-                .iter()
-                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
-                .collect::<Vec<_>>(),
+            all_turn_item_ids(&thread.turns),
             vec!["item-3", "item-3:summary", "item-4", "item-5"]
         );
     }
@@ -1707,31 +1472,7 @@ mod thread_processor_behavior_tests {
             None,
         );
 
-        assert_eq!(
-            turns[0]
-                .items
-                .iter()
-                .map(ThreadItem::id)
-                .collect::<Vec<_>>(),
-            vec!["item-3", "item-3:summary", "ctx-1", "item-4"]
-        );
-        assert_eq!(
-            turns[0].items[0],
-            ThreadItem::ContextCompaction {
-                id: "item-3".to_string(),
-            }
-        );
-        assert!(matches!(
-            &turns[0].items[1],
-            ThreadItem::AgentMessage { text, .. } if text == "summary"
-        ));
-        assert!(matches!(
-            &turns[0].items[2],
-            ThreadItem::InjectedContext { sections, .. }
-                if sections
-                    .iter()
-                    .any(|section| section.text.contains("Project body"))
-        ));
+        assert_flat_compaction_display_items(&turns[0].items);
     }
 
     #[test]
@@ -1751,10 +1492,7 @@ mod thread_processor_behavior_tests {
             vec!["compact-turn", "new-turn"]
         );
         assert_eq!(
-            turns
-                .iter()
-                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
-                .collect::<Vec<_>>(),
+            all_turn_item_ids(&turns),
             vec!["item-3", "item-3:summary", "item-4", "item-5"]
         );
     }
@@ -1893,16 +1631,13 @@ mod thread_processor_behavior_tests {
         assert!(err.contains("Responses API"), "unexpected error: {err}");
     }
 
-    #[test]
-    fn summary_from_stored_thread_preserves_millisecond_precision() {
-        let created_at =
-            DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z").expect("valid timestamp");
-        let updated_at =
-            DateTime::parse_from_rfc3339("2025-01-02T03:04:06.789Z").expect("valid timestamp");
-        let thread_id =
-            ThreadId::from_string("00000000-0000-0000-0000-000000000123").expect("valid thread");
-        let stored_thread = StoredThread {
-            thread_id,
+    fn stored_thread_id() -> ThreadId {
+        ThreadId::from_string("00000000-0000-0000-0000-000000000123").expect("valid thread")
+    }
+
+    fn stored_thread_fixture(created_at: DateTime<Utc>, updated_at: DateTime<Utc>) -> StoredThread {
+        StoredThread {
+            thread_id: stored_thread_id(),
             rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
             forked_from_id: None,
             preview: "preview".to_string(),
@@ -1910,8 +1645,8 @@ mod thread_processor_behavior_tests {
             model_provider: "openai".to_string(),
             model: None,
             reasoning_effort: None,
-            created_at: created_at.with_timezone(&Utc),
-            updated_at: updated_at.with_timezone(&Utc),
+            created_at,
+            updated_at,
             archived_at: None,
             cwd: PathBuf::from("/tmp"),
             cli_version: "0.0.0".to_string(),
@@ -1928,7 +1663,39 @@ mod thread_processor_behavior_tests {
             first_user_message: Some("first user message".to_string()),
             thread_status: None,
             history: None,
-        };
+        }
+    }
+
+    fn subagent_stored_thread(
+        created_at: DateTime<Utc>,
+        parent_thread_id: ThreadId,
+        thread_status: Option<ThreadLifecycleStatus>,
+    ) -> StoredThread {
+        StoredThread {
+            source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            }),
+            thread_source: Some(protocol::protocol::ThreadSource::Subagent),
+            agent_nickname: Some("researcher".to_string()),
+            agent_role: Some("explorer".to_string()),
+            agent_path: Some("/root/researcher".to_string()),
+            thread_status,
+            ..stored_thread_fixture(created_at, created_at)
+        }
+    }
+
+    #[test]
+    fn summary_from_stored_thread_preserves_millisecond_precision() {
+        let created_at =
+            DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z").expect("valid timestamp");
+        let updated_at =
+            DateTime::parse_from_rfc3339("2025-01-02T03:04:06.789Z").expect("valid timestamp");
+        let stored_thread =
+            stored_thread_fixture(created_at.with_timezone(&Utc), updated_at.with_timezone(&Utc));
 
         let summary = summary_from_stored_thread(stored_thread, "fallback");
 
@@ -1946,44 +1713,10 @@ mod thread_processor_behavior_tests {
     fn summary_from_stored_thread_restores_agent_path_from_metadata() {
         let created_at =
             DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z").expect("valid timestamp");
-        let thread_id =
-            ThreadId::from_string("00000000-0000-0000-0000-000000000123").expect("valid thread");
         let parent_thread_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000456").expect("valid thread");
-        let stored_thread = StoredThread {
-            thread_id,
-            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            name: None,
-            model_provider: "openai".to_string(),
-            model: None,
-            reasoning_effort: None,
-            created_at: created_at.with_timezone(&Utc),
-            updated_at: created_at.with_timezone(&Utc),
-            archived_at: None,
-            cwd: PathBuf::from("/tmp"),
-            cli_version: "0.0.0".to_string(),
-            source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id,
-                depth: 1,
-                agent_path: None,
-                agent_nickname: None,
-                agent_role: None,
-            }),
-            thread_source: Some(protocol::protocol::ThreadSource::Subagent),
-            agent_nickname: Some("researcher".to_string()),
-            agent_role: Some("explorer".to_string()),
-            agent_path: Some("/root/researcher".to_string()),
-            git_info: None,
-            approval_mode: AskForApproval::OnRequest,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            skills: Vec::new(),
-            token_usage: None,
-            first_user_message: Some("first user message".to_string()),
-            thread_status: None,
-            history: None,
-        };
+        let stored_thread =
+            subagent_stored_thread(created_at.with_timezone(&Utc), parent_thread_id, None);
 
         let summary = summary_from_stored_thread(stored_thread, "fallback");
 
@@ -2005,35 +1738,8 @@ mod thread_processor_behavior_tests {
     #[test]
     fn persisted_root_agent_metadata_rejects_invalid_agent_path() -> Result<()> {
         let created_at = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z")?;
-        let thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000123")?;
-        let stored_thread = StoredThread {
-            thread_id,
-            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            name: None,
-            model_provider: "openai".to_string(),
-            model: None,
-            reasoning_effort: None,
-            created_at: created_at.with_timezone(&Utc),
-            updated_at: created_at.with_timezone(&Utc),
-            archived_at: None,
-            cwd: PathBuf::from("/tmp"),
-            cli_version: "0.0.0".to_string(),
-            source: SessionSource::Cli,
-            thread_source: Some(protocol::protocol::ThreadSource::User),
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            approval_mode: AskForApproval::OnRequest,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            skills: Vec::new(),
-            token_usage: None,
-            first_user_message: Some("first user message".to_string()),
-            thread_status: None,
-            history: None,
-        };
+        let stored_thread =
+            stored_thread_fixture(created_at.with_timezone(&Utc), created_at.with_timezone(&Utc));
         let mut persisted_metadata = test_thread_metadata(None, None)?;
         persisted_metadata.agent_path = Some("not/absolute".to_string());
 
@@ -2056,44 +1762,14 @@ mod thread_processor_behavior_tests {
     #[test]
     fn thread_from_stored_thread_restores_agent_path_from_metadata() -> Result<()> {
         let created_at = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z")?;
-        let thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000123")?;
         let parent_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000456")?;
-        let stored_thread = StoredThread {
-            thread_id,
-            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            name: None,
-            model_provider: "openai".to_string(),
-            model: None,
-            reasoning_effort: None,
-            created_at: created_at.with_timezone(&Utc),
-            updated_at: created_at.with_timezone(&Utc),
-            archived_at: None,
-            cwd: PathBuf::from("/tmp"),
-            cli_version: "0.0.0".to_string(),
-            source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id,
-                depth: 1,
-                agent_path: None,
-                agent_nickname: None,
-                agent_role: None,
-            }),
-            thread_source: Some(protocol::protocol::ThreadSource::Subagent),
-            agent_nickname: Some("researcher".to_string()),
-            agent_role: Some("explorer".to_string()),
-            agent_path: Some("/root/researcher".to_string()),
-            git_info: None,
-            approval_mode: AskForApproval::OnRequest,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            skills: Vec::new(),
-            token_usage: None,
-            first_user_message: Some("first user message".to_string()),
-            thread_status: Some(ThreadLifecycleStatus::Waiting {
+        let stored_thread = subagent_stored_thread(
+            created_at.with_timezone(&Utc),
+            parent_thread_id,
+            Some(ThreadLifecycleStatus::Waiting {
                 reason: ThreadLifecycleWaitReason::EventSubscription,
             }),
-            history: None,
-        };
+        );
         let fallback_cwd = AbsolutePathBuf::from_absolute_path("/")?;
 
         let (thread, _) = thread_from_stored_thread(stored_thread, "fallback", &fallback_cwd);
@@ -2125,35 +1801,8 @@ mod thread_processor_behavior_tests {
     #[test]
     fn thread_from_stored_thread_projects_missing_lifecycle_as_not_loaded() -> Result<()> {
         let created_at = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z")?;
-        let thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000123")?;
-        let stored_thread = StoredThread {
-            thread_id,
-            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            name: None,
-            model_provider: "openai".to_string(),
-            model: None,
-            reasoning_effort: None,
-            created_at: created_at.with_timezone(&Utc),
-            updated_at: created_at.with_timezone(&Utc),
-            archived_at: None,
-            cwd: PathBuf::from("/tmp"),
-            cli_version: "0.0.0".to_string(),
-            source: SessionSource::Cli,
-            thread_source: Some(protocol::protocol::ThreadSource::User),
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            approval_mode: AskForApproval::OnRequest,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            skills: Vec::new(),
-            token_usage: None,
-            first_user_message: Some("first user message".to_string()),
-            thread_status: None,
-            history: None,
-        };
+        let stored_thread =
+            stored_thread_fixture(created_at.with_timezone(&Utc), created_at.with_timezone(&Utc));
         let fallback_cwd = AbsolutePathBuf::from_absolute_path("/")?;
 
         let (thread, _) = thread_from_stored_thread(stored_thread, "fallback", &fallback_cwd);
