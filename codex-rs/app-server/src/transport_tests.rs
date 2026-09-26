@@ -32,6 +32,93 @@ fn thread_goal_updated_notification() -> ServerNotification {
     })
 }
 
+fn config_warning_message(summary: &str) -> OutgoingMessage {
+    OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
+        ConfigWarningNotification {
+            summary: summary.to_string(),
+            details: None,
+            path: None,
+            range: None,
+        },
+    ))
+}
+
+fn command_execution_request_approval_message() -> OutgoingMessage {
+    OutgoingMessage::Request(ServerRequest::CommandExecutionRequestApproval {
+        request_id: RequestId::Integer(1),
+        params: app_server_protocol::CommandExecutionRequestApprovalParams {
+            thread_id: "thr_123".to_string(),
+            turn_id: "turn_123".to_string(),
+            item_id: "call_123".to_string(),
+            started_at_ms: 0,
+            approval_id: None,
+            reason: Some("Need extra read access".to_string()),
+            network_approval_context: None,
+            command: Some("cat file".to_string()),
+            cwd: Some(absolute_path("/tmp")),
+            command_actions: None,
+            additional_permissions: Some(app_server_protocol::AdditionalPermissionProfile {
+                network: None,
+                file_system: Some(app_server_protocol::AdditionalFileSystemPermissions {
+                    read: Some(vec![absolute_path("/tmp/allowed")]),
+                    write: None,
+                    glob_scan_max_depth: None,
+                    entries: None,
+                }),
+            }),
+            proposed_execpolicy_amendment: None,
+            proposed_network_policy_amendments: None,
+            available_decisions: None,
+        },
+    })
+}
+
+fn connection_state(
+    writer_tx: mpsc::Sender<QueuedOutgoingMessage>,
+    initialized: bool,
+    experimental_capable: bool,
+    opted_out_notification_methods: HashSet<String>,
+    disconnect_sender: Option<CancellationToken>,
+) -> OutboundConnectionState {
+    OutboundConnectionState::new(
+        writer_tx,
+        Arc::new(AtomicBool::new(initialized)),
+        Arc::new(AtomicBool::new(experimental_capable)),
+        Arc::new(RwLock::new(opted_out_notification_methods)),
+        disconnect_sender,
+    )
+}
+
+fn initialized_connection_state(
+    writer_tx: mpsc::Sender<QueuedOutgoingMessage>,
+    experimental_capable: bool,
+    opted_out_notification_methods: HashSet<String>,
+) -> OutboundConnectionState {
+    connection_state(
+        writer_tx,
+        /*initialized*/ true,
+        experimental_capable,
+        opted_out_notification_methods,
+        /*disconnect_sender*/ None,
+    )
+}
+
+async fn route_to_connection(
+    connections: &mut HashMap<ConnectionId, OutboundConnectionState>,
+    connection_id: ConnectionId,
+    message: OutgoingMessage,
+) {
+    route_outgoing_envelope(
+        connections,
+        OutgoingEnvelope::ToConnection {
+            connection_id,
+            message,
+            write_complete_tx: None,
+        },
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn broadcast_notifications_reach_initialized_connections_only() {
     let initialized_connection_id = ConnectionId(1);
@@ -42,21 +129,21 @@ async fn broadcast_notifications_reach_initialized_connections_only() {
     let mut connections = HashMap::new();
     connections.insert(
         initialized_connection_id,
-        OutboundConnectionState::new(
+        connection_state(
             initialized_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
+            /*initialized*/ true,
+            /*experimental_capable*/ true,
+            HashSet::new(),
             /*disconnect_sender*/ None,
         ),
     );
     connections.insert(
         uninitialized_connection_id,
-        OutboundConnectionState::new(
+        connection_state(
             uninitialized_tx,
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
+            /*initialized*/ false,
+            /*experimental_capable*/ true,
+            HashSet::new(),
             /*disconnect_sender*/ None,
         ),
     );
@@ -87,36 +174,20 @@ async fn broadcast_notifications_reach_initialized_connections_only() {
 async fn to_connection_notification_respects_opt_out_filters() {
     let connection_id = ConnectionId(7);
     let (writer_tx, mut writer_rx) = mpsc::channel(1);
-    let initialized = Arc::new(AtomicBool::new(true));
-    let opted_out_notification_methods =
-        Arc::new(RwLock::new(HashSet::from(["configWarning".to_string()])));
-
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            initialized,
-            Arc::new(AtomicBool::new(true)),
-            opted_out_notification_methods,
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ true,
+            HashSet::from(["configWarning".to_string()]),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
-                ConfigWarningNotification {
-                    summary: "task_started".to_string(),
-                    details: None,
-                    path: None,
-                    range: None,
-                },
-            )),
-            write_complete_tx: None,
-        },
+        connection_id,
+        config_warning_message("task_started"),
     )
     .await;
 
@@ -134,29 +205,17 @@ async fn to_connection_notifications_are_dropped_for_opted_out_clients() {
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::from(["configWarning".to_string()]))),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ true,
+            HashSet::from(["configWarning".to_string()]),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
-                ConfigWarningNotification {
-                    summary: "task_started".to_string(),
-                    details: None,
-                    path: None,
-                    range: None,
-                },
-            )),
-            write_complete_tx: None,
-        },
+        connection_id,
+        config_warning_message("task_started"),
     )
     .await;
 
@@ -174,29 +233,17 @@ async fn to_connection_notifications_are_preserved_for_non_opted_out_clients() {
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ true,
+            HashSet::new(),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
-                ConfigWarningNotification {
-                    summary: "task_started".to_string(),
-                    details: None,
-                    path: None,
-                    range: None,
-                },
-            )),
-            write_complete_tx: None,
-        },
+        connection_id,
+        config_warning_message("task_started"),
     )
     .await;
 
@@ -220,22 +267,17 @@ async fn experimental_notifications_are_dropped_without_capability() {
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(RwLock::new(HashSet::new())),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ false,
+            HashSet::new(),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
-            write_complete_tx: None,
-        },
+        connection_id,
+        OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
     )
     .await;
 
@@ -253,22 +295,17 @@ async fn experimental_notifications_are_preserved_with_capability() {
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ true,
+            HashSet::new(),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
-            write_complete_tx: None,
-        },
+        connection_id,
+        OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
     )
     .await;
 
@@ -290,52 +327,17 @@ async fn command_execution_request_approval_strips_additional_permissions_withou
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(RwLock::new(HashSet::new())),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ false,
+            HashSet::new(),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::Request(ServerRequest::CommandExecutionRequestApproval {
-                request_id: RequestId::Integer(1),
-                params: app_server_protocol::CommandExecutionRequestApprovalParams {
-                    thread_id: "thr_123".to_string(),
-                    turn_id: "turn_123".to_string(),
-                    item_id: "call_123".to_string(),
-                    started_at_ms: 0,
-                    approval_id: None,
-                    reason: Some("Need extra read access".to_string()),
-                    network_approval_context: None,
-                    command: Some("cat file".to_string()),
-                    cwd: Some(absolute_path("/tmp")),
-                    command_actions: None,
-                    additional_permissions: Some(
-                        app_server_protocol::AdditionalPermissionProfile {
-                            network: None,
-                            file_system: Some(
-                                app_server_protocol::AdditionalFileSystemPermissions {
-                                    read: Some(vec![absolute_path("/tmp/allowed")]),
-                                    write: None,
-                                    glob_scan_max_depth: None,
-                                    entries: None,
-                                },
-                            ),
-                        },
-                    ),
-                    proposed_execpolicy_amendment: None,
-                    proposed_network_policy_amendments: None,
-                    available_decisions: None,
-                },
-            }),
-            write_complete_tx: None,
-        },
+        connection_id,
+        command_execution_request_approval_message(),
     )
     .await;
 
@@ -355,52 +357,17 @@ async fn command_execution_request_approval_keeps_additional_permissions_with_ca
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ true,
+            HashSet::new(),
         ),
     );
 
-    route_outgoing_envelope(
+    route_to_connection(
         &mut connections,
-        OutgoingEnvelope::ToConnection {
-            connection_id,
-            message: OutgoingMessage::Request(ServerRequest::CommandExecutionRequestApproval {
-                request_id: RequestId::Integer(1),
-                params: app_server_protocol::CommandExecutionRequestApprovalParams {
-                    thread_id: "thr_123".to_string(),
-                    turn_id: "turn_123".to_string(),
-                    item_id: "call_123".to_string(),
-                    started_at_ms: 0,
-                    approval_id: None,
-                    reason: Some("Need extra read access".to_string()),
-                    network_approval_context: None,
-                    command: Some("cat file".to_string()),
-                    cwd: Some(absolute_path("/tmp")),
-                    command_actions: None,
-                    additional_permissions: Some(
-                        app_server_protocol::AdditionalPermissionProfile {
-                            network: None,
-                            file_system: Some(
-                                app_server_protocol::AdditionalFileSystemPermissions {
-                                    read: Some(vec![absolute_path("/tmp/allowed")]),
-                                    write: None,
-                                    glob_scan_max_depth: None,
-                                    entries: None,
-                                },
-                            ),
-                        },
-                    ),
-                    proposed_execpolicy_amendment: None,
-                    proposed_network_policy_amendments: None,
-                    available_decisions: None,
-                },
-            }),
-            write_complete_tx: None,
-        },
+        connection_id,
+        command_execution_request_approval_message(),
     )
     .await;
 
@@ -435,45 +402,31 @@ async fn broadcast_does_not_block_on_slow_connection() {
     let mut connections = HashMap::new();
     connections.insert(
         fast_connection_id,
-        OutboundConnectionState::new(
+        connection_state(
             fast_writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
+            /*initialized*/ true,
+            /*experimental_capable*/ true,
+            HashSet::new(),
             Some(fast_disconnect_token.clone()),
         ),
     );
     connections.insert(
         slow_connection_id,
-        OutboundConnectionState::new(
+        connection_state(
             slow_writer_tx.clone(),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
+            /*initialized*/ true,
+            /*experimental_capable*/ true,
+            HashSet::new(),
             Some(slow_disconnect_token.clone()),
         ),
     );
 
-    let queued_message = OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
-        ConfigWarningNotification {
-            summary: "already-buffered".to_string(),
-            details: None,
-            path: None,
-            range: None,
-        },
-    ));
+    let queued_message = config_warning_message("already-buffered");
     slow_writer_tx
         .try_send(QueuedOutgoingMessage::new(queued_message))
         .expect("channel should have room");
 
-    let broadcast_message = OutgoingMessage::AppServerNotification(
-        ServerNotification::ConfigWarning(ConfigWarningNotification {
-            summary: "test".to_string(),
-            details: None,
-            path: None,
-            range: None,
-        }),
-    );
+    let broadcast_message = config_warning_message("test");
     timeout(
         Duration::from_millis(100),
         route_outgoing_envelope(
@@ -514,28 +467,17 @@ async fn to_connection_stdio_waits_instead_of_disconnecting_when_writer_queue_is
     let connection_id = ConnectionId(3);
     let (writer_tx, mut writer_rx) = mpsc::channel(1);
     writer_tx
-        .send(QueuedOutgoingMessage::new(
-            OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
-                ConfigWarningNotification {
-                    summary: "queued".to_string(),
-                    details: None,
-                    path: None,
-                    range: None,
-                },
-            )),
-        ))
+        .send(QueuedOutgoingMessage::new(config_warning_message("queued")))
         .await
         .expect("channel should accept the first queued message");
 
     let mut connections = HashMap::new();
     connections.insert(
         connection_id,
-        OutboundConnectionState::new(
+        initialized_connection_state(
             writer_tx,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(RwLock::new(HashSet::new())),
-            /*disconnect_sender*/ None,
+            /*experimental_capable*/ true,
+            HashSet::new(),
         ),
     );
 
@@ -544,14 +486,7 @@ async fn to_connection_stdio_waits_instead_of_disconnecting_when_writer_queue_is
             &mut connections,
             OutgoingEnvelope::ToConnection {
                 connection_id,
-                message: OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
-                    ConfigWarningNotification {
-                        summary: "second".to_string(),
-                        details: None,
-                        path: None,
-                        range: None,
-                    },
-                )),
+                message: config_warning_message("second"),
                 write_complete_tx: None,
             },
         )
