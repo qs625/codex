@@ -591,9 +591,8 @@ mod thread_processor_behavior_tests {
         );
     }
 
-    #[test]
-    fn populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn() {
-        let mut thread = Thread {
+    fn test_thread(lifecycle_status: ThreadLifecycleStatus) -> Thread {
+        Thread {
             id: "thread-1".to_string(),
             session_id: "session-1".to_string(),
             forked_from_id: None,
@@ -602,7 +601,7 @@ mod thread_processor_behavior_tests {
             model_provider: "mock_provider".to_string(),
             created_at: 0,
             updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            lifecycle_status,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),
@@ -620,7 +619,28 @@ mod thread_processor_behavior_tests {
             turns: Vec::new(),
             active_subscription_items: None,
             active_command_items: None,
-        };
+        }
+    }
+
+    fn completed_thread() -> Thread {
+        test_thread(ThreadLifecycleStatus::completed(None))
+    }
+
+    fn active_thread() -> Thread {
+        test_thread(ThreadLifecycleStatus::Active {
+            active_flags: Vec::new(),
+        })
+    }
+
+    fn waiting_command_thread() -> Thread {
+        test_thread(ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Command,
+        })
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn() {
+        let mut thread = completed_thread();
         let persisted_items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(
                 protocol::protocol::TurnStartedEvent {
@@ -682,34 +702,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_preserves_persisted_prefix_when_merging_active_turn() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = completed_thread();
         let persisted_items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(
                 protocol::protocol::TurnStartedEvent {
@@ -815,36 +808,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn live_wait_command_turn_snapshot_overlays_persisted_read_without_command_items() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::Waiting {
-                reason: ThreadLifecycleWaitReason::Command,
-            },
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = waiting_command_thread();
         let persisted_items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(
                 protocol::protocol::TurnStartedEvent {
@@ -928,36 +892,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_prefers_stable_active_agent_message_duplicate() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = active_thread();
         let persisted_items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(
                 protocol::protocol::TurnStartedEvent {
@@ -1023,36 +958,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_keeps_same_text_across_turns() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = active_thread();
         let persisted_items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(
                 protocol::protocol::TurnStartedEvent {
@@ -1173,34 +1079,7 @@ mod thread_processor_behavior_tests {
     #[test]
     fn populate_thread_turns_from_history_does_not_prune_with_live_compaction_boundary_after_merge()
     {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = completed_thread();
         let persisted_items = vec![
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".to_string(),
@@ -1361,45 +1240,19 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn restore_persisted_display_turns_replaces_loaded_marker_only_compaction_with_summary() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: vec![Turn {
-                id: "compact-turn".to_string(),
-                items: vec![ThreadItem::ContextCompaction {
-                    id: "item-2".to_string(),
-                }],
-                items_view: TurnItemsView::Full,
-                error: None,
-                status: TurnStatus::Completed,
-                started_at: Some(1),
-                completed_at: Some(2),
-                duration_ms: Some(1),
+        let mut thread = completed_thread();
+        thread.turns = vec![Turn {
+            id: "compact-turn".to_string(),
+            items: vec![ThreadItem::ContextCompaction {
+                id: "item-2".to_string(),
             }],
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::Completed,
+            started_at: Some(1),
+            completed_at: Some(2),
+            duration_ms: Some(1),
+        }];
 
         restore_persisted_display_turns_from_rollout_items(
             &mut thread,
@@ -1423,47 +1276,19 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn restore_persisted_display_turns_keeps_in_progress_marker_only_compaction() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: vec![Turn {
-                id: "compact-turn".to_string(),
-                items: vec![ThreadItem::ContextCompaction {
-                    id: "item-2".to_string(),
-                }],
-                items_view: TurnItemsView::Full,
-                error: None,
-                status: TurnStatus::InProgress,
-                started_at: Some(1),
-                completed_at: None,
-                duration_ms: None,
+        let mut thread = active_thread();
+        thread.turns = vec![Turn {
+            id: "compact-turn".to_string(),
+            items: vec![ThreadItem::ContextCompaction {
+                id: "item-2".to_string(),
             }],
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+            items_view: TurnItemsView::Full,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: Some(1),
+            completed_at: None,
+            duration_ms: None,
+        }];
 
         restore_persisted_display_turns_from_rollout_items(
             &mut thread,
@@ -1685,34 +1510,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_prunes_compact_prefix() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = completed_thread();
 
         populate_thread_turns_from_history(&mut thread, &compacted_display_history_items(), None);
 
@@ -1744,34 +1542,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_preserves_flat_compaction_display_items() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = completed_thread();
 
         populate_thread_turns_from_history(
             &mut thread,
@@ -1808,36 +1579,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_ignores_stale_active_compact_turn_collision() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::Active {
-                active_flags: Vec::new(),
-            },
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = active_thread();
         let active_turn = Turn {
             id: "compact-turn".to_string(),
             items: vec![ThreadItem::AgentMessage {
@@ -1898,34 +1640,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_for_persisted_read_preserves_flat_compaction_display_items() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = completed_thread();
 
         populate_thread_turns_for_persisted_read(
             &mut thread,
@@ -1961,34 +1676,7 @@ mod thread_processor_behavior_tests {
 
     #[test]
     fn populate_thread_turns_from_history_counts_same_turn_compactions_before_pruning() {
-        let mut thread = Thread {
-            id: "thread-1".to_string(),
-            session_id: "session-1".to_string(),
-            forked_from_id: None,
-            preview: "preview".to_string(),
-            ephemeral: false,
-            model_provider: "mock_provider".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            lifecycle_status: ThreadLifecycleStatus::completed(None),
-            path: None,
-            cwd: test_path_buf("/tmp").abs(),
-            cli_version: "0.0.0".to_string(),
-            source: ApiSessionSource::Cli,
-            thread_source: None,
-            agent_nickname: None,
-            agent_role: None,
-            agent_path: None,
-            git_info: None,
-            name: None,
-            skills: Vec::new(),
-            token_usage: None,
-            context_usage: None,
-            stats: None,
-            turns: Vec::new(),
-            active_subscription_items: None,
-            active_command_items: None,
-        };
+        let mut thread = completed_thread();
 
         populate_thread_turns_from_history(
             &mut thread,
