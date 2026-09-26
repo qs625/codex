@@ -35,6 +35,18 @@ type ReactElementProps = {
   [key: string]: unknown;
 };
 
+const BLANK_THREAD_DRAFT = {
+  mode: "chat",
+  projectPath: "",
+  taskName: "",
+  threadProvider: null,
+  agentType: null,
+  model: null,
+  modelProvider: null,
+  reasoningEffort: null,
+  serviceTier: null,
+};
+
 function makeThread(id: string, cwd: string, name: string): Thread {
   return {
     id,
@@ -117,6 +129,28 @@ function makeProject(
   };
 }
 
+function makeChatSidebar(
+  overrides: Partial<ProjectAgentSidebar["chat"]> = {},
+): ProjectAgentSidebar["chat"] {
+  return {
+    id: "chat",
+    statusClass: "todo",
+    updatedAt: 0,
+    conversations: [],
+    ...overrides,
+  };
+}
+
+function makeSidebar(
+  projects: SidebarProjectNode[] = [],
+  chat: Partial<ProjectAgentSidebar["chat"]> = {},
+): ProjectAgentSidebar {
+  return {
+    projects,
+    chat: makeChatSidebar(chat),
+  };
+}
+
 function renderSidebar(
   sidebar: ProjectAgentSidebar,
   options?: {
@@ -146,6 +180,28 @@ function renderSidebar(
       onToggleTreeNode={() => {}}
       projectSidebar={sidebar}
       selectedThreadId={options?.selectedThreadId ?? null}
+      workspacePath="/work/alpha"
+    />,
+  );
+}
+
+function renderNewThreadPopover() {
+  return renderToStaticMarkup(
+    <NewThreadPopover
+      existingProjectPaths={["/work/alpha", "/work/beta"]}
+      onCancel={() => {}}
+      onSubmit={() => {}}
+      workspacePath="/work/alpha"
+    />,
+  );
+}
+
+function renderNewThreadDialog() {
+  return renderToStaticMarkup(
+    <NewThreadDialog
+      existingProjectPaths={["/work/alpha", "/work/beta"]}
+      onCancel={() => {}}
+      onSubmit={() => {}}
       workspacePath="/work/alpha"
     />,
   );
@@ -245,29 +301,25 @@ function findElementByClassName(
   return null;
 }
 
+function assertSourceOrder(source: string, first: string, second: string) {
+  assert.ok(source.indexOf(first) < source.indexOf(second));
+}
+
 test("SidebarPanel renders projects with nested subagents and no extra root row", () => {
   const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev")),
   ]);
-  const sidebar: ProjectAgentSidebar = {
-    projects: [
-      makeProject("project:/work/alpha", "alpha", root, {
-        descendantCount: 1,
-        activeCount: 1,
-      }),
-      makeProject(
-        "project:/work/beta",
-        "beta",
-        makeNode(makeThread("root-beta", "/work/beta", "Beta chat")),
-      ),
-    ],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [],
-    },
-  };
+  const sidebar = makeSidebar([
+    makeProject("project:/work/alpha", "alpha", root, {
+      descendantCount: 1,
+      activeCount: 1,
+    }),
+    makeProject(
+      "project:/work/beta",
+      "beta",
+      makeNode(makeThread("root-beta", "/work/beta", "Beta chat")),
+    ),
+  ]);
 
   const markup = renderSidebar(sidebar);
 
@@ -311,15 +363,7 @@ test("ConversationPanel keeps thread metadata in the composer without placeholde
 });
 
 test("SidebarPanel exposes the settings action", () => {
-  const sidebar: ProjectAgentSidebar = {
-    projects: [],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [],
-    },
-  };
+  const sidebar = makeSidebar();
 
   const markup = renderSidebar(sidebar);
 
@@ -339,10 +383,16 @@ test("sidebar project lists avoid internal separators while preserving panel res
     /\.sidebar-section-header,[\s\S]*\.sidebar-footer \{[\s\S]*border-top: 0;[\s\S]*border-bottom: 0;/,
   );
   assert.match(css, /\.sidebar \{[\s\S]*border-right: 0;/);
-  assert.match(css, /\.conversation-scroll \{[\s\S]*background: #ffffff;[\s\S]*background-image: none;/);
+  assert.match(
+    css,
+    /\.conversation-scroll \{[\s\S]*background: #ffffff;[\s\S]*background-image: none;/,
+  );
   assert.match(css, /\.tree-node::before \{[\s\S]*display: none;/);
   assert.match(css, /\.panel-resizer \{[\s\S]*background: transparent;/);
-  assert.match(css, /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/);
+  assert.match(
+    css,
+    /\.panel-resizer::before \{[\s\S]*left: 50%;[\s\S]*width: 1px;[\s\S]*background: rgba\(16, 24, 40, 0\.08\);/,
+  );
   assert.match(
     css,
     /\.is-resizing-panels \.panel-resizer::before \{[\s\S]*background: rgba\(217, 119, 6, 0\.68\);/,
@@ -376,26 +426,15 @@ test("SidebarPanel indents project subagents relative to the project header", ()
   const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     owner,
   ]);
-  const sidebar: ProjectAgentSidebar = {
-    projects: [makeProject("project:/work/alpha", "alpha", root)],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))],
-    },
-  };
+  const sidebar = makeSidebar(
+    [makeProject("project:/work/alpha", "alpha", root)],
+    { conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))] },
+  );
 
   const markup = renderSidebar(sidebar);
 
-  assert.match(
-    markup,
-    /class="tree-node " style="--depth:1"[\s\S]*owner_dev/,
-  );
-  assert.match(
-    markup,
-    /class="tree-node " style="--depth:2"[\s\S]*reviewer/,
-  );
+  assert.match(markup, /class="tree-node " style="--depth:1"[\s\S]*owner_dev/);
+  assert.match(markup, /class="tree-node " style="--depth:2"[\s\S]*reviewer/);
   assert.match(markup, /class="chat-list-row"[\s\S]*General Q&amp;A/);
   assert.match(markup, /aria-label="Delete chat General Q&amp;A"/);
   assert.doesNotMatch(markup, /tree-node-copy"><strong>General Q&amp;A/);
@@ -406,15 +445,9 @@ test("SidebarPanel keeps collapsed project children hidden across sidebar update
   const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     child,
   ]);
-  const baseSidebar: ProjectAgentSidebar = {
-    projects: [makeProject("project:/work/alpha", "alpha", root)],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [],
-    },
-  };
+  const baseSidebar = makeSidebar([
+    makeProject("project:/work/alpha", "alpha", root),
+  ]);
   const updatedSidebar: ProjectAgentSidebar = {
     ...baseSidebar,
     projects: [
@@ -442,15 +475,7 @@ test("SidebarPanel keeps collapsed project children hidden across sidebar update
 });
 
 test("SidebarPanel exposes project create and chat quick create", () => {
-  const sidebar: ProjectAgentSidebar = {
-    projects: [],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [],
-    },
-  };
+  const sidebar = makeSidebar();
 
   const markup = renderSidebar(sidebar);
 
@@ -463,15 +488,7 @@ test("SidebarPanel exposes project create and chat quick create", () => {
 });
 
 test("SidebarPanel disables chat quick create while a chat is being created", () => {
-  const sidebar: ProjectAgentSidebar = {
-    projects: [],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [],
-    },
-  };
+  const sidebar = makeSidebar();
 
   const markup = renderSidebar(sidebar, { isCreatingChatThread: true });
 
@@ -481,28 +498,11 @@ test("SidebarPanel disables chat quick create while a chat is being created", ()
 });
 
 test("buildBlankChatThreadDraft creates a cwd-free chat draft", () => {
-  assert.deepEqual(buildBlankChatThreadDraft(), {
-    mode: "chat",
-    projectPath: "",
-    taskName: "",
-    threadProvider: null,
-    agentType: null,
-    model: null,
-    modelProvider: null,
-    reasoningEffort: null,
-    serviceTier: null,
-  });
+  assert.deepEqual(buildBlankChatThreadDraft(), BLANK_THREAD_DRAFT);
 });
 
 test("NewThreadPopover renders thread/start parameter fields", () => {
-  const markup = renderToStaticMarkup(
-    <NewThreadPopover
-      existingProjectPaths={["/work/alpha", "/work/beta"]}
-      onCancel={() => {}}
-      onSubmit={() => {}}
-      workspacePath="/work/alpha"
-    />,
-  );
+  const markup = renderNewThreadPopover();
 
   assert.match(markup, /New conversation/);
   assert.match(markup, /Project path/);
@@ -523,14 +523,7 @@ test("NewThreadPopover renders thread/start parameter fields", () => {
 });
 
 test("NewThreadDialog renders centered overlay around the existing form", () => {
-  const markup = renderToStaticMarkup(
-    <NewThreadDialog
-      existingProjectPaths={["/work/alpha", "/work/beta"]}
-      onCancel={() => {}}
-      onSubmit={() => {}}
-      workspacePath="/work/alpha"
-    />,
-  );
+  const markup = renderNewThreadDialog();
 
   assert.match(markup, /class="new-thread-dialog-layer"/);
   assert.match(markup, /class="new-thread-dialog-shell"/);
@@ -579,17 +572,7 @@ test("buildNewThreadDraft trims thread start params", () => {
     buildNewThreadDraft("project", "/work/new", {
       taskName: " ",
     }),
-    {
-      mode: "project",
-      projectPath: "/work/new",
-      taskName: "",
-      threadProvider: null,
-      agentType: null,
-      model: null,
-      modelProvider: null,
-      reasoningEffort: null,
-      serviceTier: null,
-    },
+    { ...BLANK_THREAD_DRAFT, mode: "project", projectPath: "/work/new" },
   );
 });
 
@@ -708,41 +691,53 @@ test("new thread project path changes clear cwd-scoped provider and role option 
 
   assert.notEqual(effectStart, -1);
   assert.notEqual(effectEnd, -1);
-  assert.ok(
-    effectSource.indexOf("setThreadProviders([]);") <
-      effectSource.indexOf(".listThreadProviders(trimmedProjectPath)"),
+  assertSourceOrder(
+    effectSource,
+    "setThreadProviders([]);",
+    ".listThreadProviders(trimmedProjectPath)",
   );
-  assert.ok(
-    effectSource.indexOf("setThreadProvidersProjectPath(\"\");") <
-      effectSource.indexOf(".listThreadProviders(trimmedProjectPath)"),
+  assertSourceOrder(
+    effectSource,
+    'setThreadProvidersProjectPath("");',
+    ".listThreadProviders(trimmedProjectPath)",
   );
-  assert.ok(
-    effectSource.indexOf("setAgentTypes([]);") <
-      effectSource.indexOf(".listAgentTypes(trimmedProjectPath)"),
+  assertSourceOrder(
+    effectSource,
+    "setAgentTypes([]);",
+    ".listAgentTypes(trimmedProjectPath)",
   );
-  assert.ok(
-    effectSource.indexOf("setAgentTypesProjectPath(\"\");") <
-      effectSource.indexOf(".listAgentTypes(trimmedProjectPath)"),
+  assertSourceOrder(
+    effectSource,
+    'setAgentTypesProjectPath("");',
+    ".listAgentTypes(trimmedProjectPath)",
   );
 });
 
 test("new thread agent path validation matches backend path rules", () => {
-  assert.equal(isValidAgentPathSegment("owner_dev"), true);
-  assert.equal(isValidAgentPathSegment("root"), false);
-  assert.equal(isValidAgentPathSegment("OwnerDev"), false);
-  assert.equal(isValidAgentPathSegment("owner-dev"), false);
+  for (const [segment, expected] of [
+    ["owner_dev", true],
+    ["root", false],
+    ["OwnerDev", false],
+    ["owner-dev", false],
+  ] as const) {
+    assert.equal(isValidAgentPathSegment(segment), expected);
+  }
 
-  assert.equal(isValidNewThreadAgentPath("/root"), true);
-  assert.equal(isValidNewThreadAgentPath("/root/owner_dev"), true);
-  assert.equal(isValidNewThreadAgentPath("/morpheus"), true);
-  assert.equal(isValidNewThreadAgentPath("/morpheus/agent_1"), true);
-  assert.equal(isValidNewThreadAgentPath("/project"), true);
-  assert.equal(isValidNewThreadAgentPath("/project/owner"), true);
-  assert.equal(isValidNewThreadAgentPath("/Project"), false);
-  assert.equal(isValidNewThreadAgentPath("/root/root"), false);
-  assert.equal(isValidNewThreadAgentPath("/root/owner/root"), false);
-  assert.equal(isValidNewThreadAgentPath("/root/owner/"), false);
-  assert.equal(isValidNewThreadAgentPath("/"), false);
+  for (const [path, expected] of [
+    ["/root", true],
+    ["/root/owner_dev", true],
+    ["/morpheus", true],
+    ["/morpheus/agent_1", true],
+    ["/project", true],
+    ["/project/owner", true],
+    ["/Project", false],
+    ["/root/root", false],
+    ["/root/owner/root", false],
+    ["/root/owner/", false],
+    ["/", false],
+  ] as const) {
+    assert.equal(isValidNewThreadAgentPath(path), expected);
+  }
 });
 
 test("new thread project defaults use sanitized cwd basename paths", () => {
@@ -802,18 +797,10 @@ test("SidebarPanel renders Chat group conversations separately", () => {
     ...makeThread("chat-2", "", "API question"),
     lifecycleStatus: { type: "waiting", reason: "eventSubscription" },
   } satisfies Thread;
-  const sidebar: ProjectAgentSidebar = {
-    projects: [],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 2,
-      conversations: [
-        makeNode(activeChat),
-        makeNode(waitingChat),
-      ],
-    },
-  };
+  const sidebar = makeSidebar([], {
+    updatedAt: 2,
+    conversations: [makeNode(activeChat), makeNode(waitingChat)],
+  });
 
   const markup = renderSidebar(sidebar);
 
@@ -831,7 +818,10 @@ test("SidebarPanel renders Chat group conversations separately", () => {
   );
   assert.match(markup, /aria-label="Active"/);
   assert.match(markup, /aria-label="Waiting on subscription"/);
-  assert.match(markup, /aria-label="Delete chat Explain thread status updates"/);
+  assert.match(
+    markup,
+    /aria-label="Delete chat Explain thread status updates"/,
+  );
   assert.match(markup, /aria-label="Delete chat API question"/);
   assert.match(markup, /No projects yet/);
 });
@@ -840,15 +830,10 @@ test("SidebarPanel exposes project delete only on project roots", () => {
   const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev")),
   ]);
-  const sidebar: ProjectAgentSidebar = {
-    projects: [makeProject("project:/work/alpha", "alpha", root)],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))],
-    },
-  };
+  const sidebar = makeSidebar(
+    [makeProject("project:/work/alpha", "alpha", root)],
+    { conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))] },
+  );
 
   const markup = renderSidebar(sidebar);
 
@@ -933,21 +918,17 @@ test("TreeContextMenu routes project root deletion to the project archive callba
 });
 
 test("SidebarPanel keeps chat as a flat list outside tree collapse", () => {
-  const child = makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev"), [
-    makeNode(makeThread("reviewer-alpha", "/work/alpha", "reviewer")),
-  ]);
+  const child = makeNode(
+    makeThread("owner-alpha", "/work/alpha", "owner_dev"),
+    [makeNode(makeThread("reviewer-alpha", "/work/alpha", "reviewer"))],
+  );
   const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     child,
   ]);
-  const sidebar: ProjectAgentSidebar = {
-    projects: [makeProject("project:/work/alpha", "alpha", root)],
-    chat: {
-      id: "chat",
-      statusClass: "todo",
-      updatedAt: 0,
-      conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))],
-    },
-  };
+  const sidebar = makeSidebar(
+    [makeProject("project:/work/alpha", "alpha", root)],
+    { conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))] },
+  );
 
   const projectCollapsed = renderSidebar(sidebar, {
     collapsedProjects: ["project:/work/alpha"],

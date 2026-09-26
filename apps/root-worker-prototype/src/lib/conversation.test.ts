@@ -12,6 +12,23 @@ import {
 import { formatClockTime, normalizeThreadSnapshot } from "./thread";
 import type { ConversationEntry, Thread } from "../types";
 
+function makeTurn(
+  items: Thread["turns"][number]["items"],
+  overrides: Partial<Thread["turns"][number]> = {},
+): Thread["turns"][number] {
+  return {
+    id: "turn-1",
+    items,
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 1,
+    durationMs: 0,
+    ...overrides,
+  };
+}
+
 function makeThread(items: Thread["turns"][number]["items"]): Thread {
   return {
     id: "thread-1",
@@ -35,18 +52,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
     gitInfo: null,
     name: null,
     skills: [],
-    turns: [
-      {
-        id: "turn-1",
-        items,
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-    ],
+    turns: [makeTurn(items)],
   };
 }
 
@@ -371,9 +377,8 @@ test("ordinary markdown assistant messages stay on the message path", () => {
 test("compact rows archive prior artifact cells", () => {
   const entries = buildConversationEntries(
     makeThreadWithTurns([
-      {
-        id: "turn-1",
-        items: [
+      makeTurn(
+        [
           {
             type: "conversationArtifact",
             id: "artifact-1",
@@ -383,28 +388,17 @@ test("compact rows archive prior artifact cells", () => {
               '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-      {
-        id: "turn-2",
-        items: [
+        { id: "turn-1" },
+      ),
+      makeTurn(
+        [
           {
             type: "contextCompaction",
             id: "compact-1",
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 2,
-        completedAt: 2,
-        durationMs: 0,
-      },
+        { id: "turn-2", startedAt: 2, completedAt: 2 },
+      ),
     ]),
   );
 
@@ -591,38 +585,26 @@ test("preserves independent same-text user messages as separate bubbles", () => 
   const prompt = "repeatable user request";
   const entries = buildConversationEntries(
     makeThreadWithTurns([
-      {
-        id: "turn-1",
-        items: [
+      makeTurn(
+        [
           {
             type: "userMessage",
             id: "user-1",
             content: [{ type: "text", text: prompt }],
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-      {
-        id: "turn-2",
-        items: [
+        { id: "turn-1" },
+      ),
+      makeTurn(
+        [
           {
             type: "userMessage",
             id: "user-2",
             content: [{ type: "text", text: prompt }],
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 2,
-        completedAt: 2,
-        durationMs: 0,
-      },
+        { id: "turn-2", startedAt: 2, completedAt: 2 },
+      ),
     ]),
   );
 
@@ -944,9 +926,8 @@ test("merges contiguous command notifications with their command while keeping e
 test("keeps command notifications separated across turns", () => {
   const entries = buildConversationEntries(
     makeThreadWithTurns([
-      {
-        id: "turn-1",
-        items: [
+      makeTurn(
+        [
           {
             type: "commandExecutionNotification",
             id: "cmd-1:notification:output:1",
@@ -958,16 +939,10 @@ test("keeps command notifications separated across turns", () => {
             createdAtMs: 1,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-      {
-        id: "turn-2",
-        items: [
+        { id: "turn-1" },
+      ),
+      makeTurn(
+        [
           {
             type: "commandExecutionNotification",
             id: "cmd-1:notification:output:2",
@@ -979,13 +954,8 @@ test("keeps command notifications separated across turns", () => {
             createdAtMs: 2,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 2,
-        completedAt: 2,
-        durationMs: 0,
-      },
+        { id: "turn-2", startedAt: 2, completedAt: 2 },
+      ),
     ]),
   );
 
@@ -1220,9 +1190,8 @@ test("renders live active command current state as compact command anchors", () 
 test("places older active command snapshots by command start time instead of at the conversation tail", () => {
   const thread = {
     ...makeThreadWithTurns([
-      {
-        id: "turn-later",
-        items: [
+      makeTurn(
+        [
           {
             type: "userMessage",
             id: "user-later",
@@ -1236,13 +1205,8 @@ test("places older active command snapshots by command start time instead of at 
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 120,
-        completedAt: 120,
-        durationMs: 0,
-      },
+        { id: "turn-later", startedAt: 120, completedAt: 120 },
+      ),
     ]),
     updatedAt: 180,
     activeCommandItems: [
@@ -1285,9 +1249,8 @@ test("places older active command snapshots by command start time instead of at 
 test("preserves durable item order when active tail projection is inserted", () => {
   const thread = {
     ...makeThreadWithTurns([
-      {
-        id: "turn-restored",
-        items: [
+      makeTurn(
+        [
           {
             type: "agentMessage",
             id: "agent-before-poll",
@@ -1342,13 +1305,8 @@ test("preserves durable item order when active tail projection is inserted", () 
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 341,
-        completedAt: 341,
-        durationMs: 0,
-      },
+        { id: "turn-restored", startedAt: 341, completedAt: 341 },
+      ),
     ]),
     updatedAt: 360,
     activeCommandItems: [
@@ -1404,24 +1362,17 @@ test("preserves durable item order when active tail projection is inserted", () 
 test("omits pre-compact orphan active command after the compact marker", () => {
   const thread = {
     ...makeThreadWithTurns([
-      {
-        id: "turn-compact",
-        items: [
+      makeTurn(
+        [
           {
             type: "contextCompaction",
             id: "compact-1",
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 100,
-        completedAt: 100,
-        durationMs: 0,
-      },
-      {
-        id: "turn-later",
-        items: [
+        { id: "turn-compact", startedAt: 100, completedAt: 100 },
+      ),
+      makeTurn(
+        [
           {
             type: "agentMessage",
             id: "agent-later",
@@ -1430,13 +1381,8 @@ test("omits pre-compact orphan active command after the compact marker", () => {
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 120,
-        completedAt: 120,
-        durationMs: 0,
-      },
+        { id: "turn-later", startedAt: 120, completedAt: 120 },
+      ),
     ]),
     updatedAt: 180,
     activeCommandItems: [
@@ -1477,24 +1423,17 @@ test("omits pre-compact orphan active command after the compact marker", () => {
 test("keeps post-compact orphan active command visible after the compact marker", () => {
   const thread = {
     ...makeThreadWithTurns([
-      {
-        id: "turn-compact",
-        items: [
+      makeTurn(
+        [
           {
             type: "contextCompaction",
             id: "compact-1",
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 100,
-        completedAt: 100,
-        durationMs: 0,
-      },
-      {
-        id: "turn-later",
-        items: [
+        { id: "turn-compact", startedAt: 100, completedAt: 100 },
+      ),
+      makeTurn(
+        [
           {
             type: "agentMessage",
             id: "agent-later",
@@ -1503,13 +1442,8 @@ test("keeps post-compact orphan active command visible after the compact marker"
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 120,
-        completedAt: 120,
-        durationMs: 0,
-      },
+        { id: "turn-later", startedAt: 120, completedAt: 120 },
+      ),
     ]),
     updatedAt: 180,
     activeCommandItems: [
@@ -1673,8 +1607,14 @@ test("active command current state participates in conversation reuse state", ()
     firstState.entries.map((entry) => entry.id),
     ["exec-1", "exec-2"],
   );
-  assert.deepEqual(secondState.entries.map((entry) => entry.id), ["exec-2"]);
-  assert.deepEqual(secondState.flatItems.map((item) => item.id), ["exec-2"]);
+  assert.deepEqual(
+    secondState.entries.map((entry) => entry.id),
+    ["exec-2"],
+  );
+  assert.deepEqual(
+    secondState.flatItems.map((item) => item.id),
+    ["exec-2"],
+  );
   assert.strictEqual(secondState.entries[0], firstState.entries[1]);
 });
 
@@ -1710,7 +1650,10 @@ test("reuses active command entries when command snapshots are rebuilt with same
     activeCommandItems: [activeCommand("running\nnext\n")],
   } satisfies Thread;
 
-  const rebuiltSameState = buildConversationState(rebuiltSameThread, firstState);
+  const rebuiltSameState = buildConversationState(
+    rebuiltSameThread,
+    firstState,
+  );
   const changedState = buildConversationState(changedThread, rebuiltSameState);
 
   assert.notEqual(
@@ -2478,10 +2421,7 @@ test("labels external code agent providers in collab tool details", () => {
     entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
     [["multiAgent", "spawn agent", "/root -> Codex CLI /root/external"]],
   );
-  assert.match(
-    entries[0]?.toolDetails ?? "",
-    /message\nwork on this/,
-  );
+  assert.match(entries[0]?.toolDetails ?? "", /message\nwork on this/);
   assert.match(entries[0]?.toolDetails ?? "", /model\ngpt-5\.5/);
   assert.match(entries[0]?.toolDetails ?? "", /reasoning_effort\nmedium/);
   assert.match(
@@ -3155,25 +3095,18 @@ test("keeps ordinary child completion JSON in event-driven tools as event text",
 
 test("pruned compact rows omit archived cells until lazy-loaded details are read", () => {
   const fullThread = makeThreadWithTurns([
-    {
-      id: "turn-1",
-      items: [
+    makeTurn(
+      [
         {
           type: "userMessage",
           id: "old-user",
           content: [{ type: "text", text: "old request" }],
         },
       ],
-      itemsView: "full",
-      status: "completed",
-      error: null,
-      startedAt: 1,
-      completedAt: 1,
-      durationMs: 0,
-    },
-    {
-      id: "turn-2",
-      items: [
+      { id: "turn-1" },
+    ),
+    makeTurn(
+      [
         {
           type: "contextCompaction",
           id: "compact-1",
@@ -3186,13 +3119,8 @@ test("pruned compact rows omit archived cells until lazy-loaded details are read
           memoryCitation: null,
         },
       ],
-      itemsView: "full",
-      status: "completed",
-      error: null,
-      startedAt: 2,
-      completedAt: 2,
-      durationMs: 0,
-    },
+      { id: "turn-2", startedAt: 2, completedAt: 2 },
+    ),
   ]);
 
   const prunedState = buildConversationState(
@@ -3221,25 +3149,18 @@ test("pruned compact rows omit archived cells until lazy-loaded details are read
 test("keeps compact summary messages visible while preserving later visible items", () => {
   const state = buildConversationState(
     makeThreadWithTurns([
-      {
-        id: "turn-1",
-        items: [
+      makeTurn(
+        [
           {
             type: "userMessage",
             id: "old-user",
             content: [{ type: "text", text: "old request" }],
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-      {
-        id: "turn-2",
-        items: [
+        { id: "turn-1" },
+      ),
+      makeTurn(
+        [
           {
             type: "agentMessage",
             id: "compact-summary",
@@ -3259,13 +3180,8 @@ test("keeps compact summary messages visible while preserving later visible item
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 2,
-        completedAt: 2,
-        durationMs: 0,
-      },
+        { id: "turn-2", startedAt: 2, completedAt: 2 },
+      ),
     ]),
   );
 
@@ -3277,7 +3193,10 @@ test("keeps compact summary messages visible while preserving later visible item
       ["after-compact", "message"],
     ],
   );
-  assert.equal(state.cells[0]?.entries[0]?.text, "Summarizing previous context.");
+  assert.equal(
+    state.cells[0]?.entries[0]?.text,
+    "Summarizing previous context.",
+  );
   const compactEntry = state.cells[1]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
   assert.equal(compactEntry?.compactSummary, null);
@@ -3294,13 +3213,14 @@ test("renders backend thread/read compact projection with summary and init conte
   const state = buildConversationState(
     normalizeThreadSnapshot(
       makeThreadWithTurns([
-        {
-          id: "turn-old",
-          items: [
+        makeTurn(
+          [
             {
               type: "userMessage",
               id: "old-user",
-              content: [{ type: "text", text: "old request hidden by compact" }],
+              content: [
+                { type: "text", text: "old request hidden by compact" },
+              ],
             },
             {
               type: "agentMessage",
@@ -3310,16 +3230,10 @@ test("renders backend thread/read compact projection with summary and init conte
               memoryCitation: null,
             },
           ],
-          itemsView: "full",
-          status: "completed",
-          error: null,
-          startedAt: 1,
-          completedAt: 1,
-          durationMs: 0,
-        },
-        {
-          id: "compact-turn",
-          items: [
+          { id: "turn-old" },
+        ),
+        makeTurn(
+          [
             {
               type: "contextCompaction",
               id: "item-1",
@@ -3344,13 +3258,8 @@ test("renders backend thread/read compact projection with summary and init conte
               ],
             },
           ],
-          itemsView: "full",
-          status: "completed",
-          error: null,
-          startedAt: 2,
-          completedAt: 2,
-          durationMs: 0,
-        },
+          { id: "compact-turn", startedAt: 2, completedAt: 2 },
+        ),
       ]),
     ),
   );
@@ -3384,9 +3293,8 @@ test("hides pre-compact same-turn user messages while preserving post-compact us
   const followupPrompt = "等下刚才发送的user message没显示";
   const state = buildConversationState(
     makeThreadWithTurns([
-      {
-        id: "turn-active",
-        items: [
+      makeTurn(
+        [
           {
             type: "userMessage",
             id: "item-12",
@@ -3419,13 +3327,14 @@ test("hides pre-compact same-turn user messages while preserving post-compact us
             content: [{ type: "text", text: followupPrompt }],
           },
         ],
-        itemsView: "full",
-        status: "running",
-        error: null,
-        startedAt: 2,
-        completedAt: null,
-        durationMs: null,
-      },
+        {
+          id: "turn-active",
+          status: "running",
+          startedAt: 2,
+          completedAt: null,
+          durationMs: null,
+        },
+      ),
     ]),
   );
 
@@ -3460,25 +3369,18 @@ test("hides pre-compact same-turn user messages while preserving post-compact us
 test("multiple compactions keep only entries after the latest hidden compact boundary", () => {
   const state = buildConversationState(
     makeThreadWithTurns([
-      {
-        id: "turn-1",
-        items: [
+      makeTurn(
+        [
           {
             type: "userMessage",
             id: "old-user",
             content: [{ type: "text", text: "old request" }],
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-      {
-        id: "turn-2",
-        items: [
+        { id: "turn-1" },
+      ),
+      makeTurn(
+        [
           {
             type: "contextCompaction",
             id: "compact-1",
@@ -3491,16 +3393,10 @@ test("multiple compactions keep only entries after the latest hidden compact bou
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 2,
-        completedAt: 2,
-        durationMs: 0,
-      },
-      {
-        id: "turn-3",
-        items: [
+        { id: "turn-2", startedAt: 2, completedAt: 2 },
+      ),
+      makeTurn(
+        [
           {
             type: "agentMessage",
             id: "compact-2:summary",
@@ -3520,13 +3416,8 @@ test("multiple compactions keep only entries after the latest hidden compact bou
             memoryCitation: null,
           },
         ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 3,
-        completedAt: 3,
-        durationMs: 0,
-      },
+        { id: "turn-3", startedAt: 3, completedAt: 3 },
+      ),
     ]),
   );
 
@@ -3538,7 +3429,10 @@ test("multiple compactions keep only entries after the latest hidden compact bou
       ["after-second-compact", "message"],
     ],
   );
-  assert.equal(state.cells[0]?.entries[0]?.text, "summary before second compact");
+  assert.equal(
+    state.cells[0]?.entries[0]?.text,
+    "summary before second compact",
+  );
   const compactEntry = state.cells[1]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
   assert.equal(compactEntry?.archivedEntryCount, 3);
