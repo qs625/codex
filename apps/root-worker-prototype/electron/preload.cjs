@@ -16,133 +16,80 @@ function subscribeIpcState(channel, listener) {
   };
 }
 
+function createInvokeApi(channels) {
+  return Object.fromEntries(
+    Object.entries(channels).map(([methodName, channel]) => [
+      methodName,
+      (...args) => ipcRenderer.invoke(channel, ...args),
+    ]),
+  );
+}
+
+function invokeChannelGroup(prefix, entries) {
+  const normalizedEntries =
+    typeof entries === "string" ? entries.trim().split(/\s+/) : entries;
+  return Object.fromEntries(
+    normalizedEntries.map((entry) => {
+      const [methodName, channelName = methodName] =
+        typeof entry === "string" && entry.includes(":")
+          ? entry.split(":", 2)
+          : Array.isArray(entry)
+            ? entry
+            : [entry];
+      return [methodName, `${prefix}${channelName}`];
+    }),
+  );
+}
+
+const invokeChannels = {
+  ...invokeChannelGroup(
+    "codex:",
+    `
+      health showSystemNotification relaunchApp bootstrap listThreads listModels
+      readConfig writeConfigValue batchWriteConfig readAccount
+      getAndroidConnectionInfo:androidConnectionInfo startAccountLogin
+      cancelAccountLogin listAgentTypes listThreadProviders selectProjectDirectory
+      listSkills listWorkflows createThread getSelfProject startSelfCommand
+      archiveThread readCompactHistory setThreadRunConfig subscribeThread
+      unsubscribeThread getThreadGoal setThreadGoal clearThreadGoal
+      listLocalDirectory readLocalFile writeLocalFile readLocalImage
+      readGitSnapshot readGitCommitFiles readGitCommitFileDiff readGitFileDiff
+      readGitStatusSnapshot lspDefinition lspStatus openLink sendMessage
+      interruptTurn respondServerRequest rejectServerRequest requestMicrophoneAccess
+      startRealtime stopRealtime
+    `,
+  ),
+  ...invokeChannelGroup(
+    "codex:browser:",
+    `
+      showBrowserView:show hideBrowserView:hide setBrowserViewBounds:setBounds
+      navigateBrowserView:navigate createBrowserTab:newTab selectBrowserTab:selectTab
+      closeBrowserTab:closeTab browserGoBack:goBack browserGoForward:goForward
+      reloadBrowserView:reload stopBrowserView:stop
+    `,
+  ),
+  ...invokeChannelGroup(
+    "codex:terminal:",
+    `
+      getTerminalState:getState createTerminal:create selectTerminalTab:select
+      focusTerminalCommand:focusCommand closeTerminalTab:close
+      reattachTerminalTabs:reattach writeTerminal:write resizeTerminal:resize
+      updateTerminalPreferredSize:updatePreferredSize terminateTerminal:terminate
+    `,
+  ),
+  ...invokeChannelGroup(
+    "codex:computerUse:",
+    `
+      startComputerUse:start observeComputerUse:observe actComputerUse:act
+      stopComputerUse:stop getComputerUseState:state
+    `,
+  ),
+};
+
 contextBridge.exposeInMainWorld("codexDesktop", {
-  health: () => ipcRenderer.invoke("codex:health"),
-  showSystemNotification: (payload) =>
-    ipcRenderer.invoke("codex:showSystemNotification", payload),
-  relaunchApp: (payload) => ipcRenderer.invoke("codex:relaunchApp", payload),
-  bootstrap: () => ipcRenderer.invoke("codex:bootstrap"),
-  listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
-  listModels: () => ipcRenderer.invoke("codex:listModels"),
-  readConfig: (payload) => ipcRenderer.invoke("codex:readConfig", payload),
-  writeConfigValue: (payload) =>
-    ipcRenderer.invoke("codex:writeConfigValue", payload),
-  batchWriteConfig: (payload) =>
-    ipcRenderer.invoke("codex:batchWriteConfig", payload),
-  readAccount: (payload) => ipcRenderer.invoke("codex:readAccount", payload),
-  getAndroidConnectionInfo: () =>
-    ipcRenderer.invoke("codex:androidConnectionInfo"),
-  startAccountLogin: (payload) =>
-    ipcRenderer.invoke("codex:startAccountLogin", payload),
-  cancelAccountLogin: (payload) =>
-    ipcRenderer.invoke("codex:cancelAccountLogin", payload),
-  listAgentTypes: (cwd) => ipcRenderer.invoke("codex:listAgentTypes", cwd),
-  listThreadProviders: (cwd) =>
-    ipcRenderer.invoke("codex:listThreadProviders", cwd),
-  selectProjectDirectory: (defaultPath) =>
-    ipcRenderer.invoke("codex:selectProjectDirectory", defaultPath),
-  listSkills: (cwd) => ipcRenderer.invoke("codex:listSkills", cwd),
-  listWorkflows: (cwd) => ipcRenderer.invoke("codex:listWorkflows", cwd),
-  createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),
-  getSelfProject: () => ipcRenderer.invoke("codex:getSelfProject"),
-  startSelfCommand: (payload) =>
-    ipcRenderer.invoke("codex:startSelfCommand", payload),
-  archiveThread: (threadId) =>
-    ipcRenderer.invoke("codex:archiveThread", threadId),
+  ...createInvokeApi(invokeChannels),
   readThread: (threadId, includeTurns = true) =>
     ipcRenderer.invoke("codex:readThread", threadId, includeTurns),
-  readCompactHistory: (threadId) =>
-    ipcRenderer.invoke("codex:readCompactHistory", threadId),
-  setThreadRunConfig: (payload) =>
-    ipcRenderer.invoke("codex:setThreadRunConfig", payload),
-  subscribeThread: (threadId) =>
-    ipcRenderer.invoke("codex:subscribeThread", threadId),
-  unsubscribeThread: (threadId) =>
-    ipcRenderer.invoke("codex:unsubscribeThread", threadId),
-  getThreadGoal: (threadId) => ipcRenderer.invoke("codex:getThreadGoal", threadId),
-  setThreadGoal: (payload) => ipcRenderer.invoke("codex:setThreadGoal", payload),
-  clearThreadGoal: (threadId) =>
-    ipcRenderer.invoke("codex:clearThreadGoal", threadId),
-  listLocalDirectory: (target) =>
-    ipcRenderer.invoke("codex:listLocalDirectory", target),
-  readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
-  writeLocalFile: (target, content) =>
-    ipcRenderer.invoke("codex:writeLocalFile", target, content),
-  readLocalImage: (target) =>
-    ipcRenderer.invoke("codex:readLocalImage", target),
-  readGitSnapshot: (cwd, options) =>
-    ipcRenderer.invoke("codex:readGitSnapshot", cwd, options),
-  readGitCommitFiles: (cwd, hash) =>
-    ipcRenderer.invoke("codex:readGitCommitFiles", cwd, hash),
-  readGitCommitFileDiff: (cwd, options) =>
-    ipcRenderer.invoke("codex:readGitCommitFileDiff", cwd, options),
-  readGitFileDiff: (cwd, options) =>
-    ipcRenderer.invoke("codex:readGitFileDiff", cwd, options),
-  readGitStatusSnapshot: (cwd) =>
-    ipcRenderer.invoke("codex:readGitStatusSnapshot", cwd),
-  lspDefinition: (payload) =>
-    ipcRenderer.invoke("codex:lspDefinition", payload),
-  lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),
-  openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
-  showBrowserView: (bounds) => ipcRenderer.invoke("codex:browser:show", bounds),
-  hideBrowserView: (options) => ipcRenderer.invoke("codex:browser:hide", options),
-  setBrowserViewBounds: (bounds) =>
-    ipcRenderer.invoke("codex:browser:setBounds", bounds),
-  navigateBrowserView: (target) =>
-    ipcRenderer.invoke("codex:browser:navigate", target),
-  createBrowserTab: (target) => ipcRenderer.invoke("codex:browser:newTab", target),
-  selectBrowserTab: (tabId) =>
-    ipcRenderer.invoke("codex:browser:selectTab", tabId),
-  closeBrowserTab: (tabId) =>
-    ipcRenderer.invoke("codex:browser:closeTab", tabId),
-  browserGoBack: (options) => ipcRenderer.invoke("codex:browser:goBack", options),
-  browserGoForward: (options) =>
-    ipcRenderer.invoke("codex:browser:goForward", options),
-  reloadBrowserView: (options) =>
-    ipcRenderer.invoke("codex:browser:reload", options),
-  stopBrowserView: (options) => ipcRenderer.invoke("codex:browser:stop", options),
-  getTerminalState: (threadId) =>
-    ipcRenderer.invoke("codex:terminal:getState", threadId),
-  createTerminal: (payload) =>
-    ipcRenderer.invoke("codex:terminal:create", payload),
-  selectTerminalTab: (tabId) =>
-    ipcRenderer.invoke("codex:terminal:select", tabId),
-  focusTerminalCommand: (command) =>
-    ipcRenderer.invoke("codex:terminal:focusCommand", command),
-  closeTerminalTab: (tabId) =>
-    ipcRenderer.invoke("codex:terminal:close", tabId),
-  reattachTerminalTabs: () =>
-    ipcRenderer.invoke("codex:terminal:reattach"),
-  writeTerminal: (payload) =>
-    ipcRenderer.invoke("codex:terminal:write", payload),
-  resizeTerminal: (payload) =>
-    ipcRenderer.invoke("codex:terminal:resize", payload),
-  updateTerminalPreferredSize: (payload) =>
-    ipcRenderer.invoke("codex:terminal:updatePreferredSize", payload),
-  terminateTerminal: (tabId) =>
-    ipcRenderer.invoke("codex:terminal:terminate", tabId),
-  startComputerUse: (payload) =>
-    ipcRenderer.invoke("codex:computerUse:start", payload),
-  observeComputerUse: () =>
-    ipcRenderer.invoke("codex:computerUse:observe"),
-  actComputerUse: (action) =>
-    ipcRenderer.invoke("codex:computerUse:act", action),
-  stopComputerUse: () =>
-    ipcRenderer.invoke("codex:computerUse:stop"),
-  getComputerUseState: () =>
-    ipcRenderer.invoke("codex:computerUse:state"),
-  sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
-  interruptTurn: (payload) =>
-    ipcRenderer.invoke("codex:interruptTurn", payload),
-  respondServerRequest: (payload) =>
-    ipcRenderer.invoke("codex:respondServerRequest", payload),
-  rejectServerRequest: (payload) =>
-    ipcRenderer.invoke("codex:rejectServerRequest", payload),
-  requestMicrophoneAccess: () =>
-    ipcRenderer.invoke("codex:requestMicrophoneAccess"),
-  startRealtime: (payload) =>
-    ipcRenderer.invoke("codex:startRealtime", payload),
-  stopRealtime: (payload) => ipcRenderer.invoke("codex:stopRealtime", payload),
   subscribe(listener) {
     const onRequest = (_event, request) => {
       listener({ type: "request", request });
