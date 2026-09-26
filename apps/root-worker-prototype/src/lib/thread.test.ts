@@ -200,6 +200,86 @@ function makeCompactItem(id: string): ThreadItem {
   };
 }
 
+type CommandExecutionItem = Extract<ThreadItem, { type: "commandExecution" }>;
+type CommandNotificationItem = Extract<
+  ThreadItem,
+  { type: "commandExecutionNotification" }
+>;
+type BuiltinToolCallItem = Extract<ThreadItem, { type: "builtinToolCall" }>;
+
+function makeCommandExecution(
+  overrides: Partial<CommandExecutionItem> = {},
+): CommandExecutionItem {
+  return {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+    ...overrides,
+  };
+}
+
+function makeCommandNotification(
+  overrides: Partial<CommandNotificationItem> = {},
+): CommandNotificationItem {
+  return {
+    type: "commandExecutionNotification",
+    id: "cmd-1:notification:exit",
+    commandItemId: "cmd-1",
+    kind: "exit",
+    message: "Command cmd-1 has exited with code 0.",
+    output: "889b416d\n",
+    exitCode: 0,
+    createdAtMs: 3_000,
+    ...overrides,
+  };
+}
+
+function makeScheduleSubscribe(
+  overrides: Partial<BuiltinToolCallItem> = {},
+): BuiltinToolCallItem {
+  return {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+    ...overrides,
+  };
+}
+
+function makeScheduleUnsubscribe(
+  overrides: Partial<BuiltinToolCallItem> = {},
+): BuiltinToolCallItem {
+  return {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule:inactive",
+    tool: "schedule_unsubscribe",
+    arguments: {
+      subscription_id: "sub-schedule",
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      unsubscribed: true,
+    },
+    ...overrides,
+  };
+}
+
 function makeCollabStatusItem(id: string): ThreadItem {
   return {
     type: "collabAgentStatusUpdate",
@@ -402,10 +482,10 @@ test("orderSidebarProjectsStable pins self before existing project order", () =>
   });
 
   const sidebar = buildProjectAgentSidebar([alpha, beta, selfRoot]);
-  const ordered = orderSidebarProjectsStable(
-    sidebar.projects,
-    ["project:/work/beta", "project:/work/alpha"],
-  );
+  const ordered = orderSidebarProjectsStable(sidebar.projects, [
+    "project:/work/beta",
+    "project:/work/alpha",
+  ]);
 
   assert.deepEqual(
     ordered.map((project) => project.id),
@@ -687,7 +767,10 @@ test("root thread labels distinguish project roots from no-project chats", () =>
 
   assert.equal(getRootThreadConversationTitle(project), "Project chat");
   assert.equal(getAgentRoleLabel(project), "project-pm");
-  assert.equal(getRootThreadConversationTitle(defaultProject), "Default project");
+  assert.equal(
+    getRootThreadConversationTitle(defaultProject),
+    "Default project",
+  );
   assert.equal(getAgentRoleLabel(defaultProject), "Default Agent");
   assert.equal(getRootThreadConversationTitle(chat), "General Q&A");
   assert.equal(getAgentRoleLabel(chat), "Chat");
@@ -1958,7 +2041,10 @@ test("status broadcast can reopen completed lifecycle for realtime running state
     activeFlags: ["running" as const],
   };
 
-  const updated = updateThreadLifecycleStatusFromNotification(thread, liveActive);
+  const updated = updateThreadLifecycleStatusFromNotification(
+    thread,
+    liveActive,
+  );
 
   assert.deepEqual(updated.lifecycleStatus, liveActive);
   assert.deepEqual(updated.turns, []);
@@ -1972,10 +2058,10 @@ test("status notification updates a non-selected local thread without synthesizi
     turns: [],
   };
   const next = {
-    ...updateThreadLifecycleStatusFromNotification(
-      existing,
-      { type: "waiting" as const, reason: "eventSubscription" as const },
-    ),
+    ...updateThreadLifecycleStatusFromNotification(existing, {
+      type: "waiting" as const,
+      reason: "eventSubscription" as const,
+    }),
   };
 
   const threads = upsertThreadMetadataPreservingTurns([existing], next);
@@ -1985,7 +2071,10 @@ test("status notification updates a non-selected local thread without synthesizi
     reason: "eventSubscription",
   });
   assert.deepEqual(threads[0]?.turns, []);
-  assert.equal(threadStatusClass(threads[0]!.lifecycleStatus), "waiting-subscription");
+  assert.equal(
+    threadStatusClass(threads[0]!.lifecycleStatus),
+    "waiting-subscription",
+  );
 });
 
 test("explicit live activity can reopen completed lifecycle", () => {
@@ -2163,18 +2252,12 @@ test("command item notifications create a visible running command and complete t
   const started = updateThreadItem(
     makeThread(),
     "turn-1",
-    {
-      type: "commandExecution",
-      id: "cmd-1",
+    makeCommandExecution({
       command: "rtk sleep 1",
       cwd: "/tmp/project",
       status: "inProgress",
-      initialWaitMs: 1000,
       notifyOn: "output",
-      aggregatedOutput: null,
-      exitCode: null,
-      durationMs: null,
-    },
+    }),
     { startedAtMs: 2_000 },
   );
 
@@ -2210,18 +2293,15 @@ test("command item notifications create a visible running command and complete t
   const completed = updateThreadItem(
     withOutput,
     "turn-1",
-    {
-      type: "commandExecution",
-      id: "cmd-1",
+    makeCommandExecution({
       command: "rtk sleep 1",
       cwd: "/tmp/project",
       status: "completed",
-      initialWaitMs: 1000,
       notifyOn: "output",
       aggregatedOutput: "running\n",
       exitCode: 0,
       durationMs: 1000,
-    },
+    }),
     { completedAtMs: 3_000 },
   );
 
@@ -2245,18 +2325,12 @@ test("command item notifications create a visible running command and complete t
 
 test("command start notifications create new active command identity for live projections", () => {
   const thread = makeThread();
-  const commandStart = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "pnpm package:root-worker-prototype:mac",
     cwd: "/tmp/project",
     status: "running",
-    initialWaitMs: 1000,
     notifyOn: "output",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  } satisfies Extract<ThreadItem, { type: "commandExecution" }>;
+  });
 
   const updated = updateThreadItem(
     markThreadCommandExecutionRunning(thread),
@@ -2273,35 +2347,19 @@ test("command start notifications create new active command identity for live pr
 });
 
 test("conversation display keeps exec command item and typed notification summaries", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "git rev-parse --short HEAD",
     cwd: "/repo",
     status: "inProgress",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
-  const commandEnd: ThreadItem = {
+  });
+  const commandEnd = {
     ...commandStart,
     status: "completed",
     aggregatedOutput: "889b416d\n",
     exitCode: 0,
     durationMs: 12,
-  };
-  const exitNotification: ThreadItem = {
-    type: "commandExecutionNotification",
-    id: "cmd-1:notification:exit",
-    commandItemId: "cmd-1",
-    kind: "exit",
-    message: "Command cmd-1 has exited with code 0.",
-    output: "889b416d\n",
-    exitCode: 0,
-    createdAtMs: 3_000,
-  };
+  } satisfies CommandExecutionItem;
+  const exitNotification = makeCommandNotification();
 
   const started = updateThreadItem(makeThread(), "turn-1", commandStart, {
     startedAtMs: 1_000,
@@ -2360,28 +2418,12 @@ test("conversation display keeps exec command item and typed notification summar
 });
 
 test("command exit notification completes matching cross-turn running command item", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "git rev-parse --short HEAD",
     cwd: "/repo",
     status: "inProgress",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
-  const exitNotification: ThreadItem = {
-    type: "commandExecutionNotification",
-    id: "cmd-1:notification:exit",
-    commandItemId: "cmd-1",
-    kind: "exit",
-    message: "Command cmd-1 has exited with code 0.",
-    output: "889b416d\n",
-    exitCode: 0,
-    createdAtMs: 3_000,
-  };
+  });
+  const exitNotification = makeCommandNotification();
 
   const started = updateThreadItem(makeThread(), "turn-1", commandStart, {
     startedAtMs: 1_000,
@@ -2410,28 +2452,12 @@ test("command exit notification completes matching cross-turn running command it
 });
 
 test("stale active command tail does not reorder command after later messages", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "git rev-parse --short HEAD",
     cwd: "/repo",
     status: "inProgress",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
-  const exitNotification: ThreadItem = {
-    type: "commandExecutionNotification",
-    id: "cmd-1:notification:exit",
-    commandItemId: "cmd-1",
-    kind: "exit",
-    message: "Command cmd-1 has exited with code 0.",
-    output: "889b416d\n",
-    exitCode: 0,
-    createdAtMs: 3_000,
-  };
+  });
+  const exitNotification = makeCommandNotification();
   const thread = normalizeThreadSnapshot({
     ...makeThread(),
     turns: [
@@ -2474,18 +2500,12 @@ test("command output delta without command start does not create a visible place
   const started = updateThreadItem(
     withOutput,
     "turn-1",
-    {
-      type: "commandExecution",
-      id: "cmd-1",
+    makeCommandExecution({
       command: "rtk printf running",
       cwd: "/tmp/project",
       status: "inProgress",
-      initialWaitMs: 1000,
       notifyOn: "output",
-      aggregatedOutput: null,
-      exitCode: null,
-      durationMs: null,
-    },
+    }),
     { startedAtMs: 2_000 },
   );
 
@@ -2508,18 +2528,15 @@ test("command output delta without command start does not create a visible place
   const completed = updateThreadItem(
     started,
     "turn-1",
-    {
-      type: "commandExecution",
-      id: "cmd-1",
+    makeCommandExecution({
       command: "rtk printf running",
       cwd: "/tmp/project",
       status: "completed",
-      initialWaitMs: 1000,
       notifyOn: "output",
       aggregatedOutput: "running\n",
       exitCode: 0,
       durationMs: 1000,
-    },
+    }),
     { completedAtMs: 3_000 },
   );
 
@@ -2942,8 +2959,8 @@ test("mergeThreadSnapshot keeps one completed init context after first user turn
       turns: [userTurn],
     },
   );
-  const initContextEntries = buildConversationEntries(merged).filter(
-    (entry) => entry.toolName?.startsWith("Init Context"),
+  const initContextEntries = buildConversationEntries(merged).filter((entry) =>
+    entry.toolName?.startsWith("Init Context"),
   );
 
   assert.equal(initContextEntries.length, 2);
@@ -3504,20 +3521,7 @@ test("upsertThread prunes items before the latest compact boundary", () => {
 });
 
 test("upsertThread preserves active subscriptions across compact pruning", () => {
-  const scheduleMonitor: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
+  const scheduleMonitor = makeScheduleSubscribe();
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3561,21 +3565,15 @@ test("upsertThread preserves active subscriptions across compact pruning", () =>
 });
 
 test("upsertThread preserves active commands across compact pruning", () => {
-  const command: ThreadItem = {
-    type: "commandExecution",
+  const command = makeCommandExecution({
     id: "exec-1",
     command: "cargo test",
     cwd: "/tmp",
     processId: "process-1",
     source: "agent",
     status: "inProgress",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
     commandActions: [{ type: "unknown", command: "cargo test" }],
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  });
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3599,33 +3597,8 @@ test("upsertThread preserves active commands across compact pruning", () => {
 });
 
 test("upsertThread does not revive pre-compact subscriptions after compact cleanup", () => {
-  const scheduleMonitor: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
-  const scheduleCleanup: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule:inactive",
-    tool: "schedule_unsubscribe",
-    arguments: {
-      subscription_id: "sub-schedule",
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      unsubscribed: true,
-    },
-  };
+  const scheduleMonitor = makeScheduleSubscribe();
+  const scheduleCleanup = makeScheduleUnsubscribe();
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3655,20 +3628,7 @@ test("upsertThread does not revive pre-compact subscriptions after compact clean
 });
 
 test("upsertThread does not revive pre-compact subscriptions after empty compact snapshot", () => {
-  const scheduleMonitor: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
+  const scheduleMonitor = makeScheduleSubscribe();
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3895,7 +3855,11 @@ test("updateThreadItem preserves live init context notifications after compact",
     buildConversationState(updated).cells.flatMap((cell) =>
       cell.entries.map((entry) => entry.id),
     ),
-    ["compact-1", "init-after-compact:section:0", "init-after-compact:section:1"],
+    [
+      "compact-1",
+      "init-after-compact:section:0",
+      "init-after-compact:section:1",
+    ],
   );
 });
 
@@ -4169,20 +4133,7 @@ test("send response turn snapshots merge compact items and update stats", () => 
 });
 
 test("updateThreadItem preserves active subscriptions when a compact notification arrives", () => {
-  const scheduleMonitor: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
+  const scheduleMonitor = makeScheduleSubscribe();
   const thread = updateThreadItem(
     {
       ...makeThread(),
@@ -4265,7 +4216,10 @@ test("late same-turn item notifications preserve compact summary without re-addi
   );
   assert.deepEqual(
     lateSummaryThread.turns.flatMap((turn) =>
-      turn.items.map((item) => [item.id, item.type === "agentMessage" ? item.text : ""]),
+      turn.items.map((item) => [
+        item.id,
+        item.type === "agentMessage" ? item.text : "",
+      ]),
     ),
     [
       ["compact-summary", "late summary completion"],
@@ -4274,7 +4228,10 @@ test("late same-turn item notifications preserve compact summary without re-addi
   );
   assert.deepEqual(
     lateSummaryDeltaThread.turns.flatMap((turn) =>
-      turn.items.map((item) => [item.id, item.type === "agentMessage" ? item.text : ""]),
+      turn.items.map((item) => [
+        item.id,
+        item.type === "agentMessage" ? item.text : "",
+      ]),
     ),
     [
       ["compact-summary", "summarizing old context late delta"],
@@ -4282,7 +4239,9 @@ test("late same-turn item notifications preserve compact summary without re-addi
     ],
   );
   assert.deepEqual(
-    lateOrdinaryThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    lateOrdinaryThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
     ["compact-summary", "compact-1"],
   );
 });
@@ -4297,7 +4256,10 @@ test("late backend compact message summary can arrive after the marker", () => {
   const updated = updateThreadItem(
     compactedThread,
     "turn-compact",
-    makeAgentMessage("compact-1:summary", "summary from compacted item message"),
+    makeAgentMessage(
+      "compact-1:summary",
+      "summary from compacted item message",
+    ),
   );
 
   assert.deepEqual(
@@ -4356,7 +4318,10 @@ test("late backend compact message summary can arrive from a missing turn", () =
   const updated = updateThreadItem(
     compactedThread,
     "missing-compact-turn",
-    makeAgentMessage("compact-1:summary", "summary from compacted item message"),
+    makeAgentMessage(
+      "compact-1:summary",
+      "summary from compacted item message",
+    ),
   );
 
   assert.deepEqual(
@@ -6131,29 +6096,23 @@ test("uninitialized live command notifications replay after the thread snapshot 
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   let threads = [makeThread()];
   const initializedThreadIds = new Set<string>();
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "rtk printf hello",
     cwd: "/tmp",
     status: "running",
-    initialWaitMs: 1000,
     notifyOn: "output",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
-  const commandEnd: ThreadItem = {
+  });
+  const commandEnd = {
     ...commandStart,
     status: "completed",
     aggregatedOutput: "hello",
     exitCode: 0,
     durationMs: 10,
-  };
-  const expectedCommandEnd: ThreadItem = {
+  } satisfies CommandExecutionItem;
+  const expectedCommandEnd = {
     ...commandEnd,
     completedAtMs: 2_000,
-  };
+  } satisfies CommandExecutionItem;
 
   threads = applyOrQueueInitializedThreadUpdate(
     threads,
@@ -6230,18 +6189,11 @@ test("initialized live thread updates apply immediately without pending queue", 
 });
 
 test("live command start marks stale completed snapshot active for monitors", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "rtk tail -f /tmp/build.log",
     cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
     notifyOn: "output",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  });
   const updated = updateThreadItem(
     markThreadCommandExecutionRunning(makeThread()),
     "turn-command",
@@ -6269,25 +6221,17 @@ test("live command start marks stale completed snapshot active for monitors", ()
 });
 
 test("live command completion removes active command monitor state", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "rtk sleep 1",
     cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
-  const commandEnd: ThreadItem = {
+  });
+  const commandEnd = {
     ...commandStart,
     status: "completed",
     aggregatedOutput: "",
     exitCode: 0,
     durationMs: 1000,
-  };
+  } satisfies CommandExecutionItem;
   const running = updateThreadItem(
     markThreadCommandExecutionRunning(makeThread()),
     "turn-command",
@@ -6304,18 +6248,7 @@ test("live command completion removes active command monitor state", () => {
 });
 
 test("mergeThreadSnapshot clears stale active command state when snapshot has none", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
-    command: "rtk sleep 100",
-    cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  const commandStart = makeCommandExecution();
   const existing = {
     ...makeThread(),
     activeCommandItems: [commandStart],
@@ -6336,18 +6269,7 @@ test("mergeThreadSnapshot clears stale active command state when snapshot has no
 });
 
 test("mergeThreadSnapshot preserves running active commands across active stale reads", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
-    command: "rtk sleep 100",
-    cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  const commandStart = makeCommandExecution();
   const existing = {
     ...markThreadCommandExecutionRunning(makeThread()),
     activeCommandItems: [commandStart],
@@ -6370,18 +6292,7 @@ test("mergeThreadSnapshot preserves running active commands across active stale 
 });
 
 test("mergeThreadSnapshot applies explicit empty active command current-state", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
-    command: "rtk sleep 100",
-    cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  const commandStart = makeCommandExecution();
   const existing = {
     ...markThreadCommandExecutionRunning(makeThread()),
     activeCommandItems: [commandStart],
@@ -6413,31 +6324,19 @@ test("normalizeThreadSnapshot drops legacy orphan command output placeholders", 
     exitCode: null,
     durationMs: null,
   };
-  const realCommand: ThreadItem = {
-    type: "commandExecution",
+  const realCommand = makeCommandExecution({
     id: "cmd-real",
     command: "pnpm test",
     cwd: "/repo",
     processId: "process-real",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
-  const commandOutputNamedCommand: ThreadItem = {
-    type: "commandExecution",
+  });
+  const commandOutputNamedCommand = makeCommandExecution({
     id: "cmd-real-command-output",
     command: "Command output",
     cwd: "cwd pending",
     status: "inProgress",
-    initialWaitMs: 1000,
     notifyOn: "output",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  });
 
   const normalized = normalizeThreadSnapshot({
     ...makeThread(),
@@ -6503,18 +6402,7 @@ test("normalizeThreadSnapshot fills canonical thread identity fields from legacy
 });
 
 test("mergeThreadSnapshot preserves live active command items from thread read", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
-    command: "rtk sleep 100",
-    cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  const commandStart = makeCommandExecution();
   const existing = {
     ...markThreadCommandExecutionRunning(makeThread()),
     activeCommandItems: [],
@@ -6546,18 +6434,7 @@ test("mergeThreadSnapshot preserves live active command items from thread read",
 });
 
 test("upsertThreadMetadataPreservingTurns applies live active command metadata", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
-    command: "rtk sleep 100",
-    cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  const commandStart = makeCommandExecution();
   const existing = {
     ...markThreadCommandExecutionRunning(makeThread()),
     turns: [
@@ -6589,18 +6466,7 @@ test("compact-pruned late command start does not create active command monitor s
     ...makeCompactItem("compact-1"),
     completedAtMs: 2_000,
   } satisfies ThreadItem;
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
-    command: "rtk sleep 100",
-    cwd: "/repo",
-    status: "running",
-    initialWaitMs: 1000,
-    notifyOn: "exit",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  const commandStart = makeCommandExecution();
   const updated = updateThreadItem(
     markThreadCommandExecutionRunning({
       ...makeThread(),
@@ -6659,18 +6525,11 @@ test("compact turn command delta without existing command does not create placeh
 });
 
 test("live command delta before start does not create placeholder monitor", () => {
-  const commandStart: ThreadItem = {
-    type: "commandExecution",
-    id: "cmd-1",
+  const commandStart = makeCommandExecution({
     command: "rtk printf hello",
     cwd: "/tmp",
-    status: "running",
-    initialWaitMs: 1000,
     notifyOn: "output",
-    aggregatedOutput: null,
-    exitCode: null,
-    durationMs: null,
-  };
+  });
 
   const withDelta = appendCommandExecutionDelta(
     markThreadCommandExecutionRunning(makeThread()),
@@ -6714,16 +6573,11 @@ test("command delta does not create active placeholder when active command state
     turns: [
       makeTurn("turn-command", [
         {
-          type: "commandExecution",
-          id: "cmd-1",
-          command: "rtk printf hello",
-          cwd: "/tmp",
-          status: "running",
-          initialWaitMs: 1000,
-          notifyOn: "output",
-          aggregatedOutput: null,
-          exitCode: null,
-          durationMs: null,
+          ...makeCommandExecution({
+            command: "rtk printf hello",
+            cwd: "/tmp",
+            notifyOn: "output",
+          }),
         },
       ]),
     ],
@@ -6753,33 +6607,16 @@ test("uninitialized live schedule notifications update monitors after the snapsh
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
   let threads = [makeThread()];
   const initializedThreadIds = new Set<string>();
-  const scheduleSubscribe: ThreadItem = {
-    type: "builtinToolCall",
+  const scheduleSubscribe = makeScheduleSubscribe({
     id: "schedule-1",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
-  const scheduleUnsubscribe: ThreadItem = {
-    type: "builtinToolCall",
+  });
+  const scheduleUnsubscribe = makeScheduleUnsubscribe({
     id: "schedule-unsubscribe-1",
-    tool: "schedule_unsubscribe",
-    arguments: {
-      subscription_id: "sub-schedule",
-    },
-    status: "completed",
     output: {
       unsubscribed: true,
       subscription_id: "sub-schedule",
     },
-  };
+  });
 
   threads = applyOrQueueInitializedThreadUpdate(
     threads,
@@ -6838,24 +6675,13 @@ test("uninitialized live schedule notifications update monitors after the snapsh
 
 test("pending live schedule subscribe does not duplicate restored active subscription monitor", () => {
   const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
-  const restoredSchedule: ThreadItem = {
-    type: "builtinToolCall",
+  const restoredSchedule = makeScheduleSubscribe({
     id: "schedule-restored",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
-  const liveSchedule: ThreadItem = {
+  });
+  const liveSchedule = {
     ...restoredSchedule,
     id: "schedule-live",
-  };
+  } satisfies BuiltinToolCallItem;
   const snapshot: Thread = {
     ...makeThread(),
     turns: [
@@ -6908,20 +6734,7 @@ test("lazy list and subscribe metadata hydrate restored active subscription turn
     preview: "subscribed metadata",
     turns: [],
   };
-  const restoredSchedule: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
+  const restoredSchedule = makeScheduleSubscribe();
   const readSnapshot: Thread = {
     ...makeThread(),
     turns: [
@@ -6962,20 +6775,7 @@ test("lazy list and subscribe metadata hydrate restored active subscription turn
 });
 
 test("metadata-only thread updates preserve active subscription current state", () => {
-  const restoredSchedule: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
+  const restoredSchedule = makeScheduleSubscribe();
   const loadedThread = {
     ...makeThread(),
     turns: [],
@@ -6994,27 +6794,14 @@ test("metadata-only thread updates preserve active subscription current state", 
 });
 
 test("normalizing active subscription current state updates same-length items", () => {
-  const originalSchedule: ThreadItem = {
-    type: "builtinToolCall",
-    id: "active-subscription:sub-schedule",
-    tool: "schedule_subscribe",
-    arguments: {
-      label: "daily digest",
-      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
-    },
-    status: "completed",
-    output: {
-      subscription_id: "sub-schedule",
-      schedule_summary: "every 21600000 ms",
-    },
-  };
-  const updatedSchedule: ThreadItem = {
+  const originalSchedule = makeScheduleSubscribe();
+  const updatedSchedule = {
     ...originalSchedule,
     arguments: {
       label: "daily cargo clean",
       schedule: { kind: "every_interval", interval_ms: 21_600_000 },
     },
-  };
+  } satisfies BuiltinToolCallItem;
 
   const thread = normalizeThreadSnapshot({
     ...makeThread(),
