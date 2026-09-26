@@ -13,7 +13,7 @@ Active goal: larger front+backend code organization tranche. User asked to organ
 ## Active Work
 
 - id: frontend-backend-large-code-organization
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -22,9 +22,9 @@ Active goal: larger front+backend code organization tranche. User asked to organ
   depends_on: main `7316a3ac0`; previous backend cleanup tranches merged/pending capsule delivery; user requested more/larger front+backend cleanup and explicitly asked PM to execute end-to-end without asking
   files: `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code; exact architecture seam pending owner inventory
   base_commit: `7316a3ac0`
-  next_action: Owner to inventory and implement a larger coherent front/back cleanup tranche with measurable code reduction, reuse fixed reviewer, validate, and deliver commit.
-  validation: Pending owner delivery. PM acceptance requires large-enough architecture cleanup rather than small helper edits, measurable net code reduction, no behavior/schema/protocol/history/Capsule semantic weakening, and focused frontend/backend validation.
-  commit: pending
+  next_action: No immediate Runtime Capsule restart; low-risk organization refactor with no intended product/protocol/schema/history/Capsule semantic change, to be delivered with the next Runtime Capsule batch unless a later change requires earlier install.
+  validation: Owner ranked candidates and implemented a cross frontend/backend architecture cleanup: Electron preload one-to-one invoke wrappers now use declarative `createInvokeApi` / `invokeChannelGroup`; Electron main simple app-server/local-file/git/lsp IPC handlers use registration helpers while Browser/Terminal lifecycle handlers remain hand-written; app-server live runtime object-safe adapters use a local pure-forwarding macro while preserving special paths (`readThread` default, subscriptions, listener handle conversion, feedback agent-directory path, turn `Config -> Arc<Config>`). Net owner diff: `3 files changed, 265 insertions(+), 466 deletions(-)`, net -201 lines. Reviewer approved and confirmed preload API mapping stayed `75 -> 75`, main helper preserved ensure/argument semantics, and Rust macro only covered pure forwarding. PM validation passed: `git diff --check HEAD~1..HEAD`; `node --check apps/root-worker-prototype/electron/preload.cjs`; `node --check apps/root-worker-prototype/electron/main.cjs`; `node --test` focused preload/computer-use/local-file/git/lsp Electron tests (95 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server mcp_resource_read_returns_error_for_unknown_thread -- --nocapture`; only existing Rust linker/future-incompat warnings observed.
+  commit: owner `c585a52d3`; dispatch `dfe69d46a`; merge `57dc3a6d1`; pending capsule delivery
 
 - id: backend-code-reduction-refactor
   status: merged_pending_capsule_delivery
