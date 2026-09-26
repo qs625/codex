@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: larger front+backend code organization tranche. User asked to organize both frontend and backend code, do more larger cleanup, and execute end-to-end without asking. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing architecture-level duplication removal and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics.
+Active goal: continuous large front+backend code organization. User asked to continue and not stop. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing architecture-level duplication removal and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics. PM should keep dispatching coherent cleanup tranches while owner_main is free.
 
 ## Active Work
 
@@ -25,6 +25,20 @@ Active goal: larger front+backend code organization tranche. User asked to organ
   next_action: No immediate Runtime Capsule restart; low-risk organization refactor with no intended product/protocol/schema/history/Capsule semantic change, to be delivered with the next Runtime Capsule batch unless a later change requires earlier install.
   validation: Owner ranked candidates and implemented a cross frontend/backend architecture cleanup: Electron preload one-to-one invoke wrappers now use declarative `createInvokeApi` / `invokeChannelGroup`; Electron main simple app-server/local-file/git/lsp IPC handlers use registration helpers while Browser/Terminal lifecycle handlers remain hand-written; app-server live runtime object-safe adapters use a local pure-forwarding macro while preserving special paths (`readThread` default, subscriptions, listener handle conversion, feedback agent-directory path, turn `Config -> Arc<Config>`). Net owner diff: `3 files changed, 265 insertions(+), 466 deletions(-)`, net -201 lines. Reviewer approved and confirmed preload API mapping stayed `75 -> 75`, main helper preserved ensure/argument semantics, and Rust macro only covered pure forwarding. PM validation passed: `git diff --check HEAD~1..HEAD`; `node --check apps/root-worker-prototype/electron/preload.cjs`; `node --check apps/root-worker-prototype/electron/main.cjs`; `node --test` focused preload/computer-use/local-file/git/lsp Electron tests (95 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server mcp_resource_read_returns_error_for_unknown_thread -- --nocapture`; only existing Rust linker/future-incompat warnings observed.
   commit: owner `c585a52d3`; dispatch `dfe69d46a`; merge `57dc3a6d1`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-4
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-4
+  task_type: continuous_frontend_backend_architecture_cleanup
+  depends_on: main `d795805c6`; user asked to continue cleaning and not stop
+  files: `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code; exact seam pending owner inventory
+  base_commit: `d795805c6`
+  next_action: Owner to find another coherent large cleanup tranche, prefer untouched high-duplication areas, reuse reviewer, validate, and deliver.
+  validation: Pending owner delivery. PM acceptance requires measurable net code reduction, a coherent architecture simplification rather than small local edits, no product/protocol/schema/history/Capsule semantic weakening, and focused validation.
+  commit: pending
 
 - id: backend-code-reduction-refactor
   status: merged_pending_capsule_delivery
