@@ -344,6 +344,48 @@ async fn test_fuzzy_file_search_accepts_cancellation_token() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_fuzzy_file_search_empty_query_with_token_returns_empty_and_cleans_up() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path())?;
+    let root = TempDir::new()?;
+    std::fs::write(root.path().join("alpha.txt"), "contents")?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let root_path = root.path().to_string_lossy().to_string();
+    let token = "reuse-token";
+    let empty_request_id = mcp
+        .send_fuzzy_file_search_request("", vec![root_path.clone()], Some(token.to_string()))
+        .await?;
+    let empty_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(empty_request_id)),
+    )
+    .await??;
+    assert_eq!(empty_resp.result, json!({ "files": [] }));
+
+    let search_request_id = mcp
+        .send_fuzzy_file_search_request("alp", vec![root_path.clone()], Some(token.to_string()))
+        .await?;
+    let search_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(search_request_id)),
+    )
+    .await??;
+    let files = search_resp
+        .result
+        .get("files")
+        .ok_or_else(|| anyhow!("files key missing"))?
+        .as_array()
+        .ok_or_else(|| anyhow!("files is not an array"))?;
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], "alpha.txt");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_fuzzy_file_search_session_streams_updates() -> Result<()> {
     let codex_home = TempDir::new()?;
     let root = TempDir::new()?;
@@ -427,6 +469,29 @@ async fn test_fuzzy_file_search_session_update_before_start_errors() -> Result<(
     let codex_home = TempDir::new()?;
     let mut mcp = initialized_mcp(&codex_home).await?;
     assert_update_request_fails_for_missing_session(&mut mcp, "missing", "alp").await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_fuzzy_file_search_session_start_rejects_empty_session_id() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let root = TempDir::new()?;
+    let mut mcp = initialized_mcp(&codex_home).await?;
+
+    let request_id = mcp
+        .send_fuzzy_file_search_session_start_request(
+            "",
+            vec![root.path().to_string_lossy().to_string()],
+        )
+        .await?;
+    let err = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    assert_eq!(err.error.code, -32600);
+    assert_eq!(err.error.message, "sessionId must not be empty");
 
     Ok(())
 }
