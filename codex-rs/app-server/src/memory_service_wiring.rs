@@ -21,6 +21,7 @@ use memory_service_api::StageOnePromptRequest;
 use memory_service_api::StageOneRequestContext;
 use model_service_api::CreateModelClientRequest;
 use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelOptionToml;
 use model_service_api::ModelResponseEvent;
 use model_service_api::ModelSelectionPolicy;
 use model_service_api::ResponsesModelRequest;
@@ -174,6 +175,183 @@ fn service_tier_from_string(value: Option<String>) -> Option<ServiceTier> {
     value.and_then(|tier| ServiceTier::from_request_value(&tier))
 }
 
+fn chat_completions_max_tokens_by_model(
+    model_options: &[ModelOptionToml],
+    provider_id: &str,
+) -> HashMap<String, u64> {
+    model_options
+        .iter()
+        .filter(|model_option| model_option.provider == provider_id)
+        .filter_map(|model_option| {
+            model_option
+                .max_tokens
+                .map(|max_tokens| (model_option.model.clone(), max_tokens))
+        })
+        .collect()
+}
+
+struct StageOneModelClientRequest<'a> {
+    config: &'a Config,
+    config_snapshot: &'a ThreadConfigSnapshot,
+    thread_id: ThreadId,
+    installation_id: String,
+    model_slug: String,
+}
+
+impl StageOneModelClientRequest<'_> {
+    fn into_request(self) -> CreateModelClientRequest {
+        CreateModelClientRequest {
+            selection: ModelSelectionPolicy {
+                requested_model: Some(self.model_slug),
+                provider_hint: Some(self.config.model_provider_id.clone()),
+                allow_default_fallback: true,
+                refresh: ModelCatalogRefresh::Offline,
+            },
+            installation_id: self.installation_id,
+            session_id: SessionId::from(self.thread_id),
+            thread_id: self.thread_id,
+            session_source: self.config_snapshot.session_source.clone(),
+            reasoning_effort: self.config.model_reasoning_effort,
+            service_tier: service_tier_from_string(self.config_snapshot.service_tier.clone()),
+            verbosity: self.config.model_verbosity,
+            chat_completions_max_tokens_by_model: chat_completions_max_tokens_by_model(
+                &self.config.model_options,
+                &self.config.model_provider_id,
+            ),
+            enable_request_compression: self
+                .config
+                .features
+                .enabled(Feature::EnableRequestCompression),
+            include_timing_metrics: self.config.features.enabled(Feature::RuntimeMetrics),
+            beta_features_header: None,
+        }
+    }
+}
+
+struct StageOneResponsesRequest {
+    prompt: StageOnePromptRequest,
+    model_slug: String,
+    reasoning_effort: Option<ReasoningEffort>,
+    reasoning_summary: protocol::config_types::ReasoningSummary,
+    service_tier: Option<ServiceTier>,
+    verbosity: Option<protocol::config_types::Verbosity>,
+    turn_metadata_header: Option<String>,
+}
+
+impl StageOneResponsesRequest {
+    fn into_request(self) -> ResponsesModelRequest {
+        ResponsesModelRequest {
+            input: self.prompt.input,
+            tools: Vec::new(),
+            parallel_tool_calls: false,
+            base_instructions: self.prompt.base_instructions,
+            personality: None,
+            output_schema: self.prompt.output_schema,
+            output_schema_strict: self.prompt.output_schema_strict,
+            model: Some(self.model_slug),
+            reasoning_effort: self.reasoning_effort,
+            reasoning_summary: self.reasoning_summary,
+            service_tier: self.service_tier,
+            verbosity: self.verbosity,
+            turn_metadata_header: self.turn_metadata_header,
+        }
+    }
+}
+
+#[derive(Default)]
+struct StageOneStreamAccumulator {
+    result: String,
+    token_usage: Option<TokenUsage>,
+    completed: bool,
+}
+
+impl StageOneStreamAccumulator {
+    fn observe(&mut self, message: ModelResponseEvent) {
+        match message {
+            ModelResponseEvent::OutputTextDelta { delta } => self.result.push_str(&delta),
+            ModelResponseEvent::ItemDone { item } => {
+                if self.result.is_empty()
+                    && let protocol::models::ResponseItem::Message { content, .. } = item
+                    && let Some(text) = content_items_to_text(content.as_slice())
+                {
+                    self.result.push_str(&text);
+                }
+            }
+            ModelResponseEvent::Completed {
+                token_usage: usage, ..
+            } => {
+                self.token_usage = usage;
+                self.completed = true;
+            }
+            ModelResponseEvent::Created
+            | ModelResponseEvent::ItemAdded { .. }
+            | ModelResponseEvent::ServerModel { .. }
+            | ModelResponseEvent::ModelVerifications { .. }
+            | ModelResponseEvent::ServerReasoningIncluded { .. }
+            | ModelResponseEvent::ToolCallInputDelta { .. }
+            | ModelResponseEvent::ReasoningSummaryDelta { .. }
+            | ModelResponseEvent::ReasoningContentDelta { .. }
+            | ModelResponseEvent::ReasoningSummaryPartAdded { .. }
+            | ModelResponseEvent::RateLimits { .. }
+            | ModelResponseEvent::ModelsEtag { .. } => {}
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.completed
+    }
+
+    fn finish(self) -> (String, Option<TokenUsage>) {
+        (self.result, self.token_usage)
+    }
+}
+
+struct ConsolidationThreadConfig {
+    config: Config,
+}
+
+impl ConsolidationThreadConfig {
+    fn prepare(
+        base_config: &Config,
+        model: String,
+        reasoning_effort: ReasoningEffort,
+    ) -> anyhow::Result<Self> {
+        let mut config = base_config.clone();
+        let root = memory_service::memory_root(&config.codex_home);
+        config.cwd = root.clone();
+        config.ephemeral = true;
+        config.memories.generate_memories = false;
+        config.memories.use_memories = false;
+        config.include_apps_instructions = false;
+        config.mcp_servers = Constrained::allow_only(HashMap::new());
+        config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
+        let _ = config.features.disable(Feature::SpawnCsv);
+        let _ = config.features.disable(Feature::Collab);
+        let _ = config.features.disable(Feature::MemoryTool);
+        let _ = config.features.disable(Feature::Apps);
+        let _ = config.features.disable(Feature::Plugins);
+        let _ = config.features.disable(Feature::SkillMcpDependencyInstall);
+        let sandbox_policy = SandboxPolicy::WorkspaceWrite {
+            writable_roots: vec![root],
+            network_access: false,
+            exclude_tmpdir_env_var: true,
+            exclude_slash_tmp: true,
+        };
+        config
+            .permissions
+            .set_legacy_sandbox_policy(sandbox_policy, config.cwd.as_path())
+            .map_err(|err| anyhow::anyhow!("failed to set consolidation sandbox policy: {err}"))?;
+        config.model = Some(model);
+        config.model_reasoning_effort = Some(reasoning_effort);
+
+        Ok(Self { config })
+    }
+
+    fn into_config(self) -> Config {
+        self.config
+    }
+}
+
 impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
     fn state_db(&self) -> Option<SharedStateDbRuntime> {
         self.state_db.clone()
@@ -221,42 +399,16 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
             let installation_id = resolve_installation_id(&self.config.codex_home).await?;
             let model_client = self
                 .model_service
-                .create_client(CreateModelClientRequest {
-                    selection: ModelSelectionPolicy {
-                        requested_model: Some(context.model_info.slug.clone()),
-                        provider_hint: Some(self.config.model_provider_id.clone()),
-                        allow_default_fallback: true,
-                        refresh: ModelCatalogRefresh::Offline,
-                    },
-                    installation_id,
-                    session_id: SessionId::from(self.thread_id),
-                    thread_id: self.thread_id,
-                    session_source: self.config_snapshot.session_source.clone(),
-                    reasoning_effort: self.config.model_reasoning_effort,
-                    service_tier: service_tier_from_string(
-                        self.config_snapshot.service_tier.clone(),
-                    ),
-                    verbosity: self.config.model_verbosity,
-                    chat_completions_max_tokens_by_model: self
-                        .config
-                        .model_options
-                        .iter()
-                        .filter(|model_option| {
-                            model_option.provider == self.config.model_provider_id
-                        })
-                        .filter_map(|model_option| {
-                            model_option
-                                .max_tokens
-                                .map(|max_tokens| (model_option.model.clone(), max_tokens))
-                        })
-                        .collect(),
-                    enable_request_compression: self
-                        .config
-                        .features
-                        .enabled(Feature::EnableRequestCompression),
-                    include_timing_metrics: self.config.features.enabled(Feature::RuntimeMetrics),
-                    beta_features_header: None,
-                })
+                .create_client(
+                    StageOneModelClientRequest {
+                        config: &self.config,
+                        config_snapshot: &self.config_snapshot,
+                        thread_id: self.thread_id,
+                        installation_id,
+                        model_slug: context.model_info.slug.clone(),
+                    }
+                    .into_request(),
+                )
                 .await
                 .map_err(anyhow::Error::msg)?;
             let reasoning_summary = self
@@ -274,57 +426,29 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
             )) as codex_otel::SharedSessionTelemetry;
             let _session_telemetry = session_telemetry;
             let mut stream = model_client
-                .stream_responses(ResponsesModelRequest {
-                    input: request.input,
-                    tools: Vec::new(),
-                    parallel_tool_calls: false,
-                    base_instructions: request.base_instructions,
-                    personality: None,
-                    output_schema: request.output_schema,
-                    output_schema_strict: request.output_schema_strict,
-                    model: Some(context.model_info.slug.clone()),
-                    reasoning_effort: context.reasoning_effort,
-                    reasoning_summary,
-                    service_tier: service_tier_from_string(context.service_tier.clone()),
-                    verbosity: self.config.model_verbosity,
-                    turn_metadata_header,
-                })
+                .stream_responses(
+                    StageOneResponsesRequest {
+                        prompt: request,
+                        model_slug: context.model_info.slug.clone(),
+                        reasoning_effort: context.reasoning_effort,
+                        reasoning_summary,
+                        service_tier: service_tier_from_string(context.service_tier.clone()),
+                        verbosity: self.config.model_verbosity,
+                        turn_metadata_header,
+                    }
+                    .into_request(),
+                )
                 .await?;
 
-            let mut result = String::new();
-            let mut token_usage = None;
+            let mut accumulator = StageOneStreamAccumulator::default();
             while let Some(message) = stream.next().await.transpose()? {
-                match message {
-                    ModelResponseEvent::OutputTextDelta { delta } => result.push_str(&delta),
-                    ModelResponseEvent::ItemDone { item } => {
-                        if result.is_empty()
-                            && let protocol::models::ResponseItem::Message { content, .. } = item
-                            && let Some(text) = content_items_to_text(content.as_slice())
-                        {
-                            result.push_str(&text);
-                        }
-                    }
-                    ModelResponseEvent::Completed {
-                        token_usage: usage, ..
-                    } => {
-                        token_usage = usage;
-                        break;
-                    }
-                    ModelResponseEvent::Created
-                    | ModelResponseEvent::ItemAdded { .. }
-                    | ModelResponseEvent::ServerModel { .. }
-                    | ModelResponseEvent::ModelVerifications { .. }
-                    | ModelResponseEvent::ServerReasoningIncluded { .. }
-                    | ModelResponseEvent::ToolCallInputDelta { .. }
-                    | ModelResponseEvent::ReasoningSummaryDelta { .. }
-                    | ModelResponseEvent::ReasoningContentDelta { .. }
-                    | ModelResponseEvent::ReasoningSummaryPartAdded { .. }
-                    | ModelResponseEvent::RateLimits { .. }
-                    | ModelResponseEvent::ModelsEtag { .. } => {}
+                accumulator.observe(message);
+                if accumulator.is_complete() {
+                    break;
                 }
             }
 
-            Ok((result, token_usage))
+            Ok(accumulator.finish())
         })
     }
 
@@ -335,35 +459,8 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
         reasoning_effort: ReasoningEffort,
     ) -> MemoryRuntimeFuture<'a, anyhow::Result<Box<dyn MemoryConsolidationAgent>>> {
         Box::pin(async move {
-            let mut config = (*self.config).clone();
-            let root = memory_service::memory_root(&config.codex_home);
-            config.cwd = root.clone();
-            config.ephemeral = true;
-            config.memories.generate_memories = false;
-            config.memories.use_memories = false;
-            config.include_apps_instructions = false;
-            config.mcp_servers = Constrained::allow_only(HashMap::new());
-            config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
-            let _ = config.features.disable(Feature::SpawnCsv);
-            let _ = config.features.disable(Feature::Collab);
-            let _ = config.features.disable(Feature::MemoryTool);
-            let _ = config.features.disable(Feature::Apps);
-            let _ = config.features.disable(Feature::Plugins);
-            let _ = config.features.disable(Feature::SkillMcpDependencyInstall);
-            let sandbox_policy = SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![root],
-                network_access: false,
-                exclude_tmpdir_env_var: true,
-                exclude_slash_tmp: true,
-            };
-            config
-                .permissions
-                .set_legacy_sandbox_policy(sandbox_policy, config.cwd.as_path())
-                .map_err(|err| {
-                    anyhow::anyhow!("failed to set consolidation sandbox policy: {err}")
-                })?;
-            config.model = Some(model);
-            config.model_reasoning_effort = Some(reasoning_effort);
+            let config = ConsolidationThreadConfig::prepare(&self.config, model, reasoning_effort)?
+                .into_config();
 
             let MemoryConsolidationThread { thread_id, thread } =
                 self.host.start_consolidation_thread(config).await?;
@@ -473,4 +570,117 @@ fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
         })
         .collect::<Vec<_>>();
     (!pieces.is_empty()).then(|| pieces.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::models::ResponseItem;
+
+    #[test]
+    fn service_tier_from_string_accepts_current_request_values() {
+        assert_eq!(
+            service_tier_from_string(Some("priority".to_string())),
+            Some(ServiceTier::Fast)
+        );
+        assert_eq!(
+            service_tier_from_string(Some("fast".to_string())),
+            Some(ServiceTier::Fast)
+        );
+        assert_eq!(
+            service_tier_from_string(Some("flex".to_string())),
+            Some(ServiceTier::Flex)
+        );
+        assert_eq!(service_tier_from_string(Some("unknown".to_string())), None);
+        assert_eq!(service_tier_from_string(None), None);
+    }
+
+    #[test]
+    fn chat_completions_max_tokens_uses_only_selected_provider_with_values() {
+        let model_options = vec![
+            ModelOptionToml {
+                model: "gpt-a".to_string(),
+                provider: "openai".to_string(),
+                max_tokens: Some(1024),
+                ..Default::default()
+            },
+            ModelOptionToml {
+                model: "gpt-b".to_string(),
+                provider: "other".to_string(),
+                max_tokens: Some(2048),
+                ..Default::default()
+            },
+            ModelOptionToml {
+                model: "gpt-c".to_string(),
+                provider: "openai".to_string(),
+                max_tokens: None,
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            chat_completions_max_tokens_by_model(&model_options, "openai"),
+            HashMap::from([("gpt-a".to_string(), 1024)])
+        );
+    }
+
+    #[test]
+    fn stage_one_stream_accumulator_prefers_deltas_over_item_done_fallback() {
+        let mut accumulator = StageOneStreamAccumulator::default();
+
+        accumulator.observe(ModelResponseEvent::OutputTextDelta {
+            delta: "delta".to_string(),
+        });
+        accumulator.observe(ModelResponseEvent::ItemDone {
+            item: message_item("fallback"),
+        });
+        accumulator.observe(ModelResponseEvent::Completed {
+            response_id: "response".to_string(),
+            token_usage: Some(token_usage(12)),
+            end_turn: Some(true),
+        });
+
+        assert!(accumulator.is_complete());
+        assert_eq!(
+            accumulator.finish(),
+            ("delta".to_string(), Some(token_usage(12)))
+        );
+    }
+
+    #[test]
+    fn stage_one_stream_accumulator_uses_item_done_when_no_deltas_arrive() {
+        let mut accumulator = StageOneStreamAccumulator::default();
+
+        accumulator.observe(ModelResponseEvent::ItemDone {
+            item: message_item("fallback"),
+        });
+        accumulator.observe(ModelResponseEvent::Completed {
+            response_id: "response".to_string(),
+            token_usage: None,
+            end_turn: None,
+        });
+
+        assert_eq!(accumulator.finish(), ("fallback".to_string(), None));
+    }
+
+    fn message_item(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+            phase: None,
+        }
+    }
+
+    fn token_usage(total_tokens: i64) -> TokenUsage {
+        TokenUsage {
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: total_tokens,
+            reasoning_output_tokens: 0,
+            total_tokens,
+        }
+    }
 }
