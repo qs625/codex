@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -130,9 +131,72 @@ struct QueuedSerializedRequest {
     request: QueuedInitializedRequest,
 }
 
+struct SerializedRequestBatch {
+    requests: Vec<QueuedSerializedRequest>,
+}
+
+impl SerializedRequestBatch {
+    async fn run(self) {
+        join_all(
+            self.requests
+                .into_iter()
+                .map(|request| request.request.run()),
+        )
+        .await;
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.requests.len()
+    }
+
+    #[cfg(test)]
+    fn access_kind(&self) -> RequestSerializationAccess {
+        self.requests
+            .first()
+            .expect("batch should contain at least one request")
+            .access
+    }
+}
+
+struct SerializedRequestQueue {
+    requests: VecDeque<QueuedSerializedRequest>,
+}
+
+impl SerializedRequestQueue {
+    fn from_first_request(request: QueuedSerializedRequest) -> Self {
+        let mut requests = VecDeque::new();
+        requests.push_back(request);
+        Self { requests }
+    }
+
+    fn push_back(&mut self, request: QueuedSerializedRequest) {
+        self.requests.push_back(request);
+    }
+
+    fn next_batch(&mut self) -> Option<SerializedRequestBatch> {
+        let request = self.requests.pop_front()?;
+        let access = request.access;
+        let mut requests = vec![request];
+        if access == RequestSerializationAccess::SharedRead {
+            while self
+                .requests
+                .front()
+                .is_some_and(|request| request.access == RequestSerializationAccess::SharedRead)
+            {
+                let Some(request) = self.requests.pop_front() else {
+                    break;
+                };
+                requests.push(request);
+            }
+        }
+        Some(SerializedRequestBatch { requests })
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct RequestSerializationQueues {
-    inner: Arc<Mutex<HashMap<RequestSerializationQueueKey, VecDeque<QueuedSerializedRequest>>>>,
+    inner: Arc<Mutex<HashMap<RequestSerializationQueueKey, SerializedRequestQueue>>>,
 }
 
 impl RequestSerializationQueues {
@@ -145,15 +209,13 @@ impl RequestSerializationQueues {
         let request = QueuedSerializedRequest { access, request };
         let should_spawn = {
             let mut queues = self.inner.lock().await;
-            match queues.get_mut(&key) {
-                Some(queue) => {
-                    queue.push_back(request);
+            match queues.entry(key.clone()) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().push_back(request);
                     false
                 }
-                None => {
-                    let mut queue = VecDeque::new();
-                    queue.push_back(request);
-                    queues.insert(key.clone(), queue);
+                Entry::Vacant(entry) => {
+                    entry.insert(SerializedRequestQueue::from_first_request(request));
                     true
                 }
             }
@@ -168,27 +230,13 @@ impl RequestSerializationQueues {
 
     async fn drain(self, key: RequestSerializationQueueKey) {
         loop {
-            let requests = {
+            let batch = {
                 let mut queues = self.inner.lock().await;
                 let Some(queue) = queues.get_mut(&key) else {
                     return;
                 };
-                match queue.pop_front() {
-                    Some(request) => {
-                        let access = request.access;
-                        let mut requests = vec![request];
-                        if access == RequestSerializationAccess::SharedRead {
-                            while queue.front().is_some_and(|request| {
-                                request.access == RequestSerializationAccess::SharedRead
-                            }) {
-                                let Some(request) = queue.pop_front() else {
-                                    break;
-                                };
-                                requests.push(request);
-                            }
-                        }
-                        requests
-                    }
+                match queue.next_batch() {
+                    Some(batch) => batch,
                     None => {
                         queues.remove(&key);
                         return;
@@ -196,7 +244,7 @@ impl RequestSerializationQueues {
                 }
             };
 
-            join_all(requests.into_iter().map(|request| request.request.run())).await;
+            batch.run().await;
         }
     }
 }
@@ -226,6 +274,95 @@ mod tests {
 
     fn shutdown_wait_timeout() -> Duration {
         Duration::from_millis(/*millis*/ 50)
+    }
+
+    fn queued_request(access: RequestSerializationAccess) -> QueuedSerializedRequest {
+        QueuedSerializedRequest {
+            access,
+            request: QueuedInitializedRequest::new(gate(), async {}),
+        }
+    }
+
+    #[test]
+    fn serialization_scope_projects_to_queue_key_and_access() {
+        let connection_id = ConnectionId(7);
+
+        assert_eq!(
+            RequestSerializationQueueKey::from_scope(
+                connection_id,
+                ClientRequestSerializationScope::Global("config"),
+            ),
+            (
+                RequestSerializationQueueKey::Global("config"),
+                RequestSerializationAccess::Exclusive,
+            )
+        );
+        assert_eq!(
+            RequestSerializationQueueKey::from_scope(
+                connection_id,
+                ClientRequestSerializationScope::GlobalSharedRead("config"),
+            ),
+            (
+                RequestSerializationQueueKey::Global("config"),
+                RequestSerializationAccess::SharedRead,
+            )
+        );
+        assert_eq!(
+            RequestSerializationQueueKey::from_scope(
+                connection_id,
+                ClientRequestSerializationScope::CommandExecProcess {
+                    process_id: "process-1".to_string(),
+                },
+            ),
+            (
+                RequestSerializationQueueKey::CommandExecProcess {
+                    connection_id,
+                    process_id: "process-1".to_string(),
+                },
+                RequestSerializationAccess::Exclusive,
+            )
+        );
+        assert_eq!(
+            RequestSerializationQueueKey::from_scope(
+                connection_id,
+                ClientRequestSerializationScope::FsWatch {
+                    watch_id: "watch-1".to_string(),
+                },
+            ),
+            (
+                RequestSerializationQueueKey::FsWatch {
+                    connection_id,
+                    watch_id: "watch-1".to_string(),
+                },
+                RequestSerializationAccess::Exclusive,
+            )
+        );
+    }
+
+    #[test]
+    fn serialized_request_queue_batches_adjacent_shared_reads_without_crossing_writes() {
+        let mut queue = SerializedRequestQueue::from_first_request(queued_request(
+            RequestSerializationAccess::SharedRead,
+        ));
+        queue.push_back(queued_request(RequestSerializationAccess::SharedRead));
+        queue.push_back(queued_request(RequestSerializationAccess::Exclusive));
+        queue.push_back(queued_request(RequestSerializationAccess::SharedRead));
+
+        let batch = queue.next_batch().expect("shared read batch should exist");
+        assert_eq!(batch.access_kind(), RequestSerializationAccess::SharedRead);
+        assert_eq!(batch.len(), 2);
+
+        let batch = queue.next_batch().expect("exclusive batch should exist");
+        assert_eq!(batch.access_kind(), RequestSerializationAccess::Exclusive);
+        assert_eq!(batch.len(), 1);
+
+        let batch = queue
+            .next_batch()
+            .expect("later shared read batch should exist");
+        assert_eq!(batch.access_kind(), RequestSerializationAccess::SharedRead);
+        assert_eq!(batch.len(), 1);
+
+        assert!(queue.next_batch().is_none());
     }
 
     #[tokio::test]
