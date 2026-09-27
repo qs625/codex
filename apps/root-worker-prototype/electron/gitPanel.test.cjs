@@ -155,8 +155,18 @@ test("parseGitCommitFiles reads name-status output including renames and copies"
   assert.deepEqual(files, [
     { path: "src/app.ts", originalPath: null, status: "M", score: null },
     { path: "README.md", originalPath: null, status: "A", score: null },
-    { path: "src/new.ts", originalPath: "src/old.ts", status: "R", score: "100" },
-    { path: "src/copy.ts", originalPath: "src/base.ts", status: "C", score: "80" },
+    {
+      path: "src/new.ts",
+      originalPath: "src/old.ts",
+      status: "R",
+      score: "100",
+    },
+    {
+      path: "src/copy.ts",
+      originalPath: "src/base.ts",
+      status: "C",
+      score: "80",
+    },
   ]);
 });
 
@@ -253,7 +263,9 @@ test("parseGitStatus groups staged and unstaged porcelain entries", () => {
 });
 
 test("parseGitStatus reads unstaged rename entries", () => {
-  const changes = parseGitStatus([" R src/new.ts", "src/old.ts", ""].join("\0"));
+  const changes = parseGitStatus(
+    [" R src/new.ts", "src/old.ts", ""].join("\0"),
+  );
 
   assert.deepEqual(changes, [
     {
@@ -274,7 +286,10 @@ test("readGitFileDiff reads unstaged modified files from index to working tree",
   git(repo, ["commit", "-m", "initial"]);
   writeRepoFile(repo, "src/app.ts", "export const value = 2;\n");
 
-  const diff = await readGitFileDiff(repo, { path: "src/app.ts", staged: false });
+  const diff = await readGitFileDiff(repo, {
+    path: "src/app.ts",
+    staged: false,
+  });
 
   assert.equal(diff.available, true);
   assert.equal(diff.staged, false);
@@ -375,7 +390,9 @@ test("readGitCommitFileDiff handles renamed files in a commit", async (t) => {
 
 test("readGitStatusSnapshot returns typed unavailable outside a repository", async (t) => {
   requireGit(t);
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-git-status-"));
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "morpheus-git-status-"),
+  );
   t.after(() => {
     fs.rmSync(directory, { force: true, recursive: true });
   });
@@ -397,7 +414,10 @@ test("readGitFileDiff reads staged modified files from HEAD to index", async (t)
   writeRepoFile(repo, "src/app.ts", "export const value = 2;\n");
   git(repo, ["add", "src/app.ts"]);
 
-  const diff = await readGitFileDiff(repo, { path: "src/app.ts", staged: true });
+  const diff = await readGitFileDiff(repo, {
+    path: "src/app.ts",
+    staged: true,
+  });
 
   assert.equal(diff.available, true);
   assert.equal(diff.staged, true);
@@ -420,8 +440,14 @@ test("readGitFileDiff handles added, deleted, and renamed staged files", async (
   git(repo, ["mv", "src/old-name.ts", "src/new-name.ts"]);
   git(repo, ["add", "src/added.ts"]);
 
-  const added = await readGitFileDiff(repo, { path: "src/added.ts", staged: true });
-  const deleted = await readGitFileDiff(repo, { path: "src/delete-me.ts", staged: true });
+  const added = await readGitFileDiff(repo, {
+    path: "src/added.ts",
+    staged: true,
+  });
+  const deleted = await readGitFileDiff(repo, {
+    path: "src/delete-me.ts",
+    staged: true,
+  });
   const renamed = await readGitFileDiff(repo, {
     path: "src/new-name.ts",
     originalPath: "src/old-name.ts",
@@ -440,13 +466,37 @@ test("readGitFileDiff handles added, deleted, and renamed staged files", async (
   assert.equal(renamed.newContent, "rename me\n");
 });
 
+test("readGitFileDiff requires the requested original path to match", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/old-name.ts", "rename me\n");
+  git(repo, ["add", "src/old-name.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  git(repo, ["mv", "src/old-name.ts", "src/new-name.ts"]);
+
+  const diff = await readGitFileDiff(repo, {
+    path: "src/new-name.ts",
+    originalPath: "src/not-the-original.ts",
+    staged: true,
+  });
+
+  assert.equal(diff.available, false);
+  assert.equal(diff.root, fs.realpathSync(repo));
+  assert.equal(diff.path, "src/new-name.ts");
+  assert.equal(diff.originalPath, "src/not-the-original.ts");
+  assert.equal(diff.staged, true);
+  assert.match(diff.error ?? "", /Git changes list/);
+});
+
 test("readGitFileDiff returns a typed unavailable diff for binary content", async (t) => {
   const repo = createTempGitRepo(t);
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src/blob.bin"), Buffer.from([0, 1, 2, 3]));
   git(repo, ["add", "src/blob.bin"]);
 
-  const diff = await readGitFileDiff(repo, { path: "src/blob.bin", staged: true });
+  const diff = await readGitFileDiff(repo, {
+    path: "src/blob.bin",
+    staged: true,
+  });
 
   assert.equal(diff.available, false);
   assert.equal(diff.binary, true);
@@ -473,6 +523,58 @@ test("readGitCommitFileDiff returns a typed unavailable diff for binary content"
   assert.equal(diff.status, "A");
   assert.equal(diff.modeLabel, "commit");
   assert.match(diff.error ?? "", /Binary files/);
+});
+
+test("readGitCommitFileDiff returns unavailable when commit files cannot be read", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/app.ts", "export const value = 1;\n");
+  git(repo, ["add", "src/app.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  const diff = await readGitCommitFileDiff(repo, {
+    hash: "abcdef1",
+    path: "src/app.ts",
+    originalPath: "src/old-app.ts",
+  });
+
+  assert.equal(diff.available, false);
+  assert.equal(diff.root, fs.realpathSync(repo));
+  assert.equal(diff.path, "src/app.ts");
+  assert.equal(diff.originalPath, "src/old-app.ts");
+  assert.equal(diff.staged, false);
+  assert.match(diff.error ?? "", /Failed to read commit files/);
+});
+
+test("readGitCommitFileDiff handles added and deleted files in a commit", async (t) => {
+  const repo = createTempGitRepo(t);
+  writeRepoFile(repo, "src/delete-me.ts", "delete me\n");
+  git(repo, ["add", "src/delete-me.ts"]);
+  git(repo, ["commit", "-m", "initial"]);
+  writeRepoFile(repo, "src/added.ts", "new file\n");
+  git(repo, ["rm", "src/delete-me.ts"]);
+  git(repo, ["add", "src/added.ts"]);
+  git(repo, ["commit", "-m", "change files"]);
+  const hash = git(repo, ["rev-parse", "HEAD"]).trim();
+
+  const added = await readGitCommitFileDiff(repo, {
+    hash,
+    path: "src/added.ts",
+  });
+  const deleted = await readGitCommitFileDiff(repo, {
+    hash,
+    path: "src/delete-me.ts",
+  });
+
+  assert.equal(added.available, true);
+  assert.equal(added.status, "A");
+  assert.equal(added.oldContent, "");
+  assert.equal(added.newContent, "new file\n");
+  assert.equal(added.oldLabel, `${hash.slice(0, 7)}^`);
+  assert.equal(added.newLabel, hash.slice(0, 7));
+  assert.equal(deleted.available, true);
+  assert.equal(deleted.status, "D");
+  assert.equal(deleted.oldContent, "delete me\n");
+  assert.equal(deleted.newContent, "");
 });
 
 function createTempGitRepo(t) {
