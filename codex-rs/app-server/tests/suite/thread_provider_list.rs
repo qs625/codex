@@ -126,3 +126,53 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
 
     Ok(())
 }
+
+#[tokio::test]
+async fn thread_provider_list_includes_configured_native_model_providers() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_models_cache(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+model = "corp-model"
+model_provider = "corp"
+
+[model_providers.corp]
+name = "Corp Gateway"
+base_url = "https://example.invalid/v1"
+env_key = "CORP_API_KEY"
+"#,
+    )?;
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_raw_request(
+            "threadProvider/list",
+            Some(serde_json::json!({ "cwd": codex_home.path() })),
+        )
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: ThreadProviderListResponse = to_response(response)?;
+
+    let native = response
+        .data
+        .iter()
+        .find(|provider| provider.id == "native")
+        .expect("native provider descriptor should be present");
+    assert_eq!(
+        native.model_selection.mode,
+        ThreadProviderModelSelectionMode::Catalog
+    );
+    assert_eq!(
+        native.model_selection.model_providers,
+        vec!["corp".to_string(), "openai".to_string()]
+    );
+
+    Ok(())
+}
