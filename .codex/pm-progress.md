@@ -47,18 +47,22 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `37d33f8a42`; merge `b429492d3`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-23
-  status: dispatching
+  status: owner_completed
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-23
   task_type: exclusive_code_quality_refactor
   depends_on: main `1cfb7a634`; user asked to continue simplifying code and improving quality after compact regression was installed effective and tranche-22 was merged
-  files: owner to select one coherent medium/high-value seam after inventory; avoid recent compact/workspace tab fix files and recent client_metadata cleanup unless a strictly local follow-up is necessary
+  files: `codex-rs/app-server/tests/suite/experimental_api.rs`, `.codex/pm-progress.md`
   base_commit: `1cfb7a634`
-  next_action: Owner to screen candidates, implement at most one behavior-preserving refactor with fixed reviewer validation, or pause with evidence if no candidate passes the quality bar.
-  validation: pending
-  commit: pending
+  next_action: PM to merge `refactor/continuous-code-organization-23` when ready; low-risk app-server integration test cleanup can remain pending capsule delivery after merge.
+  selection: Owner confirmed checkout stayed in `/Users/bytedance/.morpheus/source_workspace` and created `refactor/continuous-code-organization-23` from clean current `main`; current main was `178c343b1` rather than requested `1cfb7a634`, with `1cfb7a634` as an ancestor and the extra commit only adding this tranche dispatch record. Screened candidates: initially selected `safety_check_downgrade.rs` but abandoned and reverted it after focused validation exposed current suite failures unrelated to the helper shape (`cyber_policy_response_emits_typed_error_notification_v2` now receives `CodexErrorInfo::Other`; `model_verification_emits_typed_notification_and_warning_v2` also failed), making that seam unsuitable for a clean behavior-equivalent cleanup. Selected `codex-rs/app-server/tests/suite/experimental_api.rs` instead because seven tests share identical `experimentalApi=false` initialization and repeated JSONRPC response/error waits, while each request payload and expected error reason remains explicit in the test body. Deferred `plugin_uninstall.rs`/`plugin_list.rs` because they are larger plugin suites with mixed local, analytics, remote cloud, cache, and feature-flag semantics where helper extraction could blur materially different setup. Deferred `thread_memory_mode_set.rs` because only two tests repeat response decode and the loaded/stored state split is clearer left explicit. Deferred `thread_shell_command.rs` again because it mixes active-turn and shell-command notification ordering and has only two cases. Deferred frontend fixture cleanup around conversation/thread analysis because nearby compact/display and thread-state surfaces are recent hotspots.
+  implementation: Added suite-private `init_without_experimental_api`, `experimental_api_disabled`, `read_error_response`, and `read_response` helpers in `experimental_api.rs`; replaced repeated disabled-capability initialization and JSONRPC wait/decode plumbing without changing request params, experimental method names, expected capability error reasons, or successful `thread/start` response decoding.
+  validation: `rustfmt codex-rs/app-server/tests/suite/experimental_api.rs` -> pass with existing stable-toolchain warning about nightly-only `imports_granularity`; `rustfmt --check codex-rs/app-server/tests/suite/experimental_api.rs` -> pass with same warning; `git diff --check -- .codex/pm-progress.md codex-rs/app-server/tests/suite/experimental_api.rs` -> pass; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all experimental_api` -> pass, 7 tests; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> pass. Existing linker `__eh_frame` and `proc-macro-error2` future-incompat warnings observed.
+  reviewer_result: `/self/owner_main/reviewer` approved. Reviewer found no blocking issues and confirmed `init_without_experimental_api` preserves disabled capability initialization and response assertion, `experimental_api_disabled` preserves field values, JSONRPC wait helpers preserve `DEFAULT_TIMEOUT`/`RequestId::Integer`/stream wait semantics, and request params plus expected capability error reasons remain explicit at call sites.
+  risk: Test-only helper extraction in one app-server integration suite; no production, JSONRPC method/params/error text, provider-visible schema, model IO, persisted history, or product behavior change. Residual risk is limited to helper abstraction around test driver plumbing, covered by reviewer and focused suite.
+  commit: owner commit created on `refactor/continuous-code-organization-23`; final hash reported in owner delivery
 
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change

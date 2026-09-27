@@ -26,33 +26,50 @@ use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[tokio::test]
-async fn mock_experimental_method_requires_experimental_api_capability() -> Result<()> {
-    let codex_home = TempDir::new()?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
+async fn init_without_experimental_api(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new(codex_home).await?;
     let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
+        .initialize_with_capabilities(default_client_info(), Some(experimental_api_disabled()))
         .await?;
     let JSONRPCMessage::Response(_) = init else {
         anyhow::bail!("expected initialize response, got {init:?}");
     };
+    Ok(mcp)
+}
+
+fn experimental_api_disabled() -> InitializeCapabilities {
+    InitializeCapabilities {
+        experimental_api: false,
+        request_attestation: false,
+        opt_out_notification_methods: None,
+    }
+}
+
+async fn read_error_response(mcp: &mut McpProcess, request_id: i64) -> Result<JSONRPCError> {
+    timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await?
+}
+
+async fn read_response(mcp: &mut McpProcess, request_id: i64) -> Result<JSONRPCResponse> {
+    timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await?
+}
+
+#[tokio::test]
+async fn mock_experimental_method_requires_experimental_api_capability() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_mock_experimental_method_request(MockExperimentalMethodParams::default())
         .await?;
-    let error = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let error = read_error_response(&mut mcp, request_id).await?;
     assert_experimental_capability_error(error, "mock/experimentalMethod");
     Ok(())
 }
@@ -60,21 +77,7 @@ async fn mock_experimental_method_requires_experimental_api_capability() -> Resu
 #[tokio::test]
 async fn realtime_conversation_start_requires_experimental_api_capability() -> Result<()> {
     let codex_home = TempDir::new()?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
-        .await?;
-    let JSONRPCMessage::Response(_) = init else {
-        anyhow::bail!("expected initialize response, got {init:?}");
-    };
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
@@ -86,11 +89,7 @@ async fn realtime_conversation_start_requires_experimental_api_capability() -> R
             voice: None,
         })
         .await?;
-    let error = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let error = read_error_response(&mut mcp, request_id).await?;
     assert_experimental_capability_error(error, "thread/realtime/start");
     Ok(())
 }
@@ -98,21 +97,7 @@ async fn realtime_conversation_start_requires_experimental_api_capability() -> R
 #[tokio::test]
 async fn thread_memory_mode_set_requires_experimental_api_capability() -> Result<()> {
     let codex_home = TempDir::new()?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
-        .await?;
-    let JSONRPCMessage::Response(_) = init else {
-        anyhow::bail!("expected initialize response, got {init:?}");
-    };
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_thread_memory_mode_set_request(ThreadMemoryModeSetParams {
@@ -120,11 +105,7 @@ async fn thread_memory_mode_set_requires_experimental_api_capability() -> Result
             mode: ThreadMemoryMode::Disabled,
         })
         .await?;
-    let error = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let error = read_error_response(&mut mcp, request_id).await?;
     assert_experimental_capability_error(error, "thread/memoryMode/set");
     Ok(())
 }
@@ -132,21 +113,7 @@ async fn thread_memory_mode_set_requires_experimental_api_capability() -> Result
 #[tokio::test]
 async fn realtime_webrtc_start_requires_experimental_api_capability() -> Result<()> {
     let codex_home = TempDir::new()?;
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-
-    let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
-        .await?;
-    let JSONRPCMessage::Response(_) = init else {
-        anyhow::bail!("expected initialize response, got {init:?}");
-    };
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
@@ -160,11 +127,7 @@ async fn realtime_webrtc_start_requires_experimental_api_capability() -> Result<
             voice: None,
         })
         .await?;
-    let error = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let error = read_error_response(&mut mcp, request_id).await?;
     assert_experimental_capability_error(error, "thread/realtime/start");
     Ok(())
 }
@@ -175,20 +138,7 @@ async fn thread_start_mock_field_requires_experimental_api_capability() -> Resul
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
-        .await?;
-    let JSONRPCMessage::Response(_) = init else {
-        anyhow::bail!("expected initialize response, got {init:?}");
-    };
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_thread_start_request(ThreadStartParams {
@@ -197,11 +147,7 @@ async fn thread_start_mock_field_requires_experimental_api_capability() -> Resul
         })
         .await?;
 
-    let error = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let error = read_error_response(&mut mcp, request_id).await?;
     assert_experimental_capability_error(error, "thread/start.mockExperimentalField");
     Ok(())
 }
@@ -213,20 +159,7 @@ async fn thread_start_without_dynamic_tools_allows_without_experimental_api_capa
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
-        .await?;
-    let JSONRPCMessage::Response(_) = init else {
-        anyhow::bail!("expected initialize response, got {init:?}");
-    };
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_thread_start_request(ThreadStartParams {
@@ -234,11 +167,7 @@ async fn thread_start_without_dynamic_tools_allows_without_experimental_api_capa
             ..Default::default()
         })
         .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let response = read_response(&mut mcp, request_id).await?;
     let _: ThreadStartResponse = to_response(response)?;
     Ok(())
 }
@@ -250,20 +179,7 @@ async fn thread_start_granular_approval_policy_requires_experimental_api_capabil
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    let init = mcp
-        .initialize_with_capabilities(
-            default_client_info(),
-            Some(InitializeCapabilities {
-                experimental_api: false,
-                request_attestation: false,
-                opt_out_notification_methods: None,
-            }),
-        )
-        .await?;
-    let JSONRPCMessage::Response(_) = init else {
-        anyhow::bail!("expected initialize response, got {init:?}");
-    };
+    let mut mcp = init_without_experimental_api(codex_home.path()).await?;
 
     let request_id = mcp
         .send_thread_start_request(ThreadStartParams {
@@ -278,11 +194,7 @@ async fn thread_start_granular_approval_policy_requires_experimental_api_capabil
         })
         .await?;
 
-    let error = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
+    let error = read_error_response(&mut mcp, request_id).await?;
     assert_experimental_capability_error(error, "askForApproval.granular");
     Ok(())
 }
