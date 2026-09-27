@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import { buildContextUsageAnalysis } from "./contextUsage";
 import type { Thread } from "../types";
 
-function makeThread(items: Thread["turns"][number]["items"], skills: Thread["skills"] = []): Thread {
+function makeThread(
+  items: Thread["turns"][number]["items"],
+  skills: Thread["skills"] = [],
+): Thread {
   return {
     id: "thread-1",
     sessionId: "session-1",
@@ -42,6 +45,28 @@ function makeThread(items: Thread["turns"][number]["items"], skills: Thread["ski
   };
 }
 
+test("builds empty analysis when no thread is selected", () => {
+  const analysis = buildContextUsageAnalysis(null, 9);
+
+  assert.equal(analysis.hasBudgetData, false);
+  assert.equal(analysis.budgetUsedPercent, 0);
+  assert.equal(analysis.usedTokens, null);
+  assert.equal(analysis.contextWindowTokens, null);
+  assert.equal(analysis.loadedSkills, 0);
+  assert.equal(analysis.totalSkills, 9);
+  assert.equal(analysis.totalConcreteLoads, 0);
+  assert.equal(analysis.reasoningSharePercent, 0);
+  assert.deepEqual(analysis.loadedConcreteSkills, []);
+  assert.deepEqual(analysis.toolBreakdown, []);
+  assert.equal(analysis.turnTrend.turns.length, 0);
+  assert.equal(analysis.turnTrend.rows.length, 14);
+  assert.equal(analysis.categories.length, 8);
+  assert.equal(
+    analysis.categories.find((category) => category.id === "compact")?.units,
+    0,
+  );
+});
+
 test("builds compact context usage analysis with loaded skill ratios and timeline", () => {
   const thread = makeThread(
     [
@@ -75,7 +100,9 @@ test("builds compact context usage analysis with loaded skill ratios and timelin
       {
         type: "reasoning",
         id: "reasoning-1",
-        summary: ["Need a compact budget section and a horizontal category ratio."],
+        summary: [
+          "Need a compact budget section and a horizontal category ratio.",
+        ],
         content: [],
       },
       {
@@ -110,7 +137,8 @@ test("builds compact context usage analysis with loaded skill ratios and timelin
   assert.equal(analysis.turnTrend.turns.length, 1);
   assert.equal(analysis.turnTrend.rows.length, 8);
   assert.ok(
-    (analysis.turnTrend.rows.find((row) => row.id === "userMessages")?.cells[0]?.units ?? 0) > 0,
+    (analysis.turnTrend.rows.find((row) => row.id === "userMessages")?.cells[0]
+      ?.units ?? 0) > 0,
   );
   assert.equal(analysis.categories.length, 8);
   assert.equal(analysis.loadedConcreteSkills[0]?.name, "openai-docs");
@@ -122,6 +150,106 @@ test("builds compact context usage analysis with loaded skill ratios and timelin
     analysis.categories.some(
       (category) => category.id === "toolCalls" && category.sharePercent === 0,
     ),
+  );
+});
+
+test("uses threadUsage snapshot before legacy token and context usage fields", () => {
+  const thread = makeThread([
+    {
+      type: "userMessage",
+      id: "user-1",
+      content: [{ type: "text", text: "Use current thread usage snapshot." }],
+    },
+  ]);
+  thread.tokenUsage = {
+    total: {
+      totalTokens: 99_000,
+      inputTokens: 80_000,
+      cachedInputTokens: 0,
+      outputTokens: 19_000,
+      reasoningOutputTokens: 0,
+    },
+    last: {
+      totalTokens: 99_000,
+      inputTokens: 80_000,
+      cachedInputTokens: 0,
+      outputTokens: 19_000,
+      reasoningOutputTokens: 0,
+    },
+    modelContextWindow: 100_000,
+  };
+  thread.contextUsage = {
+    totalBytes: 100,
+    budgetUsedPercent: null,
+    categories: {
+      compact: 100,
+      skillsMetadata: 0,
+      concreteSkills: 0,
+      toolsMetadata: 0,
+      toolCalls: 0,
+      userMessages: 0,
+      llmMessages: 0,
+      reasoning: 0,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 1,
+      skills: [],
+    },
+  };
+  thread.threadUsage = {
+    tokenUsage: {
+      total: {
+        totalTokens: 10_000,
+        inputTokens: 8_000,
+        cachedInputTokens: 0,
+        outputTokens: 2_000,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: 5_000,
+        inputTokens: 4_000,
+        cachedInputTokens: 0,
+        outputTokens: 1_000,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 50_000,
+    },
+    contextUsage: {
+      totalBytes: 200,
+      budgetUsedPercent: null,
+      categories: {
+        compact: 0,
+        skillsMetadata: 0,
+        concreteSkills: 0,
+        toolsMetadata: 0,
+        toolCalls: 0,
+        userMessages: 200,
+        llmMessages: 0,
+        reasoning: 0,
+      },
+      loadedSkills: {
+        loadedCount: 0,
+        totalCount: 2,
+        skills: [],
+      },
+    },
+  };
+
+  const analysis = buildContextUsageAnalysis(thread, 2);
+
+  assert.equal(analysis.budgetUsedPercent, 10);
+  assert.equal(analysis.usedTokens, 5_000);
+  assert.equal(analysis.contextWindowTokens, 50_000);
+  assert.equal(analysis.totalSkills, 2);
+  assert.equal(
+    analysis.categories.find((category) => category.id === "userMessages")
+      ?.units,
+    10_000,
+  );
+  assert.equal(
+    analysis.categories.find((category) => category.id === "compact")?.units,
+    0,
   );
 });
 
@@ -159,10 +287,12 @@ test("counts event command subscriptions and events in tool usage", () => {
   );
 
   assert.ok(
-    (analysis.turnTrend.rows.find((row) => row.id === "toolCalls")?.cells[0]?.units ?? 0) > 0,
+    (analysis.turnTrend.rows.find((row) => row.id === "toolCalls")?.cells[0]
+      ?.units ?? 0) > 0,
   );
   assert.ok(
-    (analysis.turnTrend.rows.find((row) => row.id === "toolsMetadata")?.cells[0]?.units ?? 0) > 0,
+    (analysis.turnTrend.rows.find((row) => row.id === "toolsMetadata")?.cells[0]
+      ?.units ?? 0) > 0,
   );
 });
 
@@ -250,10 +380,23 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.loadedSkills, 0);
   assert.equal(analysis.loadedConcreteSkills.length, 0);
   assert.equal(analysis.turnTrend.turns[0]?.label, "1");
-  assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
-  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 1.8);
-  assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
-  assert.equal(analysis.categories.find((row) => row.id === "toolCalls"), undefined);
+  assert.equal(
+    analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells
+      .length,
+    1,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent,
+    1.8,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "llmMessages")?.units,
+    19900,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "toolCalls"),
+    undefined,
+  );
   assert.deepEqual(
     analysis.categories
       .filter((row) =>
@@ -276,14 +419,38 @@ test("uses last token usage for budget percent and context usage ratios for toke
       "otherTools",
     ],
   );
-  assert.equal(analysis.categories.find((row) => row.id === "fileWrites")?.label, "File Writes");
-  assert.equal(analysis.categories.find((row) => row.id === "fileReads")?.label, "File Reads");
-  assert.equal(analysis.categories.find((row) => row.id === "commands")?.units, 6100);
-  assert.equal(analysis.categories.find((row) => row.id === "interAgent")?.sharePercent, 0.1);
-  assert.equal(analysis.categories.find((row) => row.id === "searchMedia")?.units, 0);
-  assert.equal(analysis.categories.find((row) => row.id === "searchMedia")?.sharePercent, 0);
-  assert.equal(analysis.categories.find((row) => row.id === "otherTools")?.units, 0);
-  assert.equal(analysis.categories.find((row) => row.id === "otherTools")?.sharePercent, 0);
+  assert.equal(
+    analysis.categories.find((row) => row.id === "fileWrites")?.label,
+    "File Writes",
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "fileReads")?.label,
+    "File Reads",
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "commands")?.units,
+    6100,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "interAgent")?.sharePercent,
+    0.1,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "searchMedia")?.units,
+    0,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "searchMedia")?.sharePercent,
+    0,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "otherTools")?.units,
+    0,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "otherTools")?.sharePercent,
+    0,
+  );
   assert.deepEqual(analysis.toolBreakdown, []);
 });
 
@@ -447,9 +614,18 @@ test("keeps tool I/O fallback when backend context usage has no breakdown data",
   const analysis = buildContextUsageAnalysis(thread, 0);
 
   assert.deepEqual(analysis.toolBreakdown, []);
-  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.label, "Tool Inputs & Results");
-  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.sharePercent, 100);
-  assert.equal(analysis.categories.find((row) => row.id === "commands"), undefined);
+  assert.equal(
+    analysis.categories.find((row) => row.id === "toolCalls")?.label,
+    "Tool Inputs & Results",
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "toolCalls")?.sharePercent,
+    100,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "commands"),
+    undefined,
+  );
 });
 
 test("does not synthesize tool buckets when top-level tool usage is zero", () => {
@@ -484,9 +660,18 @@ test("does not synthesize tool buckets when top-level tool usage is zero", () =>
 
   const analysis = buildContextUsageAnalysis(thread, 0);
 
-  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.units, 0);
-  assert.equal(analysis.categories.find((row) => row.id === "fileWrites"), undefined);
-  assert.equal(analysis.categories.find((row) => row.id === "commands"), undefined);
+  assert.equal(
+    analysis.categories.find((row) => row.id === "toolCalls")?.units,
+    0,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "fileWrites"),
+    undefined,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "commands"),
+    undefined,
+  );
 });
 
 test("keeps aggregate tool fallback when backend tool breakdown has no usage", () => {
@@ -521,11 +706,26 @@ test("keeps aggregate tool fallback when backend tool breakdown has no usage", (
 
   const analysis = buildContextUsageAnalysis(thread, 0);
 
-  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.label, "Tool Inputs & Results");
-  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.sharePercent, 100);
-  assert.equal(analysis.categories.find((row) => row.id === "interAgent"), undefined);
-  assert.equal(analysis.categories.find((row) => row.id === "searchMedia"), undefined);
-  assert.equal(analysis.categories.find((row) => row.id === "otherTools"), undefined);
+  assert.equal(
+    analysis.categories.find((row) => row.id === "toolCalls")?.label,
+    "Tool Inputs & Results",
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "toolCalls")?.sharePercent,
+    100,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "interAgent"),
+    undefined,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "searchMedia"),
+    undefined,
+  );
+  assert.equal(
+    analysis.categories.find((row) => row.id === "otherTools"),
+    undefined,
+  );
 });
 
 test("uses selected model context window override for budget display", () => {
@@ -635,7 +835,8 @@ test("ignores malformed non-string tool text in context usage estimation", () =>
 
   assert.equal(analysis.turnTrend.turns.length, 1);
   assert.ok(
-    (analysis.turnTrend.rows.find((row) => row.id === "toolCalls")?.cells[0]?.units ?? 0) > 0,
+    (analysis.turnTrend.rows.find((row) => row.id === "toolCalls")?.cells[0]
+      ?.units ?? 0) > 0,
   );
 });
 
@@ -664,9 +865,13 @@ test("turn trend only counts skill injected context as concrete skills", () => {
 
   const analysis = buildContextUsageAnalysis(thread, 0);
 
-  assert.ok((analysis.turnTrend.rows.find((row) => row.id === "concreteSkills")?.cells[0]?.units ?? 0) > 0);
+  assert.ok(
+    (analysis.turnTrend.rows.find((row) => row.id === "concreteSkills")
+      ?.cells[0]?.units ?? 0) > 0,
+  );
   assert.equal(
-    analysis.turnTrend.rows.find((row) => row.id === "skillsMetadata")?.cells[0]?.units ?? 0,
+    analysis.turnTrend.rows.find((row) => row.id === "skillsMetadata")?.cells[0]
+      ?.units ?? 0,
     0,
   );
 });

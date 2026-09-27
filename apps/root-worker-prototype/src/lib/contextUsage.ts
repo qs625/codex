@@ -92,6 +92,13 @@ export type ContextUsageAnalysis = {
   };
 };
 
+type ThreadUsageSnapshot = {
+  tokenUsage: ThreadTokenUsage | null | undefined;
+  contextUsage: ThreadContextUsage | null | undefined;
+  skillLoads: Map<string, LoadedSkillSummary>;
+  turnTrend: ContextUsageAnalysis["turnTrend"];
+};
+
 const CATEGORY_ORDER: Array<{
   id: ContextUsageCategoryId;
   label: string;
@@ -108,7 +115,8 @@ const CATEGORY_ORDER: Array<{
     id: "skillsMetadata",
     label: "Skill Metadata",
     shortLabel: "Skill Meta",
-    description: "Skill names, routing hints, and load directives kept in context",
+    description:
+      "Skill names, routing hints, and load directives kept in context",
   },
   {
     id: "concreteSkills",
@@ -126,7 +134,8 @@ const CATEGORY_ORDER: Array<{
     id: "toolCalls",
     label: "Tool Inputs & Results",
     shortLabel: "Tool I/O",
-    description: "Tool arguments, returned results, and execution output kept in context",
+    description:
+      "Tool arguments, returned results, and execution output kept in context",
   },
   {
     id: "fileWrites",
@@ -144,7 +153,8 @@ const CATEGORY_ORDER: Array<{
     id: "commands",
     label: "Commands",
     shortLabel: "Cmd",
-    description: "Shell command inputs, test output, build output, and git output",
+    description:
+      "Shell command inputs, test output, build output, and git output",
   },
   {
     id: "interAgent",
@@ -247,7 +257,9 @@ const TOOL_BREAKDOWN_ORDER: Array<{
   },
 ];
 
-export function getContextUsageCategoryColor(categoryId: ContextUsageCategoryId) {
+export function getContextUsageCategoryColor(
+  categoryId: ContextUsageCategoryId,
+) {
   return CATEGORY_COLORS[categoryId];
 }
 
@@ -270,65 +282,98 @@ export function buildContextUsageAnalysis(
   modelContextWindowOverride?: number | null,
 ): ContextUsageAnalysis {
   if (!thread) {
-    return {
-      hasBudgetData: false,
-      budgetUsedPercent: 0,
-      usedTokens: null,
-      contextWindowTokens: null,
-      loadedSkills: 0,
-      totalSkills: totalSkillMetadataCount,
-      totalConcreteLoads: 0,
-      reasoningSharePercent: 0,
-      categories: buildCategorySummaries(
-        initializeCategoryUnits(),
-        0,
-        0,
-        0,
-        0,
-        false,
-      ),
-      toolBreakdown: [],
-      loadedConcreteSkills: [],
-      turnTrend: buildEmptyTurnTrend(),
-    };
+    return buildEmptyContextUsageAnalysis(totalSkillMetadataCount);
   }
 
-  const tokenUsage = thread.threadUsage?.tokenUsage ?? thread.tokenUsage;
-  const contextUsage = thread.threadUsage?.contextUsage ?? thread.contextUsage;
-  const { skillLoads, turnTrend } = collectThreadUsage(thread);
+  const snapshot = buildThreadUsageSnapshot(thread);
 
+  const { contextUsage } = snapshot;
   if (contextUsage) {
-    const loadedConcreteSkills = mergeLoadedSkills(skillLoads, contextUsage);
-    const totalConcreteLoads = loadedConcreteSkills.reduce((sum, skill) => sum + skill.loadCount, 0);
-    return buildContextUsageAnalysisFromBackend(
-      contextUsage,
-      tokenUsage,
+    return buildBackendContextUsageAnalysis(
+      { ...snapshot, contextUsage },
       totalSkillMetadataCount,
-      loadedConcreteSkills,
-      totalConcreteLoads,
-      turnTrend,
       modelContextWindowOverride,
     );
   }
 
-  const loadedConcreteSkills = [...skillLoads.values()]
+  return buildEstimatedContextUsageAnalysis(
+    snapshot,
+    totalSkillMetadataCount,
+    modelContextWindowOverride,
+  );
+}
+
+function buildEmptyContextUsageAnalysis(
+  totalSkillMetadataCount: number,
+): ContextUsageAnalysis {
+  return {
+    hasBudgetData: false,
+    budgetUsedPercent: 0,
+    usedTokens: null,
+    contextWindowTokens: null,
+    loadedSkills: 0,
+    totalSkills: totalSkillMetadataCount,
+    totalConcreteLoads: 0,
+    reasoningSharePercent: 0,
+    categories: buildCategorySummaries(
+      initializeCategoryUnits(),
+      0,
+      0,
+      0,
+      0,
+      false,
+    ),
+    toolBreakdown: [],
+    loadedConcreteSkills: [],
+    turnTrend: buildEmptyTurnTrend(),
+  };
+}
+
+function buildThreadUsageSnapshot(thread: Thread): ThreadUsageSnapshot {
+  const { skillLoads, turnTrend } = collectThreadUsage(thread);
+  return {
+    tokenUsage: thread.threadUsage?.tokenUsage ?? thread.tokenUsage,
+    contextUsage: thread.threadUsage?.contextUsage ?? thread.contextUsage,
+    skillLoads,
+    turnTrend,
+  };
+}
+
+function buildEstimatedContextUsageAnalysis(
+  snapshot: ThreadUsageSnapshot,
+  totalSkillMetadataCount: number,
+  modelContextWindowOverride?: number | null,
+): ContextUsageAnalysis {
+  const loadedConcreteSkills = [...snapshot.skillLoads.values()]
     .map((skill) => ({
       ...skill,
       loadCount: Math.max(skill.loadCount, 1),
     }))
-    .sort((left, right) => right.loadCount - left.loadCount || left.name.localeCompare(right.name));
-  const totalConcreteLoads = loadedConcreteSkills.reduce((sum, skill) => sum + skill.loadCount, 0);
-  const normalizedTotalSkills = Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
+    .sort(
+      (left, right) =>
+        right.loadCount - left.loadCount || left.name.localeCompare(right.name),
+    );
+  const totalConcreteLoads = loadedConcreteSkills.reduce(
+    (sum, skill) => sum + skill.loadCount,
+    0,
+  );
+  const normalizedTotalSkills = Math.max(
+    totalSkillMetadataCount,
+    loadedConcreteSkills.length,
+  );
 
   return {
-    hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
-    budgetUsedPercent: budgetPercentFromTokenUsage(
-      tokenUsage,
+    hasBudgetData: hasContextWindow(
+      snapshot.tokenUsage,
       modelContextWindowOverride,
     ),
-    usedTokens: usedTokensFromTokenUsage(tokenUsage),
+    budgetUsedPercent: budgetPercentFromTokenUsage(
+      snapshot.tokenUsage,
+      modelContextWindowOverride,
+    ),
+    usedTokens: usedTokensFromTokenUsage(snapshot.tokenUsage),
     contextWindowTokens: contextWindowTokensFromTokenUsage(
-      tokenUsage,
+      snapshot.tokenUsage,
       modelContextWindowOverride,
     ),
     loadedSkills: loadedConcreteSkills.length,
@@ -345,19 +390,24 @@ export function buildContextUsageAnalysis(
     ),
     toolBreakdown: [],
     loadedConcreteSkills,
-    turnTrend,
+    turnTrend: snapshot.turnTrend,
   };
 }
 
-function buildContextUsageAnalysisFromBackend(
-  contextUsage: ThreadContextUsage,
-  tokenUsage: ThreadTokenUsage | null | undefined,
+function buildBackendContextUsageAnalysis(
+  snapshot: ThreadUsageSnapshot & { contextUsage: ThreadContextUsage },
   totalSkillMetadataCount: number,
-  loadedConcreteSkills: LoadedSkillSummary[],
-  totalConcreteLoads: number,
-  turnTrend: ContextUsageAnalysis["turnTrend"],
   modelContextWindowOverride?: number | null,
 ): ContextUsageAnalysis {
+  const contextUsage = snapshot.contextUsage;
+  const loadedConcreteSkills = mergeLoadedSkills(
+    snapshot.skillLoads,
+    contextUsage,
+  );
+  const totalConcreteLoads = loadedConcreteSkills.reduce(
+    (sum, skill) => sum + skill.loadCount,
+    0,
+  );
   const rawCategoryUnits = initializeCategoryUnits();
   rawCategoryUnits.compact = contextUsage.categories.compact;
   rawCategoryUnits.skillsMetadata = contextUsage.categories.skillsMetadata;
@@ -378,10 +428,15 @@ function buildContextUsageAnalysisFromBackend(
   rawCategoryUnits.reasoning = contextUsage.categories.reasoning;
 
   const totalUnits = sumCategoryUnits(rawCategoryUnits);
-  const totalUsedTokens = categoryDistributionTokensFromTokenUsage(tokenUsage);
-  const lastUsedTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
+  const totalUsedTokens = categoryDistributionTokensFromTokenUsage(
+    snapshot.tokenUsage,
+  );
+  const lastUsedTokens = usedTokensFromTokenUsage(snapshot.tokenUsage) ?? 0;
   const contextWindowTokens =
-    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ?? 0;
+    contextWindowTokensFromTokenUsage(
+      snapshot.tokenUsage,
+      modelContextWindowOverride,
+    ) ?? 0;
   const categories = buildCategorySummaries(
     rawCategoryUnits,
     totalUnits,
@@ -390,9 +445,12 @@ function buildContextUsageAnalysisFromBackend(
     contextWindowTokens,
     toolBucketUnits != null,
   );
-  const reasoningSharePercent = categories.find((category) => category.id === "reasoning")?.sharePercent ?? 0;
+  const reasoningSharePercent =
+    categories.find((category) => category.id === "reasoning")?.sharePercent ??
+    0;
   const normalizedTotalSkills =
-    contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
+    contextUsage.loadedSkills.totalCount ??
+    Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
   const authoritativeLoadedSkills = hasAuthoritativeLoadedSkills(contextUsage);
   const loadedSkillCount = authoritativeLoadedSkills
     ? sanitizeUnitCount(contextUsage.loadedSkills.loadedCount)
@@ -402,14 +460,17 @@ function buildContextUsageAnalysisFromBackend(
       );
 
   return {
-    hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
-    budgetUsedPercent: budgetPercentFromTokenUsage(
-      tokenUsage,
+    hasBudgetData: hasContextWindow(
+      snapshot.tokenUsage,
       modelContextWindowOverride,
     ),
-    usedTokens: usedTokensFromTokenUsage(tokenUsage),
+    budgetUsedPercent: budgetPercentFromTokenUsage(
+      snapshot.tokenUsage,
+      modelContextWindowOverride,
+    ),
+    usedTokens: usedTokensFromTokenUsage(snapshot.tokenUsage),
     contextWindowTokens: contextWindowTokensFromTokenUsage(
-      tokenUsage,
+      snapshot.tokenUsage,
       modelContextWindowOverride,
     ),
     loadedSkills: loadedSkillCount,
@@ -419,7 +480,7 @@ function buildContextUsageAnalysisFromBackend(
     categories,
     toolBreakdown: [],
     loadedConcreteSkills,
-    turnTrend,
+    turnTrend: snapshot.turnTrend,
   };
 }
 
@@ -451,13 +512,12 @@ function buildToolCategoryUnits(
   if (toolCallUnits <= 0) {
     return null;
   }
-  const unitsByCategory = rows.reduce<Partial<Record<ContextUsageCategoryId, number>>>(
-    (units, row) => {
-      units[row.categoryId] = 0;
-      return units;
-    },
-    {},
-  );
+  const unitsByCategory = rows.reduce<
+    Partial<Record<ContextUsageCategoryId, number>>
+  >((units, row) => {
+    units[row.categoryId] = 0;
+    return units;
+  }, {});
   const nonZeroRows = rows.filter((row) => row.totalUnits > 0);
   let allocatedUnits = 0;
   return nonZeroRows.reduce<Partial<Record<ContextUsageCategoryId, number>>>(
@@ -483,13 +543,23 @@ function buildCategorySummaries(
   hasToolBuckets: boolean,
 ): ContextUsageCategorySummary[] {
   return CATEGORY_ORDER.filter((category) =>
-    shouldIncludeCategory(category.id, rawCategoryUnits[category.id], hasToolBuckets),
+    shouldIncludeCategory(
+      category.id,
+      rawCategoryUnits[category.id],
+      hasToolBuckets,
+    ),
   ).map((category) => {
     const units = rawCategoryUnits[category.id];
-    const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
-    const categoryTokens = totalUsedTokens > 0 ? Math.round((mixSharePercent / 100) * totalUsedTokens) : 0;
+    const mixSharePercent =
+      totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
+    const categoryTokens =
+      totalUsedTokens > 0
+        ? Math.round((mixSharePercent / 100) * totalUsedTokens)
+        : 0;
     const lastCategoryTokens =
-      lastUsedTokens > 0 ? Math.round((mixSharePercent / 100) * lastUsedTokens) : 0;
+      lastUsedTokens > 0
+        ? Math.round((mixSharePercent / 100) * lastUsedTokens)
+        : 0;
     const sharePercent =
       contextWindowTokens > 0 && lastCategoryTokens > 0
         ? roundPercent((lastCategoryTokens / contextWindowTokens) * 100)
@@ -580,7 +650,11 @@ function mergeLoadedSkills(
       name: skill.name,
       path: skill.path,
       kind: skill.kind,
-      loadCount: Math.max(skill.loadCount, merged.get(skill.path)?.loadCount ?? 0, 1),
+      loadCount: Math.max(
+        skill.loadCount,
+        merged.get(skill.path)?.loadCount ?? 0,
+        1,
+      ),
     });
   }
 
@@ -596,7 +670,8 @@ function hasAuthoritativeLoadedSkills(contextUsage: ThreadContextUsage) {
 
 function sortLoadedSkills(skillLoads: Map<string, LoadedSkillSummary>) {
   return [...skillLoads.values()].sort(
-    (left, right) => right.loadCount - left.loadCount || left.name.localeCompare(right.name),
+    (left, right) =>
+      right.loadCount - left.loadCount || left.name.localeCompare(right.name),
   );
 }
 
@@ -772,27 +847,35 @@ function accumulateItemUnits(
       if (!section.label.startsWith("Skill: ")) {
         continue;
       }
-      units.concreteSkills += estimateTextUnits(section.label) + estimateTextUnits(section.text);
+      units.concreteSkills +=
+        estimateTextUnits(section.label) + estimateTextUnits(section.text);
     }
     return;
   }
 
   if (item.type === "commandExecution") {
     units.toolsMetadata += 28;
-    units.toolCalls += estimateTextUnits(item.command) + estimateTextUnits(item.cwd);
+    units.toolCalls +=
+      estimateTextUnits(item.command) + estimateTextUnits(item.cwd);
     units.toolCalls += estimateTextUnits(item.aggregatedOutput);
     return;
   }
 
   if (item.type === "dynamicToolCall") {
     units.toolsMetadata += 30 + estimateTextUnits(item.namespace);
-    units.toolCalls += estimateObjectUnits(item.arguments) + estimateObjectUnits(item.contentItems) + 24;
+    units.toolCalls +=
+      estimateObjectUnits(item.arguments) +
+      estimateObjectUnits(item.contentItems) +
+      24;
     return;
   }
 
   if (item.type === "builtinToolCall") {
     units.toolsMetadata += 24;
-    units.toolCalls += estimateObjectUnits(item.arguments) + estimateObjectUnits(item.output) + 20;
+    units.toolCalls +=
+      estimateObjectUnits(item.arguments) +
+      estimateObjectUnits(item.output) +
+      20;
     return;
   }
 
@@ -822,18 +905,25 @@ function accumulateItemUnits(
 
   if (item.type === "mcpToolCall") {
     units.toolsMetadata += 32 + estimateTextUnits(item.server);
-    units.toolCalls += estimateObjectUnits(item.arguments) + estimateObjectUnits(item.result) + estimateObjectUnits(item.error);
+    units.toolCalls +=
+      estimateObjectUnits(item.arguments) +
+      estimateObjectUnits(item.result) +
+      estimateObjectUnits(item.error);
     return;
   }
 
   if (item.type === "collabAgentToolCall") {
     units.toolsMetadata += 30;
-    units.toolCalls += estimateTextUnits(item.tool) + estimateTextUnits(item.prompt) + estimateObjectUnits(item.agentsStates);
+    units.toolCalls +=
+      estimateTextUnits(item.tool) +
+      estimateTextUnits(item.prompt) +
+      estimateObjectUnits(item.agentsStates);
     return;
   }
 
   if (item.type === "collabAgentMessage") {
-    units.toolCalls += estimateTextUnits(item.content) + estimateTextUnits(item.operation) + 32;
+    units.toolCalls +=
+      estimateTextUnits(item.content) + estimateTextUnits(item.operation) + 32;
     return;
   }
 
@@ -849,12 +939,16 @@ function accumulateItemUnits(
 
   if (item.type === "webSearch") {
     units.toolsMetadata += 18;
-    units.toolCalls += estimateTextUnits(item.query) + estimateTextUnits(item.action) + 24;
+    units.toolCalls +=
+      estimateTextUnits(item.query) + estimateTextUnits(item.action) + 24;
     return;
   }
 
   if (item.type === "imageGeneration") {
-    units.toolCalls += estimateTextUnits(item.revisedPrompt) + estimateTextUnits(item.result) + 36;
+    units.toolCalls +=
+      estimateTextUnits(item.revisedPrompt) +
+      estimateTextUnits(item.result) +
+      36;
     return;
   }
 
@@ -901,7 +995,8 @@ function budgetPercentFromTokenUsage(
 ) {
   const totalTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
   const modelContextWindow =
-    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ?? 0;
+    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ??
+    0;
 
   if (modelContextWindow <= 0 || totalTokens <= 0) {
     return 0;
@@ -915,12 +1010,16 @@ function hasContextWindow(
   modelContextWindowOverride?: number | null,
 ) {
   return (
-    contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ??
-    0
-  ) > 0;
+    (contextWindowTokensFromTokenUsage(
+      tokenUsage,
+      modelContextWindowOverride,
+    ) ?? 0) > 0
+  );
 }
 
-function usedTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
+function usedTokensFromTokenUsage(
+  tokenUsage: ThreadTokenUsage | null | undefined,
+) {
   const totalTokens = tokenUsage?.last.totalTokens ?? 0;
   return totalTokens > 0 ? totalTokens : null;
 }
