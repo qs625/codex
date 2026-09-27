@@ -12,6 +12,21 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-28
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-28
+  task_type: exclusive_large_production_code_quality_refactor
+  depends_on: main `b1b1700c7`; user asked to continue and clarified not to keep doing small changes
+  files: TBD by owner after production candidate inventory; target must be a cohesive production module/cluster, not tests as the primary change
+  base_commit: `b1b1700c7`
+  next_action: Owner must evaluate at least three production candidates and select a larger coherent module-boundary/code-organization tranche. This tranche should continue the larger production-first direction after Git panel and Settings catalog refactors, while avoiding recently touched compact/display, Git panel diff projection, and Settings config catalog paths unless only used as reference.
+  constraints: Preserve behavior, provider-visible tool/schema/descriptions, API/IPC/JSONRPC method params/errors/field names, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, and external/native provider parity. Do not restore broad facades or expand old registry surfaces.
+  validation: pending owner inventory, design, reviewer review, focused tests, formatting, `git diff --check`, and relevant build/test validation.
+  commit: pending
+
 - id: continuous-code-organization-tranche-27
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
