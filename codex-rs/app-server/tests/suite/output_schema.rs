@@ -11,11 +11,44 @@ use app_test_support::to_response;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
+use serde::de::DeserializeOwned;
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+async fn init_mcp(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new(codex_home).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn read_response<T>(mcp: &mut McpProcess, request_id: i64) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    to_response(response)
+}
+
+async fn start_default_thread(mcp: &mut McpProcess) -> Result<ThreadStartResponse> {
+    let request_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            ..Default::default()
+        })
+        .await?;
+    read_response(mcp, request_id).await
+}
+
+async fn start_turn(mcp: &mut McpProcess, params: TurnStartParams) -> Result<TurnStartResponse> {
+    let request_id = mcp.send_turn_start_request(params).await?;
+    read_response(mcp, request_id).await
+}
 
 #[tokio::test]
 async fn turn_start_accepts_output_schema_v2() -> Result<()> {
@@ -32,20 +65,9 @@ async fn turn_start_accepts_output_schema_v2() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
 
-    let thread_req = mcp
-        .send_thread_start_request(ThreadStartParams {
-            ..Default::default()
-        })
-        .await?;
-    let thread_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    let ThreadStartResponse { thread, .. } = start_default_thread(&mut mcp).await?;
 
     let output_schema = serde_json::json!({
         "type": "object",
@@ -56,8 +78,9 @@ async fn turn_start_accepts_output_schema_v2() -> Result<()> {
         "additionalProperties": false
     });
 
-    let turn_req = mcp
-        .send_turn_start_request(TurnStartParams {
+    let _turn: TurnStartResponse = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -65,14 +88,9 @@ async fn turn_start_accepts_output_schema_v2() -> Result<()> {
             }],
             output_schema: Some(output_schema.clone()),
             ..Default::default()
-        })
-        .await?;
-    let turn_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+        },
     )
-    .await??;
-    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+    .await?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -114,20 +132,9 @@ async fn turn_start_output_schema_is_per_turn_v2() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = init_mcp(codex_home.path()).await?;
 
-    let thread_req = mcp
-        .send_thread_start_request(ThreadStartParams {
-            ..Default::default()
-        })
-        .await?;
-    let thread_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    let ThreadStartResponse { thread, .. } = start_default_thread(&mut mcp).await?;
 
     let output_schema = serde_json::json!({
         "type": "object",
@@ -138,8 +145,9 @@ async fn turn_start_output_schema_is_per_turn_v2() -> Result<()> {
         "additionalProperties": false
     });
 
-    let turn_req_1 = mcp
-        .send_turn_start_request(TurnStartParams {
+    let _turn: TurnStartResponse = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -147,14 +155,9 @@ async fn turn_start_output_schema_is_per_turn_v2() -> Result<()> {
             }],
             output_schema: Some(output_schema.clone()),
             ..Default::default()
-        })
-        .await?;
-    let turn_resp_1: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_req_1)),
+        },
     )
-    .await??;
-    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp_1)?;
+    .await?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -180,8 +183,9 @@ async fn turn_start_output_schema_is_per_turn_v2() -> Result<()> {
     ]);
     let response_mock2 = responses::mount_sse_once(&server, body2).await;
 
-    let turn_req_2 = mcp
-        .send_turn_start_request(TurnStartParams {
+    let _turn: TurnStartResponse = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Hello again".to_string(),
@@ -189,14 +193,9 @@ async fn turn_start_output_schema_is_per_turn_v2() -> Result<()> {
             }],
             output_schema: None,
             ..Default::default()
-        })
-        .await?;
-    let turn_resp_2: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_req_2)),
+        },
     )
-    .await??;
-    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp_2)?;
+    .await?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
