@@ -20,7 +20,10 @@ async function readGitSnapshot(cwd, options = {}) {
     return unavailableSnapshot("This workspace is not a Git repository.");
   }
 
-  const { root, treeRoot } = await gitRootInfoForCwd(cwd, rootResult.stdout.trim());
+  const { root, treeRoot } = await gitRootInfoForCwd(
+    cwd,
+    rootResult.stdout.trim(),
+  );
   const [branchResult, refsResult, statusResult] = await Promise.all([
     runGit(root, ["branch", "--show-current"]),
     runGit(root, buildGitRefsArgs()),
@@ -29,7 +32,9 @@ async function readGitSnapshot(cwd, options = {}) {
   const refs = refsResult.ok ? parseGitRefs(refsResult.stdout) : [];
   const requestedRef = normalizeSelectedGitRef(options?.ref);
   const selectedRef =
-    requestedRef && refs.some((ref) => ref.name === requestedRef) ? requestedRef : null;
+    requestedRef && refs.some((ref) => ref.name === requestedRef)
+      ? requestedRef
+      : null;
   const graphResult = await runGit(root, buildGitLogArgs(selectedRef));
 
   return {
@@ -41,7 +46,8 @@ async function readGitSnapshot(cwd, options = {}) {
     refs,
     graph: graphResult.ok ? parseGitGraph(graphResult.stdout) : [],
     changes: statusResult.ok ? parseGitStatus(statusResult.stdout) : [],
-    error: graphResult.ok && statusResult.ok ? null : "Git snapshot is incomplete.",
+    error:
+      graphResult.ok && statusResult.ok ? null : "Git snapshot is incomplete.",
   };
 }
 
@@ -58,7 +64,10 @@ async function readGitCommitFiles(cwd, hash) {
     return unavailableCommitFiles("This workspace is not a Git repository.");
   }
 
-  const result = await runGit(rootResult.stdout.trim(), buildGitCommitFilesArgs(hash));
+  const result = await runGit(
+    rootResult.stdout.trim(),
+    buildGitCommitFilesArgs(hash),
+  );
   if (!result.ok) {
     return unavailableCommitFiles("Failed to read commit files.");
   }
@@ -80,10 +89,17 @@ async function readGitStatusSnapshot(cwd) {
     return unavailableStatusSnapshot("This workspace is not a Git repository.");
   }
 
-  const { root, treeRoot } = await gitRootInfoForCwd(cwd, rootResult.stdout.trim());
+  const { root, treeRoot } = await gitRootInfoForCwd(
+    cwd,
+    rootResult.stdout.trim(),
+  );
   const statusResult = await runGit(root, ["status", "--porcelain=v1", "-z"]);
   if (!statusResult.ok) {
-    return unavailableStatusSnapshot("Failed to read Git status.", root, treeRoot);
+    return unavailableStatusSnapshot(
+      "Failed to read Git status.",
+      root,
+      treeRoot,
+    );
   }
 
   return {
@@ -100,10 +116,8 @@ async function readGitFileDiff(cwd, options = {}) {
     return unavailableFileDiff("No workspace is selected.");
   }
 
-  const mode = options?.staged ? "staged" : "unstaged";
-  const requestedPath = normalizeGitPath(options?.path);
-  const requestedOriginalPath = normalizeGitPath(options?.originalPath);
-  if (!requestedPath) {
+  const selection = normalizeGitFileDiffSelection(options);
+  if (!selection) {
     return unavailableFileDiff("Invalid file path.");
   }
 
@@ -119,72 +133,23 @@ async function readGitFileDiff(cwd, options = {}) {
   }
 
   const changes = parseGitStatus(statusResult.stdout);
-  const change = changes.find((entry) =>
-    entry.path === requestedPath &&
-    (requestedOriginalPath === null || entry.originalPath === requestedOriginalPath) &&
-    (mode === "staged" ? entry.staged : entry.unstaged),
-  );
+  const change = findWorkingTreeDiffChange(changes, selection);
   if (!change) {
-    return unavailableFileDiff("This file is no longer present in the Git changes list.", {
-      root,
-      path: requestedPath,
-      originalPath: requestedOriginalPath,
-      staged: mode === "staged",
-    });
+    return unavailableFileDiff(
+      "This file is no longer present in the Git changes list.",
+      {
+        root,
+        path: selection.path,
+        originalPath: selection.originalPath,
+        staged: selection.mode === "staged",
+      },
+    );
   }
 
-  const status =
-    (mode === "staged" ? change.stagedStatus : change.unstagedStatus) ??
-    change.stagedStatus ??
-    change.unstagedStatus ??
-    "M";
-  const originalPath = change.originalPath ?? null;
-  const oldPath = originalPath && (status === "R" || status === "C") ? originalPath : change.path;
-  const unifiedDiff = await readUnifiedDiff(root, change, mode);
-  const base = {
-    available: true,
+  return projectGitFileDiff(
     root,
-    path: change.path,
-    originalPath,
-    staged: mode === "staged",
-    status,
-    language: languageFromPath(change.path),
-    oldLabel: mode === "staged" ? "HEAD" : "Index",
-    newLabel: mode === "staged" ? "Index" : "Working tree",
-    unifiedDiff,
-    error: null,
-    binary: false,
-  };
-
-  try {
-    const oldContent =
-      status === "A" || status === "?"
-        ? ""
-        : mode === "staged"
-          ? await readGitTextObject(root, `HEAD:${oldPath}`)
-          : await readGitTextObject(root, `:${oldPath}`);
-    const newContent =
-      status === "D"
-        ? ""
-        : mode === "staged"
-          ? await readGitTextObject(root, `:${change.path}`)
-          : await readWorkingTreeText(root, change.path);
-
-    return {
-      ...base,
-      oldContent,
-      newContent,
-    };
-  } catch (error) {
-    return {
-      ...base,
-      available: false,
-      oldContent: "",
-      newContent: "",
-      error: error instanceof Error ? error.message : "Failed to read file diff.",
-      binary: isBinaryReadError(error),
-    };
-  }
+    await buildWorkingTreeFileDiffTarget(root, change, selection.mode),
+  );
 }
 
 async function readGitCommitFileDiff(cwd, options = {}) {
@@ -196,9 +161,8 @@ async function readGitCommitFileDiff(cwd, options = {}) {
   if (!isValidCommitHash(hash)) {
     return unavailableFileDiff("Invalid commit hash.");
   }
-  const requestedPath = normalizeGitPath(options?.path);
-  const requestedOriginalPath = normalizeGitPath(options?.originalPath);
-  if (!requestedPath) {
+  const selection = normalizeGitFileDiffSelection(options);
+  if (!selection) {
     return unavailableFileDiff("Invalid file path.");
   }
 
@@ -211,68 +175,188 @@ async function readGitCommitFileDiff(cwd, options = {}) {
   if (!commitFilesResult.ok) {
     return unavailableFileDiff("Failed to read commit files.", {
       root,
-      path: requestedPath,
-      originalPath: requestedOriginalPath,
+      path: selection.path,
+      originalPath: selection.originalPath,
       commit: hash,
     });
   }
 
   const files = parseGitCommitFiles(commitFilesResult.stdout);
-  const file = files.find(
-    (entry) =>
-      entry.path === requestedPath &&
-      (requestedOriginalPath === null || entry.originalPath === requestedOriginalPath),
-  );
+  const file = findCommitDiffFile(files, selection);
   if (!file) {
-    return unavailableFileDiff("This file is not present in the selected commit.", {
-      root,
-      path: requestedPath,
-      originalPath: requestedOriginalPath,
-      commit: hash,
-    });
+    return unavailableFileDiff(
+      "This file is not present in the selected commit.",
+      {
+        root,
+        path: selection.path,
+        originalPath: selection.originalPath,
+        commit: hash,
+      },
+    );
   }
 
+  return projectGitFileDiff(
+    root,
+    await buildCommitFileDiffTarget(root, hash, file),
+  );
+}
+
+function normalizeGitFileDiffSelection(options = {}) {
+  const path = normalizeGitPath(options?.path);
+  if (!path) {
+    return null;
+  }
+  return {
+    path,
+    originalPath: normalizeGitPath(options?.originalPath),
+    mode: options?.staged ? "staged" : "unstaged",
+  };
+}
+
+function findWorkingTreeDiffChange(changes, selection) {
+  return changes.find(
+    (entry) =>
+      entry.path === selection.path &&
+      (selection.originalPath === null ||
+        entry.originalPath === selection.originalPath) &&
+      (selection.mode === "staged" ? entry.staged : entry.unstaged),
+  );
+}
+
+function findCommitDiffFile(files, selection) {
+  return files.find(
+    (entry) =>
+      entry.path === selection.path &&
+      (selection.originalPath === null ||
+        entry.originalPath === selection.originalPath),
+  );
+}
+
+async function buildWorkingTreeFileDiffTarget(root, change, mode) {
+  const status = selectedWorkingTreeStatus(change, mode);
+  const originalPath = change.originalPath ?? null;
+  const oldPath = oldPathForDiff(change.path, originalPath, status);
+  const staged = mode === "staged";
+  return {
+    base: {
+      available: true,
+      root,
+      path: change.path,
+      originalPath,
+      staged,
+      status,
+      language: languageFromPath(change.path),
+      oldLabel: staged ? "HEAD" : "Index",
+      newLabel: staged ? "Index" : "Working tree",
+      unifiedDiff: await readUnifiedDiff(root, change, mode),
+      error: null,
+      binary: false,
+    },
+    oldContent:
+      status === "A" || status === "?"
+        ? emptyGitContent()
+        : gitObjectContent(staged ? `HEAD:${oldPath}` : `:${oldPath}`),
+    newContent:
+      status === "D"
+        ? emptyGitContent()
+        : staged
+          ? gitObjectContent(`:${change.path}`)
+          : workingTreeContent(change.path),
+    fallbackError: "Failed to read file diff.",
+  };
+}
+
+async function buildCommitFileDiffTarget(root, hash, file) {
   const status = file.status || "M";
   const originalPath = file.originalPath ?? null;
-  const oldPath = originalPath && (status === "R" || status === "C") ? originalPath : file.path;
+  const oldPath = oldPathForDiff(file.path, originalPath, status);
   const shortHash = hash.slice(0, 7);
-  const unifiedDiff = await readCommitUnifiedDiff(root, hash, file);
-  const base = {
-    available: true,
-    root,
-    path: file.path,
-    originalPath,
-    staged: false,
-    status,
-    language: languageFromPath(file.path),
-    oldLabel: `${shortHash}^`,
-    newLabel: shortHash,
-    modeLabel: "commit",
-    commit: hash,
-    parent: `${hash}^`,
-    unifiedDiff,
-    error: null,
-    binary: false,
+  return {
+    base: {
+      available: true,
+      root,
+      path: file.path,
+      originalPath,
+      staged: false,
+      status,
+      language: languageFromPath(file.path),
+      oldLabel: `${shortHash}^`,
+      newLabel: shortHash,
+      modeLabel: "commit",
+      commit: hash,
+      parent: `${hash}^`,
+      unifiedDiff: await readCommitUnifiedDiff(root, hash, file),
+      error: null,
+      binary: false,
+    },
+    oldContent:
+      status === "A"
+        ? emptyGitContent()
+        : gitObjectContent(`${hash}^:${oldPath}`),
+    newContent:
+      status === "D"
+        ? emptyGitContent()
+        : gitObjectContent(`${hash}:${file.path}`),
+    fallbackError: "Failed to read commit file diff.",
   };
+}
 
+async function projectGitFileDiff(root, target) {
   try {
-    const oldContent = status === "A" ? "" : await readGitTextObject(root, `${hash}^:${oldPath}`);
-    const newContent = status === "D" ? "" : await readGitTextObject(root, `${hash}:${file.path}`);
+    const oldContent = await readGitContent(root, target.oldContent);
+    const newContent = await readGitContent(root, target.newContent);
     return {
-      ...base,
+      ...target.base,
       oldContent,
       newContent,
     };
   } catch (error) {
     return {
-      ...base,
+      ...target.base,
       available: false,
       oldContent: "",
       newContent: "",
-      error: error instanceof Error ? error.message : "Failed to read commit file diff.",
+      error: error instanceof Error ? error.message : target.fallbackError,
       binary: isBinaryReadError(error),
     };
   }
+}
+
+function selectedWorkingTreeStatus(change, mode) {
+  return (
+    (mode === "staged" ? change.stagedStatus : change.unstagedStatus) ??
+    change.stagedStatus ??
+    change.unstagedStatus ??
+    "M"
+  );
+}
+
+function oldPathForDiff(path, originalPath, status) {
+  return originalPath && (status === "R" || status === "C")
+    ? originalPath
+    : path;
+}
+
+function emptyGitContent() {
+  return { type: "empty" };
+}
+
+function gitObjectContent(spec) {
+  return { type: "gitObject", spec };
+}
+
+function workingTreeContent(path) {
+  return { type: "workingTree", path };
+}
+
+async function readGitContent(root, content) {
+  if (content.type === "empty") {
+    return "";
+  }
+  if (content.type === "gitObject") {
+    return await readGitTextObject(root, content.spec);
+  }
+  return await readWorkingTreeText(root, content.path);
 }
 
 function buildGitLogArgs(ref = null) {
@@ -368,7 +452,9 @@ async function gitRootInfoForCwd(cwd, root) {
   const prefixResult = await runGit(cwd, ["rev-parse", "--show-prefix"]);
   return {
     root,
-    treeRoot: prefixResult.ok ? gitTreeRootForCwd(cwd, prefixResult.stdout.trim()) : root,
+    treeRoot: prefixResult.ok
+      ? gitTreeRootForCwd(cwd, prefixResult.stdout.trim())
+      : root,
   };
 }
 
@@ -488,7 +574,9 @@ async function readWorkingTreeText(root, gitPath) {
 
 function bufferToGitPreviewText(buffer) {
   if (buffer.includes(0)) {
-    const error = new Error("Binary files cannot be previewed as side-by-side text.");
+    const error = new Error(
+      "Binary files cannot be previewed as side-by-side text.",
+    );
     error.code = "ERR_GIT_DIFF_BINARY";
     throw error;
   }
@@ -502,7 +590,14 @@ function isBinaryReadError(error) {
 async function readUnifiedDiff(root, change, mode) {
   const args =
     mode === "staged"
-      ? ["diff", "--cached", "--no-ext-diff", "--find-renames", "--", change.path]
+      ? [
+          "diff",
+          "--cached",
+          "--no-ext-diff",
+          "--find-renames",
+          "--",
+          change.path,
+        ]
       : ["diff", "--no-ext-diff", "--find-renames", "--", change.path];
   if (change.originalPath) {
     args.push(change.originalPath);
@@ -572,8 +667,11 @@ function parseGitStatus(stdout) {
     const unstagedCode = entry[1];
     const path = entry.slice(3);
     const renamed =
-      stagedCode === "R" || stagedCode === "C" || unstagedCode === "R" || unstagedCode === "C";
-    const originalPath = renamed ? entries[index + 1] ?? null : null;
+      stagedCode === "R" ||
+      stagedCode === "C" ||
+      unstagedCode === "R" ||
+      unstagedCode === "C";
+    const originalPath = renamed ? (entries[index + 1] ?? null) : null;
     if (renamed) {
       index += 1;
     }

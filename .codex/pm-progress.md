@@ -13,19 +13,24 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: continuous-code-organization-tranche-26
-  status: dispatched
+  status: owner_completed
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-26
   task_type: exclusive_large_production_code_quality_refactor
-  depends_on: main `98bb56df0`; user clarified "不要一直做小改动啊"; higher-priority compact/display regression has been installed effective
-  files: TBD by owner after candidate inventory; target must be a production module/cluster in `codex-rs/` or `apps/root-worker-prototype/`, not test-only helpers
-  base_commit: `98bb56df0`
-  next_action: Resumed after `compact-user-message-after-compact-display` was installed effective. Owner must evaluate at least three production candidates and select a larger coherent module-boundary/code-organization tranche. Acceptable work should consolidate a real production seam across a cohesive module/cluster, not just rename/extract tiny helpers. If no suitable larger tranche is safe from current main, pause with evidence rather than shipping another small cleanup.
+  depends_on: main `494ac5162`; user clarified "不要一直做小改动啊"; higher-priority compact/display regression has been installed effective
+  files: `apps/root-worker-prototype/electron/gitPanel.cjs`, `apps/root-worker-prototype/electron/gitPanel.test.cjs`, `.codex/pm-progress.md`
+  base_commit: `494ac5162`
+  next_action: Ready for PM merge. No immediate Runtime Capsule restart required; this is an Electron Git panel internal data-boundary refactor with no intended user-visible workflow, compact/display, Browser/Terminal lifecycle, provider, or Runtime Capsule behavior change.
   constraints: Preserve behavior, provider-visible tool/schema/descriptions, JSONRPC/API method params/errors unless explicitly justified and tested, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, and external/native provider parity. Tests may be added/updated only as regression support for the production refactor.
-  validation: pending owner inventory, design, reviewer review, focused tests, formatting, `git diff --check`, and relevant debug build.
-  commit: pending
+  selection: Owner screened production candidates and selected `apps/root-worker-prototype/electron/gitPanel.cjs` because `readGitFileDiff` and `readGitCommitFileDiff` both mixed cwd validation, Git status/name-status collection, requested path/originalPath matching, rename/copy old-path derivation, label/status response projection, content loading, unified diff collection, and binary/error downgrading inside endpoint handlers. Deferred `apps/root-worker-prototype/electron/appServerClient.cjs` mobile launch/default home handling because it is closer to app-server launch, mobile listener, packaged helper, and Runtime Capsule startup semantics. Deferred `codex-rs/app-server/src/request_processors/account_processor.rs` because auth login/logout notification orchestration touches external auth, cloud requirements, plugin refresh, and exact auth error text. Rejected `marketplace_processor.rs` for this tranche because it is production code but too small and already has straightforward add/remove/upgrade projections, making it closer to the small-helper cleanup the user asked to avoid.
+  production_issue: Git panel diff readers had a shared production seam but no semantic owner for it: target selection and response projection were duplicated across working-tree and commit diff paths, so future changes to originalPath filtering, add/delete empty-content behavior, labels, or binary downgrade could easily drift between the two endpoint paths.
+  implementation: Introduced module-private `normalizeGitFileDiffSelection`, working-tree/commit target lookup helpers, `buildWorkingTreeFileDiffTarget`, `buildCommitFileDiffTarget`, and `projectGitFileDiff` with typed content descriptors for empty, Git object, and working-tree content. The public readers now perform request validation and Git data collection, then delegate diff response projection through the shared target/projector boundary. Added focused CJS tests for originalPath mismatch filtering, commit files read failure returning typed unavailable diff, and commit added/deleted empty-content projection.
+  reviewer_result: Fixed reviewer `/self/owner_main/reviewer` first found a blocking regression where the commit-files failure branch still referenced removed locals `requestedPath`/`requestedOriginalPath`, which would have thrown `ReferenceError` instead of returning the existing unavailable diff. Owner fixed it to use `selection.path`/`selection.originalPath` and added the missing failure-path test. Reviewer then approved with no blocking findings.
+  validation: Owner validation passed: `./node_modules/.bin/prettier --check apps/root-worker-prototype/electron/gitPanel.cjs apps/root-worker-prototype/electron/gitPanel.test.cjs`; `node --test apps/root-worker-prototype/electron/gitPanel.test.cjs` (25 passed); `git diff --check`. Initial prettier check failed before mechanical format write; after `./node_modules/.bin/prettier --write ...`, final prettier check passed. Rust/app-server build not run because only Electron Git panel CJS files were touched. Installed self-debug not required because no visible UI/interaction behavior was intended to change.
+  risk: Low-to-medium Electron production refactor contained within Git panel data reading/projection. No Git command shapes, IPC/API method names, response field names, error text, path validation rules, provider-visible schema, compact/display path, thread lifecycle/read/list/archive/status, Browser/Terminal lifecycle, Runtime Capsule, or Launcher semantics are intended to change. Regression coverage exercises staged/unstaged content sources, rename originalPath matching, binary downgrade, commit files failure, and add/delete empty-content projection.
+  commit: owner commit pending; final hash to be reported in owner delivery
 
 - id: compact-user-message-after-compact-display
   status: installed_effective
