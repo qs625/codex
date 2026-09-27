@@ -98,7 +98,8 @@ test("keeps built-in commands visible when no skills are available", () => {
       commandId: "clear",
       token: "clear",
       label: "/clear",
-      description: "Archive this project session and start a fresh project chat",
+      description:
+        "Archive this project session and start a fresh project chat",
       aliases: ["reset", "new"],
     },
     {
@@ -219,6 +220,44 @@ test("does not show workflow suggestions when no workflows are discovered", () =
   });
 
   assert.deepEqual(suggestions, []);
+});
+
+test("returns no suggestions when the slash query is inactive", () => {
+  const suggestions = buildComposerSlashSuggestions({
+    availableSkills: [makeSkill()],
+    availableWorkflows: [makeWorkflow()],
+    draftSkills: [],
+    query: null,
+  });
+
+  assert.deepEqual(suggestions, []);
+});
+
+test("keeps workflow and skill section order when commands are suppressed", () => {
+  const workflow = makeWorkflow({
+    id: "quick-check",
+    inputs: {},
+  });
+  const skill = makeSkill({ name: "quick-check-skill" });
+  const suggestions = buildComposerSlashSuggestions({
+    availableSkills: [skill],
+    availableWorkflows: [workflow],
+    commandsEnabled: false,
+    draftSkills: [],
+    query: "quick",
+  });
+
+  assert.deepEqual(suggestions, [
+    {
+      type: "workflow",
+      workflow,
+      draftText: "Use the quick-check workflow.",
+    },
+    {
+      type: "skill",
+      skill,
+    },
+  ]);
 });
 
 test("does not suggest skills already attached to the draft", () => {
