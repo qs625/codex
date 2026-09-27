@@ -13,7 +13,7 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: compact-live-output-after-init-context
-  status: capsule_built_pending_restart
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -22,11 +22,11 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `e3ee8d2c3`; user reported compact output stops after compact summary and init context
   files: `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`
   base_commit: `e3ee8d2c3`
-  next_action: Request Runtime Capsule restart for built capsule `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81`, then self-debug installed client because this is a user-visible frontend display fix.
+  next_action: Installed effective in Runtime Capsule `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81`. No further action for this bug unless user reproduces a remaining compact/display issue.
   root_cause: Frontend compact merge guard treated untimed live continuation items/deltas in an active in-flight compact turn as stale after the compact boundary, so compact summary/init context displayed but later live output was dropped. Backend `thread/read` projection and conversation compact cell build retained the after-compact suffix, so the fix stayed in frontend live merge.
   implementation: Added a typed lifecycle helper that only allows untimed live items/deltas when the thread is active and the turn is still in flight. Explicitly timestamped items still go through the compact boundary timestamp check. Added regression tests for live item output after init context, live agent delta after init context, and timestamped stale item rejection at the compact boundary.
   validation: Fixed reviewer `/self/owner_dev_2/reviewer` approved after a first review finding that active/running allowance must not override explicit stale timestamps; owner added the narrowed helper and negative test. Owner validation passed: `pnpm --dir apps/root-worker-prototype exec prettier --write src/lib/thread.ts src/lib/thread.test.ts`; `pnpm exec prettier --check apps/root-worker-prototype/src/lib/thread.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (249 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `git diff --check HEAD~1 HEAD`. PM validation after merge passed: `pnpm exec prettier --check apps/root-worker-prototype/src/lib/thread.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (249 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `git diff --check e3ee8d2c3..HEAD`. Existing Node `[DEP0205] module.register()` warning observed.
-  commit: owner `919d60900`; merge `d748a27de`; progress `40ee58f4e`; built capsule `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81`; activation `capsule-1790491495873-15dcbef9c7b32525`; pending restart
+  commit: owner `919d60900`; merge `d748a27de`; progress `40ee58f4e`; build record `4b1392380`; built capsule `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81`; activation `capsule-1790491495873-15dcbef9c7b32525`; restart `call_79Z9vlZVD2t8Zb0drjtxp2e2`; installed effective; self-debug confirmed launcher `control.json` selected/externalCurrent/activeLaunch release all match `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81`, payload pid `8938` listens on CDP `127.0.0.1:9222`, renderer URL is under `runtime-launcher/artifacts/c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81`, Electron UA includes `Electron/37.10.3`, `/self` workspace and Browser panel loaded, and console reported 0 errors / 0 warnings
 
 - id: continuous-code-organization-tranche-20
   status: paused_wip
