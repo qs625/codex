@@ -12,6 +12,66 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: module-refactor-installed-artifact-update
+  status: canceled_no_change
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: refactor/installed-artifact-update-module-1
+  task_type: parallel_module_refactor
+  depends_on: main `4a4cdfee2f`; user authorized choosing modules and parallel refactors
+  files: planned scope `apps/root-worker-prototype/electron/installedArtifactUpdate.cjs`, `apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs` and directly related local helpers only
+  base_commit: `4a4cdfee2f`
+  next_action: Canceled before implementation because user clarified preference for backend/frontend feature modules, then narrowed to backend module architecture. No code changes.
+  validation: owner_dev reported clean checkout and no WIP
+  commit: none
+
+- id: module-refactor-app-server-request-processor
+  status: superseded_by_backend_module_workflow
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: refactor/app-server-request-processor-module-1
+  task_type: parallel_module_refactor
+  depends_on: main `4a4cdfee2f`; user authorized choosing modules and parallel refactors
+  files: planned scope one low-risk app-server request processor module to be selected after owner inventory; avoid thread read/list/archive/status, external_agent_config, provider-visible schema/error text, and recent cleanup files
+  base_commit: `4a4cdfee2f`
+  next_action: Superseded by `backend-module-workflow-refactor`; owner_dev_2 reported one-file workflow_processor WIP from the old brief, to be re-evaluated under the stricter architecture brief.
+  validation: owner_dev_2 pause report received; old WIP is unsubmitted and safe to keep/rework/discard
+  commit: none
+
+- id: backend-module-catalog-refactor
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: refactor/backend-catalog-module-1
+  task_type: backend_module_architecture_refactor
+  depends_on: main `4a4cdfee2f`; user clarified backend modules can be refactored in parallel and wants real architecture issues, not helper churn
+  files: `codex-rs/app-server/src/request_processors/catalog_processor.rs`, `codex-rs/app-server/tests/suite/thread_provider_list.rs`
+  base_commit: `4a4cdfee2f`
+  next_action: No immediate Runtime Capsule restart; backend behavior-preserving architecture refactor with focused tests, to be delivered with the next Runtime Capsule batch.
+  architecture: Catalog processor currently hosts models, thread providers, agent types, features, skills, hooks, and collaboration modes. The real issue selected for this tranche was that `model/list` and `threadProvider/list` both mixed config loading, supported-model collection, configured-model inclusion, and response projection. Owner introduced module-private `ModelCatalogSnapshot` to represent collected model catalog data while keeping each endpoint's response projection explicit.
+  selection: Selected model catalog source snapshot because it separates data collection from endpoint projection with low risk. Deferred pagination helper because it is mostly boilerplate, and deferred skills/hooks source planning because it crosses plugin/workspace setting/warning aggregation semantics.
+  validation: Fixed reviewer `/self/owner_dev/reviewer` approved, including a second review after a missing `Model` import was fixed. Owner validation passed: `rustfmt` and `rustfmt --check` on touched files with existing nightly-only warning; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all model_list` (11 passed); `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all thread_provider_list` (2 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; `git diff --check`. PM validation after merge passed: `git diff --check 4a4cdfee2f..HEAD`; `rustfmt --edition 2024 --check codex-rs/app-server/src/request_processors/workflow_processor.rs codex-rs/app-server/src/request_processors/catalog_processor.rs codex-rs/app-server/tests/suite/thread_provider_list.rs`; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all model_list -- --nocapture` (11 passed); `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all thread_provider_list -- --nocapture` (2 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`. Existing linker `__eh_frame`, rustfmt `imports_granularity`, and `proc-macro-error2` future-incompat warnings observed.
+  commit: owner `3171fe309`; merge `ec067a0cc`; pending capsule delivery
+
+- id: backend-module-workflow-refactor
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: refactor/backend-workflow-module-1
+  task_type: backend_module_architecture_refactor
+  depends_on: main `4a4cdfee2f`; user clarified backend modules can be refactored in parallel and wants real architecture issues, not helper churn
+  files: planned scope `codex-rs/app-server/src/request_processors/workflow_processor.rs` plus focused tests only if needed
+  base_commit: `4a4cdfee2f`
+  next_action: No immediate Runtime Capsule restart; backend behavior-preserving architecture refactor with focused tests, to be delivered with the next Runtime Capsule batch.
+  architecture: Workflow processor operations separate into list/describe read-only discovery, status read-only projection, start/resume mutation with subscribe-before-runtime-call and terminal update listening, and abort mutation with direct update broadcast only. The real issue selected was notification ownership being embedded in handlers, making future mutation operations easy to implement without immediate broadcast or terminal filtering.
+  selection: Selected `WorkflowRunNotifications` as module-private owner for immediate and terminal run notifications. Deferred response projection split because `map_workflow_run` is already centralized, and deferred generic operation dispatch because it could hide start/resume/abort special semantics.
+  validation: Fixed reviewer `/self/owner_dev_2/reviewer` approved after two rounds, confirming notification ordering, run_id/non-terminal/Lagged filtering, abort direct-update-only semantics, and status read-only projection. Owner validation passed: `rustfmt --edition 2024` and `rustfmt --edition 2024 --check` on `workflow_processor.rs` with existing nightly-only warning; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server workflow_processor::tests` (5 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`; `git diff --check HEAD~1 HEAD`. PM validation after merge passed: `git diff --check 4a4cdfee2f..HEAD`; `rustfmt --edition 2024 --check` on touched backend files; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server workflow_processor::tests -- --nocapture` (5 passed); `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`. Existing linker `__eh_frame`, rustfmt `imports_granularity`, and `proc-macro-error2` future-incompat warnings observed.
+  commit: owner `36e256471`; merge `c9c552629`; pending capsule delivery
+
 - id: continuous-code-organization-tranche-21
   status: paused_no_viable_code_change
   owner: /self/owner_main
