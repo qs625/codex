@@ -40,8 +40,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct WorkflowRequestProcessor {
     config_manager: ConfigManager,
-    outgoing: Arc<OutgoingMessageSender>,
     workflow_api: Arc<dyn WorkflowApi>,
+    run_notifications: WorkflowRunNotifications,
 }
 
 impl WorkflowRequestProcessor {
@@ -52,8 +52,8 @@ impl WorkflowRequestProcessor {
     ) -> Self {
         Self {
             config_manager,
-            outgoing,
             workflow_api,
+            run_notifications: WorkflowRunNotifications::new(outgoing),
         }
     }
 
@@ -119,7 +119,10 @@ impl WorkflowRequestProcessor {
             .await
             .map_err(invalid_request)?;
         Ok(WorkflowStartResponse {
-            run: self.finish_started_run(run, updates).await,
+            run: self
+                .run_notifications
+                .finish_started_run(run, updates)
+                .await,
         })
     }
 
@@ -156,7 +159,10 @@ impl WorkflowRequestProcessor {
             .await
             .map_err(invalid_request)?;
         Ok(WorkflowResumeResponse {
-            run: self.finish_started_run(run, updates).await,
+            run: self
+                .run_notifications
+                .finish_started_run(run, updates)
+                .await,
         })
     }
 
@@ -176,7 +182,7 @@ impl WorkflowRequestProcessor {
             .await
             .map_err(invalid_request)?;
         Ok(WorkflowAbortResponse {
-            run: self.finish_run_update(run).await,
+            run: self.run_notifications.finish_run_update(run).await,
         })
     }
 
@@ -206,15 +212,16 @@ impl WorkflowRequestProcessor {
             ),
         )
     }
+}
 
-    async fn send_run_updated(&self, run: WorkflowRun) {
-        self.outgoing
-            .send_server_notification(ServerNotification::WorkflowRunUpdated(
-                WorkflowRunUpdatedNotification {
-                    run: map_workflow_run(run),
-                },
-            ))
-            .await;
+#[derive(Clone)]
+struct WorkflowRunNotifications {
+    outgoing: Arc<OutgoingMessageSender>,
+}
+
+impl WorkflowRunNotifications {
+    fn new(outgoing: Arc<OutgoingMessageSender>) -> Self {
+        Self { outgoing }
     }
 
     async fn finish_started_run(
@@ -234,6 +241,16 @@ impl WorkflowRequestProcessor {
         map_workflow_run(response_run)
     }
 
+    async fn send_run_updated(&self, run: WorkflowRun) {
+        self.outgoing
+            .send_server_notification(ServerNotification::WorkflowRunUpdated(
+                WorkflowRunUpdatedNotification {
+                    run: map_workflow_run(run),
+                },
+            ))
+            .await;
+    }
+
     fn spawn_terminal_run_notification(
         &self,
         run_id: String,
@@ -247,8 +264,7 @@ impl WorkflowRequestProcessor {
                     Err(WorkflowRunUpdateError::Lagged(_)) => continue,
                     Err(WorkflowRunUpdateError::Closed) => break,
                 };
-                if run.run_id == run_id
-                    && is_terminal_workflow_run_notification_status(run.status)
+                if run.run_id == run_id && is_terminal_workflow_run_notification_status(run.status)
                 {
                     outgoing
                         .send_server_notification(ServerNotification::WorkflowRunUpdated(
@@ -355,6 +371,93 @@ fn map_workflow_source(source: WorkflowSource) -> ApiWorkflowSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outgoing_message::OutgoingEnvelope;
+    use crate::outgoing_message::OutgoingMessage;
+    use crate::outgoing_message::OutgoingMessageSender;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::pin::Pin;
+    use tokio::sync::mpsc;
+
+    struct TestWorkflowRunUpdates {
+        runs: VecDeque<Result<WorkflowRun, WorkflowRunUpdateError>>,
+    }
+
+    impl TestWorkflowRunUpdates {
+        fn new(runs: Vec<Result<WorkflowRun, WorkflowRunUpdateError>>) -> Self {
+            Self { runs: runs.into() }
+        }
+    }
+
+    impl codex_workflow_api::WorkflowRunUpdateReceiver for TestWorkflowRunUpdates {
+        fn recv(
+            &mut self,
+        ) -> Pin<Box<dyn Future<Output = Result<WorkflowRun, WorkflowRunUpdateError>> + Send + '_>>
+        {
+            Box::pin(async move {
+                self.runs
+                    .pop_front()
+                    .unwrap_or(Err(WorkflowRunUpdateError::Closed))
+            })
+        }
+    }
+
+    fn test_notifications() -> (WorkflowRunNotifications, mpsc::Receiver<OutgoingEnvelope>) {
+        let (tx, rx) = mpsc::channel::<OutgoingEnvelope>(8);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        (WorkflowRunNotifications::new(outgoing), rx)
+    }
+
+    fn test_workflow_run(run_id: &str, status: WorkflowRunStatus) -> WorkflowRun {
+        WorkflowRun {
+            run_id: run_id.to_string(),
+            workflow: WorkflowSummary {
+                id: "workflow".to_string(),
+                name: "Workflow".to_string(),
+                description: "A workflow".to_string(),
+                source: WorkflowSource::Project,
+                path: "/tmp/workflow".to_string(),
+                entry: "WORKFLOW.md".to_string(),
+                version: Some("1".to_string()),
+                when_to_use: vec!["test".to_string()],
+                inputs: BTreeMap::new(),
+                instructions: "instructions".to_string(),
+            },
+            status,
+            runner_status: "runner".to_string(),
+            inputs: json!({ "input": true }),
+            created_at: 1,
+            updated_at: 2,
+            revision: 3,
+            message: "message".to_string(),
+            abort_reason: None,
+            bindings: BTreeMap::new(),
+            output: None,
+            error: None,
+            snapshot_path: None,
+        }
+    }
+
+    async fn recv_workflow_run_notification(
+        rx: &mut mpsc::Receiver<OutgoingEnvelope>,
+    ) -> ApiWorkflowRun {
+        let envelope = rx.recv().await.expect("expected workflow notification");
+        let OutgoingEnvelope::Broadcast { message } = envelope else {
+            panic!("expected broadcast workflow notification");
+        };
+        let OutgoingMessage::AppServerNotification(ServerNotification::WorkflowRunUpdated(
+            notification,
+        )) = message
+        else {
+            panic!("expected workflow run updated notification");
+        };
+        notification.run
+    }
 
     #[test]
     fn workflow_run_terminal_notification_status_excludes_abort() {
@@ -370,5 +473,98 @@ mod tests {
         assert!(!is_terminal_workflow_run_notification_status(
             WorkflowRunStatus::Aborted
         ));
+    }
+
+    #[test]
+    fn workflow_run_projection_preserves_status_response_shape() {
+        let mut run = test_workflow_run("run-1", WorkflowRunStatus::Completed);
+        run.abort_reason = Some("stopped".to_string());
+        run.output = Some(json!({ "ok": true }));
+        run.error = Some("error".to_string());
+        run.snapshot_path = Some("/tmp/snapshot.json".to_string());
+
+        let response = map_workflow_run(run);
+
+        assert_eq!(response.run_id, "run-1");
+        assert_eq!(response.workflow.id, "workflow");
+        assert_eq!(response.status, ApiWorkflowRunStatus::Completed);
+        assert_eq!(response.runner_status, "runner");
+        assert_eq!(response.inputs, json!({ "input": true }));
+        assert_eq!(response.abort_reason.as_deref(), Some("stopped"));
+        assert_eq!(response.output, Some(json!({ "ok": true })));
+        assert_eq!(response.error.as_deref(), Some("error"));
+        assert_eq!(
+            response.snapshot_path.as_deref(),
+            Some("/tmp/snapshot.json")
+        );
+    }
+
+    #[tokio::test]
+    async fn started_run_notification_emits_current_run_before_terminal_update() {
+        let (notifications, mut rx) = test_notifications();
+        let running = test_workflow_run("run-1", WorkflowRunStatus::Running);
+        let completed = test_workflow_run("run-1", WorkflowRunStatus::Completed);
+
+        let response = notifications
+            .finish_started_run(
+                running.clone(),
+                Box::new(TestWorkflowRunUpdates::new(vec![Ok(completed.clone())])),
+            )
+            .await;
+
+        assert_eq!(response.run_id, "run-1");
+        assert_eq!(response.status, ApiWorkflowRunStatus::Running);
+        assert_eq!(
+            recv_workflow_run_notification(&mut rx).await,
+            map_workflow_run(running)
+        );
+        assert_eq!(
+            recv_workflow_run_notification(&mut rx).await,
+            map_workflow_run(completed)
+        );
+    }
+
+    #[tokio::test]
+    async fn started_run_terminal_subscription_filters_run_id_and_non_terminal_updates() {
+        let (notifications, mut rx) = test_notifications();
+        let running = test_workflow_run("run-1", WorkflowRunStatus::Running);
+        let other_completed = test_workflow_run("run-2", WorkflowRunStatus::Completed);
+        let same_running = test_workflow_run("run-1", WorkflowRunStatus::Running);
+        let failed = test_workflow_run("run-1", WorkflowRunStatus::Failed);
+
+        notifications
+            .finish_started_run(
+                running,
+                Box::new(TestWorkflowRunUpdates::new(vec![
+                    Ok(other_completed),
+                    Ok(same_running),
+                    Err(WorkflowRunUpdateError::Lagged(1)),
+                    Ok(failed.clone()),
+                ])),
+            )
+            .await;
+
+        let immediate = recv_workflow_run_notification(&mut rx).await;
+        assert_eq!(immediate.run_id, "run-1");
+        assert_eq!(immediate.status, ApiWorkflowRunStatus::Running);
+        assert_eq!(
+            recv_workflow_run_notification(&mut rx).await,
+            map_workflow_run(failed)
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_run_update_emits_once_without_terminal_subscription() {
+        let (notifications, mut rx) = test_notifications();
+        let aborted = test_workflow_run("run-1", WorkflowRunStatus::Aborted);
+
+        let response = notifications.finish_run_update(aborted.clone()).await;
+
+        assert_eq!(response.status, ApiWorkflowRunStatus::Aborted);
+        assert_eq!(
+            recv_workflow_run_notification(&mut rx).await,
+            map_workflow_run(aborted)
+        );
+        assert!(rx.try_recv().is_err());
     }
 }
