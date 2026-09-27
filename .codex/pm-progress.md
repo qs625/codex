@@ -29,19 +29,22 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `4a2369c33` + `2e46a4f76`; merges `05051257b` + `bc3b6f387`; built capsule `sha256:1a3e17f6a1ae1fdcc6760c9004224ecc1c5dc0600ebff06350b6c2b9486473ef`; restart `call_czsl8iUM1UL2IsSwXSDSF90m`; installed effective
 
 - id: continuous-code-organization-tranche-22
-  status: paused_ready_to_merge
+  status: merged_pending_capsule_delivery
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-22
   task_type: exclusive_code_quality_refactor
-  depends_on: main `955a4a52f`; user asked to continue code optimization/refactoring with goal of simplifying code and improving quality; paused when compact display regression became higher priority
+  depends_on: main `955a4a52f`; user asked to continue code optimization/refactoring with goal of simplifying code and improving quality
   files: `codex-rs/app-server/tests/suite/client_metadata.rs`, `.codex/pm-progress.md`
   base_commit: `955a4a52f`
-  next_action: Optional later PM merge of owner commit `37d33f8a42` after confirming it still applies to current main; do not resume before user-visible compact fix is fully closed.
-  selection: Owner selected suite-private client metadata test driver cleanup after screening candidates. It extracts repeated MCP initialization, default `thread/start`, and `turn/start` / `turn/steer` typed response plumbing while keeping metadata payloads and request assertions explicit.
-  validation: Owner reported fixed reviewer approval and validation passed: rustfmt, rustfmt --check, git diff --check, focused `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all client_metadata -- --nocapture` (3 passed), and `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`.
-  commit: owner `37d33f8a42`; not merged
+  next_action: No immediate Runtime Capsule restart; app-server integration test-support helper refactor with no intended production/runtime/protocol/schema/provider-visible behavior change, to be delivered with the next Runtime Capsule batch.
+  selection: Owner screened candidates and selected `codex-rs/app-server/tests/suite/client_metadata.rs` because all three tests repeatedly performed the same MCP initialization, default `thread/start` request/typed response decode, and `turn/start` or `turn/steer` response decode around one coherent client-metadata forwarding contract. The extracted helpers stay suite-private and only wrap protocol driver plumbing; each test still declares its metadata payload, text input, notification ordering, request-count waits, HTTP/websocket metadata extraction, and assertions explicitly. Deferred `thread_shell_command.rs` because it is coherent but only two tests and mixes active-turn approval ordering with shell-command notifications. Deferred `thread_unarchive.rs` because archive/unarchive path assertions are persisted-file semantics and should remain explicit. Deferred frontend `runConfig` fixture sharing because it is small cross-file test helper churn. Deferred websocket connection helper cleanup because it is connection/lifecycle timing-sensitive.
+  implementation: Added suite-private `init_mcp`, generic `read_response`, `start_default_thread`, `start_turn`, and `steer_turn` helpers in `client_metadata.rs`, then replaced repeated request/response decode blocks without changing payloads, request log assertions, websocket warmup assertions, or completion/started notification waits.
+  reviewer_result: `/self/owner_main/reviewer` approved. Reviewer found no blocking issues and confirmed helpers preserve MCP initialization, `RequestId::Integer` response waits, `DEFAULT_READ_TIMEOUT`, `to_response` typed decode, default `thread/start`, explicit metadata payloads, request-count waits, notification ordering, and HTTP/websocket assertions.
+  validation: Owner validation passed before pause: `rustfmt codex-rs/app-server/tests/suite/client_metadata.rs` -> pass with existing stable-toolchain warning about nightly-only `imports_granularity`; `rustfmt --check codex-rs/app-server/tests/suite/client_metadata.rs` -> pass with same warning; `git diff --check -- .codex/pm-progress.md codex-rs/app-server/tests/suite/client_metadata.rs` -> pass; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all client_metadata -- --nocapture` -> pass, 3 tests; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> pass. PM resumed after compact display regression was installed effective, merged the owner commit into current main, and will rerun focused validation on the merged result. Cargo emitted existing linker/future-incompat warnings unrelated to this test-only refactor.
+  risk: Test-only helper extraction in one suite file; no production, schema, persisted history, or provider-visible behavior change. Main residual risk is helper abstraction hiding request/response plumbing, covered by reviewer and focused suite.
+  commit: owner `37d33f8a42`; merge pending final hash
 
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change

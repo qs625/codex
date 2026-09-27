@@ -13,6 +13,7 @@ use app_test_support::to_response;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;
@@ -21,6 +22,41 @@ use tokio::time::timeout;
 // Bazel CI can spend tens of seconds starting app-server subprocesses or
 // processing turn RPCs under load.
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn init_mcp(codex_home: &Path) -> Result<McpProcess> {
+    let mut mcp = McpProcess::new(codex_home).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn read_response<T>(mcp: &mut McpProcess, request_id: i64) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    to_response::<T>(response)
+}
+
+async fn start_default_thread(mcp: &mut McpProcess) -> Result<ThreadStartResponse> {
+    let request_id = mcp
+        .send_thread_start_request(ThreadStartParams::default())
+        .await?;
+    read_response::<ThreadStartResponse>(mcp, request_id).await
+}
+
+async fn start_turn(mcp: &mut McpProcess, params: TurnStartParams) -> Result<TurnStartResponse> {
+    let request_id = mcp.send_turn_start_request(params).await?;
+    read_response::<TurnStartResponse>(mcp, request_id).await
+}
+
+async fn steer_turn(mcp: &mut McpProcess, params: TurnSteerParams) -> Result<TurnSteerResponse> {
+    let request_id = mcp.send_turn_steer_request(params).await?;
+    read_response::<TurnSteerResponse>(mcp, request_id).await
+}
 
 #[tokio::test]
 async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result<()> {
@@ -44,25 +80,16 @@ async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result
         /*supports_websockets*/ false,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let thread_req = mcp
-        .send_thread_start_request(ThreadStartParams::default())
-        .await?;
-    let thread_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ThreadStartResponse { thread, .. } = start_default_thread(&mut mcp).await?;
 
     let client_metadata = HashMap::from([
         ("fiber_run_id".to_string(), "fiber-start-123".to_string()),
         ("origin".to_string(), "gaas".to_string()),
     ]);
-    let turn_req = mcp
-        .send_turn_start_request(TurnStartParams {
+    let TurnStartResponse { turn } = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id,
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -70,14 +97,9 @@ async fn turn_start_forwards_client_metadata_to_responses_request_v2() -> Result
             }],
             responsesapi_client_metadata: Some(client_metadata.clone()),
             ..Default::default()
-        })
-        .await?;
-    let turn_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+        },
     )
-    .await??;
-    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+    .await?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -126,23 +148,14 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
         /*supports_websockets*/ false,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let thread_req = mcp
-        .send_thread_start_request(ThreadStartParams::default())
-        .await?;
-    let thread_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ThreadStartResponse { thread, .. } = start_default_thread(&mut mcp).await?;
 
     let start_metadata =
         HashMap::from([("fiber_run_id".to_string(), "fiber-start-123".to_string())]);
-    let turn_req = mcp
-        .send_turn_start_request(TurnStartParams {
+    let TurnStartResponse { turn } = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Run sleep".to_string(),
@@ -150,14 +163,9 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
             }],
             responsesapi_client_metadata: Some(start_metadata.clone()),
             ..Default::default()
-        })
-        .await?;
-    let turn_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+        },
     )
-    .await??;
-    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+    .await?;
     let turn_id = turn.id.clone();
 
     timeout(
@@ -171,8 +179,9 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
         ("fiber_run_id".to_string(), "fiber-steer-456".to_string()),
         ("origin".to_string(), "gaas".to_string()),
     ]);
-    let steer_req = mcp
-        .send_turn_steer_request(TurnSteerParams {
+    let _turn: TurnSteerResponse = steer_turn(
+        &mut mcp,
+        TurnSteerParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Focus on the failure".to_string(),
@@ -180,14 +189,9 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
             }],
             responsesapi_client_metadata: Some(steer_metadata.clone()),
             expected_turn_id: turn_id.clone(),
-        })
-        .await?;
-    let steer_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(steer_req)),
+        },
     )
-    .await??;
-    let _turn: TurnSteerResponse = to_response::<TurnSteerResponse>(steer_resp)?;
+    .await?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -248,25 +252,16 @@ async fn turn_start_forwards_client_metadata_to_responses_websocket_request_body
         /*supports_websockets*/ true,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let thread_req = mcp
-        .send_thread_start_request(ThreadStartParams::default())
-        .await?;
-    let thread_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    let mut mcp = init_mcp(codex_home.path()).await?;
+    let ThreadStartResponse { thread, .. } = start_default_thread(&mut mcp).await?;
 
     let client_metadata = HashMap::from([
         ("fiber_run_id".to_string(), "fiber-start-123".to_string()),
         ("origin".to_string(), "gaas".to_string()),
     ]);
-    let turn_req = mcp
-        .send_turn_start_request(TurnStartParams {
+    let TurnStartResponse { turn } = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id,
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -274,14 +269,9 @@ async fn turn_start_forwards_client_metadata_to_responses_websocket_request_body
             }],
             responsesapi_client_metadata: Some(client_metadata),
             ..Default::default()
-        })
-        .await?;
-    let turn_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+        },
     )
-    .await??;
-    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+    .await?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
