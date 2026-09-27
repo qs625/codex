@@ -972,7 +972,7 @@ export function updateThreadItem(
   if (
     threadHasCompactItem(thread) &&
     !isExactSummaryItemForLatestCompact(thread, nextItem) &&
-    !canCreateUntimedLiveCommandAfterCompact(thread, nextItem, timestamps) &&
+    !canCreateUntimedLiveTurnItemAfterCompact(thread, nextItem, timestamps) &&
     !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
   ) {
     return thread;
@@ -1330,7 +1330,7 @@ function canAppendUntimedLiveItemAfterCompactInTurn(
   );
 }
 
-function canCreateUntimedLiveCommandAfterCompact(
+function canCreateUntimedLiveTurnItemAfterCompact(
   thread: Thread,
   item?: ThreadItem,
   timestamps?: {
@@ -1338,12 +1338,16 @@ function canCreateUntimedLiveCommandAfterCompact(
     completedAtMs?: number | null;
   },
 ) {
+  if (!isThreadActive(thread) || hasExplicitItemTimestamp(item, timestamps)) {
+    return false;
+  }
+  if (item && isUserMessageItem(item)) {
+    return true;
+  }
   return (
-    isThreadActive(thread) &&
     item?.type === "commandExecution" &&
     isRunningCommandExecutionStatus(item.status) &&
-    hasUntimedInFlightTurnAfterLatestCompact(thread) &&
-    !hasExplicitItemTimestamp(item, timestamps)
+    hasUntimedInFlightTurnAfterLatestCompact(thread)
   );
 }
 
