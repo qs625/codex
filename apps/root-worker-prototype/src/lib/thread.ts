@@ -262,7 +262,8 @@ export function pickBootstrapInitialProjectThread(
   }
 
   const rememberedThread = options.rememberedThreadId
-    ? (threads.find((thread) => thread.id === options.rememberedThreadId) ?? null)
+    ? (threads.find((thread) => thread.id === options.rememberedThreadId) ??
+      null)
     : null;
   if (rememberedThread) {
     return rememberedThread;
@@ -588,7 +589,9 @@ export function revealThreadInSidebarState({
         ? collapsedProjectIds.filter((value) => value !== project.id)
         : [...collapsedProjectIds],
     expandedProjectId:
-      project && !targetIsProjectRoot && collapsedProjectIds.includes(project.id)
+      project &&
+      !targetIsProjectRoot &&
+      collapsedProjectIds.includes(project.id)
         ? project.id
         : null,
   };
@@ -619,7 +622,7 @@ export function getAgentRoleLabel(thread: Thread) {
 export function getRootThreadConversationTitle(thread: Thread) {
   const projectCwd = normalizeProjectCwd(thread.cwd);
   return isProjectRootThread(thread) && projectCwd
-    ? thread.name ?? projectLabelFromCwd(projectCwd)
+    ? (thread.name ?? projectLabelFromCwd(projectCwd))
     : getThreadLabel(thread);
 }
 
@@ -755,10 +758,7 @@ export function updateThreadTurnNotification(
       items: turn.items.filter(isUserMessageItem),
     });
   }
-  if (
-    method === "turn/completed" &&
-    canMergeTurnSnapshotItems(thread, turn)
-  ) {
+  if (method === "turn/completed" && canMergeTurnSnapshotItems(thread, turn)) {
     return updateThreadTurn(thread, turn);
   }
   return updateThreadTurnLifecycle(thread, turn);
@@ -822,7 +822,8 @@ export function updateThreadItem(
   const nextItemIsInitContext = initContextItemKey(nextItem) !== null;
   let shouldUpdateActiveCommandItems = false;
   const finalize = (updated: Thread) => {
-    const reconciled = reconcileThreadCommandExecutionExitNotifications(updated);
+    const reconciled =
+      reconcileThreadCommandExecutionExitNotifications(updated);
     return shouldUpdateActiveCommandItems
       ? applyActiveCommandItemUpdate(reconciled, nextItem)
       : reconciled;
@@ -858,6 +859,12 @@ export function updateThreadItem(
         nextItem.type !== "contextCompaction" &&
         !nextItemIsInitContext &&
         !isSummaryItemForLatestCompact(thread, nextItem) &&
+        !canAppendUntimedLiveItemAfterCompactInTurn(
+          thread,
+          turn,
+          nextItem,
+          timestamps,
+        ) &&
         !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
       ) {
         return turn;
@@ -1247,7 +1254,8 @@ export function appendAgentDelta(
         if (
           !hasItem &&
           turnHasCompactItem(turn) &&
-          !isExactSummaryDeltaForLatestCompact(thread, itemId)
+          !isExactSummaryDeltaForLatestCompact(thread, itemId) &&
+          !canAppendUntimedLiveItemAfterCompactInTurn(thread, turn)
         ) {
           return turn;
         }
@@ -1305,6 +1313,22 @@ function isThreadActive(thread: Thread) {
   return thread.lifecycleStatus.type === "active";
 }
 
+function canAppendUntimedLiveItemAfterCompactInTurn(
+  thread: Thread,
+  turn: Turn,
+  item?: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  return (
+    isThreadActive(thread) &&
+    isTurnInFlight(turn) &&
+    !hasExplicitItemTimestamp(item, timestamps)
+  );
+}
+
 function threadHasCompactItem(thread: Thread) {
   return thread.turns.some(turnHasCompactItem);
 }
@@ -1335,6 +1359,21 @@ function isItemNotificationAfterLatestCompact(
       timestamps?.completedAtMs ??
       item.startedAtMs ??
       item.completedAtMs,
+  );
+}
+
+function hasExplicitItemTimestamp(
+  item?: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  return (
+    Number.isFinite(timestamps?.startedAtMs) ||
+    Number.isFinite(timestamps?.completedAtMs) ||
+    Number.isFinite(item?.startedAtMs) ||
+    Number.isFinite(item?.completedAtMs)
   );
 }
 
@@ -1453,13 +1492,12 @@ function appendActiveCommandExecutionDelta(
   if (existingIndex === -1) {
     return thread;
   }
-  const nextItem =
-    appendDelta(
-      activeCommandItems[existingIndex]! as Extract<
-        ThreadItem,
-        { type: "commandExecution" }
-      >,
-    );
+  const nextItem = appendDelta(
+    activeCommandItems[existingIndex]! as Extract<
+      ThreadItem,
+      { type: "commandExecution" }
+    >,
+  );
   const nextActiveCommandItems = activeCommandItems.map((item, index) =>
     index === existingIndex ? nextItem : item,
   );
@@ -1674,7 +1712,10 @@ function mergeActiveCommandItemsForSnapshot(
     : [];
 }
 
-function shouldPreserveMissingActiveCommandItems(existing: Thread, next: Thread) {
+function shouldPreserveMissingActiveCommandItems(
+  existing: Thread,
+  next: Thread,
+) {
   return (
     hasRunningActiveCommandItem(existing) &&
     !isTerminalThreadLifecycle(next.lifecycleStatus)
@@ -1839,57 +1880,60 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
   let activeCommandItems = dropLegacyOrphanCommandOutputPlaceholders([
     ...(identityNormalizedThread.activeCommandItems ?? []),
   ]);
-  const turns = identityNormalizedThread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
-    if (isActiveSubscriptionsTurn(turn)) {
-      activeSubscriptionItems.splice(
-        0,
-        activeSubscriptionItems.length,
-        ...turn.items,
-      );
-      return normalizedTurns;
-    }
-    if (isActiveCommandsTurn(turn)) {
-      activeCommandItems.splice(
-        0,
-        activeCommandItems.length,
-        ...dropLegacyOrphanCommandOutputPlaceholders(turn.items),
-      );
-      return normalizedTurns;
-    }
+  const turns = identityNormalizedThread.turns.reduce<Turn[]>(
+    (normalizedTurns, turn) => {
+      if (isActiveSubscriptionsTurn(turn)) {
+        activeSubscriptionItems.splice(
+          0,
+          activeSubscriptionItems.length,
+          ...turn.items,
+        );
+        return normalizedTurns;
+      }
+      if (isActiveCommandsTurn(turn)) {
+        activeCommandItems.splice(
+          0,
+          activeCommandItems.length,
+          ...dropLegacyOrphanCommandOutputPlaceholders(turn.items),
+        );
+        return normalizedTurns;
+      }
 
-    const normalizedTurn = normalizeTurnSnapshot(turn);
-    const existingIndex = normalizedTurns.findIndex(
-      (candidate) => candidate.id === normalizedTurn.id,
-    );
-    if (existingIndex !== -1) {
-      return normalizedTurns.map((existing, index) =>
-        index === existingIndex
-          ? mergeTurn(existing, normalizedTurn)
-          : existing,
+      const normalizedTurn = normalizeTurnSnapshot(turn);
+      const existingIndex = normalizedTurns.findIndex(
+        (candidate) => candidate.id === normalizedTurn.id,
       );
-    }
+      if (existingIndex !== -1) {
+        return normalizedTurns.map((existing, index) =>
+          index === existingIndex
+            ? mergeTurn(existing, normalizedTurn)
+            : existing,
+        );
+      }
 
-    const incomingMatcher = createTurnItemMatcher(
-      buildTurnItemIndex([
-        { turn: normalizedTurn, items: normalizedTurn.items },
-      ]),
-    );
-    const retainedExistingTurns = normalizedTurns.flatMap((existing) =>
-      getRetainedUnmatchedTurn(existing, incomingMatcher),
-    );
-    const existingMatcher = createTurnItemMatcher(
-      buildTurnItemIndex(
-        retainedExistingTurns.map((existing) => ({
-          turn: existing,
-          items: existing.items,
-        })),
-      ),
-    );
-    return [
-      ...retainedExistingTurns,
-      ...getRetainedUnmatchedTurn(normalizedTurn, existingMatcher),
-    ];
-  }, []);
+      const incomingMatcher = createTurnItemMatcher(
+        buildTurnItemIndex([
+          { turn: normalizedTurn, items: normalizedTurn.items },
+        ]),
+      );
+      const retainedExistingTurns = normalizedTurns.flatMap((existing) =>
+        getRetainedUnmatchedTurn(existing, incomingMatcher),
+      );
+      const existingMatcher = createTurnItemMatcher(
+        buildTurnItemIndex(
+          retainedExistingTurns.map((existing) => ({
+            turn: existing,
+            items: existing.items,
+          })),
+        ),
+      );
+      return [
+        ...retainedExistingTurns,
+        ...getRetainedUnmatchedTurn(normalizedTurn, existingMatcher),
+      ];
+    },
+    [],
+  );
 
   const activeSubscriptionItemsChanged = !threadItemsArrayEqual(
     activeSubscriptionItems,
@@ -1901,7 +1945,9 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
   );
   const normalizedThread =
     turns.length === identityNormalizedThread.turns.length &&
-    turns.every((turn, index) => turn === identityNormalizedThread.turns[index]) &&
+    turns.every(
+      (turn, index) => turn === identityNormalizedThread.turns[index],
+    ) &&
     !activeSubscriptionItemsChanged &&
     !activeCommandItemsChanged
       ? identityNormalizedThread
@@ -2072,11 +2118,10 @@ function normalizeTurnSnapshot(turn: Turn): Turn {
       index === existingIndex
         ? mergeThreadItem(existing, normalizedItem)
         : existing,
-      );
+    );
   }, []);
-  const reconciledItems = reconcileCommandExecutionExitNotificationsInItems(
-    items,
-  );
+  const reconciledItems =
+    reconcileCommandExecutionExitNotificationsInItems(items);
 
   return reconciledItems.length === turn.items.length &&
     reconciledItems.every((item, index) => item === turn.items[index])

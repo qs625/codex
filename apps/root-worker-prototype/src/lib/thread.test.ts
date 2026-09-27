@@ -4246,6 +4246,111 @@ test("late same-turn item notifications preserve compact summary without re-addi
   );
 });
 
+test("active compact turn keeps live item output after init context", () => {
+  const compactedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-compact", [
+          makeCompactItem("compact-1"),
+          makeAgentMessage("compact-1:summary", "compact summary"),
+          makeInitContextItem("ctx-1"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("after-init-context", "continuing after init context"),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "compact-1:summary", "ctx-1", "after-init-context"],
+  );
+});
+
+test("active compact turn rejects timestamped stale item at compact boundary", () => {
+  const compactedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-compact", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeAgentMessage("compact-1:summary", "compact summary"),
+          makeInitContextItem("ctx-1"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("old-at-boundary", "old ordinary output"),
+    { completedAtMs: 12_000 },
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "compact-1:summary", "ctx-1"],
+  );
+});
+
+test("active compact turn keeps live agent delta after init context", () => {
+  const compactedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-compact", [
+          makeCompactItem("compact-1"),
+          makeAgentMessage("compact-1:summary", "compact summary"),
+          makeInitContextItem("ctx-1"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const updated = appendAgentDelta(
+    compactedThread,
+    "turn-compact",
+    "after-init-context",
+    "streamed after init context",
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) =>
+      turn.items.map((item) => [
+        item.id,
+        item.type === "agentMessage" ? item.text : "",
+      ]),
+    ),
+    [
+      ["compact-1", ""],
+      ["compact-1:summary", "compact summary"],
+      ["ctx-1", ""],
+      ["after-init-context", "streamed after init context"],
+    ],
+  );
+});
+
 test("late backend compact message summary can arrive after the marker", () => {
   const compactedThread = updateThreadItem(
     makeThread(),
