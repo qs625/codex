@@ -46,6 +46,20 @@ Active goal: continuous large front+backend code organization. User asked to con
   risk: Test-only helper extraction in one suite file; no production, schema, persisted history, or provider-visible behavior change. Main residual risk is helper abstraction hiding request/response plumbing, covered by reviewer and focused suite.
   commit: owner `37d33f8a42`; merge `b429492d3`; pending capsule delivery
 
+- id: continuous-code-organization-tranche-23
+  status: dispatching
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-23
+  task_type: exclusive_code_quality_refactor
+  depends_on: main `1cfb7a634`; user asked to continue simplifying code and improving quality after compact regression was installed effective and tranche-22 was merged
+  files: owner to select one coherent medium/high-value seam after inventory; avoid recent compact/workspace tab fix files and recent client_metadata cleanup unless a strictly local follow-up is necessary
+  base_commit: `1cfb7a634`
+  next_action: Owner to screen candidates, implement at most one behavior-preserving refactor with fixed reviewer validation, or pause with evidence if no candidate passes the quality bar.
+  validation: pending
+  commit: pending
+
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change
   owner: /self/owner_dev
