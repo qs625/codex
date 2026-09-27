@@ -83,18 +83,23 @@ Active goal: continuous large front+backend code organization. User asked to con
   commit: owner `195735b8`; merge `067b64614`; pending capsule delivery
 
 - id: continuous-code-organization-tranche-25
-  status: dispatching
+  status: owner_completed
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-25
   task_type: exclusive_production_code_quality_refactor
   depends_on: main `e1759bc8a`; user explicitly clarified to continue code optimization but not only test cleanup
-  files: owner to select one coherent production-code seam after inventory; tests may be touched only as regression/validation support
+  files: `codex-rs/app-server/src/request_processors/config_processor.rs`, `.codex/pm-progress.md`
   base_commit: `e1759bc8a`
-  next_action: Owner to screen at least three production-code candidates and implement one behavior-preserving refactor, or pause with evidence if no production candidate passes the quality bar. Do not select test-only helper cleanup.
-  validation: pending
-  commit: pending
+  next_action: PM may merge `refactor/continuous-code-organization-25`; no immediate Runtime Capsule restart needed because this is a low-risk app-server production projection refactor with no intended runtime/protocol/schema/provider-visible behavior change.
+  selection: Owner confirmed checkout stayed in `/Users/bytedance/.morpheus/source_workspace` and created `refactor/continuous-code-organization-25` from clean current `main`; current main was `55147f32f7` rather than requested `e1759bc8a`, with `e1759bc8a` as an ancestor and the extra commit only adding this tranche dispatch record. Screened production candidates: selected `codex-rs/app-server/src/request_processors/config_processor.rs` because `ConfigRequirementsToml` -> `ConfigRequirements` projection had repeated optional Vec conversions and network permission entry mapping embedded in struct literals, while focused unit tests can lock the behavior without touching provider-visible schema or error text. Deferred `codex-rs/app-server/src/request_processors/fs_processor.rs` because its repeated response wrappers are already straightforward and the error mapper is tiny. Deferred `apps/root-worker-prototype/electron/environment.cjs` because path construction is stable and remaining duplication is low-value compared with the risk of changing desktop PATH ordering. Deferred `apps/root-worker-prototype/src/lib/runConfig.ts` because it is user-facing model selection ordering/visibility behavior and current helpers are already cohesive. Rejected `turn_processor.rs` external-root unsupported-param cleanup because the ordered error-message list is a provider/runtime contract-adjacent surface.
+  production_issue: `config_processor.rs` mixed several requirements projection idioms inline: optional-list mapping, optional filter-mapping, web-search disabled normalization, and network domain/unix-socket permission projection. This made the endpoint response mapping harder to audit for behavior preservation.
+  implementation: Added module-private projection helpers `map_optional_vec`, `filter_map_optional_vec`, `map_allowed_web_search_modes`, `map_network_domain_permissions_to_api`, and `map_network_unix_socket_permissions_to_api`; rewired `map_requirements_toml_to_api` and `map_network_requirements_to_api` to express the API projection directly. Added focused unit tests for web-search disabled inclusion and network permission projection.
+  reviewer_result: `/self/owner_main/reviewer` approved. Reviewer found no blocking issues and confirmed optional Vec helpers preserve `None`/`Some(empty)`, sandbox `ExternalSandbox` filtering and empty result semantics remain unchanged, web-search `Disabled` is only appended when absent, network projections preserve BTreeMap behavior and derived allow/deny lists are still computed before consuming entries, and the added tests only support regression coverage.
+  validation: Owner validation passed: `rustfmt codex-rs/app-server/src/request_processors/config_processor.rs` -> pass with existing stable-toolchain warning about nightly-only `imports_granularity`; `rustfmt --check codex-rs/app-server/src/request_processors/config_processor.rs` -> pass with same warning; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server config_processor` -> pass; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all config_rpc` -> pass, 16 tests; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> pass. Existing linker `__eh_frame` and `proc-macro-error2` future-incompat warnings observed.
+  risk: Low-risk production projection refactor inside one request processor module. No JSONRPC method/params/response/error text, provider-visible schema/tool descriptions, persisted history, model-visible context, thread lifecycle/read/list/archive/status, Browser/Terminal lifecycle, compact/display merge, external provider dispatch, Runtime Capsule, or Launcher behavior change intended. Tests touched only as same-file focused unit regression support.
+  commit: owner commit pending; final hash to be reported in owner delivery
 
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::chatgpt_config::chatgpt_config_from_core;
@@ -461,34 +462,21 @@ impl ConfigRequestProcessor {
 
 fn map_requirements_toml_to_api(requirements: ConfigRequirementsToml) -> ConfigRequirements {
     ConfigRequirements {
-        allowed_approval_policies: requirements.allowed_approval_policies.map(|policies| {
-            policies
-                .into_iter()
-                .map(app_server_protocol::AskForApproval::from)
-                .collect()
-        }),
-        allowed_approvals_reviewers: requirements.allowed_approvals_reviewers.map(|reviewers| {
-            reviewers
-                .into_iter()
-                .map(app_server_protocol::ApprovalsReviewer::from)
-                .collect()
-        }),
-        allowed_sandbox_modes: requirements.allowed_sandbox_modes.map(|modes| {
-            modes
-                .into_iter()
-                .filter_map(map_sandbox_mode_requirement_to_api)
-                .collect()
-        }),
-        allowed_web_search_modes: requirements.allowed_web_search_modes.map(|modes| {
-            let mut normalized = modes
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<WebSearchMode>>();
-            if !normalized.contains(&WebSearchMode::Disabled) {
-                normalized.push(WebSearchMode::Disabled);
-            }
-            normalized
-        }),
+        allowed_approval_policies: map_optional_vec(
+            requirements.allowed_approval_policies,
+            app_server_protocol::AskForApproval::from,
+        ),
+        allowed_approvals_reviewers: map_optional_vec(
+            requirements.allowed_approvals_reviewers,
+            app_server_protocol::ApprovalsReviewer::from,
+        ),
+        allowed_sandbox_modes: filter_map_optional_vec(
+            requirements.allowed_sandbox_modes,
+            map_sandbox_mode_requirement_to_api,
+        ),
+        allowed_web_search_modes: requirements
+            .allowed_web_search_modes
+            .map(map_allowed_web_search_modes),
         allow_managed_hooks_only: requirements.allow_managed_hooks_only,
         feature_requirements: requirements
             .feature_requirements
@@ -499,6 +487,27 @@ fn map_requirements_toml_to_api(requirements: ConfigRequirementsToml) -> ConfigR
             .map(map_residency_requirement_to_api),
         network: requirements.network.map(map_network_requirements_to_api),
     }
+}
+
+fn map_optional_vec<T, U>(items: Option<Vec<T>>, map_item: impl FnMut(T) -> U) -> Option<Vec<U>> {
+    items.map(|items| items.into_iter().map(map_item).collect())
+}
+
+fn filter_map_optional_vec<T, U>(
+    items: Option<Vec<T>>,
+    map_item: impl FnMut(T) -> Option<U>,
+) -> Option<Vec<U>> {
+    items.map(|items| items.into_iter().filter_map(map_item).collect())
+}
+
+fn map_allowed_web_search_modes(
+    modes: Vec<config_service::WebSearchModeRequirement>,
+) -> Vec<WebSearchMode> {
+    let mut normalized = modes.into_iter().map(Into::into).collect::<Vec<_>>();
+    if !normalized.contains(&WebSearchMode::Disabled) {
+        normalized.push(WebSearchMode::Disabled);
+    }
+    normalized
 }
 
 fn map_hooks_requirements_to_api(hooks: ManagedHooksRequirementsToml) -> ManagedHooksRequirements {
@@ -611,30 +620,26 @@ fn map_network_requirements_to_api(network: NetworkRequirementsToml) -> NetworkR
         allow_upstream_proxy: network.allow_upstream_proxy,
         dangerously_allow_non_loopback_proxy: network.dangerously_allow_non_loopback_proxy,
         dangerously_allow_all_unix_sockets: network.dangerously_allow_all_unix_sockets,
-        domains: network.domains.map(|domains| {
-            domains
-                .entries
-                .into_iter()
-                .map(|(pattern, permission)| {
-                    (pattern, map_network_domain_permission_to_api(permission))
-                })
-                .collect()
-        }),
+        domains: network.domains.map(map_network_domain_permissions_to_api),
         managed_allowed_domains_only: network.managed_allowed_domains_only,
         allowed_domains,
         denied_domains,
-        unix_sockets: network.unix_sockets.map(|unix_sockets| {
-            unix_sockets
-                .entries
-                .into_iter()
-                .map(|(path, permission)| {
-                    (path, map_network_unix_socket_permission_to_api(permission))
-                })
-                .collect()
-        }),
+        unix_sockets: network
+            .unix_sockets
+            .map(map_network_unix_socket_permissions_to_api),
         allow_unix_sockets,
         allow_local_binding: network.allow_local_binding,
     }
+}
+
+fn map_network_domain_permissions_to_api(
+    domains: NetworkDomainPermissionsToml,
+) -> BTreeMap<String, NetworkDomainPermission> {
+    domains
+        .entries
+        .into_iter()
+        .map(|(pattern, permission)| (pattern, map_network_domain_permission_to_api(permission)))
+        .collect()
 }
 
 fn map_network_domain_permission_to_api(
@@ -644,6 +649,16 @@ fn map_network_domain_permission_to_api(
         NetworkDomainPermissionToml::Allow => NetworkDomainPermission::Allow,
         NetworkDomainPermissionToml::Deny => NetworkDomainPermission::Deny,
     }
+}
+
+fn map_network_unix_socket_permissions_to_api(
+    unix_sockets: NetworkUnixSocketPermissionsToml,
+) -> BTreeMap<String, NetworkUnixSocketPermission> {
+    unix_sockets
+        .entries
+        .into_iter()
+        .map(|(path, permission)| (path, map_network_unix_socket_permission_to_api(permission)))
+        .collect()
 }
 
 fn map_network_unix_socket_permission_to_api(
@@ -674,8 +689,18 @@ fn config_write_error(code: ConfigWriteErrorCode, message: impl Into<String>) ->
 #[cfg(test)]
 mod tests {
     use super::map_requirements_toml_to_api;
+    use app_server_protocol::NetworkDomainPermission;
+    use app_server_protocol::NetworkUnixSocketPermission;
     use config_service::ConfigRequirementsToml;
+    use config_service::NetworkDomainPermissionToml;
+    use config_service::NetworkDomainPermissionsToml;
+    use config_service::NetworkRequirementsToml;
+    use config_service::NetworkUnixSocketPermissionToml;
+    use config_service::NetworkUnixSocketPermissionsToml;
+    use config_service::WebSearchModeRequirement;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::WebSearchMode;
+    use std::collections::BTreeMap;
 
     #[test]
     fn requirements_api_includes_allow_managed_hooks_only() {
@@ -686,5 +711,91 @@ mod tests {
 
         assert_eq!(mapped.allow_managed_hooks_only, Some(true));
         assert_eq!(mapped.hooks, None);
+    }
+
+    #[test]
+    fn requirements_api_web_search_modes_include_disabled() {
+        let mapped = map_requirements_toml_to_api(ConfigRequirementsToml {
+            allowed_web_search_modes: Some(vec![WebSearchModeRequirement::Cached]),
+            ..ConfigRequirementsToml::default()
+        });
+
+        assert_eq!(
+            mapped.allowed_web_search_modes,
+            Some(vec![WebSearchMode::Cached, WebSearchMode::Disabled])
+        );
+    }
+
+    #[test]
+    fn requirements_api_maps_network_permissions() {
+        let mapped = map_requirements_toml_to_api(ConfigRequirementsToml {
+            network: Some(NetworkRequirementsToml {
+                domains: Some(NetworkDomainPermissionsToml {
+                    entries: BTreeMap::from([
+                        (
+                            "allowed.example".to_string(),
+                            NetworkDomainPermissionToml::Allow,
+                        ),
+                        (
+                            "denied.example".to_string(),
+                            NetworkDomainPermissionToml::Deny,
+                        ),
+                    ]),
+                }),
+                unix_sockets: Some(NetworkUnixSocketPermissionsToml {
+                    entries: BTreeMap::from([
+                        (
+                            "/tmp/allowed.sock".to_string(),
+                            NetworkUnixSocketPermissionToml::Allow,
+                        ),
+                        (
+                            "/tmp/blocked.sock".to_string(),
+                            NetworkUnixSocketPermissionToml::None,
+                        ),
+                    ]),
+                }),
+                ..NetworkRequirementsToml::default()
+            }),
+            ..ConfigRequirementsToml::default()
+        });
+
+        let network = mapped
+            .network
+            .expect("network requirements should be mapped");
+        assert_eq!(
+            network.domains,
+            Some(BTreeMap::from([
+                (
+                    "allowed.example".to_string(),
+                    NetworkDomainPermission::Allow,
+                ),
+                ("denied.example".to_string(), NetworkDomainPermission::Deny),
+            ]))
+        );
+        assert_eq!(
+            network.allowed_domains,
+            Some(vec!["allowed.example".to_string()])
+        );
+        assert_eq!(
+            network.denied_domains,
+            Some(vec!["denied.example".to_string()])
+        );
+        assert_eq!(
+            network.unix_sockets,
+            Some(BTreeMap::from([
+                (
+                    "/tmp/allowed.sock".to_string(),
+                    NetworkUnixSocketPermission::Allow,
+                ),
+                (
+                    "/tmp/blocked.sock".to_string(),
+                    NetworkUnixSocketPermission::None,
+                ),
+            ]))
+        );
+        assert_eq!(
+            network.allow_unix_sockets,
+            Some(vec!["/tmp/allowed.sock".to_string()])
+        );
     }
 }
