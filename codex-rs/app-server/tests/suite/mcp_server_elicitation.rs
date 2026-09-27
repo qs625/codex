@@ -2,26 +2,23 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use anyhow::Result;
-use app_server_protocol::JSONRPCMessage;
-use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::McpElicitationSchema;
 use app_server_protocol::McpServerElicitationAction;
 use app_server_protocol::McpServerElicitationRequest;
 use app_server_protocol::McpServerElicitationRequestParams;
 use app_server_protocol::McpServerElicitationRequestResponse;
-use app_server_protocol::RequestId;
 use app_server_protocol::ServerRequest;
-use app_server_protocol::ServerRequestResolvedNotification;
 use app_server_protocol::ThreadStartParams;
-use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::TurnCompletedNotification;
 use app_server_protocol::TurnStartParams;
-use app_server_protocol::TurnStartResponse;
 use app_server_protocol::TurnStatus;
 use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::ChatGptAuthFixture;
-use app_test_support::McpProcess;
-use app_test_support::to_response;
+use app_test_support::initialized_mcp;
+use app_test_support::read_server_request;
+use app_test_support::start_thread;
+use app_test_support::start_turn;
+use app_test_support::wait_for_server_request_resolved_before_turn_completed;
 use app_test_support::write_chatgpt_auth;
 use axum::Json;
 use axum::Router;
@@ -116,24 +113,22 @@ async fn mcp_server_elicitation_round_trip() -> Result<()> {
         AuthCredentialsStoreMode::File,
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path(), DEFAULT_READ_TIMEOUT).await?;
 
-    let thread_start_id = mcp
-        .send_thread_start_request(ThreadStartParams {
+    let thread = start_thread(
+        &mut mcp,
+        ThreadStartParams {
             model: Some("mock-model".to_string()),
             ..Default::default()
-        })
-        .await?;
-    let thread_start_resp: JSONRPCResponse = timeout(
+        },
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
     )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
+    .await?
+    .thread;
 
-    let warmup_turn_start_id = mcp
-        .send_turn_start_request(TurnStartParams {
+    let _ = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Warm up connectors.".to_string(),
@@ -141,14 +136,10 @@ async fn mcp_server_elicitation_round_trip() -> Result<()> {
             }],
             model: Some("mock-model".to_string()),
             ..Default::default()
-        })
-        .await?;
-    let warmup_turn_start_resp: JSONRPCResponse = timeout(
+        },
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(warmup_turn_start_id)),
     )
-    .await??;
-    let _: TurnStartResponse = to_response(warmup_turn_start_resp)?;
+    .await?;
 
     let warmup_completed = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -164,8 +155,9 @@ async fn mcp_server_elicitation_round_trip() -> Result<()> {
     assert_eq!(warmup_completed.thread_id, thread.id);
     assert_eq!(warmup_completed.turn.status, TurnStatus::Completed);
 
-    let turn_start_id = mcp
-        .send_turn_start_request(TurnStartParams {
+    let turn = start_turn(
+        &mut mcp,
+        TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Use [$calendar](app://calendar) to run the calendar tool.".to_string(),
@@ -173,20 +165,13 @@ async fn mcp_server_elicitation_round_trip() -> Result<()> {
             }],
             model: Some("mock-model".to_string()),
             ..Default::default()
-        })
-        .await?;
-    let turn_start_resp: JSONRPCResponse = timeout(
+        },
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
     )
-    .await??;
-    let TurnStartResponse { turn } = to_response(turn_start_resp)?;
+    .await?
+    .turn;
 
-    let server_req = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_request_message(),
-    )
-    .await??;
+    let server_req = read_server_request(&mut mcp, DEFAULT_READ_TIMEOUT).await?;
     let ServerRequest::McpServerElicitationRequest { request_id, params } = server_req else {
         panic!("expected McpServerElicitationRequest request, got: {server_req:?}");
     };
@@ -213,7 +198,7 @@ async fn mcp_server_elicitation_round_trip() -> Result<()> {
 
     let resolved_request_id = request_id.clone();
     mcp.send_response(
-        request_id,
+        request_id.clone(),
         serde_json::to_value(McpServerElicitationRequestResponse {
             action: McpServerElicitationAction::Accept,
             content: Some(json!({
@@ -224,43 +209,16 @@ async fn mcp_server_elicitation_round_trip() -> Result<()> {
     )
     .await?;
 
-    let mut saw_resolved = false;
-    loop {
-        let message = timeout(DEFAULT_READ_TIMEOUT, mcp.read_next_message()).await??;
-        let JSONRPCMessage::Notification(notification) = message else {
-            continue;
-        };
-
-        match notification.method.as_str() {
-            "serverRequest/resolved" => {
-                let resolved: ServerRequestResolvedNotification = serde_json::from_value(
-                    notification
-                        .params
-                        .clone()
-                        .expect("serverRequest/resolved params"),
-                )?;
-                assert_eq!(
-                    resolved,
-                    ServerRequestResolvedNotification {
-                        thread_id: thread.id.clone(),
-                        request_id: resolved_request_id.clone(),
-                    }
-                );
-                saw_resolved = true;
-            }
-            "turn/completed" => {
-                let completed: TurnCompletedNotification = serde_json::from_value(
-                    notification.params.clone().expect("turn/completed params"),
-                )?;
-                assert!(saw_resolved, "serverRequest/resolved should arrive first");
-                assert_eq!(completed.thread_id, thread.id);
-                assert_eq!(completed.turn.id, turn.id);
-                assert_eq!(completed.turn.status, TurnStatus::Completed);
-                break;
-            }
-            _ => {}
-        }
-    }
+    let completed = wait_for_server_request_resolved_before_turn_completed(
+        &mut mcp,
+        &thread.id,
+        resolved_request_id,
+        DEFAULT_READ_TIMEOUT,
+    )
+    .await?;
+    assert_eq!(completed.thread_id, thread.id);
+    assert_eq!(completed.turn.id, turn.id);
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
 
     let requests = response_mock.requests();
     assert_eq!(requests.len(), 3);

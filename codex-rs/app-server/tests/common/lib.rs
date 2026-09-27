@@ -6,6 +6,7 @@ mod mock_model_server;
 mod models_cache;
 mod responses;
 mod rollout;
+mod server_request;
 
 pub use analytics_server::start_analytics_events_server;
 use app_server_protocol::JSONRPCResponse;
@@ -44,6 +45,11 @@ pub use rollout::create_fake_rollout_with_text_elements;
 pub use rollout::create_fake_rollout_with_token_usage;
 pub use rollout::rollout_path;
 use serde::de::DeserializeOwned;
+pub use server_request::initialized_mcp;
+pub use server_request::read_server_request;
+pub use server_request::start_thread;
+pub use server_request::start_turn;
+pub use server_request::wait_for_server_request_resolved_before_turn_completed;
 use std::future::Future;
 
 const DEFAULT_CURRENT_THREAD_TEST_STACK_SIZE: usize = 4 * 1024 * 1024;
@@ -61,10 +67,7 @@ where
     run_current_thread_test_with_stack_named("app-server-suite", future)
 }
 
-pub fn run_current_thread_test_with_stack_named<Fut>(
-    name: &str,
-    future: Fut,
-) -> anyhow::Result<()>
+pub fn run_current_thread_test_with_stack_named<Fut>(name: &str, future: Fut) -> anyhow::Result<()>
 where
     Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
 {
