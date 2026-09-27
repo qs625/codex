@@ -8,9 +8,24 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: continuous large front+backend code organization. User asked to continue and not stop. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing architecture-level duplication removal and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics. PM should keep dispatching coherent cleanup tranches while owner_main is free.
+Active goal: continuous large front+backend code organization. User asked to continue and not stop, and clarified not to keep doing small changes. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing larger coherent production/module-boundary refactors, architecture-level duplication removal, and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics. PM should keep dispatching coherent cleanup tranches while owner_main is free, but must not fall back to tiny helper/test-only cleanups just to keep momentum.
 
 ## Active Work
+
+- id: continuous-code-organization-tranche-26
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-26
+  task_type: exclusive_large_production_code_quality_refactor
+  depends_on: main `05154cb61`; user clarified "不要一直做小改动啊"
+  files: TBD by owner after candidate inventory; target must be a production module/cluster in `codex-rs/` or `apps/root-worker-prototype/`, not test-only helpers
+  base_commit: `05154cb61`
+  next_action: Owner must evaluate at least three production candidates and select a larger coherent module-boundary/code-organization tranche. Acceptable work should consolidate a real production seam across a cohesive module/cluster, not just rename/extract tiny helpers. If no suitable larger tranche is safe from current main, pause with evidence rather than shipping another small cleanup.
+  constraints: Preserve behavior, provider-visible tool/schema/descriptions, JSONRPC/API method params/errors unless explicitly justified and tested, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, and external/native provider parity. Tests may be added/updated only as regression support for the production refactor.
+  validation: pending owner inventory, design, reviewer review, focused tests, formatting, `git diff --check`, and relevant debug build.
+  commit: pending
 
 - id: compact-live-output-after-init-context-regression
   status: installed_effective
