@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -24,7 +26,8 @@ use app_test_support::to_response;
 use app_test_support::write_mock_responses_config_toml;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
-use std::collections::BTreeMap;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use tempfile::TempDir;
 #[cfg(unix)]
 use tokio::io::AsyncWriteExt;
@@ -32,41 +35,165 @@ use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[tokio::test]
-async fn external_agent_config_import_sends_completion_notification_for_sync_only_import()
--> Result<()> {
-    let codex_home = TempDir::new()?;
-    let home_dir = codex_home.path().display().to_string();
+async fn initialized_mcp(codex_home: &Path) -> Result<McpProcess> {
+    let home_dir = codex_home.display().to_string();
     let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
+        McpProcess::new_with_env(codex_home, &[("HOME", Some(home_dir.as_str()))]).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({
-                "migrationItems": [{
-                    "itemType": "CONFIG",
-                    "description": "Import config",
-                    "cwd": null
-                }]
-            })),
-        )
-        .await?;
+async fn read_response<T>(mcp: &mut McpProcess, request_id: i64) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    read_response_with_timeout(mcp, request_id, DEFAULT_TIMEOUT).await
+}
 
-    let response: JSONRPCResponse = timeout(
+async fn wait_for_response(mcp: &mut McpProcess, request_id: i64) -> Result<JSONRPCResponse> {
+    timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
     )
+    .await?
+}
+
+async fn read_response_with_timeout<T>(
+    mcp: &mut McpProcess,
+    request_id: i64,
+    read_timeout: Duration,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let response: JSONRPCResponse = timeout(
+        read_timeout,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
     .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
-    assert_eq!(response, ExternalAgentConfigImportResponse {});
+    to_response(response)
+}
+
+async fn detect_external_agent_config(
+    mcp: &mut McpProcess,
+    params: Value,
+) -> Result<ExternalAgentConfigDetectResponse> {
+    let request_id = mcp
+        .send_raw_request("externalAgentConfig/detect", Some(params))
+        .await?;
+    read_response(mcp, request_id).await
+}
+
+async fn import_external_agent_config(
+    mcp: &mut McpProcess,
+    migration_items: Value,
+) -> Result<ExternalAgentConfigImportResponse> {
+    import_external_agent_config_with_timeout(mcp, migration_items, DEFAULT_TIMEOUT).await
+}
+
+async fn import_external_agent_config_with_timeout(
+    mcp: &mut McpProcess,
+    migration_items: Value,
+    read_timeout: Duration,
+) -> Result<ExternalAgentConfigImportResponse> {
+    let request_id = mcp
+        .send_raw_request(
+            "externalAgentConfig/import",
+            Some(serde_json::json!({ "migrationItems": migration_items })),
+        )
+        .await?;
+    read_response_with_timeout(mcp, request_id, read_timeout).await
+}
+
+async fn expect_import_completed(mcp: &mut McpProcess) -> Result<()> {
     let notification = timeout(
         DEFAULT_TIMEOUT,
         mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
     )
     .await??;
     assert_eq!(notification.method, "externalAgentConfig/import/completed");
+    Ok(())
+}
+
+async fn list_threads(mcp: &mut McpProcess) -> Result<ThreadListResponse> {
+    let request_id = mcp
+        .send_thread_list_request(default_thread_list_params())
+        .await?;
+    read_response(mcp, request_id).await
+}
+
+async fn read_thread(mcp: &mut McpProcess, thread_id: String) -> Result<ThreadReadResponse> {
+    let request_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id,
+            include_turns: true,
+        })
+        .await?;
+    read_response(mcp, request_id).await
+}
+
+async fn resume_thread(mcp: &mut McpProcess, thread_id: String) -> Result<ThreadResumeResponse> {
+    let request_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id,
+            ..Default::default()
+        })
+        .await?;
+    read_response(mcp, request_id).await
+}
+
+async fn start_follow_up_turn(mcp: &mut McpProcess, thread_id: String, text: &str) -> Result<()> {
+    let request_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id,
+            input: vec![UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    wait_for_response(mcp, request_id).await?;
+    timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    Ok(())
+}
+
+fn default_thread_list_params() -> ThreadListParams {
+    ThreadListParams {
+        cursor: None,
+        limit: None,
+        sort_key: None,
+        sort_direction: None,
+        model_providers: None,
+        source_kinds: None,
+        archived: None,
+        cwd: None,
+        use_state_db_only: false,
+        search_term: None,
+    }
+}
+
+#[tokio::test]
+async fn external_agent_config_import_sends_completion_notification_for_sync_only_import()
+-> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
+
+    let response = import_external_agent_config(
+        &mut mcp,
+        serde_json::json!([{
+            "itemType": "CONFIG",
+            "description": "Import config",
+            "cwd": null
+        }]),
+    )
+    .await?;
+    assert_eq!(response, ExternalAgentConfigImportResponse {});
+    expect_import_completed(&mut mcp).await?;
 
     Ok(())
 }
@@ -115,44 +242,26 @@ async fn external_agent_config_import_sends_completion_notification_for_local_pl
         serde_json::to_string_pretty(&settings)?,
     )?;
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({
-                "migrationItems": [{
-                    "itemType": "PLUGINS",
-                    "description": "Import plugins",
-                    "cwd": null,
-                    "details": {
-                        "plugins": [{
-                            "marketplaceName": "debug",
-                            "pluginNames": ["sample"]
-                        }]
-                    }
+    let response = import_external_agent_config(
+        &mut mcp,
+        serde_json::json!([{
+            "itemType": "PLUGINS",
+            "description": "Import plugins",
+            "cwd": null,
+            "details": {
+                "plugins": [{
+                    "marketplaceName": "debug",
+                    "pluginNames": ["sample"]
                 }]
-            })),
-        )
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+            }
+        }]),
     )
-    .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
+    .await?;
 
     assert_eq!(response, ExternalAgentConfigImportResponse {});
-    let notification = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-    )
-    .await??;
-    assert_eq!(notification.method, "externalAgentConfig/import/completed");
+    expect_import_completed(&mut mcp).await?;
 
     let request_id = mcp
         .send_plugin_list_request(PluginListParams {
@@ -160,12 +269,7 @@ async fn external_agent_config_import_sends_completion_notification_for_local_pl
             marketplace_kinds: None,
         })
         .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: PluginListResponse = to_response(response)?;
+    let response: PluginListResponse = read_response(&mut mcp, request_id).await?;
     let plugin = response
         .marketplaces
         .iter()
@@ -203,43 +307,25 @@ async fn external_agent_config_import_sends_completion_notification_after_pendin
 }"#,
     )?;
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({
-                "migrationItems": [{
-                    "itemType": "PLUGINS",
-                    "description": "Import plugins",
-                    "cwd": null,
-                    "details": {
-                        "plugins": [{
-                            "marketplaceName": "acme-tools",
-                            "pluginNames": ["formatter"]
-                        }]
-                    }
+    let response = import_external_agent_config(
+        &mut mcp,
+        serde_json::json!([{
+            "itemType": "PLUGINS",
+            "description": "Import plugins",
+            "cwd": null,
+            "details": {
+                "plugins": [{
+                    "marketplaceName": "acme-tools",
+                    "pluginNames": ["formatter"]
                 }]
-            })),
-        )
-        .await?;
-
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+            }
+        }]),
     )
-    .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
+    .await?;
     assert_eq!(response, ExternalAgentConfigImportResponse {});
-    let notification = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-    )
-    .await??;
-    assert_eq!(notification.method, "externalAgentConfig/import/completed");
+    expect_import_completed(&mut mcp).await?;
 
     Ok(())
 }
@@ -281,67 +367,23 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
         .join("\n"),
     )?;
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/detect",
-            Some(serde_json::json!({
-                "includeHome": true,
-            })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    let detected = detect_external_agent_config(
+        &mut mcp,
+        serde_json::json!({
+            "includeHome": true,
+        }),
     )
-    .await??;
-    let detected: ExternalAgentConfigDetectResponse = to_response(response)?;
+    .await?;
     assert_eq!(detected.items.len(), 1);
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({ "migrationItems": detected.items })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
+    let response =
+        import_external_agent_config(&mut mcp, serde_json::json!(detected.items)).await?;
     assert_eq!(response, ExternalAgentConfigImportResponse {});
-    let notification = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-    )
-    .await??;
-    assert_eq!(notification.method, "externalAgentConfig/import/completed");
+    expect_import_completed(&mut mcp).await?;
 
-    let request_id = mcp
-        .send_thread_list_request(ThreadListParams {
-            cursor: None,
-            limit: None,
-            sort_key: None,
-            sort_direction: None,
-            model_providers: None,
-            source_kinds: None,
-            archived: None,
-            cwd: None,
-            use_state_db_only: false,
-            search_term: None,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadListResponse = to_response(response)?;
+    let response = list_threads(&mut mcp).await?;
     let thread = response
         .data
         .first()
@@ -350,18 +392,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
     assert_eq!(thread.preview, "first request");
     assert_eq!(thread.name.as_deref(), Some("source session title"));
 
-    let request_id = mcp
-        .send_thread_read_request(ThreadReadParams {
-            thread_id: thread.id.clone(),
-            include_turns: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadReadResponse = to_response(response)?;
+    let response = read_thread(&mut mcp, thread.id.clone()).await?;
     assert_eq!(response.thread.turns.len(), 1);
     let items = &response.thread.turns[0].items;
     assert_eq!(items.len(), 3);
@@ -375,52 +406,11 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
         })
     );
 
-    let request_id = mcp
-        .send_thread_resume_request(ThreadResumeParams {
-            thread_id: thread.id.clone(),
-            ..Default::default()
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let _: ThreadResumeResponse = to_response(response)?;
+    let _: ThreadResumeResponse = resume_thread(&mut mcp, thread.id.clone()).await?;
 
-    let request_id = mcp
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id.clone(),
-            input: vec![UserInput::Text {
-                text: "follow up".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
-        })
-        .await?;
-    timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
+    start_follow_up_turn(&mut mcp, thread.id.clone(), "follow up").await?;
 
-    let request_id = mcp
-        .send_thread_read_request(ThreadReadParams {
-            thread_id: thread.id,
-            include_turns: true,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadReadResponse = to_response(response)?;
+    let response = read_thread(&mut mcp, thread.id).await?;
     assert_eq!(response.thread.turns.len(), 2);
     match &response.thread.turns[1].items[1] {
         ThreadItem::AgentMessage { text, .. } => assert_eq!(text, "follow-up answer"),
@@ -453,64 +443,28 @@ async fn external_agent_config_import_accepts_detected_session_payload_after_res
         .to_string(),
     )?;
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({
-                "migrationItems": [{
-                    "itemType": "SESSIONS",
-                    "description": "Migrate recent sessions",
-                    "cwd": null,
-                    "details": {
-                        "sessions": [{
-                            "path": session_path,
-                            "cwd": project_root,
-                            "title": "first request"
-                        }]
-                    }
+    let response = import_external_agent_config(
+        &mut mcp,
+        serde_json::json!([{
+            "itemType": "SESSIONS",
+            "description": "Migrate recent sessions",
+            "cwd": null,
+            "details": {
+                "sessions": [{
+                    "path": session_path,
+                    "cwd": project_root,
+                    "title": "first request"
                 }]
-            })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+            }
+        }]),
     )
-    .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
+    .await?;
     assert_eq!(response, ExternalAgentConfigImportResponse {});
-    let notification = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-    )
-    .await??;
-    assert_eq!(notification.method, "externalAgentConfig/import/completed");
+    expect_import_completed(&mut mcp).await?;
 
-    let request_id = mcp
-        .send_thread_list_request(ThreadListParams {
-            cursor: None,
-            limit: None,
-            sort_key: None,
-            sort_direction: None,
-            model_providers: None,
-            source_kinds: None,
-            archived: None,
-            cwd: None,
-            use_state_db_only: false,
-            search_term: None,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadListResponse = to_response(response)?;
+    let response = list_threads(&mut mcp).await?;
     assert_eq!(response.data.len(), 1);
 
     Ok(())
@@ -538,65 +492,19 @@ async fn external_agent_config_import_skips_already_imported_session_versions() 
         .to_string(),
     )?;
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/detect",
-            Some(serde_json::json!({ "includeHome": true })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let detected: ExternalAgentConfigDetectResponse = to_response(response)?;
+    let detected =
+        detect_external_agent_config(&mut mcp, serde_json::json!({ "includeHome": true })).await?;
 
     for _ in 0..2 {
-        let request_id = mcp
-            .send_raw_request(
-                "externalAgentConfig/import",
-                Some(serde_json::json!({ "migrationItems": detected.items.clone() })),
-            )
-            .await?;
-        let response: JSONRPCResponse = timeout(
-            DEFAULT_TIMEOUT,
-            mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-        )
-        .await??;
-        let _: ExternalAgentConfigImportResponse = to_response(response)?;
-        let notification = timeout(
-            DEFAULT_TIMEOUT,
-            mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-        )
-        .await??;
-        assert_eq!(notification.method, "externalAgentConfig/import/completed");
+        let _: ExternalAgentConfigImportResponse =
+            import_external_agent_config(&mut mcp, serde_json::json!(detected.items.clone()))
+                .await?;
+        expect_import_completed(&mut mcp).await?;
     }
 
-    let request_id = mcp
-        .send_thread_list_request(ThreadListParams {
-            cursor: None,
-            limit: None,
-            sort_key: None,
-            sort_direction: None,
-            model_providers: None,
-            source_kinds: None,
-            archived: None,
-            cwd: None,
-            use_state_db_only: false,
-            search_term: None,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadListResponse = to_response(response)?;
+    let response = list_threads(&mut mcp).await?;
     assert_eq!(response.data.len(), 1);
 
     Ok(())
@@ -634,38 +542,19 @@ async fn external_agent_config_import_returns_before_background_session_import_f
         .status()?;
     assert!(status.success());
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/detect",
-            Some(serde_json::json!({ "includeHome": true })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let detected: ExternalAgentConfigDetectResponse = to_response(response)?;
+    let detected =
+        detect_external_agent_config(&mut mcp, serde_json::json!({ "includeHome": true })).await?;
     assert_eq!(detected.items.len(), 1);
     let detected_items = detected.items;
 
-    let request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({ "migrationItems": detected_items.clone() })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
+    let response = import_external_agent_config_with_timeout(
+        &mut mcp,
+        serde_json::json!(detected_items.clone()),
         Duration::from_secs(5),
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
     )
-    .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
+    .await?;
     assert_eq!(response, ExternalAgentConfigImportResponse {});
 
     assert!(
@@ -678,18 +567,12 @@ async fn external_agent_config_import_returns_before_background_session_import_f
         "session import completed before the blocked background import was unblocked"
     );
 
-    let duplicate_request_id = mcp
-        .send_raw_request(
-            "externalAgentConfig/import",
-            Some(serde_json::json!({ "migrationItems": detected_items })),
-        )
-        .await?;
-    let response: JSONRPCResponse = timeout(
+    let response = import_external_agent_config_with_timeout(
+        &mut mcp,
+        serde_json::json!(detected_items),
         Duration::from_secs(5),
-        mcp.read_stream_until_response_message(RequestId::Integer(duplicate_request_id)),
     )
-    .await??;
-    let response: ExternalAgentConfigImportResponse = to_response(response)?;
+    .await?;
     assert_eq!(response, ExternalAgentConfigImportResponse {});
 
     let writer = tokio::spawn(async move {
@@ -701,40 +584,10 @@ async fn external_agent_config_import_returns_before_background_session_import_f
     });
     timeout(DEFAULT_TIMEOUT, writer).await???;
 
-    let notification = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-    )
-    .await??;
-    assert_eq!(notification.method, "externalAgentConfig/import/completed");
+    expect_import_completed(&mut mcp).await?;
+    expect_import_completed(&mut mcp).await?;
 
-    let notification = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_notification_message("externalAgentConfig/import/completed"),
-    )
-    .await??;
-    assert_eq!(notification.method, "externalAgentConfig/import/completed");
-
-    let request_id = mcp
-        .send_thread_list_request(ThreadListParams {
-            cursor: None,
-            limit: None,
-            sort_key: None,
-            sort_direction: None,
-            model_providers: None,
-            source_kinds: None,
-            archived: None,
-            cwd: None,
-            use_state_db_only: false,
-            search_term: None,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadListResponse = to_response(response)?;
+    let response = list_threads(&mut mcp).await?;
     assert_eq!(response.data.len(), 1);
 
     Ok(())
@@ -763,10 +616,7 @@ async fn external_agent_config_import_rejects_undetected_session_paths() -> Resu
         )?;
     }
 
-    let home_dir = codex_home.path().display().to_string();
-    let mut mcp =
-        McpProcess::new_with_env(codex_home.path(), &[("HOME", Some(home_dir.as_str()))]).await?;
-    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let mut mcp = initialized_mcp(codex_home.path()).await?;
 
     let request_id = mcp
         .send_raw_request(
@@ -799,26 +649,7 @@ async fn external_agent_config_import_rejects_undetected_session_paths() -> Resu
             .contains("external agent session was not detected for import")
     );
 
-    let request_id = mcp
-        .send_thread_list_request(ThreadListParams {
-            cursor: None,
-            limit: None,
-            sort_key: None,
-            sort_direction: None,
-            model_providers: None,
-            source_kinds: None,
-            archived: None,
-            cwd: None,
-            use_state_db_only: false,
-            search_term: None,
-        })
-        .await?;
-    let response: JSONRPCResponse = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    let response: ThreadListResponse = to_response(response)?;
+    let response = list_threads(&mut mcp).await?;
     assert_eq!(response.data, Vec::new());
 
     Ok(())
