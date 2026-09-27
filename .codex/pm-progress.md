@@ -13,20 +13,35 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: compact-live-output-after-init-context-regression
-  status: owner_validated_pending_commit
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
   branch: fix/compact-output-after-init-context-regression
   task_type: frontend_user_visible_bugfix
   depends_on: main `955a4a52f`; installed Runtime Capsule `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81` still reproduced compact display stopping after summary/init context
-  files: `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`
+  files: `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`, `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/lib/workspaceTabs.ts`, `apps/root-worker-prototype/src/lib/workspaceTabs.test.ts`, `apps/root-worker-prototype/src/components/RightPanel.test.tsx`
   base_commit: `955a4a52f`
-  next_action: Commit owner fix, merge to main, then deliver a new Runtime Capsule and run installed self-debug on a real compacted `/self` thread.
-  root_cause: The prior fix only covered same compact-turn untimed continuation and agent deltas. In the installed repro, compact summary/init context and the post-compact user turn were visible, but subsequent missing-turn typed live items such as running command/tool output were still rejected by the compact boundary guard because they had no explicit timestamp after the latest compact marker.
-  implementation: Kept compact stale filtering intact but added a narrow frontend merge allowance for untimed running `commandExecution` items only when the thread is active and there is already an untimed in-flight turn after the latest compact marker. Collab child completions were not given an untimed bypass; they still require a timestamp after the compact boundary or an existing matching turn. Added regression coverage for compact summary + init context + post-compact user turn followed by live command output and timestamped child completion, plus negative tests for untimed stale child completion, untimed missing-turn command on a timestamped later turn, and timestamped stale missing-turn command.
-  validation: Fixed reviewer `/self/owner_dev_2/reviewer` first found the allowance too broad because active compact threads could revive untimed old missing-turn items or attach stale child completions to a later active turn; owner narrowed the predicate and added negative tests; reviewer then approved. Owner validation passed so far: `pnpm --dir apps/root-worker-prototype exec prettier --write src/lib/thread.ts src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec prettier --check src/lib/thread.ts src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed). Existing Node `[DEP0205] module.register()` warning observed.
-  commit: pending
+  next_action: Installed effective in Runtime Capsule `sha256:1a3e17f6a1ae1fdcc6760c9004224ecc1c5dc0600ebff06350b6c2b9486473ef`. No further action unless the user reproduces another compact/display issue.
+  root_cause: Two issues combined. First, the prior compact fix only covered same compact-turn untimed continuation and agent deltas. In the installed repro, compact summary/init context and the post-compact user turn were visible, but subsequent missing-turn typed live items such as running command/tool output were still rejected by the compact boundary guard because they had no explicit timestamp after the latest compact marker. Second, after the first follow-up Runtime Capsule was installed, self-debug showed the conversation articles existed in DOM/state but every `.workspace-tab-panel` was `display:none`; `activeWorkspaceTabId` could be null/invalid during restart restore and the old panel visibility logic had no shared fallback, so all panels were hidden.
+  implementation: Kept compact stale filtering intact but added a narrow frontend merge allowance for untimed running `commandExecution` items only when the thread is active and there is already an untimed in-flight turn after the latest compact marker. Collab child completions were not given an untimed bypass; they still require a timestamp after the compact boundary or an existing matching turn. Added regression coverage for compact summary + init context + post-compact user turn followed by live command output and timestamped child completion, plus negative tests for untimed stale child completion, untimed missing-turn command on a timestamped later turn, and timestamped stale missing-turn command. Added `resolveActiveWorkspaceTabId` so tab selected state, active tab lookup, panel visibility, and close fallback all share the same valid-active-or-selected-conversation-or-first-tab resolution.
+  validation: Fixed reviewer `/self/owner_dev_2/reviewer` first found the compact item allowance too broad because active compact threads could revive untimed old missing-turn items or attach stale child completions to a later active turn; owner narrowed the predicate and added negative tests; reviewer then approved. After installed self-debug exposed the hidden-panel restore issue, owner added the workspace tab resolver and reviewer approved again. Owner and PM validation passed: prettier write/check on touched frontend files; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (253 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/workspaceTabs.test.ts` (7 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx` (69 passed); `git diff --check`. Built two capsules during validation: intermediate `sha256:22777828972ec3942363e56a5c6d4968ea57b3a0d246a5277160a8fdb804c6a5` exposed the hidden-panel issue; final `sha256:1a3e17f6a1ae1fdcc6760c9004224ecc1c5dc0600ebff06350b6c2b9486473ef` was restarted with `call_czsl8iUM1UL2IsSwXSDSF90m`. Final self-debug confirmed launcher `control.json` selected/externalCurrent/activeLaunch all match final release, payload pid `16617` listens on CDP `127.0.0.1:9222`, renderer URL is under the final artifact, conversation panel is visible, compact-after-restart output including PM validation/build/restart messages is visible in DOM, Thread Analysis shows runtime restart recovered, and console reported 0 errors / 0 warnings.
+  commit: owner `4a2369c33` + `2e46a4f76`; merges `05051257b` + `bc3b6f387`; built capsule `sha256:1a3e17f6a1ae1fdcc6760c9004224ecc1c5dc0600ebff06350b6c2b9486473ef`; restart `call_czsl8iUM1UL2IsSwXSDSF90m`; installed effective
+
+- id: continuous-code-organization-tranche-22
+  status: paused_ready_to_merge
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-22
+  task_type: exclusive_code_quality_refactor
+  depends_on: main `955a4a52f`; user asked to continue code optimization/refactoring with goal of simplifying code and improving quality; paused when compact display regression became higher priority
+  files: `codex-rs/app-server/tests/suite/client_metadata.rs`, `.codex/pm-progress.md`
+  base_commit: `955a4a52f`
+  next_action: Optional later PM merge of owner commit `37d33f8a42` after confirming it still applies to current main; do not resume before user-visible compact fix is fully closed.
+  selection: Owner selected suite-private client metadata test driver cleanup after screening candidates. It extracts repeated MCP initialization, default `thread/start`, and `turn/start` / `turn/steer` typed response plumbing while keeping metadata payloads and request assertions explicit.
+  validation: Owner reported fixed reviewer approval and validation passed: rustfmt, rustfmt --check, git diff --check, focused `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all client_metadata -- --nocapture` (3 passed), and `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`.
+  commit: owner `37d33f8a42`; not merged
 
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change
