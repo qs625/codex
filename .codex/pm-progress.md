@@ -13,19 +13,24 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: continuous-code-organization-tranche-32
-  status: dispatched
+  status: owner_completed
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
   branch: refactor/continuous-code-organization-32
   task_type: exclusive_large_production_code_quality_refactor
-  depends_on: main `fc398fe32`; user explicitly asked to keep going and not stop
-  files: TBD by owner after production candidate inventory; target must be a cohesive production module/cluster, not tests as the primary change
-  base_commit: `fc398fe32`
-  next_action: Owner must continue the production-first larger-tranche optimization stream: evaluate at least three production candidates and select a cohesive module-boundary refactor that is meaningfully larger than local helper extraction. Avoid recently touched compact/display, Git panel diff projection, Settings config catalog, feedback upload log collection, apps/list load-state, LSP manager file-target, and context usage projection paths unless only used as reference.
+  depends_on: main `4a82dbeae`; user explicitly asked to keep going and not stop
+  files: `apps/root-worker-prototype/src/lib/approvalRequests.ts`, `apps/root-worker-prototype/src/lib/approvalRequests.test.ts`, `.codex/pm-progress.md`
+  base_commit: `4a82dbeae`
+  next_action: PM merge to main and keep as pending Runtime Capsule delivery batch; no immediate restart required because this is an internal frontend approval request normalization/projection refactor with no intended API/IPC, provider, model context, persisted protocol, Browser/Terminal lifecycle, Runtime Capsule, Launcher, or visible workflow behavior change.
   constraints: Preserve behavior, provider-visible tool/schema/descriptions, API/IPC/JSONRPC method params/errors/field names, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, and external/native provider parity. Do not restore broad facades or expand old registry surfaces.
-  validation: pending owner inventory, design, reviewer review, focused tests, formatting, `git diff --check`, and relevant build/test validation.
-  commit: pending
+  selection: Owner screened production candidates and selected `apps/root-worker-prototype/src/lib/approvalRequests.ts` because approval normalization mixed request params validation, shared base identity extraction, three approval-domain response projections, metadata/default-decision fallback, and permissions-vs-non-permissions response projection in one entry flow. Deferred `codex-rs/app-server/src/request_processors/external_agent_config_processor.rs` because it has a real detect/import/session/plugin projection seam but is provider/external-agent migration sensitive and background side-effect heavy for a behavior-equivalent tranche. Deferred `apps/root-worker-prototype/src/lib/runtimeRestartProgress.ts` because it has a coherent status projection seam but touches Runtime Capsule/restart recovery semantics, which this tranche should avoid. Rejected `apps/root-worker-prototype/src/lib/sendMessagePayload.ts`/`sendMessageFlow.ts`, `apps/root-worker-prototype/src/lib/accountSettings.ts`, `apps/root-worker-prototype/electron/permissionHandlers.cjs`, and file preview/target helpers as too small or path/security-sensitive relative to the requested larger production tranche. Avoided recently touched compact/display, Git panel diff projection, Settings config catalog, feedback upload log collection, apps/list load-state, LSP manager file-target, and context usage projection paths.
+  production_issue: Approval request normalization had no explicit source/base/projector boundary. The public builder directly mixed JSON-ish params validation, required thread/turn/item identity checks, command network/file/permissions metadata projection, default decision fallback, and response result shape selection, making field-shape and downgrade invariants harder to audit across approval kinds.
+  implementation: Added module-private `ApprovalRequestBase`, `ApprovalRequestSource`, `buildApprovalRequestSource`, `projectApprovalRequest`, per-kind request projectors, and `buildPermissionsApprovalResponse`. `normalizeApprovalRequest` now only builds the source and dispatches to the projector; `buildApprovalResponse` delegates permissions-specific response shaping while preserving non-permissions `{ decision }`. Added focused tests for network command metadata and filtered decisions, invalid command decision fallback, file-change projection, and malformed/unknown request rejection.
+  reviewer_result: Fixed reviewer `/self/owner_main/reviewer` approved with no blocking findings. Reviewer confirmed params/base validation, command/fileChange/permissions title/detail/metadata/decision projection, and permissions/non-permissions response shapes remain equivalent. Reviewer did not run commands.
+  validation: Owner validation passed after formatting: `./node_modules/.bin/prettier --check apps/root-worker-prototype/src/lib/approvalRequests.ts apps/root-worker-prototype/src/lib/approvalRequests.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/approvalRequests.test.ts` (6 passed); `git diff --check`. Initial prettier check failed before mechanical `prettier --write` and passed afterward. Rust/app-server build not run because only frontend TS approval projection files were touched.
+  risk: Low-to-medium frontend production refactor contained within approval request normalization/projection. No public exports, UI text, IPC method names, response field names, JSONRPC params/errors, provider-visible schema/tool descriptions, model-visible context, persisted history/protocol semantics, compact/display, Browser/Terminal lifecycle, Runtime Capsule, or Launcher behavior is intended to change. Installed self-debug not required for owner delivery because this is internal data projection code with focused unit coverage and no intended visible workflow change.
+  commit: owner commit pending; final hash to be reported in owner delivery
 
 - id: continuous-code-organization-tranche-31
   status: merged_pending_capsule_delivery
