@@ -1,5 +1,6 @@
 use super::*;
 use crate::models::ModelCatalogRuntime;
+use app_server_protocol::Model;
 use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::built_in_configs;
 use futures::StreamExt;
@@ -34,6 +35,27 @@ pub(crate) struct CatalogRequestProcessor {
 }
 
 const SKILLS_LIST_CWD_CONCURRENCY: usize = 5;
+
+struct ModelCatalogSnapshot {
+    models: Vec<Model>,
+}
+
+impl ModelCatalogSnapshot {
+    fn new(models: Vec<Model>) -> Self {
+        Self { models }
+    }
+
+    fn model_provider_ids(&self) -> Vec<String> {
+        let mut model_providers = self
+            .models
+            .iter()
+            .filter_map(|model| model.model_provider.clone())
+            .collect::<Vec<_>>();
+        model_providers.sort();
+        model_providers.dedup();
+        model_providers
+    }
+}
 
 fn skills_to_info(
     skills: &[SkillMetadata],
@@ -336,16 +358,10 @@ impl CatalogRequestProcessor {
             cursor,
             include_hidden,
         } = params;
-        let config =
-            load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
-        let mut models = supported_models(
-            self.catalog_runtime.as_ref(),
-            &config,
-            include_hidden.unwrap_or(false),
-        )
-        .await;
-        add_configured_model(&mut models, &config);
-        let total = models.len();
+        let model_catalog = self
+            .collect_model_catalog(/*cwd*/ None, include_hidden.unwrap_or(false))
+            .await?;
+        let total = model_catalog.models.len();
 
         if total == 0 {
             return Ok(ModelListResponse {
@@ -370,7 +386,7 @@ impl CatalogRequestProcessor {
         }
 
         let end = start.saturating_add(effective_limit).min(total);
-        let items = models[start..end].to_vec();
+        let items = model_catalog.models[start..end].to_vec();
         let next_cursor = if end < total {
             Some(end.to_string())
         } else {
@@ -399,19 +415,10 @@ impl CatalogRequestProcessor {
     ) -> Result<ThreadProviderListResponse, JSONRPCErrorError> {
         let ThreadProviderListParams { cwd } = params;
         let config = load_latest_config_for_request(&self.config_manager, cwd).await?;
-        let mut models = supported_models(
-            self.catalog_runtime.as_ref(),
-            &config,
-            /*include_hidden*/ false,
-        )
-        .await;
-        add_configured_model(&mut models, &config);
-        let mut model_providers = models
-            .iter()
-            .filter_map(|model| model.model_provider.clone())
-            .collect::<Vec<_>>();
-        model_providers.sort();
-        model_providers.dedup();
+        let model_catalog = self
+            .collect_model_catalog_from_config(&config, /*include_hidden*/ false)
+            .await;
+        let model_providers = model_catalog.model_provider_ids();
 
         let external_model_selection = ThreadProviderModelSelection {
             mode: ThreadProviderModelSelectionMode::ProviderDefault,
@@ -448,6 +455,28 @@ impl CatalogRequestProcessor {
             })
             .collect();
         Ok(ThreadProviderListResponse { data })
+    }
+
+    async fn collect_model_catalog(
+        &self,
+        cwd: Option<PathBuf>,
+        include_hidden: bool,
+    ) -> Result<ModelCatalogSnapshot, JSONRPCErrorError> {
+        let config = load_latest_config_for_request(&self.config_manager, cwd).await?;
+        Ok(self
+            .collect_model_catalog_from_config(&config, include_hidden)
+            .await)
+    }
+
+    async fn collect_model_catalog_from_config(
+        &self,
+        config: &Config,
+        include_hidden: bool,
+    ) -> ModelCatalogSnapshot {
+        let mut models =
+            supported_models(self.catalog_runtime.as_ref(), config, include_hidden).await;
+        add_configured_model(&mut models, config);
+        ModelCatalogSnapshot::new(models)
     }
 
     async fn list_collaboration_modes(
