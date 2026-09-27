@@ -82,6 +82,20 @@ Active goal: continuous large front+backend code organization. User asked to con
   risk: Test-only helper extraction in one app-server integration suite; no production, JSONRPC method/params/response/error text, provider-visible schema, model IO, persisted history, or product behavior change. Residual risk is limited to helper abstraction around thread/turn response plumbing, covered by reviewer and focused suite.
   commit: owner `195735b8`; merge `067b64614`; pending capsule delivery
 
+- id: continuous-code-organization-tranche-25
+  status: dispatching
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-25
+  task_type: exclusive_production_code_quality_refactor
+  depends_on: main `e1759bc8a`; user explicitly clarified to continue code optimization but not only test cleanup
+  files: owner to select one coherent production-code seam after inventory; tests may be touched only as regression/validation support
+  base_commit: `e1759bc8a`
+  next_action: Owner to screen at least three production-code candidates and implement one behavior-preserving refactor, or pause with evidence if no production candidate passes the quality bar. Do not select test-only helper cleanup.
+  validation: pending
+  commit: pending
+
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change
   owner: /self/owner_dev
