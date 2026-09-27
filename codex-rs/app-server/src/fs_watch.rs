@@ -14,6 +14,7 @@ use codex_file_watcher::FileWatcherSubscriber;
 use codex_file_watcher::Receiver;
 use codex_file_watcher::WatchPath;
 use codex_file_watcher::WatchRegistration;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::hash_map::Entry;
@@ -66,6 +67,39 @@ impl DebouncedReceiver {
             paths: self.changed_paths.drain().collect(),
         })
     }
+}
+
+struct FsWatchRequest {
+    key: WatchKey,
+    watch_id: String,
+    root: AbsolutePathBuf,
+}
+
+struct PreparedWatch {
+    request: FsWatchRequest,
+    rx: Receiver,
+    entry: WatchEntry,
+    terminate_rx: oneshot::Receiver<oneshot::Sender<()>>,
+}
+
+struct WatchTask {
+    connection_id: ConnectionId,
+    watch_id: String,
+    root: AbsolutePathBuf,
+    outgoing: Arc<OutgoingMessageSender>,
+    rx: DebouncedReceiver,
+    terminate_rx: oneshot::Receiver<oneshot::Sender<()>>,
+}
+
+struct WatchNotification {
+    connection_id: ConnectionId,
+    notification: FsChangedNotification,
+}
+
+struct WatchTermination {
+    done_rx: oneshot::Receiver<()>,
+    _subscriber: FileWatcherSubscriber,
+    _registration: WatchRegistration,
 }
 
 #[derive(Clone)]
@@ -124,69 +158,71 @@ impl FsWatchManager {
         connection_id: ConnectionId,
         params: FsWatchParams,
     ) -> Result<FsWatchResponse, JSONRPCErrorError> {
-        let watch_id = params.watch_id;
-        let watch_key = WatchKey {
-            connection_id,
-            watch_id: watch_id.clone(),
-        };
-        let outgoing = self.outgoing.clone();
-        let (subscriber, rx) = self.file_watcher.add_subscriber();
-        let watch_root = params.path.clone();
-        let registration = subscriber.register_paths(vec![WatchPath {
-            path: params.path.to_path_buf(),
-            recursive: false,
-        }]);
-        let (terminate_tx, terminate_rx) = oneshot::channel();
+        let prepared = self.prepare_watch(connection_id, params);
+        let response_path = prepared.request.root.clone();
+        let terminate_rx = prepared.terminate_rx;
+        self.insert_watch_entry(&prepared.request, prepared.entry)
+            .await?;
+        self.spawn_watch_task(prepared.request, prepared.rx, terminate_rx);
 
-        match self.state.lock().await.entries.entry(watch_key) {
+        Ok(FsWatchResponse {
+            path: response_path,
+        })
+    }
+
+    fn prepare_watch(&self, connection_id: ConnectionId, params: FsWatchParams) -> PreparedWatch {
+        let request = FsWatchRequest::from_connection_params(connection_id, params);
+        let (subscriber, rx) = self.file_watcher.add_subscriber();
+        let registration = subscriber.register_paths(vec![request.watch_path()]);
+        let (terminate_tx, terminate_rx) = oneshot::channel();
+        PreparedWatch {
+            request,
+            rx,
+            entry: WatchEntry {
+                terminate_tx,
+                _subscriber: subscriber,
+                _registration: registration,
+            },
+            terminate_rx,
+        }
+    }
+
+    async fn insert_watch_entry(
+        &self,
+        request: &FsWatchRequest,
+        entry: WatchEntry,
+    ) -> Result<(), JSONRPCErrorError> {
+        match self.state.lock().await.entries.entry(request.key.clone()) {
             Entry::Occupied(_) => {
                 return Err(invalid_request(format!(
-                    "watchId already exists: {watch_id}"
+                    "watchId already exists: {}",
+                    request.watch_id
                 )));
             }
-            Entry::Vacant(entry) => {
-                entry.insert(WatchEntry {
-                    terminate_tx,
-                    _subscriber: subscriber,
-                    _registration: registration,
-                });
+            Entry::Vacant(vacant) => {
+                vacant.insert(entry);
             }
         }
+        Ok(())
+    }
 
-        let task_watch_id = watch_id.clone();
+    fn spawn_watch_task(
+        &self,
+        request: FsWatchRequest,
+        rx: Receiver,
+        terminate_rx: oneshot::Receiver<oneshot::Sender<()>>,
+    ) {
+        let task = WatchTask {
+            connection_id: request.key.connection_id,
+            watch_id: request.watch_id,
+            root: request.root,
+            outgoing: Arc::clone(&self.outgoing),
+            rx: DebouncedReceiver::new(rx, FS_CHANGED_NOTIFICATION_DEBOUNCE),
+            terminate_rx,
+        };
         tokio::spawn(async move {
-            let mut rx = DebouncedReceiver::new(rx, FS_CHANGED_NOTIFICATION_DEBOUNCE);
-            tokio::pin!(terminate_rx);
-            loop {
-                let event = tokio::select! {
-                    biased;
-                    _ = &mut terminate_rx => break,
-                    event = rx.recv() => match event {
-                        Some(event) => event,
-                        None => break,
-                    },
-                };
-                let mut changed_paths = event
-                    .paths
-                    .into_iter()
-                    .map(|path| watch_root.join(path))
-                    .collect::<Vec<_>>();
-                changed_paths.sort_by(|left, right| left.as_path().cmp(right.as_path()));
-                if !changed_paths.is_empty() {
-                    outgoing
-                        .send_server_notification_to_connection_and_wait(
-                            connection_id,
-                            ServerNotification::FsChanged(FsChangedNotification {
-                                watch_id: task_watch_id.clone(),
-                                changed_paths,
-                            }),
-                        )
-                        .await;
-                }
-            }
+            task.run().await;
         });
-
-        Ok(FsWatchResponse { path: params.path })
     }
 
     pub(crate) async fn unwatch(
@@ -194,17 +230,14 @@ impl FsWatchManager {
         connection_id: ConnectionId,
         params: FsUnwatchParams,
     ) -> Result<FsUnwatchResponse, JSONRPCErrorError> {
-        let watch_key = WatchKey {
-            connection_id,
-            watch_id: params.watch_id,
-        };
-        let entry = self.state.lock().await.entries.remove(&watch_key);
-        if let Some(entry) = entry {
-            // Wait for the oneshot to be destroyed by the task to ensure that no notifications
-            // are send after the unwatch response.
-            let (done_tx, done_rx) = oneshot::channel();
-            let _ = entry.terminate_tx.send(done_tx);
-            let _ = done_rx.await;
+        if let Some(termination) = self
+            .remove_watch_entry(WatchKey {
+                connection_id,
+                watch_id: params.watch_id,
+            })
+            .await
+        {
+            termination.wait().await;
         }
         Ok(FsUnwatchResponse {})
     }
@@ -216,6 +249,131 @@ impl FsWatchManager {
             .extract_if(|key, _| key.connection_id == connection_id)
             .count();
     }
+
+    async fn remove_watch_entry(&self, watch_key: WatchKey) -> Option<WatchTermination> {
+        self.state
+            .lock()
+            .await
+            .entries
+            .remove(&watch_key)
+            .map(WatchTermination::from_entry)
+    }
+}
+
+impl FsWatchRequest {
+    fn from_connection_params(connection_id: ConnectionId, params: FsWatchParams) -> Self {
+        let watch_id = params.watch_id;
+        Self {
+            key: WatchKey {
+                connection_id,
+                watch_id: watch_id.clone(),
+            },
+            watch_id,
+            root: params.path,
+        }
+    }
+
+    fn watch_path(&self) -> WatchPath {
+        WatchPath {
+            path: self.root.to_path_buf(),
+            recursive: false,
+        }
+    }
+}
+
+impl WatchTask {
+    async fn run(self) {
+        let WatchTask {
+            connection_id,
+            watch_id,
+            root,
+            outgoing,
+            mut rx,
+            terminate_rx,
+        } = self;
+        tokio::pin!(terminate_rx);
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = &mut terminate_rx => break,
+                event = rx.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
+            if let Some(notification) =
+                watch_notification_for_event(connection_id, &watch_id, &root, event)
+            {
+                notification.send(&outgoing).await;
+            }
+        }
+    }
+}
+
+impl WatchNotification {
+    async fn send(self, outgoing: &OutgoingMessageSender) {
+        outgoing
+            .send_server_notification_to_connection_and_wait(
+                self.connection_id,
+                ServerNotification::FsChanged(self.notification),
+            )
+            .await;
+    }
+}
+
+impl WatchTermination {
+    fn from_entry(entry: WatchEntry) -> Self {
+        let WatchEntry {
+            terminate_tx,
+            _subscriber,
+            _registration,
+        } = entry;
+        let (done_tx, done_rx) = oneshot::channel();
+        let _ = terminate_tx.send(done_tx);
+        Self {
+            done_rx,
+            _subscriber,
+            _registration,
+        }
+    }
+
+    async fn wait(self) {
+        // Wait for the oneshot to be destroyed by the task to ensure that no notifications
+        // are sent after the unwatch response.
+        let _ = self.done_rx.await;
+    }
+}
+
+fn watch_notification_for_event(
+    connection_id: ConnectionId,
+    watch_id: &str,
+    root: &AbsolutePathBuf,
+    event: FileWatcherEvent,
+) -> Option<WatchNotification> {
+    let changed_paths = changed_paths_for_event(root, event);
+    if changed_paths.is_empty() {
+        return None;
+    }
+    Some(WatchNotification {
+        connection_id,
+        notification: FsChangedNotification {
+            watch_id: watch_id.to_string(),
+            changed_paths,
+        },
+    })
+}
+
+fn changed_paths_for_event(
+    root: &AbsolutePathBuf,
+    event: FileWatcherEvent,
+) -> Vec<AbsolutePathBuf> {
+    let mut changed_paths = event
+        .paths
+        .into_iter()
+        .map(|path| root.join(path))
+        .collect::<Vec<_>>();
+    changed_paths.sort_by(|left, right| left.as_path().cmp(right.as_path()));
+    changed_paths
 }
 
 #[cfg(test)]
@@ -356,6 +514,40 @@ mod tests {
 
         assert_eq!(error.message, "watchId already exists: watch-head");
         assert_eq!(manager.state.lock().await.entries.len(), 1);
+    }
+
+    #[test]
+    fn watch_notification_projection_sorts_joined_paths_and_skips_empty_events() {
+        let root = absolute_path(PathBuf::from("/tmp/repo/.git"));
+
+        let notification = watch_notification_for_event(
+            ConnectionId(7),
+            "watch-git",
+            &root,
+            FileWatcherEvent {
+                paths: vec![PathBuf::from("refs/heads/main"), PathBuf::from("HEAD")],
+            },
+        )
+        .expect("changed paths should produce a notification");
+
+        assert_eq!(notification.connection_id, ConnectionId(7));
+        assert_eq!(notification.notification.watch_id, "watch-git");
+        assert_eq!(
+            notification.notification.changed_paths,
+            vec![
+                absolute_path(PathBuf::from("/tmp/repo/.git/HEAD")),
+                absolute_path(PathBuf::from("/tmp/repo/.git/refs/heads/main")),
+            ]
+        );
+        assert!(
+            watch_notification_for_event(
+                ConnectionId(7),
+                "watch-git",
+                &root,
+                FileWatcherEvent { paths: Vec::new() },
+            )
+            .is_none()
+        );
     }
 
     #[tokio::test]
