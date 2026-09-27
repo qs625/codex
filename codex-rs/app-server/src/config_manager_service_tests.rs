@@ -93,6 +93,122 @@ fn linear_server_write_params(
 }
 
 #[test]
+fn config_write_request_preserves_batch_metadata_and_edit_order() {
+    let request = ConfigWriteRequest::batch(ConfigBatchWriteParams {
+        edits: vec![
+            app_server_protocol::ConfigEdit {
+                key_path: "model".to_string(),
+                value: serde_json::json!("gpt-5.2"),
+                merge_strategy: MergeStrategy::Replace,
+            },
+            app_server_protocol::ConfigEdit {
+                key_path: "features.personality".to_string(),
+                value: serde_json::json!(true),
+                merge_strategy: MergeStrategy::Upsert,
+            },
+        ],
+        file_path: Some("/tmp/config.toml".to_string()),
+        expected_version: Some("sha256:expected".to_string()),
+        reload_user_config: true,
+    });
+
+    assert_eq!(request.file_path.as_deref(), Some("/tmp/config.toml"));
+    assert_eq!(request.expected_version.as_deref(), Some("sha256:expected"));
+    assert_eq!(request.edits.len(), 2);
+    assert_eq!(request.edits[0].key_path, "model");
+    assert_eq!(request.edits[0].merge_strategy, MergeStrategy::Replace);
+    assert_eq!(request.edits[1].key_path, "features.personality");
+    assert_eq!(request.edits[1].merge_strategy, MergeStrategy::Upsert);
+}
+
+#[test]
+fn config_write_target_allows_only_user_config_path() {
+    let tmp = tempdir().expect("tempdir");
+    let allowed = AbsolutePathBuf::from_absolute_path(config_path(&tmp)).expect("allowed path");
+    let default_target = ConfigWriteTarget::resolve(None, allowed.clone()).expect("default target");
+    assert_eq!(default_target.path, allowed);
+
+    let disallowed = tmp.path().join("other.toml");
+    let result = ConfigWriteTarget::resolve(
+        Some(disallowed.display().to_string()),
+        default_target.path.clone(),
+    );
+    let Err(err) = result else {
+        panic!("non-user config path should be rejected");
+    };
+    assert_eq!(
+        err.write_error_code(),
+        Some(ConfigWriteErrorCode::ConfigLayerReadonly)
+    );
+    assert_eq!(
+        err.to_string(),
+        "Only writes to the user config are allowed"
+    );
+}
+
+#[test]
+fn config_write_plan_tracks_segments_without_persisting_noops() {
+    let user_config: TomlValue = toml::from_str(
+        r#"model = "gpt-5.2"
+
+[features]
+personality = true
+"#,
+    )
+    .expect("parse config");
+
+    let plan = ConfigWritePlan::new(user_config)
+        .apply_edits(vec![
+            ConfigWriteEdit {
+                key_path: "model".to_string(),
+                value: serde_json::json!("gpt-5.2"),
+                merge_strategy: MergeStrategy::Replace,
+            },
+            ConfigWriteEdit {
+                key_path: "features.personality".to_string(),
+                value: serde_json::json!(false),
+                merge_strategy: MergeStrategy::Replace,
+            },
+            ConfigWriteEdit {
+                key_path: "features.missing".to_string(),
+                value: serde_json::Value::Null,
+                merge_strategy: MergeStrategy::Replace,
+            },
+        ])
+        .expect("edits apply");
+
+    assert_eq!(
+        plan.parsed_segments,
+        vec![
+            vec!["model".to_string()],
+            vec!["features".to_string(), "personality".to_string()],
+            vec!["features".to_string(), "missing".to_string()],
+        ]
+    );
+    assert_eq!(
+        value_at_path(
+            &plan.user_config,
+            &["features".to_string(), "personality".to_string()]
+        ),
+        Some(&TomlValue::Boolean(false))
+    );
+    assert_eq!(plan.config_edits.len(), 1);
+    match &plan.config_edits[0] {
+        ConfigEdit::SetPath { segments, value } => {
+            assert_eq!(
+                segments,
+                &vec!["features".to_string(), "personality".to_string()]
+            );
+            assert_eq!(
+                value.as_value().and_then(toml_edit::Value::as_bool),
+                Some(false)
+            );
+        }
+        other => panic!("expected SetPath edit, got {other:?}"),
+    }
+}
+
+#[test]
 fn toml_value_to_item_handles_nested_config_tables() {
     let config = r#"
 [mcp_servers.docs]

@@ -11,15 +11,15 @@ use app_server_protocol::ConfigWriteResponse;
 use app_server_protocol::MergeStrategy;
 use app_server_protocol::OverriddenMetadata;
 use app_server_protocol::WriteStatus;
-use config_service::ConfigRequirementsToml;
-use config_service::ConfigLayerEntry;
-use config_service::ConfigLayerStack;
-use config_service::ConfigLayerStackOrdering;
-use config_service::merge_toml_values;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_toml::deserialize_config_toml_with_base;
 use codex_config_types::CONFIG_TOML_FILE;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigLayerStack;
+use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigRequirementsToml;
+use config_service::merge_toml_values;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::path::Path;
@@ -105,6 +105,145 @@ impl ConfigManagerError {
     }
 }
 
+struct ConfigWriteEdit {
+    key_path: String,
+    value: JsonValue,
+    merge_strategy: MergeStrategy,
+}
+
+struct ConfigWriteRequest {
+    file_path: Option<String>,
+    expected_version: Option<String>,
+    edits: Vec<ConfigWriteEdit>,
+}
+
+impl ConfigWriteRequest {
+    fn single(params: ConfigValueWriteParams) -> Self {
+        Self {
+            file_path: params.file_path,
+            expected_version: params.expected_version,
+            edits: vec![ConfigWriteEdit {
+                key_path: params.key_path,
+                value: params.value,
+                merge_strategy: params.merge_strategy,
+            }],
+        }
+    }
+
+    fn batch(params: ConfigBatchWriteParams) -> Self {
+        Self {
+            file_path: params.file_path,
+            expected_version: params.expected_version,
+            edits: params
+                .edits
+                .into_iter()
+                .map(|edit| ConfigWriteEdit {
+                    key_path: edit.key_path,
+                    value: edit.value,
+                    merge_strategy: edit.merge_strategy,
+                })
+                .collect(),
+        }
+    }
+}
+
+struct ConfigWriteTarget {
+    path: AbsolutePathBuf,
+}
+
+impl ConfigWriteTarget {
+    fn resolve(
+        file_path: Option<String>,
+        allowed_path: AbsolutePathBuf,
+    ) -> Result<Self, ConfigManagerError> {
+        let provided_path = match file_path {
+            Some(path) => AbsolutePathBuf::from_absolute_path(PathBuf::from(path))
+                .map_err(|err| ConfigManagerError::io("failed to resolve user config path", err))?,
+            None => allowed_path.clone(),
+        };
+
+        if !paths_match(&allowed_path, &provided_path) {
+            return Err(ConfigManagerError::write(
+                ConfigWriteErrorCode::ConfigLayerReadonly,
+                "Only writes to the user config are allowed",
+            ));
+        }
+
+        Ok(Self {
+            path: provided_path,
+        })
+    }
+}
+
+struct ConfigWritePlan {
+    user_config: TomlValue,
+    parsed_segments: Vec<Vec<String>>,
+    config_edits: Vec<ConfigEdit>,
+}
+
+impl ConfigWritePlan {
+    fn new(user_config: TomlValue) -> Self {
+        Self {
+            user_config,
+            parsed_segments: Vec::new(),
+            config_edits: Vec::new(),
+        }
+    }
+
+    fn apply_edits(mut self, edits: Vec<ConfigWriteEdit>) -> Result<Self, ConfigManagerError> {
+        for edit in edits {
+            self.apply_edit(edit)?;
+        }
+        Ok(self)
+    }
+
+    fn apply_edit(&mut self, edit: ConfigWriteEdit) -> Result<(), ConfigManagerError> {
+        let ConfigWriteEdit {
+            key_path,
+            value,
+            merge_strategy,
+        } = edit;
+        let segments = parse_key_path(&key_path).map_err(|message| {
+            ConfigManagerError::write(ConfigWriteErrorCode::ConfigValidationError, message)
+        })?;
+        let original_value = value_at_path(&self.user_config, &segments).cloned();
+        let parsed_value = parse_value(value).map_err(|message| {
+            ConfigManagerError::write(ConfigWriteErrorCode::ConfigValidationError, message)
+        })?;
+
+        apply_merge(
+            &mut self.user_config,
+            &segments,
+            parsed_value.as_ref(),
+            merge_strategy,
+        )
+        .map_err(|err| match err {
+            MergeError::Validation(message) => {
+                ConfigManagerError::write(ConfigWriteErrorCode::ConfigValidationError, message)
+            }
+        })?;
+
+        let updated_value = value_at_path(&self.user_config, &segments).cloned();
+        if original_value != updated_value {
+            let edit = match updated_value {
+                Some(value) => ConfigEdit::SetPath {
+                    segments: segments.clone(),
+                    value: toml_value_to_item(&value).map_err(|err| {
+                        ConfigManagerError::anyhow("failed to build config edits", err)
+                    })?,
+                },
+                None => ConfigEdit::ClearPath {
+                    segments: segments.clone(),
+                },
+            };
+            self.config_edits.push(edit);
+        }
+
+        self.parsed_segments.push(segments);
+        Ok(())
+    }
+}
+
 impl ConfigManager {
     pub(crate) async fn read(
         &self,
@@ -171,46 +310,29 @@ impl ConfigManager {
         &self,
         params: ConfigValueWriteParams,
     ) -> Result<ConfigWriteResponse, ConfigManagerError> {
-        let edits = vec![(params.key_path, params.value, params.merge_strategy)];
-        self.apply_edits(params.file_path, params.expected_version, edits)
-            .await
+        self.apply_edits(ConfigWriteRequest::single(params)).await
     }
 
     pub(crate) async fn batch_write(
         &self,
         params: ConfigBatchWriteParams,
     ) -> Result<ConfigWriteResponse, ConfigManagerError> {
-        let edits = params
-            .edits
-            .into_iter()
-            .map(|edit| (edit.key_path, edit.value, edit.merge_strategy))
-            .collect();
-
-        self.apply_edits(params.file_path, params.expected_version, edits)
-            .await
+        self.apply_edits(ConfigWriteRequest::batch(params)).await
     }
 
     async fn apply_edits(
         &self,
-        file_path: Option<String>,
-        expected_version: Option<String>,
-        edits: Vec<(String, JsonValue, MergeStrategy)>,
+        request: ConfigWriteRequest,
     ) -> Result<ConfigWriteResponse, ConfigManagerError> {
+        let ConfigWriteRequest {
+            file_path,
+            expected_version,
+            edits,
+        } = request;
         let allowed_path = self
             .user_config_path()
             .map_err(|err| ConfigManagerError::io("failed to resolve user config path", err))?;
-        let provided_path = match file_path {
-            Some(path) => AbsolutePathBuf::from_absolute_path(PathBuf::from(path))
-                .map_err(|err| ConfigManagerError::io("failed to resolve user config path", err))?,
-            None => allowed_path.clone(),
-        };
-
-        if !paths_match(&allowed_path, &provided_path) {
-            return Err(ConfigManagerError::write(
-                ConfigWriteErrorCode::ConfigLayerReadonly,
-                "Only writes to the user config are allowed",
-            ));
-        }
+        let target = ConfigWriteTarget::resolve(file_path, allowed_path.clone())?;
 
         let layers = self
             .load_thread_agnostic_config()
@@ -230,62 +352,22 @@ impl ConfigManager {
             ));
         }
 
-        let mut user_config = user_layer.config.clone();
-        let mut parsed_segments = Vec::new();
-        let mut config_edits = Vec::new();
+        let plan = ConfigWritePlan::new(user_layer.config.clone()).apply_edits(edits)?;
 
-        for (key_path, value, strategy) in edits.into_iter() {
-            let segments = parse_key_path(&key_path).map_err(|message| {
-                ConfigManagerError::write(ConfigWriteErrorCode::ConfigValidationError, message)
-            })?;
-            let original_value = value_at_path(&user_config, &segments).cloned();
-            let parsed_value = parse_value(value).map_err(|message| {
-                ConfigManagerError::write(ConfigWriteErrorCode::ConfigValidationError, message)
-            })?;
-
-            apply_merge(&mut user_config, &segments, parsed_value.as_ref(), strategy).map_err(
-                |err| match err {
-                    MergeError::Validation(message) => ConfigManagerError::write(
-                        ConfigWriteErrorCode::ConfigValidationError,
-                        message,
-                    ),
-                },
-            )?;
-
-            let updated_value = value_at_path(&user_config, &segments).cloned();
-            if original_value != updated_value {
-                let edit = match updated_value {
-                    Some(value) => ConfigEdit::SetPath {
-                        segments: segments.clone(),
-                        value: toml_value_to_item(&value).map_err(|err| {
-                            ConfigManagerError::anyhow("failed to build config edits", err)
-                        })?,
-                    },
-                    None => ConfigEdit::ClearPath {
-                        segments: segments.clone(),
-                    },
-                };
-                config_edits.push(edit);
-            }
-
-            parsed_segments.push(segments);
-        }
-
-        validate_config(&user_config).map_err(|err| {
+        validate_config(&plan.user_config).map_err(|err| {
             ConfigManagerError::write(
                 ConfigWriteErrorCode::ConfigValidationError,
                 format!("Invalid configuration: {err}"),
             )
         })?;
         let user_config_toml =
-            deserialize_config_toml_with_base(user_config.clone(), self.codex_home()).map_err(
-                |err| {
+            deserialize_config_toml_with_base(plan.user_config.clone(), self.codex_home())
+                .map_err(|err| {
                     ConfigManagerError::write(
                         ConfigWriteErrorCode::ConfigValidationError,
                         format!("Invalid configuration: {err}"),
                     )
-                },
-            )?;
+                })?;
         validate_feature_requirements_for_config_toml(
             &user_config_toml,
             layers.requirements().feature_requirements.as_ref(),
@@ -296,7 +378,7 @@ impl ConfigManager {
                 format!("Invalid configuration: {err}"),
             )
         })?;
-        let updated_layers = layers.with_user_config(&provided_path, user_config.clone());
+        let updated_layers = layers.with_user_config(&target.path, plan.user_config.clone());
         let effective = updated_layers.effective_config();
         validate_config(&effective).map_err(|err| {
             ConfigManagerError::write(
@@ -305,15 +387,15 @@ impl ConfigManager {
             )
         })?;
 
-        if !config_edits.is_empty() {
-            ConfigEditsBuilder::for_config_path(provided_path.as_path())
-                .with_edits(config_edits)
+        if !plan.config_edits.is_empty() {
+            ConfigEditsBuilder::for_config_path(target.path.as_path())
+                .with_edits(plan.config_edits)
                 .apply()
                 .await
                 .map_err(|err| ConfigManagerError::anyhow("failed to persist config.toml", err))?;
         }
 
-        let overridden = first_overridden_edit(&updated_layers, &effective, &parsed_segments);
+        let overridden = first_overridden_edit(&updated_layers, &effective, &plan.parsed_segments);
         let status = overridden
             .as_ref()
             .map(|_| WriteStatus::OkOverridden)
@@ -331,7 +413,7 @@ impl ConfigManager {
                 })?
                 .version
                 .clone(),
-            file_path: provided_path,
+            file_path: target.path,
             overridden_metadata: overridden,
         })
     }
