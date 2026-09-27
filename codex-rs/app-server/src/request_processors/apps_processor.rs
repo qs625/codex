@@ -163,14 +163,15 @@ impl AppsRequestProcessor {
         };
 
         let chatgpt_config = chatgpt_config_from_core(&config);
-        let (mut accessible_connectors, mut all_connectors) = tokio::join!(
+        let (accessible_connectors, all_connectors) = tokio::join!(
             core_connectors::list_cached_accessible_connectors_from_mcp_tools(
                 &config,
                 auth_snapshot.as_ref()
             ),
             chatgpt_connectors::list_cached_all_connectors(&chatgpt_config)
         );
-        let cached_all_connectors = all_connectors.clone();
+        let mut load_state =
+            AppListLoadState::new(accessible_connectors, all_connectors, force_refetch);
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -204,23 +205,8 @@ impl AppsRequestProcessor {
         });
 
         let app_list_deadline = tokio::time::Instant::now() + APP_LIST_LOAD_TIMEOUT;
-        let mut accessible_loaded = false;
-        let mut all_loaded = false;
-        let mut last_notified_apps = None;
-
-        if accessible_connectors.is_some() || all_connectors.is_some() {
-            let merged = core_connectors::with_app_enabled_state(
-                merge_loaded_apps(all_connectors.as_deref(), accessible_connectors.as_deref()),
-                &config,
-            );
-            if should_send_app_list_updated_notification(
-                merged.as_slice(),
-                accessible_loaded,
-                all_loaded,
-            ) {
-                send_app_list_updated_notification(outgoing, merged.clone()).await;
-                last_notified_apps = Some(merged);
-            }
+        if let Some(data) = load_state.initial_notification_data(&config) {
+            send_app_list_updated_notification(outgoing, data).await;
         }
 
         loop {
@@ -237,52 +223,14 @@ impl AppsRequestProcessor {
                 }
             };
 
-            match result {
-                AppListLoadResult::Accessible(Ok(connectors)) => {
-                    accessible_connectors = Some(connectors);
-                    accessible_loaded = true;
-                }
-                AppListLoadResult::Accessible(Err(err)) => {
-                    return Err(internal_error(err));
-                }
-                AppListLoadResult::Directory(Ok(connectors)) => {
-                    all_connectors = Some(connectors);
-                    all_loaded = true;
-                }
-                AppListLoadResult::Directory(Err(err)) => {
-                    return Err(internal_error(err));
-                }
+            load_state.apply_load_result(result)?;
+
+            if let Some(data) = load_state.current_notification_data(&config) {
+                send_app_list_updated_notification(outgoing, data).await;
             }
 
-            let showing_interim_force_refetch = force_refetch && !(accessible_loaded && all_loaded);
-            let all_connectors_for_update =
-                if showing_interim_force_refetch && cached_all_connectors.is_some() {
-                    cached_all_connectors.as_deref()
-                } else {
-                    all_connectors.as_deref()
-                };
-            let accessible_connectors_for_update =
-                if showing_interim_force_refetch && !accessible_loaded {
-                    None
-                } else {
-                    accessible_connectors.as_deref()
-                };
-            let merged = core_connectors::with_app_enabled_state(
-                merge_loaded_apps(all_connectors_for_update, accessible_connectors_for_update),
-                &config,
-            );
-            if should_send_app_list_updated_notification(
-                merged.as_slice(),
-                accessible_loaded,
-                all_loaded,
-            ) && last_notified_apps.as_ref() != Some(&merged)
-            {
-                send_app_list_updated_notification(outgoing, merged.clone()).await;
-                last_notified_apps = Some(merged.clone());
-            }
-
-            if accessible_loaded && all_loaded {
-                return paginate_apps(merged.as_slice(), start, limit);
+            if let Some(response) = load_state.final_response(&config, start, limit)? {
+                return Ok(response);
             }
         }
     }
@@ -315,6 +263,132 @@ const APP_LIST_LOAD_TIMEOUT: Duration = Duration::from_secs(90);
 enum AppListLoadResult {
     Accessible(Result<Vec<AppInfo>, String>),
     Directory(Result<Vec<AppInfo>, String>),
+}
+
+struct AppListLoadState {
+    accessible_connectors: Option<Vec<AppInfo>>,
+    all_connectors: Option<Vec<AppInfo>>,
+    cached_all_connectors: Option<Vec<AppInfo>>,
+    accessible_loaded: bool,
+    all_loaded: bool,
+    force_refetch: bool,
+    last_notified_apps: Option<Vec<AppInfo>>,
+}
+
+impl AppListLoadState {
+    fn new(
+        accessible_connectors: Option<Vec<AppInfo>>,
+        all_connectors: Option<Vec<AppInfo>>,
+        force_refetch: bool,
+    ) -> Self {
+        Self {
+            cached_all_connectors: all_connectors.clone(),
+            accessible_connectors,
+            all_connectors,
+            accessible_loaded: false,
+            all_loaded: false,
+            force_refetch,
+            last_notified_apps: None,
+        }
+    }
+
+    fn apply_load_result(&mut self, result: AppListLoadResult) -> Result<(), JSONRPCErrorError> {
+        match result {
+            AppListLoadResult::Accessible(Ok(connectors)) => {
+                self.accessible_connectors = Some(connectors);
+                self.accessible_loaded = true;
+                Ok(())
+            }
+            AppListLoadResult::Accessible(Err(err)) => Err(internal_error(err)),
+            AppListLoadResult::Directory(Ok(connectors)) => {
+                self.all_connectors = Some(connectors);
+                self.all_loaded = true;
+                Ok(())
+            }
+            AppListLoadResult::Directory(Err(err)) => Err(internal_error(err)),
+        }
+    }
+
+    fn initial_notification_data(&mut self, config: &Config) -> Option<Vec<AppInfo>> {
+        if self.accessible_connectors.is_none() && self.all_connectors.is_none() {
+            return None;
+        }
+
+        let merged = app_list_with_enabled_state(
+            self.all_connectors.as_deref(),
+            self.accessible_connectors.as_deref(),
+            config,
+        );
+        self.take_notification_data(merged)
+    }
+
+    fn current_notification_data(&mut self, config: &Config) -> Option<Vec<AppInfo>> {
+        let merged = self.current_merged_apps(config);
+        self.take_notification_data(merged)
+    }
+
+    fn final_response(
+        &self,
+        config: &Config,
+        start: usize,
+        limit: Option<u32>,
+    ) -> Result<Option<AppsListResponse>, JSONRPCErrorError> {
+        if !self.is_fully_loaded() {
+            return Ok(None);
+        }
+
+        paginate_apps(self.current_merged_apps(config).as_slice(), start, limit).map(Some)
+    }
+
+    fn take_notification_data(&mut self, merged: Vec<AppInfo>) -> Option<Vec<AppInfo>> {
+        if !should_send_app_list_updated_notification(
+            merged.as_slice(),
+            self.accessible_loaded,
+            self.all_loaded,
+        ) || self.last_notified_apps.as_ref() == Some(&merged)
+        {
+            return None;
+        }
+
+        self.last_notified_apps = Some(merged.clone());
+        Some(merged)
+    }
+
+    fn current_merged_apps(&self, config: &Config) -> Vec<AppInfo> {
+        let (all_connectors, accessible_connectors) = self.current_merge_sources();
+        app_list_with_enabled_state(all_connectors, accessible_connectors, config)
+    }
+
+    fn current_merge_sources(&self) -> (Option<&[AppInfo]>, Option<&[AppInfo]>) {
+        let showing_interim_force_refetch = self.force_refetch && !self.is_fully_loaded();
+        let all_connectors =
+            if showing_interim_force_refetch && self.cached_all_connectors.is_some() {
+                self.cached_all_connectors.as_deref()
+            } else {
+                self.all_connectors.as_deref()
+            };
+        let accessible_connectors = if showing_interim_force_refetch && !self.accessible_loaded {
+            None
+        } else {
+            self.accessible_connectors.as_deref()
+        };
+        (all_connectors, accessible_connectors)
+    }
+
+    fn is_fully_loaded(&self) -> bool {
+        self.accessible_loaded && self.all_loaded
+    }
+}
+
+fn app_list_with_enabled_state(
+    all_connectors: Option<&[AppInfo]>,
+    accessible_connectors: Option<&[AppInfo]>,
+    config: &Config,
+) -> Vec<AppInfo> {
+    core_connectors::with_app_enabled_state(
+        merge_loaded_apps(all_connectors, accessible_connectors),
+        config,
+    )
 }
 
 fn merge_loaded_apps(
@@ -368,4 +442,91 @@ async fn send_app_list_updated_notification(
             AppListUpdatedNotification { data },
         ))
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(id: &str, is_accessible: bool) -> AppInfo {
+        AppInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            logo_url: None,
+            logo_url_dark: None,
+            distribution_channel: None,
+            branding: None,
+            app_metadata: None,
+            labels: None,
+            install_url: None,
+            is_accessible,
+            is_enabled: true,
+            plugin_display_names: Vec::new(),
+        }
+    }
+
+    fn app_ids(apps: Option<&[AppInfo]>) -> Vec<&str> {
+        apps.unwrap_or_default()
+            .iter()
+            .map(|app| app.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn app_list_load_state_force_refetch_uses_cached_directory_until_fully_loaded() {
+        let mut state = AppListLoadState::new(
+            Some(vec![app("cached-accessible", true)]),
+            Some(vec![app("cached-directory", false)]),
+            true,
+        );
+
+        state
+            .apply_load_result(AppListLoadResult::Accessible(Ok(vec![app(
+                "fresh-accessible",
+                true,
+            )])))
+            .expect("accessible load result should apply");
+        let (all_connectors, accessible_connectors) = state.current_merge_sources();
+        assert_eq!(app_ids(all_connectors), vec!["cached-directory"]);
+        assert_eq!(app_ids(accessible_connectors), vec!["fresh-accessible"]);
+
+        state
+            .apply_load_result(AppListLoadResult::Directory(Ok(vec![app(
+                "fresh-directory",
+                false,
+            )])))
+            .expect("directory load result should apply");
+        let (all_connectors, accessible_connectors) = state.current_merge_sources();
+        assert_eq!(app_ids(all_connectors), vec!["fresh-directory"]);
+        assert_eq!(app_ids(accessible_connectors), vec!["fresh-accessible"]);
+    }
+
+    #[test]
+    fn app_list_load_state_suppresses_duplicate_notifications() {
+        let mut state = AppListLoadState::new(None, None, false);
+        let accessible = vec![app("accessible", true)];
+
+        assert!(
+            state
+                .take_notification_data(vec![app("directory", false)])
+                .is_none()
+        );
+
+        state.accessible_loaded = true;
+        assert_eq!(
+            state.take_notification_data(accessible.clone()),
+            Some(accessible.clone())
+        );
+        assert!(state.take_notification_data(accessible.clone()).is_none());
+
+        state.all_loaded = true;
+        assert!(state.take_notification_data(accessible).is_none());
+
+        let final_directory_only = vec![app("directory", false)];
+        assert_eq!(
+            state.take_notification_data(final_directory_only.clone()),
+            Some(final_directory_only)
+        );
+    }
 }
