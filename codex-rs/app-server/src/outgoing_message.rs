@@ -96,7 +96,7 @@ pub(crate) enum OutgoingEnvelope {
 pub(crate) struct OutgoingMessageSender {
     next_server_request_id: AtomicI64,
     sender: mpsc::Sender<OutgoingEnvelope>,
-    request_id_to_callback: Mutex<HashMap<RequestId, PendingCallbackEntry>>,
+    pending_server_requests: PendingServerRequests,
     /// Incoming requests that are still waiting on a final response or error.
     /// We keep them here because this is where responses, errors, and
     /// disconnect cleanup all get handled.
@@ -115,6 +115,62 @@ struct PendingCallbackEntry {
     callback: oneshot::Sender<ClientRequestResult>,
     thread_id: Option<ThreadId>,
     request: ServerRequest,
+}
+
+#[derive(Default)]
+struct PendingServerRequests {
+    entries: Mutex<HashMap<RequestId, PendingCallbackEntry>>,
+}
+
+impl PendingServerRequests {
+    async fn insert(
+        &self,
+        id: RequestId,
+        entry: PendingCallbackEntry,
+    ) -> Option<PendingCallbackEntry> {
+        let mut entries = self.entries.lock().await;
+        entries.insert(id, entry)
+    }
+
+    async fn remove_entry(&self, id: &RequestId) -> Option<(RequestId, PendingCallbackEntry)> {
+        let mut entries = self.entries.lock().await;
+        entries.remove_entry(id)
+    }
+
+    async fn drain_all(&self) -> Vec<PendingCallbackEntry> {
+        let mut entries = self.entries.lock().await;
+        entries.drain().map(|(_, entry)| entry).collect()
+    }
+
+    async fn pending_requests_for_thread(&self, thread_id: ThreadId) -> Vec<ServerRequest> {
+        let entries = self.entries.lock().await;
+        let mut requests = entries
+            .values()
+            .filter_map(|entry| {
+                (entry.thread_id == Some(thread_id)).then_some(entry.request.clone())
+            })
+            .collect::<Vec<_>>();
+        requests.sort_by(|left, right| left.id().cmp(right.id()));
+        requests
+    }
+
+    async fn drain_for_thread(&self, thread_id: ThreadId) -> Vec<PendingCallbackEntry> {
+        let mut entries = self.entries.lock().await;
+        let request_ids = entries
+            .iter()
+            .filter_map(|(request_id, entry)| {
+                (entry.thread_id == Some(thread_id)).then_some(request_id.clone())
+            })
+            .collect::<Vec<_>>();
+
+        let mut drained = Vec::with_capacity(request_ids.len());
+        for request_id in request_ids {
+            if let Some(entry) = entries.remove(&request_id) {
+                drained.push(entry);
+            }
+        }
+        drained
+    }
 }
 
 impl ThreadScopedOutgoingMessageSender {
@@ -214,7 +270,7 @@ impl OutgoingMessageSender {
         Self {
             next_server_request_id: AtomicI64::new(0),
             sender,
-            request_id_to_callback: Mutex::new(HashMap::new()),
+            pending_server_requests: PendingServerRequests::default(),
             request_contexts: Mutex::new(HashMap::new()),
             analytics_events_client,
         }
@@ -294,17 +350,16 @@ impl OutgoingMessageSender {
         let request = request.request_with_id(outgoing_message_id.clone());
 
         let (tx_approve, rx_approve) = oneshot::channel();
-        {
-            let mut request_id_to_callback = self.request_id_to_callback.lock().await;
-            request_id_to_callback.insert(
+        self.pending_server_requests
+            .insert(
                 id,
                 PendingCallbackEntry {
                     callback: tx_approve,
                     thread_id,
                     request: request.clone(),
                 },
-            );
-        }
+            )
+            .await;
 
         let outgoing_message = OutgoingMessage::Request(request.clone());
         let send_result = match connection_ids {
@@ -343,8 +398,9 @@ impl OutgoingMessageSender {
 
         if let Err(err) = send_result {
             warn!("failed to send request {outgoing_message_id:?} to client: {err:?}");
-            let mut request_id_to_callback = self.request_id_to_callback.lock().await;
-            request_id_to_callback.remove(&outgoing_message_id);
+            self.pending_server_requests
+                .remove_entry(&outgoing_message_id)
+                .await;
         }
         (outgoing_message_id, rx_approve)
     }
@@ -422,13 +478,7 @@ impl OutgoingMessageSender {
     }
 
     pub(crate) async fn cancel_all_requests(&self, error: Option<JSONRPCErrorError>) {
-        let entries = {
-            let mut request_id_to_callback = self.request_id_to_callback.lock().await;
-            request_id_to_callback
-                .drain()
-                .map(|(_, entry)| entry)
-                .collect::<Vec<_>>()
-        };
+        let entries = self.pending_server_requests.drain_all().await;
 
         for entry in entries {
             self.analytics_events_client
@@ -446,23 +496,16 @@ impl OutgoingMessageSender {
         &self,
         id: &RequestId,
     ) -> Option<(RequestId, PendingCallbackEntry)> {
-        let mut request_id_to_callback = self.request_id_to_callback.lock().await;
-        request_id_to_callback.remove_entry(id)
+        self.pending_server_requests.remove_entry(id).await
     }
 
     pub(crate) async fn pending_requests_for_thread(
         &self,
         thread_id: ThreadId,
     ) -> Vec<ServerRequest> {
-        let request_id_to_callback = self.request_id_to_callback.lock().await;
-        let mut requests = request_id_to_callback
-            .values()
-            .filter_map(|entry| {
-                (entry.thread_id == Some(thread_id)).then_some(entry.request.clone())
-            })
-            .collect::<Vec<_>>();
-        requests.sort_by(|left, right| left.id().cmp(right.id()));
-        requests
+        self.pending_server_requests
+            .pending_requests_for_thread(thread_id)
+            .await
     }
 
     pub(crate) async fn cancel_requests_for_thread(
@@ -470,23 +513,10 @@ impl OutgoingMessageSender {
         thread_id: ThreadId,
         error: Option<JSONRPCErrorError>,
     ) {
-        let entries = {
-            let mut request_id_to_callback = self.request_id_to_callback.lock().await;
-            let request_ids = request_id_to_callback
-                .iter()
-                .filter_map(|(request_id, entry)| {
-                    (entry.thread_id == Some(thread_id)).then_some(request_id.clone())
-                })
-                .collect::<Vec<_>>();
-
-            let mut entries = Vec::with_capacity(request_ids.len());
-            for request_id in request_ids {
-                if let Some(entry) = request_id_to_callback.remove(&request_id) {
-                    entries.push(entry);
-                }
-            }
-            entries
-        };
+        let entries = self
+            .pending_server_requests
+            .drain_for_thread(thread_id)
+            .await;
 
         for entry in entries {
             self.analytics_events_client
@@ -1027,6 +1057,89 @@ mod tests {
             CommandExecutionApprovalDecision::AcceptForSession
         );
     }
+
+    fn pending_file_change_request(
+        id: RequestId,
+        thread_id: ThreadId,
+    ) -> (PendingCallbackEntry, oneshot::Receiver<ClientRequestResult>) {
+        let (callback, receiver) = oneshot::channel();
+        let request = ServerRequest::FileChangeRequestApproval {
+            request_id: id,
+            params: FileChangeRequestApprovalParams {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn-id".to_string(),
+                item_id: "item-id".to_string(),
+                started_at_ms: 1,
+                reason: None,
+                grant_root: None,
+            },
+        };
+        (
+            PendingCallbackEntry {
+                callback,
+                thread_id: Some(thread_id),
+                request,
+            },
+            receiver,
+        )
+    }
+
+    #[tokio::test]
+    async fn pending_server_requests_returns_thread_requests_in_request_id_order() {
+        let pending = PendingServerRequests::default();
+        let thread_id = ThreadId::new();
+        let other_thread_id = ThreadId::new();
+        let (second_entry, _second_receiver) =
+            pending_file_change_request(RequestId::Integer(2), thread_id);
+        let (first_entry, _first_receiver) =
+            pending_file_change_request(RequestId::Integer(1), thread_id);
+        let (other_entry, _other_receiver) =
+            pending_file_change_request(RequestId::Integer(0), other_thread_id);
+
+        pending.insert(RequestId::Integer(2), second_entry).await;
+        pending.insert(RequestId::Integer(1), first_entry).await;
+        pending.insert(RequestId::Integer(0), other_entry).await;
+
+        let requests = pending.pending_requests_for_thread(thread_id).await;
+        assert_eq!(
+            requests.iter().map(ServerRequest::id).collect::<Vec<_>>(),
+            vec![&RequestId::Integer(1), &RequestId::Integer(2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_server_requests_drain_for_thread_leaves_other_threads_pending() {
+        let pending = PendingServerRequests::default();
+        let thread_id = ThreadId::new();
+        let other_thread_id = ThreadId::new();
+        let (thread_entry, _thread_receiver) =
+            pending_file_change_request(RequestId::Integer(1), thread_id);
+        let (other_entry, _other_receiver) =
+            pending_file_change_request(RequestId::Integer(2), other_thread_id);
+
+        pending.insert(RequestId::Integer(1), thread_entry).await;
+        pending.insert(RequestId::Integer(2), other_entry).await;
+
+        let drained = pending.drain_for_thread(thread_id).await;
+        assert_eq!(drained.len(), 1);
+        assert!(
+            pending
+                .pending_requests_for_thread(thread_id)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            pending
+                .pending_requests_for_thread(other_thread_id)
+                .await
+                .len(),
+            1
+        );
+
+        let remaining = pending.drain_all().await;
+        assert_eq!(remaining.len(), 1);
+    }
+
     #[tokio::test]
     async fn send_response_routes_to_target_connection() {
         let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(4);
