@@ -12,6 +12,24 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-22
+  status: owner_completed
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-22
+  task_type: exclusive_code_quality_refactor
+  depends_on: main `955a4a52f`; user asked to continue code optimization/refactoring with goal of simplifying code and improving quality
+  files: `codex-rs/app-server/tests/suite/client_metadata.rs`, `.codex/pm-progress.md`
+  base_commit: `955a4a52f`
+  next_action: PM to merge `refactor/continuous-code-organization-22` when ready; low-risk test-only cleanup can remain pending capsule delivery after merge.
+  selection: Owner screened candidates and selected `codex-rs/app-server/tests/suite/client_metadata.rs` because all three tests repeatedly performed the same MCP initialization, default `thread/start` request/typed response decode, and `turn/start` or `turn/steer` response decode around one coherent client-metadata forwarding contract. The extracted helpers stay suite-private and only wrap protocol driver plumbing; each test still declares its metadata payload, text input, notification ordering, request-count waits, HTTP/websocket metadata extraction, and assertions explicitly. Deferred `thread_shell_command.rs` because it is coherent but only two tests and mixes active-turn approval ordering with shell-command notifications. Deferred `thread_unarchive.rs` because archive/unarchive path assertions are persisted-file semantics and should remain explicit. Deferred frontend `runConfig` fixture sharing because it is small cross-file test helper churn. Deferred websocket connection helper cleanup because it is connection/lifecycle timing-sensitive.
+  implementation: Added suite-private `init_mcp`, generic `read_response`, `start_default_thread`, `start_turn`, and `steer_turn` helpers in `client_metadata.rs`, then replaced repeated request/response decode blocks without changing payloads, request log assertions, websocket warmup assertions, or completion/started notification waits.
+  reviewer_result: `/self/owner_main/reviewer` approved. Reviewer found no blocking issues and confirmed helpers preserve MCP initialization, `RequestId::Integer` response waits, `DEFAULT_READ_TIMEOUT`, `to_response` typed decode, default `thread/start`, explicit metadata payloads, request-count waits, notification ordering, and HTTP/websocket assertions.
+  validation: `rustfmt codex-rs/app-server/tests/suite/client_metadata.rs` -> pass with existing stable-toolchain warning about nightly-only `imports_granularity`; `rustfmt --check codex-rs/app-server/tests/suite/client_metadata.rs` -> pass with same warning; `git diff --check -- .codex/pm-progress.md codex-rs/app-server/tests/suite/client_metadata.rs` -> pass; `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all client_metadata -- --nocapture` -> pass, 3 tests; `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> pass. Cargo emitted existing linker/future-incompat warnings unrelated to this test-only refactor.
+  risk: Test-only helper extraction in one suite file; no production, schema, persisted history, or provider-visible behavior change. Main residual risk is helper abstraction hiding request/response plumbing, covered by reviewer and focused suite.
+  commit: pending
+
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change
   owner: /self/owner_dev
