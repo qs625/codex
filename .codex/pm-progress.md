@@ -13,7 +13,7 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: continuous-code-organization-tranche-26
-  status: dispatched
+  status: paused_for_user_visible_bug
   owner: /self/owner_main
   reviewer: /self/owner_main/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace
@@ -22,9 +22,25 @@ Active goal: continuous large front+backend code organization. User asked to con
   depends_on: main `05154cb61`; user clarified "不要一直做小改动啊"
   files: TBD by owner after candidate inventory; target must be a production module/cluster in `codex-rs/` or `apps/root-worker-prototype/`, not test-only helpers
   base_commit: `05154cb61`
-  next_action: Owner must evaluate at least three production candidates and select a larger coherent module-boundary/code-organization tranche. Acceptable work should consolidate a real production seam across a cohesive module/cluster, not just rename/extract tiny helpers. If no suitable larger tranche is safe from current main, pause with evidence rather than shipping another small cleanup.
+  next_action: Paused before implementation because the user reported a higher-priority installed compact/display regression. Resume only after `compact-user-message-after-compact-display` is fixed and installed effective; when resumed, owner must evaluate at least three production candidates and select a larger coherent module-boundary/code-organization tranche. Acceptable work should consolidate a real production seam across a cohesive module/cluster, not just rename/extract tiny helpers. If no suitable larger tranche is safe from current main, pause with evidence rather than shipping another small cleanup.
   constraints: Preserve behavior, provider-visible tool/schema/descriptions, JSONRPC/API method params/errors unless explicitly justified and tested, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, and external/native provider parity. Tests may be added/updated only as regression support for the production refactor.
   validation: pending owner inventory, design, reviewer review, focused tests, formatting, `git diff --check`, and relevant debug build.
+  commit: pending
+
+- id: compact-user-message-after-compact-display
+  status: dispatched
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/compact-user-message-after-compact-display
+  task_type: frontend_user_visible_bugfix
+  depends_on: installed Runtime Capsule `sha256:1a3e17f6a1ae1fdcc6760c9004224ecc1c5dc0600ebff06350b6c2b9486473ef`; main `b88e720db`
+  files: expected `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`, and directly related conversation display helpers only unless evidence requires a narrower/lower layer
+  base_commit: `b88e720db`
+  next_action: Owner to diagnose and fix why, after compact/init-context display, a newly sent user message and subsequent live messages can be received by runtime/right-panel state but not rendered in the main conversation list.
+  evidence: Installed self-debug connected to Electron CDP `127.0.0.1:9222`, PID `16617`, renderer URL under installed release `1a3e17f6a1ae1fdcc6760c9004224ecc1c5dc0600ebff06350b6c2b9486473ef`, console 0 errors/warnings. Snapshot showed main conversation list ending at user message `不要一直做小改动啊` with a `Thinking` status, while the right Thread Analysis plan had already updated in response to the later user bug report. This suggests backend/runtime and some UI state received the new turn, but the conversation message list projection/merge/visibility path dropped or hid the post-compact user message.
+  constraints: Preserve compact stale filtering for truly old items, persisted history/protocol semantics, model-visible context, provider-visible contracts, and workspace tab visibility fallback. Do not solve by disabling compact boundary filtering globally, by reviving stale pre-compact items, by special-casing the exact message text, by parsing raw markers, or by treating hidden/right-panel state as proof that conversation display is correct.
+  validation: pending owner diagnosis, focused regression tests for post-compact user message plus subsequent assistant/tool/live items, reviewer review, frontend focused tests, `git diff --check`, merge, Runtime Capsule build/restart, and installed self-debug.
   commit: pending
 
 - id: compact-live-output-after-init-context-regression
