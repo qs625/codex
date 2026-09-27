@@ -33,6 +33,23 @@ export type ComposerSlashSuggestion =
   | SkillSlashSuggestion
   | WorkflowSlashSuggestion;
 
+type ActiveSlashDraft = {
+  firstLine: string;
+  lowerFirstLine: string;
+};
+
+type ComposerSlashSuggestionRequest = {
+  availableSkills: ThreadSkill[];
+  availableWorkflows: WorkflowSummary[];
+  commandsEnabled: boolean;
+  normalizedQuery: string;
+  selectedSkillPaths: Set<string>;
+};
+
+type SlashSuggestionSection = {
+  suggestions: ComposerSlashSuggestion[];
+};
+
 export const BUILT_IN_SLASH_COMMANDS: BuiltInSlashCommand[] = [
   {
     type: "command",
@@ -81,27 +98,38 @@ export const BUILT_IN_SLASH_COMMANDS: BuiltInSlashCommand[] = [
 ];
 
 export function getActiveComposerSlashQuery(draft: string) {
+  const target = getActiveSlashDraft(draft);
+  if (!target) {
+    return null;
+  }
+  const goalSubcommandQuery = getGoalSubcommandSlashQuery(target);
+  if (goalSubcommandQuery !== null) {
+    return goalSubcommandQuery;
+  }
+  if (target.firstLine.includes(" ")) {
+    return null;
+  }
+  return target.firstLine.slice(1);
+}
+
+function getActiveSlashDraft(draft: string): ActiveSlashDraft | null {
   const firstLine = draft.trimStart().split("\n", 1)[0] ?? "";
   if (!firstLine.startsWith("/")) {
     return null;
   }
-  const goalSubcommandQuery = getGoalSubcommandSlashQuery(firstLine);
-  if (goalSubcommandQuery !== null) {
-    return goalSubcommandQuery;
-  }
-  if (firstLine.includes(" ")) {
-    return null;
-  }
-  return firstLine.slice(1);
+
+  return {
+    firstLine,
+    lowerFirstLine: firstLine.toLowerCase(),
+  };
 }
 
-function getGoalSubcommandSlashQuery(firstLine: string) {
-  const lowerFirstLine = firstLine.toLowerCase();
-  if (!lowerFirstLine.startsWith("/goal ")) {
+function getGoalSubcommandSlashQuery(target: ActiveSlashDraft) {
+  if (!target.lowerFirstLine.startsWith("/goal ")) {
     return null;
   }
 
-  const query = lowerFirstLine.slice("/goal ".length);
+  const query = target.lowerFirstLine.slice("/goal ".length);
   if (query.includes(" ")) {
     return null;
   }
@@ -134,72 +162,135 @@ export function buildComposerSlashSuggestions({
   draftSkills: DraftSkill[];
   query: string | null;
 }): ComposerSlashSuggestion[] {
-  if (query === null) {
+  const request = buildComposerSlashSuggestionRequest({
+    availableSkills,
+    availableWorkflows,
+    commandsEnabled,
+    draftSkills,
+    query,
+  });
+  if (!request) {
     return [];
   }
 
+  return buildComposerSlashSuggestionSections(request).flatMap(
+    (section) => section.suggestions,
+  );
+}
+
+function buildComposerSlashSuggestionRequest({
+  availableSkills,
+  availableWorkflows,
+  commandsEnabled,
+  draftSkills,
+  query,
+}: {
+  availableSkills: ThreadSkill[];
+  availableWorkflows: WorkflowSummary[];
+  commandsEnabled: boolean;
+  draftSkills: DraftSkill[];
+  query: string | null;
+}): ComposerSlashSuggestionRequest | null {
+  if (query === null) {
+    return null;
+  }
+
+  return {
+    availableSkills,
+    availableWorkflows,
+    commandsEnabled,
+    normalizedQuery: query.trim().toLowerCase(),
+    selectedSkillPaths: new Set(draftSkills.map((skill) => skill.path)),
+  };
+}
+
+function buildComposerSlashSuggestionSections(
+  request: ComposerSlashSuggestionRequest,
+): SlashSuggestionSection[] {
   return [
-    ...(commandsEnabled ? filterBuiltInSlashCommands(query) : []),
-    ...filterWorkflowSlashSuggestions(availableWorkflows, query).map(
-      (workflow) => ({
-        type: "workflow" as const,
-        workflow,
-        draftText: buildWorkflowDraftText(workflow),
-      }),
-    ),
-    ...filterSkillSlashSuggestions(availableSkills, draftSkills, query).map(
-      (skill) => ({
-        type: "skill" as const,
-        skill,
-      }),
-    ),
+    buildBuiltInCommandSuggestionSection(request),
+    buildWorkflowSuggestionSection(request),
+    buildSkillSuggestionSection(request),
   ];
 }
 
-function filterBuiltInSlashCommands(query: string) {
-  const normalizedQuery = query.trim().toLowerCase();
-  return BUILT_IN_SLASH_COMMANDS.filter((command) => {
-    if (!normalizedQuery) {
-      return true;
-    }
+function buildBuiltInCommandSuggestionSection({
+  commandsEnabled,
+  normalizedQuery,
+}: ComposerSlashSuggestionRequest): SlashSuggestionSection {
+  if (!commandsEnabled) {
+    return { suggestions: [] };
+  }
 
-    const searchable = [
-      command.token,
-      command.label,
-      command.description,
-      ...command.aliases,
-    ]
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalizedQuery);
-  });
+  return {
+    suggestions: BUILT_IN_SLASH_COMMANDS.filter((command) =>
+      matchesSearchableValues(
+        [command.token, command.label, command.description, ...command.aliases],
+        normalizedQuery,
+      ),
+    ),
+  };
 }
 
-function filterWorkflowSlashSuggestions(
-  availableWorkflows: WorkflowSummary[],
-  query: string,
-) {
-  const normalizedQuery = query.trim().toLowerCase();
+function buildWorkflowSuggestionSection({
+  availableWorkflows,
+  normalizedQuery,
+}: ComposerSlashSuggestionRequest): SlashSuggestionSection {
+  return {
+    suggestions: availableWorkflows
+      .filter((workflow) =>
+        matchesSearchableValues(
+          workflowSearchableValues(workflow),
+          normalizedQuery,
+        ),
+      )
+      .map((workflow) => ({
+        type: "workflow" as const,
+        workflow,
+        draftText: buildWorkflowDraftText(workflow),
+      })),
+  };
+}
 
-  return availableWorkflows.filter((workflow) => {
-    if (!normalizedQuery) {
-      return true;
-    }
+function buildSkillSuggestionSection({
+  availableSkills,
+  normalizedQuery,
+  selectedSkillPaths,
+}: ComposerSlashSuggestionRequest): SlashSuggestionSection {
+  return {
+    suggestions: availableSkills
+      .filter((skill) => !selectedSkillPaths.has(skill.path))
+      .filter((skill) =>
+        matchesSearchableValues(
+          [skill.name, skill.kind, skill.path],
+          normalizedQuery,
+        ),
+      )
+      .map((skill) => ({
+        type: "skill" as const,
+        skill,
+      })),
+  };
+}
 
-    const searchable = [
-      `workflow ${workflow.id}`,
-      workflow.id,
-      workflow.name,
-      workflow.description,
-      workflow.source,
-      workflow.path,
-      ...workflow.whenToUse,
-      ...Object.keys(workflow.inputs),
-    ]
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalizedQuery);
-  });
+function matchesSearchableValues(values: string[], normalizedQuery: string) {
+  if (!normalizedQuery) {
+    return true;
+  }
+  return values.join(" ").toLowerCase().includes(normalizedQuery);
+}
+
+function workflowSearchableValues(workflow: WorkflowSummary) {
+  return [
+    `workflow ${workflow.id}`,
+    workflow.id,
+    workflow.name,
+    workflow.description,
+    workflow.source,
+    workflow.path,
+    ...workflow.whenToUse,
+    ...Object.keys(workflow.inputs),
+  ];
 }
 
 function buildWorkflowDraftText(workflow: WorkflowSummary) {
@@ -210,28 +301,4 @@ function buildWorkflowDraftText(workflow: WorkflowSummary) {
 
   const inputList = inputNames.map((name) => `${name}: `).join(", ");
   return `Use the ${workflow.id} workflow with ${inputList}`;
-}
-
-function filterSkillSlashSuggestions(
-  availableSkills: ThreadSkill[],
-  draftSkills: DraftSkill[],
-  query: string,
-) {
-  const normalizedQuery = query.trim().toLowerCase();
-  const selectedPaths = new Set(draftSkills.map((skill) => skill.path));
-
-  return availableSkills.filter((skill) => {
-    if (selectedPaths.has(skill.path)) {
-      return false;
-    }
-
-    if (!normalizedQuery) {
-      return true;
-    }
-
-    const searchable = [skill.name, skill.kind, skill.path]
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalizedQuery);
-  });
 }
