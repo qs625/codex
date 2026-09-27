@@ -12,6 +12,36 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: compact-live-output-after-init-context
+  status: merged_pending_capsule_delivery
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/compact-output-after-init-context-display
+  task_type: frontend_user_visible_bugfix
+  depends_on: main `e3ee8d2c3`; user reported compact output stops after compact summary and init context
+  files: `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`
+  base_commit: `e3ee8d2c3`
+  next_action: Build full Runtime Capsule from canonical main, request Runtime Capsule restart, and self-debug installed client because this is a user-visible frontend display fix.
+  root_cause: Frontend compact merge guard treated untimed live continuation items/deltas in an active in-flight compact turn as stale after the compact boundary, so compact summary/init context displayed but later live output was dropped. Backend `thread/read` projection and conversation compact cell build retained the after-compact suffix, so the fix stayed in frontend live merge.
+  implementation: Added a typed lifecycle helper that only allows untimed live items/deltas when the thread is active and the turn is still in flight. Explicitly timestamped items still go through the compact boundary timestamp check. Added regression tests for live item output after init context, live agent delta after init context, and timestamped stale item rejection at the compact boundary.
+  validation: Fixed reviewer `/self/owner_dev_2/reviewer` approved after a first review finding that active/running allowance must not override explicit stale timestamps; owner added the narrowed helper and negative test. Owner validation passed: `pnpm --dir apps/root-worker-prototype exec prettier --write src/lib/thread.ts src/lib/thread.test.ts`; `pnpm exec prettier --check apps/root-worker-prototype/src/lib/thread.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (249 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `git diff --check HEAD~1 HEAD`. PM validation after merge passed: `pnpm exec prettier --check apps/root-worker-prototype/src/lib/thread.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (249 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `git diff --check e3ee8d2c3..HEAD`. Existing Node `[DEP0205] module.register()` warning observed.
+  commit: owner `919d60900`; merge `d748a27de`; pending capsule delivery
+
+- id: continuous-code-organization-tranche-20
+  status: paused_wip
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-20
+  task_type: high_bar_frontend_backend_architecture_cleanup
+  depends_on: main `e3ee8d2c3`; paused when user reported compact display bug
+  files: `codex-rs/app-server/tests/suite/external_agent_config.rs`, `.codex/pm-progress.md`
+  base_commit: `e3ee8d2c3`
+  next_action: WIP is stashed on canonical checkout with message `pm-pause-tranche-20-wip-before-compact-bugfix`; decide after compact fix is installed whether to restore, rebase, continue validation/review, or discard.
+  validation: paused before final validation; owner reported an initial reviewer approval but a focused `external_agent_config` suite failure led to a small helper correction that still needs rerun/re-review if resumed
+  commit: pending; WIP not committed
+
 - id: continuous-code-organization-tranche-19
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
