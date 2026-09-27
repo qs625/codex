@@ -53,13 +53,51 @@ test("parses valid JSON and URI Android connection payloads", () => {
 });
 
 test("parses naked websocket endpoints for manual compatibility", () => {
-  assert.equal(
-    parseAndroidConnectionPayload("ws://192.168.1.2:8910").endpoint,
-    "ws://192.168.1.2:8910",
+  assert.deepEqual(parseAndroidConnectionPayload(" ws://192.168.1.2:8910 "), {
+    type: ANDROID_CONNECTION_PAYLOAD_TYPE,
+    version: 1,
+    endpoint: "ws://192.168.1.2:8910",
+  });
+});
+
+test("normalizes JSON and URI endpoint and token fields", () => {
+  assert.deepEqual(
+    parseAndroidConnectionPayload(
+      JSON.stringify({
+        type: ANDROID_CONNECTION_PAYLOAD_TYPE,
+        version: 1,
+        endpoint: " wss://json.example/ws ",
+        token: " json-token ",
+      }),
+    ),
+    {
+      type: ANDROID_CONNECTION_PAYLOAD_TYPE,
+      version: 1,
+      endpoint: "wss://json.example/ws",
+      token: "json-token",
+    },
+  );
+
+  assert.deepEqual(
+    parseAndroidConnectionPayload(
+      "morpheus://connect?endpoint=%20wss%3A%2F%2Furi.example%2Fws%20&token=%20uri-token%20",
+    ),
+    {
+      type: ANDROID_CONNECTION_PAYLOAD_TYPE,
+      version: 1,
+      endpoint: "wss://uri.example/ws",
+      token: "uri-token",
+    },
   );
 });
 
 test("rejects malformed or unsupported Android connection payloads", () => {
+  assert.throws(() => parseAndroidConnectionPayload(""), /empty/);
+  assert.throws(() => parseAndroidConnectionPayload("{"), /invalid JSON/);
+  assert.throws(
+    () => parseAndroidConnectionPayload(JSON.stringify(null)),
+    /Morpheus connection payload/,
+  );
   assert.throws(
     () => parseAndroidConnectionPayload("https://example.com"),
     /Morpheus connection payload/,
@@ -98,6 +136,18 @@ test("rejects malformed or unsupported Android connection payloads", () => {
         JSON.stringify({
           type: ANDROID_CONNECTION_PAYLOAD_TYPE,
           version: 1,
+          endpoint: "ws://x",
+          token: 42,
+        }),
+      ),
+    /token must be a string/,
+  );
+  assert.throws(
+    () =>
+      parseAndroidConnectionPayload(
+        JSON.stringify({
+          type: ANDROID_CONNECTION_PAYLOAD_TYPE,
+          version: 1,
           endpoint: "https://example.com",
         }),
       ),
@@ -107,6 +157,12 @@ test("rejects malformed or unsupported Android connection payloads", () => {
 
 test("validates WebSocket endpoint drafts", () => {
   assert.equal(validateAndroidConnectionEndpoint("wss://example.com/ws"), null);
-  assert.match(validateAndroidConnectionEndpoint("https://example.com") ?? "", /ws:\/\//);
-  assert.match(validateAndroidConnectionEndpoint("ws://example .com") ?? "", /whitespace/);
+  assert.match(
+    validateAndroidConnectionEndpoint("https://example.com") ?? "",
+    /ws:\/\//,
+  );
+  assert.match(
+    validateAndroidConnectionEndpoint("ws://example .com") ?? "",
+    /whitespace/,
+  );
 });
