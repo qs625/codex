@@ -57,6 +57,30 @@ enum RefreshTokenRequestOutcome {
     FailedPermanently,
 }
 
+#[derive(Clone, Copy)]
+enum AccountBackendAction {
+    ReadRateLimits,
+    NotifyWorkspaceOwner,
+}
+
+struct AccountBackendRequest {
+    client: BackendClient,
+}
+
+struct AddCreditsNudgeEmailRequest {
+    credit_type: BackendAddCreditsNudgeCreditType,
+}
+
+enum AddCreditsNudgeEmailOutcome {
+    Sent,
+    CooldownActive,
+}
+
+struct AccountRateLimitSnapshots {
+    primary: CoreRateLimitSnapshot,
+    by_limit_id: HashMap<String, CoreRateLimitSnapshot>,
+}
+
 fn remote_plugin_auth_from_codex_auth(auth: Option<CodexAuth>) -> Option<RemotePluginAuth> {
     auth.map(|auth| {
         RemotePluginAuth::new(
@@ -851,44 +875,39 @@ impl AccountRequestProcessor {
     async fn get_account_rate_limits_response(
         &self,
     ) -> Result<GetAccountRateLimitsResponse, JSONRPCErrorError> {
-        self.fetch_account_rate_limits()
-            .await
-            .map(
-                |(rate_limits, rate_limits_by_limit_id)| GetAccountRateLimitsResponse {
-                    rate_limits: rate_limits.into(),
-                    rate_limits_by_limit_id: Some(
-                        rate_limits_by_limit_id
-                            .into_iter()
-                            .map(|(limit_id, snapshot)| (limit_id, snapshot.into()))
-                            .collect(),
-                    ),
-                },
-            )
+        let request = self
+            .account_backend_request(AccountBackendAction::ReadRateLimits)
+            .await?;
+        let snapshots = self.fetch_account_rate_limits(request).await?;
+        Ok(rate_limits_response_from_snapshots(snapshots))
     }
 
     async fn send_add_credits_nudge_email_response(
         &self,
         params: SendAddCreditsNudgeEmailParams,
     ) -> Result<SendAddCreditsNudgeEmailResponse, JSONRPCErrorError> {
-        self.send_add_credits_nudge_email_inner(params)
-            .await
-            .map(|status| SendAddCreditsNudgeEmailResponse { status })
+        let request = self
+            .account_backend_request(AccountBackendAction::NotifyWorkspaceOwner)
+            .await?;
+        let target = AddCreditsNudgeEmailRequest::from_params(params);
+        let outcome = self
+            .send_add_credits_nudge_email_inner(request, target)
+            .await?;
+        Ok(SendAddCreditsNudgeEmailResponse {
+            status: AddCreditsNudgeEmailStatus::from(outcome),
+        })
     }
 
-    async fn send_add_credits_nudge_email_inner(
+    async fn account_backend_request(
         &self,
-        params: SendAddCreditsNudgeEmailParams,
-    ) -> Result<AddCreditsNudgeEmailStatus, JSONRPCErrorError> {
+        action: AccountBackendAction,
+    ) -> Result<AccountBackendRequest, JSONRPCErrorError> {
         let Some(auth) = self.auth_manager.auth().await else {
-            return Err(invalid_request(
-                "codex account authentication required to notify workspace owner",
-            ));
+            return Err(invalid_request(action.missing_auth_message()));
         };
 
         if !auth.uses_codex_backend() {
-            return Err(invalid_request(
-                "chatgpt authentication required to notify workspace owner",
-            ));
+            return Err(invalid_request(action.non_chatgpt_auth_message()));
         }
 
         let client = BackendClient::from_auth_snapshot(
@@ -898,13 +917,22 @@ impl AccountRequestProcessor {
         .map(|client| client.with_user_agent(get_codex_user_agent()))
         .map_err(|err| internal_error(format!("failed to construct backend client: {err}")))?;
 
-        match client
-            .send_add_credits_nudge_email(Self::backend_credit_type(params.credit_type))
+        Ok(AccountBackendRequest { client })
+    }
+
+    async fn send_add_credits_nudge_email_inner(
+        &self,
+        request: AccountBackendRequest,
+        target: AddCreditsNudgeEmailRequest,
+    ) -> Result<AddCreditsNudgeEmailOutcome, JSONRPCErrorError> {
+        match request
+            .client
+            .send_add_credits_nudge_email(target.credit_type)
             .await
         {
-            Ok(()) => Ok(AddCreditsNudgeEmailStatus::Sent),
+            Ok(()) => Ok(AddCreditsNudgeEmailOutcome::Sent),
             Err(err) if err.status().is_some_and(|status| status.as_u16() == 429) => {
-                Ok(AddCreditsNudgeEmailStatus::CooldownActive)
+                Ok(AddCreditsNudgeEmailOutcome::CooldownActive)
             }
             Err(err) => Err(internal_error(format!(
                 "failed to notify workspace owner: {err}"
@@ -912,51 +940,68 @@ impl AccountRequestProcessor {
         }
     }
 
-    fn backend_credit_type(value: AddCreditsNudgeCreditType) -> BackendAddCreditsNudgeCreditType {
-        match value {
-            AddCreditsNudgeCreditType::Credits => BackendAddCreditsNudgeCreditType::Credits,
-            AddCreditsNudgeCreditType::UsageLimit => BackendAddCreditsNudgeCreditType::UsageLimit,
+    async fn fetch_account_rate_limits(
+        &self,
+        request: AccountBackendRequest,
+    ) -> Result<AccountRateLimitSnapshots, JSONRPCErrorError> {
+        let snapshots =
+            request.client.get_rate_limits_many().await.map_err(|err| {
+                internal_error(format!("failed to fetch codex rate limits: {err}"))
+            })?;
+        AccountRateLimitSnapshots::try_from_snapshots(snapshots)
+    }
+}
+
+impl AccountBackendAction {
+    fn missing_auth_message(self) -> &'static str {
+        match self {
+            AccountBackendAction::ReadRateLimits => {
+                "codex account authentication required to read rate limits"
+            }
+            AccountBackendAction::NotifyWorkspaceOwner => {
+                "codex account authentication required to notify workspace owner"
+            }
         }
     }
 
-    async fn fetch_account_rate_limits(
-        &self,
-    ) -> Result<
-        (
-            CoreRateLimitSnapshot,
-            HashMap<String, CoreRateLimitSnapshot>,
-        ),
-        JSONRPCErrorError,
-    > {
-        let Some(auth) = self.auth_manager.auth().await else {
-            return Err(invalid_request(
-                "codex account authentication required to read rate limits",
-            ));
-        };
-
-        if !auth.uses_codex_backend() {
-            return Err(invalid_request(
-                "chatgpt authentication required to read rate limits",
-            ));
+    fn non_chatgpt_auth_message(self) -> &'static str {
+        match self {
+            AccountBackendAction::ReadRateLimits => {
+                "chatgpt authentication required to read rate limits"
+            }
+            AccountBackendAction::NotifyWorkspaceOwner => {
+                "chatgpt authentication required to notify workspace owner"
+            }
         }
+    }
+}
 
-        let client = BackendClient::from_auth_snapshot(
-            self.config.chatgpt_base_url.clone(),
-            &auth.request_auth_snapshot(),
-        )
-        .map(|client| client.with_user_agent(get_codex_user_agent()))
-        .map_err(|err| internal_error(format!("failed to construct backend client: {err}")))?;
+impl AddCreditsNudgeEmailRequest {
+    fn from_params(params: SendAddCreditsNudgeEmailParams) -> Self {
+        Self {
+            credit_type: backend_credit_type(params.credit_type),
+        }
+    }
+}
 
-        let snapshots = client
-            .get_rate_limits_many()
-            .await
-            .map_err(|err| internal_error(format!("failed to fetch codex rate limits: {err}")))?;
+impl From<AddCreditsNudgeEmailOutcome> for AddCreditsNudgeEmailStatus {
+    fn from(outcome: AddCreditsNudgeEmailOutcome) -> Self {
+        match outcome {
+            AddCreditsNudgeEmailOutcome::Sent => Self::Sent,
+            AddCreditsNudgeEmailOutcome::CooldownActive => Self::CooldownActive,
+        }
+    }
+}
+
+impl AccountRateLimitSnapshots {
+    fn try_from_snapshots(
+        snapshots: Vec<CoreRateLimitSnapshot>,
+    ) -> Result<Self, JSONRPCErrorError> {
         if snapshots.is_empty() {
             return Err(internal_error(
                 "failed to fetch codex rate limits: no snapshots returned",
             ));
         }
-
         let rate_limits_by_limit_id: HashMap<String, CoreRateLimitSnapshot> = snapshots
             .iter()
             .cloned()
@@ -975,6 +1020,128 @@ impl AccountRequestProcessor {
             .cloned()
             .unwrap_or_else(|| snapshots[0].clone());
 
-        Ok((primary, rate_limits_by_limit_id))
+        Ok(Self {
+            primary,
+            by_limit_id: rate_limits_by_limit_id,
+        })
+    }
+}
+
+fn backend_credit_type(value: AddCreditsNudgeCreditType) -> BackendAddCreditsNudgeCreditType {
+    match value {
+        AddCreditsNudgeCreditType::Credits => BackendAddCreditsNudgeCreditType::Credits,
+        AddCreditsNudgeCreditType::UsageLimit => BackendAddCreditsNudgeCreditType::UsageLimit,
+    }
+}
+
+fn rate_limits_response_from_snapshots(
+    snapshots: AccountRateLimitSnapshots,
+) -> GetAccountRateLimitsResponse {
+    GetAccountRateLimitsResponse {
+        rate_limits: snapshots.primary.into(),
+        rate_limits_by_limit_id: Some(
+            snapshots
+                .by_limit_id
+                .into_iter()
+                .map(|(limit_id, snapshot)| (limit_id, snapshot.into()))
+                .collect(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::protocol::RateLimitWindow as CoreRateLimitWindow;
+
+    fn rate_limit_snapshot(limit_id: Option<&str>, used_percent: f64) -> CoreRateLimitSnapshot {
+        CoreRateLimitSnapshot {
+            limit_id: limit_id.map(str::to_string),
+            limit_name: limit_id.map(str::to_string),
+            primary: Some(CoreRateLimitWindow {
+                used_percent,
+                window_minutes: Some(60),
+                resets_at: Some(123),
+            }),
+            secondary: None,
+            credits: None,
+            plan_type: None,
+            rate_limit_reached_type: None,
+        }
+    }
+
+    #[test]
+    fn backend_credit_type_preserves_protocol_mapping() {
+        assert_eq!(
+            backend_credit_type(AddCreditsNudgeCreditType::Credits),
+            BackendAddCreditsNudgeCreditType::Credits
+        );
+        assert_eq!(
+            backend_credit_type(AddCreditsNudgeCreditType::UsageLimit),
+            BackendAddCreditsNudgeCreditType::UsageLimit
+        );
+    }
+
+    #[test]
+    fn account_rate_limit_snapshots_reject_empty_backend_response() {
+        let err = match AccountRateLimitSnapshots::try_from_snapshots(Vec::new()) {
+            Ok(_) => panic!("empty backend response should fail"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.message,
+            "failed to fetch codex rate limits: no snapshots returned"
+        );
+    }
+
+    #[test]
+    fn account_rate_limit_snapshots_preserve_primary_and_limit_id_fallbacks() {
+        let snapshots = AccountRateLimitSnapshots::try_from_snapshots(vec![
+            rate_limit_snapshot(Some("other"), 10.0),
+            rate_limit_snapshot(None, 20.0),
+            rate_limit_snapshot(Some("codex"), 30.0),
+        ])
+        .expect("snapshots should project");
+
+        assert_eq!(snapshots.primary.limit_id.as_deref(), Some("codex"));
+        assert_eq!(
+            snapshots
+                .by_limit_id
+                .get("codex")
+                .and_then(|snapshot| snapshot.primary.as_ref())
+                .map(|window| window.used_percent),
+            Some(30.0)
+        );
+        assert_eq!(
+            snapshots
+                .by_limit_id
+                .get("other")
+                .and_then(|snapshot| snapshot.primary.as_ref())
+                .map(|window| window.used_percent),
+            Some(10.0)
+        );
+    }
+
+    #[test]
+    fn account_rate_limit_snapshots_use_first_snapshot_when_codex_is_absent() {
+        let snapshots = AccountRateLimitSnapshots::try_from_snapshots(vec![
+            rate_limit_snapshot(Some("other"), 10.0),
+            rate_limit_snapshot(None, 20.0),
+        ])
+        .expect("snapshots should project");
+        let response = rate_limits_response_from_snapshots(snapshots);
+
+        assert_eq!(response.rate_limits.limit_id.as_deref(), Some("other"));
+        assert_eq!(
+            response
+                .rate_limits_by_limit_id
+                .as_ref()
+                .expect("limit map")
+                .get("codex")
+                .and_then(|snapshot| snapshot.primary.as_ref())
+                .map(|window| window.used_percent),
+            Some(20)
+        );
     }
 }
