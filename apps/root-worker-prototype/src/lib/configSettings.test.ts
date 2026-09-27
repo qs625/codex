@@ -29,7 +29,11 @@ function readResponse(
     config,
     origins: {
       model: {
-        name: { type: "user", file: "/home/.morpheus/config.toml", profile: null },
+        name: {
+          type: "user",
+          file: "/home/.morpheus/config.toml",
+          profile: null,
+        },
         version: "v1",
       },
       sandbox_mode: {
@@ -40,7 +44,11 @@ function readResponse(
     },
     layers: [
       {
-        name: { type: "user", file: "/home/.morpheus/config.toml", profile: null },
+        name: {
+          type: "user",
+          file: "/home/.morpheus/config.toml",
+          profile: null,
+        },
         version: "v1",
         config: {},
         disabledReason: null,
@@ -221,28 +229,28 @@ test("creating a ModelHub option prepares a model_options write", () => {
 
   assert.equal(entry.provider, "modelhub-gpt");
   assert.equal(isModelOptionsDirty([entry]), true);
-  const params = buildConfigSaveParams(state.fields, state.userVersion, [], [
-    entry,
-  ]);
-  assert.deepEqual(
-    params?.edits,
-    [
-      {
-        keyPath: "model_options",
-        mergeStrategy: "replace",
-        value: [
-          {
-            model: "modelhub-gpt-5",
-            provider: "modelhub-gpt",
-            base_url: "https://example.invalid/modelhub",
-            wire_api: "azure_chat_completions",
-            ak: "secret-ak",
-            context_window: 128000,
-          },
-        ],
-      },
-    ],
+  const params = buildConfigSaveParams(
+    state.fields,
+    state.userVersion,
+    [],
+    [entry],
   );
+  assert.deepEqual(params?.edits, [
+    {
+      keyPath: "model_options",
+      mergeStrategy: "replace",
+      value: [
+        {
+          model: "modelhub-gpt-5",
+          provider: "modelhub-gpt",
+          base_url: "https://example.invalid/modelhub",
+          wire_api: "azure_chat_completions",
+          ak: "secret-ak",
+          context_window: 128000,
+        },
+      ],
+    },
+  ]);
   assert.equal(params?.reloadUserConfig, false);
 });
 
@@ -330,7 +338,11 @@ test("custom provider registry rename is dirty even when value is unchanged", ()
       state.modelOptions,
     )?.edits,
     [
-      { keyPath: "model_providers.corp", value: null, mergeStrategy: "replace" },
+      {
+        keyPath: "model_providers.corp",
+        value: null,
+        mergeStrategy: "replace",
+      },
       {
         keyPath: "model_providers.corp2",
         mergeStrategy: "replace",
@@ -343,6 +355,58 @@ test("custom provider registry rename is dirty even when value is unchanged", ()
       },
     ],
   );
+});
+
+test("config save params combine field and editable catalog edits in stable order", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      approval_policy: "on-request",
+      model_options: [{ model: "gpt-5.5", provider: "modelhub-gpt" }],
+      model_providers: {
+        corp: {
+          name: "Corp Gateway",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+        },
+      },
+    }),
+  );
+  const fields = updateFieldDraft(state.fields, "approval_policy", "never");
+  const providerRegistry = state.providerRegistry.map((entry) => ({
+    ...entry,
+    draftId: "corp-east",
+  }));
+  const modelOptions = state.modelOptions.map((entry) => ({
+    ...entry,
+    model: "gpt-5.5-latest",
+  }));
+
+  const params = buildConfigSaveParams(
+    fields,
+    state.userVersion,
+    providerRegistry,
+    modelOptions,
+  );
+
+  assert.deepEqual(params?.edits, [
+    { keyPath: "approval_policy", value: "never", mergeStrategy: "replace" },
+    { keyPath: "model_providers.corp", value: null, mergeStrategy: "replace" },
+    {
+      keyPath: "model_providers.corp-east",
+      mergeStrategy: "replace",
+      value: {
+        name: "Corp Gateway",
+        base_url: "https://corp.example.invalid/v1",
+        wire_api: "responses",
+      },
+    },
+    {
+      keyPath: "model_options",
+      mergeStrategy: "replace",
+      value: [{ model: "gpt-5.5-latest", provider: "modelhub-gpt" }],
+    },
+  ]);
+  assert.equal(params?.reloadUserConfig, true);
 });
 
 test("inline model option providers are not duplicated as custom registry entries", () => {
@@ -361,7 +425,7 @@ test("inline model option providers are not duplicated as custom registry entrie
           base_url: "https://example.invalid/modelhub",
           wire_api: "azure_chat_completions",
         },
-        corp: {
+        "corp": {
           name: "Corp Gateway",
           base_url: "https://corp.example.invalid/v1",
           wire_api: "responses",
@@ -434,11 +498,7 @@ test("provider registry preserves advanced fields as readonly", () => {
 
 test("unset draft values clear config paths", () => {
   const state = buildSettingsConfigState(readResponse({ model: "gpt-5" }));
-  const fields = updateFieldDraft(
-    state.fields,
-    "model",
-    getUnsetDraftValue(),
-  );
+  const fields = updateFieldDraft(state.fields, "model", getUnsetDraftValue());
 
   const params = buildConfigSaveParams(fields, state.userVersion);
 
@@ -529,7 +589,10 @@ test("unsupported text field objects and arrays stay readonly and unsaved", () =
 
   assert.equal(objectModel?.isUnsupported, true);
   assert.match(objectModel?.unsupportedValue ?? "", /nested/);
-  assert.equal(buildConfigSaveParams(objectState.fields, objectState.userVersion), null);
+  assert.equal(
+    buildConfigSaveParams(objectState.fields, objectState.userVersion),
+    null,
+  );
 
   const arrayState = buildSettingsConfigState(
     readResponse({
@@ -542,7 +605,10 @@ test("unsupported text field objects and arrays stay readonly and unsaved", () =
 
   assert.equal(arrayProvider?.isUnsupported, true);
   assert.match(arrayProvider?.unsupportedValue ?? "", /openai/);
-  assert.equal(buildConfigSaveParams(arrayState.fields, arrayState.userVersion), null);
+  assert.equal(
+    buildConfigSaveParams(arrayState.fields, arrayState.userVersion),
+    null,
+  );
 });
 
 test("global settings sections keep model defaults outside provider registry", () => {
@@ -599,7 +665,7 @@ test("config inventory includes unknown nested effective config with origins", (
       },
       {
         origins: {
-          workflow: {
+          "workflow": {
             name: { type: "project", dotCodexFolder: "/work/.morpheus" },
             version: "project-v1",
           },
@@ -705,10 +771,12 @@ test("readonly inventory rows never become save edits", () => {
       unknown_runtime: { enabled: true },
     }),
   );
-  const rows = buildConfigInventory(readResponse({
-    model: "gpt-5",
-    unknown_runtime: { enabled: true },
-  }));
+  const rows = buildConfigInventory(
+    readResponse({
+      model: "gpt-5",
+      unknown_runtime: { enabled: true },
+    }),
+  );
 
   assert.equal(
     rows.some((row) => row.keyPath === "unknown_runtime.enabled"),

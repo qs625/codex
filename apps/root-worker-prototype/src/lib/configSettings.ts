@@ -1,5 +1,6 @@
 import type {
   ConfigBatchWriteParams,
+  ConfigEdit,
   ConfigLayer,
   ConfigLayerMetadata,
   ConfigReadResponse,
@@ -98,6 +99,11 @@ export type ResourceOverviewRow = {
   detail: string | null;
   sourceLabel: string;
   isEmpty: boolean;
+};
+
+type EditableConfigCatalog = {
+  providerRegistry: ProviderRegistryEntry[];
+  modelOptions: ModelOptionEntry[];
 };
 
 const UNSET_VALUE = "__codex_unset__";
@@ -235,14 +241,12 @@ export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
   },
 ];
 
-export const CONFIG_SECTION_LABELS: Record<
-  SettingsFieldSection["id"],
-  string
-> = {
-  defaults: "Thread Defaults",
-  execution: "Execution",
-  desktop: "Desktop",
-};
+export const CONFIG_SECTION_LABELS: Record<SettingsFieldSection["id"], string> =
+  {
+    defaults: "Thread Defaults",
+    execution: "Execution",
+    desktop: "Desktop",
+  };
 
 export function buildSettingsConfigState(
   response: ConfigReadResponse,
@@ -250,10 +254,11 @@ export function buildSettingsConfigState(
   const fields = SUPPORTED_CONFIG_FIELDS.map((definition) =>
     buildFieldState(definition, response),
   );
+  const catalog = buildEditableConfigCatalog(response);
   return {
     fields,
-    providerRegistry: buildProviderRegistryEntries(response),
-    modelOptions: buildModelOptionEntries(response),
+    providerRegistry: catalog.providerRegistry,
+    modelOptions: catalog.modelOptions,
     globalSections: buildGlobalSettingsSections(fields),
     configInventory: buildConfigInventory(response, fields),
     resourceOverview: buildResourceOverview(response),
@@ -271,7 +276,13 @@ export function buildConfigInventory(
   for (const key of Object.keys(response.config).sort((left, right) =>
     left.localeCompare(right),
   )) {
-    flattenConfigValue(key, response.config[key], response, editablePaths, rows);
+    flattenConfigValue(
+      key,
+      response.config[key],
+      response,
+      editablePaths,
+      rows,
+    );
     if (rows.length >= CONFIG_INVENTORY_LIMIT) {
       rows.push({
         keyPath: "...",
@@ -306,7 +317,8 @@ export function buildResourceOverview(
     {
       id: "project",
       title: "Project Resources",
-      rows: projectRows.length > 0 ? projectRows : [emptyResourceRow("Project")],
+      rows:
+        projectRows.length > 0 ? projectRows : [emptyResourceRow("Project")],
     },
     {
       id: "effective",
@@ -322,34 +334,54 @@ export function buildResourceOverview(
 export function buildProviderRegistryEntries(
   response: ConfigReadResponse,
 ): ProviderRegistryEntry[] {
+  return buildEditableConfigCatalog(response).providerRegistry;
+}
+
+function buildEditableConfigCatalog(
+  response: ConfigReadResponse,
+): EditableConfigCatalog {
+  return {
+    providerRegistry: projectProviderRegistry(response),
+    modelOptions: projectModelOptions(response),
+  };
+}
+
+function projectProviderRegistry(
+  response: ConfigReadResponse,
+): ProviderRegistryEntry[] {
   const value = response.config.model_providers;
   if (!isJsonObject(value)) {
     return [];
   }
   const inlineModelProviders = inlineModelOptionProviderIds(response);
-  return Object.entries(value)
-    .flatMap(([id, provider]) => {
-      if (
-        BUILT_IN_PROVIDER_IDS.has(id) ||
-        !isJsonObject(provider) ||
-        isInlineModelOptionProvider(id, provider, inlineModelProviders)
-      ) {
-        return [];
-      }
-      return [providerEntryFromRaw(id, provider, false)];
-    });
+  return Object.entries(value).flatMap(([id, provider]) => {
+    if (
+      BUILT_IN_PROVIDER_IDS.has(id) ||
+      !isJsonObject(provider) ||
+      isInlineModelOptionProvider(id, provider, inlineModelProviders)
+    ) {
+      return [];
+    }
+    return [providerEntryFromRaw(id, provider, false)];
+  });
 }
 
 export function buildModelOptionEntries(
   response: ConfigReadResponse,
 ): ModelOptionEntry[] {
+  return buildEditableConfigCatalog(response).modelOptions;
+}
+
+function projectModelOptions(response: ConfigReadResponse): ModelOptionEntry[] {
   const value = response.config.model_options;
   if (!Array.isArray(value)) {
     return [];
   }
   return value
     .map((option, index) =>
-      isJsonObject(option) ? modelOptionEntryFromRaw(index, option, false) : null,
+      isJsonObject(option)
+        ? modelOptionEntryFromRaw(index, option, false)
+        : null,
     )
     .filter((option): option is ModelOptionEntry => option != null);
 }
@@ -373,15 +405,22 @@ export function buildConfigSaveParams(
   modelOptions: ModelOptionEntry[] = [],
 ): ConfigBatchWriteParams | null {
   const fieldEdits = fields
-    .filter((field) => !field.isUnsupported && field.draftValue !== field.effectiveValue)
+    .filter(
+      (field) =>
+        !field.isUnsupported && field.draftValue !== field.effectiveValue,
+    )
     .map((field) => ({
       keyPath: field.keyPath,
       value: valueFromDraft(field.draftValue),
       mergeStrategy: "replace" as const,
     }));
-  const providerEdits = buildProviderRegistryEdits(providerRegistry);
-  const modelOptionEdits = buildModelOptionsEdits(modelOptions);
-  const edits = [...fieldEdits, ...providerEdits, ...modelOptionEdits];
+  const edits = [
+    ...fieldEdits,
+    ...buildEditableConfigCatalogEdits({
+      providerRegistry,
+      modelOptions,
+    }),
+  ];
 
   if (edits.length === 0) {
     return null;
@@ -406,7 +445,9 @@ export function updateFieldDraft(
   );
 }
 
-export function resetFieldDrafts(fields: ConfigFieldState[]): ConfigFieldState[] {
+export function resetFieldDrafts(
+  fields: ConfigFieldState[],
+): ConfigFieldState[] {
   return fields.map((field) => ({
     ...field,
     draftValue: field.effectiveValue,
@@ -415,16 +456,25 @@ export function resetFieldDrafts(fields: ConfigFieldState[]): ConfigFieldState[]
 
 export function isSettingsDirty(fields: ConfigFieldState[]) {
   return fields.some(
-    (field) => !field.isUnsupported && field.draftValue !== field.effectiveValue,
+    (field) =>
+      !field.isUnsupported && field.draftValue !== field.effectiveValue,
   );
 }
 
-export function isProviderRegistryDirty(providerRegistry: ProviderRegistryEntry[]) {
-  return providerRegistry.some((entry) => providerEntryDirty(entry));
+export function isProviderRegistryDirty(
+  providerRegistry: ProviderRegistryEntry[],
+) {
+  return editableConfigCatalogIsDirty({
+    providerRegistry,
+    modelOptions: [],
+  });
 }
 
 export function isModelOptionsDirty(modelOptions: ModelOptionEntry[]) {
-  return modelOptions.some((entry) => modelOptionDirty(entry));
+  return editableConfigCatalogIsDirty({
+    providerRegistry: [],
+    modelOptions,
+  });
 }
 
 function isRuntimeRefreshableConfigKey(keyPath: string) {
@@ -437,9 +487,18 @@ export function validateSettingsDrafts(
   providerRegistry: ProviderRegistryEntry[],
   modelOptions: ModelOptionEntry[],
 ): string[] {
+  return validateEditableConfigCatalog({
+    providerRegistry,
+    modelOptions,
+  });
+}
+
+function validateEditableConfigCatalog(
+  catalog: EditableConfigCatalog,
+): string[] {
   const errors: string[] = [];
   const providerIds = new Set<string>();
-  for (const entry of providerRegistry) {
+  for (const entry of catalog.providerRegistry) {
     if (entry.isDeleted) {
       continue;
     }
@@ -447,7 +506,9 @@ export function validateSettingsDrafts(
     if (!id) {
       errors.push("Provider id is required.");
     } else if (!PROVIDER_ID_PATTERN.test(id)) {
-      errors.push(`Provider id "${id}" must use lowercase letters, numbers, dots, underscores, or dashes.`);
+      errors.push(
+        `Provider id "${id}" must use lowercase letters, numbers, dots, underscores, or dashes.`,
+      );
     } else if (BUILT_IN_PROVIDER_IDS.has(id)) {
       errors.push(`Provider id "${id}" is reserved.`);
     } else if (providerIds.has(id)) {
@@ -455,18 +516,22 @@ export function validateSettingsDrafts(
     }
     providerIds.add(id);
     if (!entry.name.trim()) {
-      errors.push(`Provider "${id || entry.effectiveId}" needs a display name.`);
+      errors.push(
+        `Provider "${id || entry.effectiveId}" needs a display name.`,
+      );
     }
     if (!entry.baseUrl.trim()) {
       errors.push(`Provider "${id || entry.effectiveId}" needs a base URL.`);
     }
     if (!WIRE_API_OPTIONS.has(entry.wireApi)) {
-      errors.push(`Provider "${id || entry.effectiveId}" has an unsupported wire API.`);
+      errors.push(
+        `Provider "${id || entry.effectiveId}" has an unsupported wire API.`,
+      );
     }
   }
 
   const modelPairs = new Set<string>();
-  for (const entry of modelOptions) {
+  for (const entry of catalog.modelOptions) {
     if (entry.isDeleted) {
       continue;
     }
@@ -491,12 +556,19 @@ export function validateSettingsDrafts(
       ["auto compact token limit", entry.autoCompactTokenLimit],
       ["max tokens", entry.maxTokens],
     ] as const) {
-      if (value.trim() && (!/^\d+$/.test(value.trim()) || Number(value.trim()) <= 0)) {
-        errors.push(`${model || "Configured model"} ${label} must be positive.`);
+      if (
+        value.trim() &&
+        (!/^\d+$/.test(value.trim()) || Number(value.trim()) <= 0)
+      ) {
+        errors.push(
+          `${model || "Configured model"} ${label} must be positive.`,
+        );
       }
     }
     if (entry.wireApi.trim() && !WIRE_API_OPTIONS.has(entry.wireApi)) {
-      errors.push(`${model || "Configured model"} has an unsupported wire API.`);
+      errors.push(
+        `${model || "Configured model"} has an unsupported wire API.`,
+      );
     }
   }
 
@@ -506,7 +578,10 @@ export function validateSettingsDrafts(
 export function createProviderRegistryEntry(
   existing: ProviderRegistryEntry[],
 ): ProviderRegistryEntry {
-  const draftId = nextUniqueId("custom-provider", new Set(existing.map((entry) => entry.draftId)));
+  const draftId = nextUniqueId(
+    "custom-provider",
+    new Set(existing.map((entry) => entry.draftId)),
+  );
   return {
     id: `new-provider:${draftId}`,
     effectiveId: draftId,
@@ -552,19 +627,19 @@ export function createModelHubOptionEntry(
 export function resetProviderRegistryDrafts(
   entries: ProviderRegistryEntry[],
 ): ProviderRegistryEntry[] {
-  return entries
-    .filter((entry) => !entry.isNew)
-    .map((entry) => providerEntryFromRaw(entry.effectiveId, entry.raw, false));
+  return resetEditableConfigCatalog({
+    providerRegistry: entries,
+    modelOptions: [],
+  }).providerRegistry;
 }
 
 export function resetModelOptionDrafts(
   entries: ModelOptionEntry[],
 ): ModelOptionEntry[] {
-  return entries
-    .filter((entry) => !entry.isNew)
-    .map((entry, fallbackIndex) =>
-      modelOptionEntryFromRaw(entry.index ?? fallbackIndex, entry.raw, false),
-    );
+  return resetEditableConfigCatalog({
+    providerRegistry: [],
+    modelOptions: entries,
+  }).modelOptions;
 }
 
 export function getUnsetDraftValue() {
@@ -733,7 +808,8 @@ function emptyResourceRow(sourceLabel: string): ResourceOverviewRow {
   return {
     keyPath: "",
     label: "No resource config",
-    summary: "No agents, skills, plugins, or memory config found in this layer.",
+    summary:
+      "No agents, skills, plugins, or memory config found in this layer.",
     detail: null,
     sourceLabel,
     isEmpty: true,
@@ -824,7 +900,9 @@ function configValueType(value: JsonConfigValue | undefined) {
 }
 
 function truncate(value: string, maxLength: number) {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+  return value.length > maxLength
+    ? `${value.slice(0, maxLength - 3)}...`
+    : value;
 }
 
 function scalarConfigValue(value: JsonConfigValue | undefined): string | null {
@@ -929,7 +1007,9 @@ function providerEntryFromRaw(
     isNew,
     isDeleted: false,
     isReadonly: hasAdvancedFields,
-    readonlyReason: hasAdvancedFields ? "Contains advanced provider fields." : null,
+    readonlyReason: hasAdvancedFields
+      ? "Contains advanced provider fields."
+      : null,
     raw: { ...raw },
   };
 }
@@ -964,18 +1044,69 @@ function buildProviderRegistryEdits(providerRegistry: ProviderRegistryEntry[]) {
     .flatMap((entry) => {
       const oldPath = `model_providers.${entry.effectiveId}`;
       if (entry.isDeleted) {
-        return entry.isNew ? [] : [{ keyPath: oldPath, value: null, mergeStrategy: "replace" as const }];
+        return entry.isNew
+          ? []
+          : [
+              {
+                keyPath: oldPath,
+                value: null,
+                mergeStrategy: "replace" as const,
+              },
+            ];
       }
       const nextId = entry.draftId.trim();
       const nextValue = providerValueFromEntry(entry);
       if (!entry.isNew && nextId !== entry.effectiveId) {
         return [
           { keyPath: oldPath, value: null, mergeStrategy: "replace" as const },
-          { keyPath: `model_providers.${nextId}`, value: nextValue, mergeStrategy: "replace" as const },
+          {
+            keyPath: `model_providers.${nextId}`,
+            value: nextValue,
+            mergeStrategy: "replace" as const,
+          },
         ];
       }
-      return [{ keyPath: `model_providers.${nextId}`, value: nextValue, mergeStrategy: "replace" as const }];
+      return [
+        {
+          keyPath: `model_providers.${nextId}`,
+          value: nextValue,
+          mergeStrategy: "replace" as const,
+        },
+      ];
     });
+}
+
+function buildEditableConfigCatalogEdits(
+  catalog: EditableConfigCatalog,
+): ConfigEdit[] {
+  return [
+    ...buildProviderRegistryEdits(catalog.providerRegistry),
+    ...buildModelOptionsEdits(catalog.modelOptions),
+  ];
+}
+
+function resetEditableConfigCatalog(
+  catalog: EditableConfigCatalog,
+): EditableConfigCatalog {
+  return {
+    providerRegistry: catalog.providerRegistry
+      .filter((entry) => !entry.isNew)
+      .map((entry) =>
+        providerEntryFromRaw(entry.effectiveId, entry.raw, false),
+      ),
+    modelOptions: catalog.modelOptions
+      .filter((entry) => !entry.isNew)
+      .map((entry, fallbackIndex) =>
+        modelOptionEntryFromRaw(entry.index ?? fallbackIndex, entry.raw, false),
+      ),
+  };
+}
+
+function editableConfigCatalogIsDirty(catalog: EditableConfigCatalog) {
+  return (
+    catalog.providerRegistry.some((entry) => providerEntryDirty(entry)) ||
+    catalog.modelOptions.some((entry) => modelOptionDirty(entry))
+  );
 }
 
 function buildModelOptionsEdits(modelOptions: ModelOptionEntry[]) {
@@ -1058,11 +1189,15 @@ function cleanObject(
   value: Record<string, JsonConfigValue | undefined>,
 ): Record<string, JsonConfigValue | undefined> {
   return Object.fromEntries(
-    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined && entryValue !== ""),
+    Object.entries(value).filter(
+      ([, entryValue]) => entryValue !== undefined && entryValue !== "",
+    ),
   );
 }
 
-function isJsonObject(value: JsonConfigValue | undefined): value is Record<string, JsonConfigValue | undefined> {
+function isJsonObject(
+  value: JsonConfigValue | undefined,
+): value is Record<string, JsonConfigValue | undefined> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
