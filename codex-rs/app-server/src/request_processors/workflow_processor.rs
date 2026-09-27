@@ -34,8 +34,43 @@ use codex_workflow_api::WorkflowRunStatus;
 use codex_workflow_api::WorkflowRunUpdateError;
 use codex_workflow_api::WorkflowSource;
 use codex_workflow_api::WorkflowSummary;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+struct WorkflowDiscoveryRequest {
+    cwd: Option<String>,
+}
+
+struct WorkflowDescribeRequest {
+    discovery: WorkflowDiscoveryContext,
+    workflow: String,
+}
+
+struct WorkflowStartRequest {
+    discovery: WorkflowDiscoveryContext,
+    workflow: String,
+    inputs: Value,
+}
+
+struct WorkflowStatusRequest {
+    run_id: String,
+}
+
+struct WorkflowResumeRequest {
+    run_id: String,
+    inputs: Option<Value>,
+}
+
+struct WorkflowAbortRequest {
+    run_id: String,
+    reason: Option<String>,
+}
+
+struct StartedWorkflowRun {
+    run: WorkflowRun,
+    updates: Box<dyn codex_workflow_api::WorkflowRunUpdateReceiver>,
+}
 
 #[derive(Clone)]
 pub(crate) struct WorkflowRequestProcessor {
@@ -61,12 +96,10 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowListParams,
     ) -> Result<WorkflowListResponse, JSONRPCErrorError> {
-        let discovery = self.discovery_context(params.cwd).await?;
-        let workflows = self
-            .workflow_api
-            .list_workflows(discovery)
-            .await
-            .map_err(invalid_request)?;
+        let discovery = self
+            .discovery_context(WorkflowDiscoveryRequest::from(params))
+            .await?;
+        let workflows = self.list_workflows(discovery).await?;
         Ok(WorkflowListResponse {
             workflows: workflows
                 .workflows
@@ -85,17 +118,8 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowDescribeParams,
     ) -> Result<WorkflowDescribeResponse, JSONRPCErrorError> {
-        let discovery = self.discovery_context(params.cwd).await?;
-        let details = self
-            .workflow_api
-            .describe_workflow(
-                discovery,
-                codex_workflow_api::WorkflowDescribeArgs {
-                    workflow: params.workflow,
-                },
-            )
-            .await
-            .map_err(invalid_request)?;
+        let request = self.describe_request(params).await?;
+        let details = self.describe_workflow(request).await?;
         Ok(WorkflowDescribeResponse {
             workflow: map_workflow_details(details),
         })
@@ -105,23 +129,12 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowStartParams,
     ) -> Result<WorkflowStartResponse, JSONRPCErrorError> {
-        let discovery = self.discovery_context(params.cwd).await?;
-        let updates = self.workflow_api.subscribe_workflow_updates();
-        let run = self
-            .workflow_api
-            .start_workflow(
-                WorkflowExecutionContext::new(discovery, None),
-                codex_workflow_api::WorkflowStartArgs {
-                    workflow: params.workflow,
-                    inputs: Some(params.inputs),
-                },
-            )
-            .await
-            .map_err(invalid_request)?;
+        let request = self.start_request(params).await?;
+        let started = self.start_workflow(request).await?;
         Ok(WorkflowStartResponse {
             run: self
                 .run_notifications
-                .finish_started_run(run, updates)
+                .finish_started_run(started.run, started.updates)
                 .await,
         })
     }
@@ -131,12 +144,8 @@ impl WorkflowRequestProcessor {
         params: WorkflowStatusParams,
     ) -> Result<WorkflowStatusResponse, JSONRPCErrorError> {
         let run = self
-            .workflow_api
-            .workflow_status(codex_workflow_api::WorkflowStatusArgs {
-                run_id: params.run_id,
-            })
-            .await
-            .map_err(invalid_request)?;
+            .workflow_status(WorkflowStatusRequest::from(params))
+            .await?;
         Ok(WorkflowStatusResponse {
             run: map_workflow_run(run),
         })
@@ -146,22 +155,13 @@ impl WorkflowRequestProcessor {
         &self,
         params: WorkflowResumeParams,
     ) -> Result<WorkflowResumeResponse, JSONRPCErrorError> {
-        let updates = self.workflow_api.subscribe_workflow_updates();
-        let run = self
-            .workflow_api
-            .resume_workflow(
-                WorkflowExecutionContext::new(empty_discovery_context(), None),
-                codex_workflow_api::WorkflowResumeArgs {
-                    run_id: params.run_id,
-                    inputs: params.inputs,
-                },
-            )
-            .await
-            .map_err(invalid_request)?;
+        let started = self
+            .resume_workflow(WorkflowResumeRequest::from(params))
+            .await?;
         Ok(WorkflowResumeResponse {
             run: self
                 .run_notifications
-                .finish_started_run(run, updates)
+                .finish_started_run(started.run, started.updates)
                 .await,
         })
     }
@@ -171,16 +171,8 @@ impl WorkflowRequestProcessor {
         params: WorkflowAbortParams,
     ) -> Result<WorkflowAbortResponse, JSONRPCErrorError> {
         let run = self
-            .workflow_api
-            .abort_workflow(
-                WorkflowExecutionContext::new(empty_discovery_context(), None),
-                codex_workflow_api::WorkflowAbortArgs {
-                    run_id: params.run_id,
-                    reason: params.reason,
-                },
-            )
-            .await
-            .map_err(invalid_request)?;
+            .abort_workflow(WorkflowAbortRequest::from(params))
+            .await?;
         Ok(WorkflowAbortResponse {
             run: self.run_notifications.finish_run_update(run).await,
         })
@@ -188,9 +180,9 @@ impl WorkflowRequestProcessor {
 
     async fn discovery_context(
         &self,
-        cwd: Option<String>,
+        request: WorkflowDiscoveryRequest,
     ) -> Result<WorkflowDiscoveryContext, JSONRPCErrorError> {
-        let fallback_cwd = cwd.map(PathBuf::from);
+        let fallback_cwd = request.cwd.map(PathBuf::from);
         let config = self
             .config_manager
             .load_latest_config(fallback_cwd)
@@ -211,6 +203,154 @@ impl WorkflowRequestProcessor {
                     .collect(),
             ),
         )
+    }
+
+    async fn describe_request(
+        &self,
+        params: WorkflowDescribeParams,
+    ) -> Result<WorkflowDescribeRequest, JSONRPCErrorError> {
+        Ok(WorkflowDescribeRequest {
+            discovery: self
+                .discovery_context(WorkflowDiscoveryRequest { cwd: params.cwd })
+                .await?,
+            workflow: params.workflow,
+        })
+    }
+
+    async fn start_request(
+        &self,
+        params: WorkflowStartParams,
+    ) -> Result<WorkflowStartRequest, JSONRPCErrorError> {
+        Ok(WorkflowStartRequest {
+            discovery: self
+                .discovery_context(WorkflowDiscoveryRequest { cwd: params.cwd })
+                .await?,
+            workflow: params.workflow,
+            inputs: params.inputs,
+        })
+    }
+
+    async fn list_workflows(
+        &self,
+        discovery: WorkflowDiscoveryContext,
+    ) -> Result<codex_workflow_api::WorkflowRegistry, JSONRPCErrorError> {
+        self.workflow_api
+            .list_workflows(discovery)
+            .await
+            .map_err(invalid_request)
+    }
+
+    async fn describe_workflow(
+        &self,
+        request: WorkflowDescribeRequest,
+    ) -> Result<WorkflowDetails, JSONRPCErrorError> {
+        self.workflow_api
+            .describe_workflow(
+                request.discovery,
+                codex_workflow_api::WorkflowDescribeArgs {
+                    workflow: request.workflow,
+                },
+            )
+            .await
+            .map_err(invalid_request)
+    }
+
+    async fn start_workflow(
+        &self,
+        request: WorkflowStartRequest,
+    ) -> Result<StartedWorkflowRun, JSONRPCErrorError> {
+        let updates = self.workflow_api.subscribe_workflow_updates();
+        let run = self
+            .workflow_api
+            .start_workflow(
+                WorkflowExecutionContext::new(request.discovery, None),
+                codex_workflow_api::WorkflowStartArgs {
+                    workflow: request.workflow,
+                    inputs: Some(request.inputs),
+                },
+            )
+            .await
+            .map_err(invalid_request)?;
+        Ok(StartedWorkflowRun { run, updates })
+    }
+
+    async fn workflow_status(
+        &self,
+        request: WorkflowStatusRequest,
+    ) -> Result<WorkflowRun, JSONRPCErrorError> {
+        self.workflow_api
+            .workflow_status(codex_workflow_api::WorkflowStatusArgs {
+                run_id: request.run_id,
+            })
+            .await
+            .map_err(invalid_request)
+    }
+
+    async fn resume_workflow(
+        &self,
+        request: WorkflowResumeRequest,
+    ) -> Result<StartedWorkflowRun, JSONRPCErrorError> {
+        let updates = self.workflow_api.subscribe_workflow_updates();
+        let run = self
+            .workflow_api
+            .resume_workflow(
+                WorkflowExecutionContext::new(empty_discovery_context(), None),
+                codex_workflow_api::WorkflowResumeArgs {
+                    run_id: request.run_id,
+                    inputs: request.inputs,
+                },
+            )
+            .await
+            .map_err(invalid_request)?;
+        Ok(StartedWorkflowRun { run, updates })
+    }
+
+    async fn abort_workflow(
+        &self,
+        request: WorkflowAbortRequest,
+    ) -> Result<WorkflowRun, JSONRPCErrorError> {
+        self.workflow_api
+            .abort_workflow(
+                WorkflowExecutionContext::new(empty_discovery_context(), None),
+                codex_workflow_api::WorkflowAbortArgs {
+                    run_id: request.run_id,
+                    reason: request.reason,
+                },
+            )
+            .await
+            .map_err(invalid_request)
+    }
+}
+
+impl From<WorkflowListParams> for WorkflowDiscoveryRequest {
+    fn from(params: WorkflowListParams) -> Self {
+        Self { cwd: params.cwd }
+    }
+}
+
+impl From<WorkflowStatusParams> for WorkflowStatusRequest {
+    fn from(params: WorkflowStatusParams) -> Self {
+        Self {
+            run_id: params.run_id,
+        }
+    }
+}
+
+impl From<WorkflowResumeParams> for WorkflowResumeRequest {
+    fn from(params: WorkflowResumeParams) -> Self {
+        Self {
+            run_id: params.run_id,
+            inputs: params.inputs,
+        }
+    }
+}
+
+impl From<WorkflowAbortParams> for WorkflowAbortRequest {
+    fn from(params: WorkflowAbortParams) -> Self {
+        Self {
+            run_id: params.run_id,
+            reason: params.reason,
+        }
     }
 }
 
@@ -416,18 +556,7 @@ mod tests {
     fn test_workflow_run(run_id: &str, status: WorkflowRunStatus) -> WorkflowRun {
         WorkflowRun {
             run_id: run_id.to_string(),
-            workflow: WorkflowSummary {
-                id: "workflow".to_string(),
-                name: "Workflow".to_string(),
-                description: "A workflow".to_string(),
-                source: WorkflowSource::Project,
-                path: "/tmp/workflow".to_string(),
-                entry: "WORKFLOW.md".to_string(),
-                version: Some("1".to_string()),
-                when_to_use: vec!["test".to_string()],
-                inputs: BTreeMap::new(),
-                instructions: "instructions".to_string(),
-            },
+            workflow: test_workflow_summary(WorkflowSource::Project),
             status,
             runner_status: "runner".to_string(),
             inputs: json!({ "input": true }),
@@ -440,6 +569,29 @@ mod tests {
             output: None,
             error: None,
             snapshot_path: None,
+        }
+    }
+
+    fn test_workflow_summary(source: WorkflowSource) -> WorkflowSummary {
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "input".to_string(),
+            WorkflowInputSpec {
+                input_type: "string".to_string(),
+                description: Some("Input description".to_string()),
+            },
+        );
+        WorkflowSummary {
+            id: "workflow".to_string(),
+            name: "Workflow".to_string(),
+            description: "A workflow".to_string(),
+            source,
+            path: "/tmp/workflow".to_string(),
+            entry: "WORKFLOW.md".to_string(),
+            version: Some("1".to_string()),
+            when_to_use: vec!["test".to_string()],
+            inputs,
+            instructions: "instructions".to_string(),
         }
     }
 
@@ -497,6 +649,59 @@ mod tests {
             response.snapshot_path.as_deref(),
             Some("/tmp/snapshot.json")
         );
+    }
+
+    #[test]
+    fn workflow_details_projection_preserves_summary_inputs_and_instructions() {
+        let details = WorkflowDetails {
+            summary: test_workflow_summary(WorkflowSource::Home),
+            instructions: "expanded instructions".to_string(),
+        };
+
+        let response = map_workflow_details(details);
+
+        assert_eq!(response.summary.id, "workflow");
+        assert_eq!(response.summary.source, ApiWorkflowSource::Home);
+        assert_eq!(response.summary.path, "/tmp/workflow");
+        assert_eq!(response.summary.entry, "WORKFLOW.md");
+        assert_eq!(response.summary.version.as_deref(), Some("1"));
+        assert_eq!(response.summary.when_to_use, vec!["test".to_string()]);
+        assert_eq!(response.instructions, "expanded instructions");
+        let input = response.summary.inputs.get("input").expect("input spec");
+        assert_eq!(input.input_type, "string");
+        assert_eq!(input.description.as_deref(), Some("Input description"));
+    }
+
+    #[test]
+    fn workflow_diagnostic_projection_preserves_source_path_and_message() {
+        let diagnostic = WorkflowDiagnostic {
+            source: WorkflowSource::Project,
+            path: "/tmp/workflow/WORKFLOW.md".to_string(),
+            message: "invalid frontmatter".to_string(),
+        };
+
+        let response = map_workflow_diagnostic(diagnostic);
+
+        assert_eq!(response.source, ApiWorkflowSource::Project);
+        assert_eq!(response.path, "/tmp/workflow/WORKFLOW.md");
+        assert_eq!(response.message, "invalid frontmatter");
+    }
+
+    #[test]
+    fn workflow_request_targets_preserve_optional_fields() {
+        let resume = WorkflowResumeRequest::from(WorkflowResumeParams {
+            run_id: "run-1".to_string(),
+            inputs: None,
+        });
+        let abort = WorkflowAbortRequest::from(WorkflowAbortParams {
+            run_id: "run-1".to_string(),
+            reason: Some("stop now".to_string()),
+        });
+
+        assert_eq!(resume.run_id, "run-1");
+        assert_eq!(resume.inputs, None);
+        assert_eq!(abort.run_id, "run-1");
+        assert_eq!(abort.reason.as_deref(), Some("stop now"));
     }
 
     #[tokio::test]
