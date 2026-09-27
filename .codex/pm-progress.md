@@ -12,6 +12,22 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: compact-live-output-after-init-context-regression
+  status: owner_validated_pending_commit
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/compact-output-after-init-context-regression
+  task_type: frontend_user_visible_bugfix
+  depends_on: main `955a4a52f`; installed Runtime Capsule `sha256:c38282c82df8165b81b0eb195fc37585a2f1ebb25b3eaaa19135d24fd2451a81` still reproduced compact display stopping after summary/init context
+  files: `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`
+  base_commit: `955a4a52f`
+  next_action: Commit owner fix, merge to main, then deliver a new Runtime Capsule and run installed self-debug on a real compacted `/self` thread.
+  root_cause: The prior fix only covered same compact-turn untimed continuation and agent deltas. In the installed repro, compact summary/init context and the post-compact user turn were visible, but subsequent missing-turn typed live items such as running command/tool output were still rejected by the compact boundary guard because they had no explicit timestamp after the latest compact marker.
+  implementation: Kept compact stale filtering intact but added a narrow frontend merge allowance for untimed running `commandExecution` items only when the thread is active and there is already an untimed in-flight turn after the latest compact marker. Collab child completions were not given an untimed bypass; they still require a timestamp after the compact boundary or an existing matching turn. Added regression coverage for compact summary + init context + post-compact user turn followed by live command output and timestamped child completion, plus negative tests for untimed stale child completion, untimed missing-turn command on a timestamped later turn, and timestamped stale missing-turn command.
+  validation: Fixed reviewer `/self/owner_dev_2/reviewer` first found the allowance too broad because active compact threads could revive untimed old missing-turn items or attach stale child completions to a later active turn; owner narrowed the predicate and added negative tests; reviewer then approved. Owner validation passed so far: `pnpm --dir apps/root-worker-prototype exec prettier --write src/lib/thread.ts src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec prettier --check src/lib/thread.ts src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed). Existing Node `[DEP0205] module.register()` warning observed.
+  commit: pending
+
 - id: module-refactor-installed-artifact-update
   status: canceled_no_change
   owner: /self/owner_dev

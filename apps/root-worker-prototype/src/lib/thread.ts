@@ -972,6 +972,7 @@ export function updateThreadItem(
   if (
     threadHasCompactItem(thread) &&
     !isExactSummaryItemForLatestCompact(thread, nextItem) &&
+    !canCreateUntimedLiveCommandAfterCompact(thread, nextItem, timestamps) &&
     !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
   ) {
     return thread;
@@ -1327,6 +1328,36 @@ function canAppendUntimedLiveItemAfterCompactInTurn(
     isTurnInFlight(turn) &&
     !hasExplicitItemTimestamp(item, timestamps)
   );
+}
+
+function canCreateUntimedLiveCommandAfterCompact(
+  thread: Thread,
+  item?: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  return (
+    isThreadActive(thread) &&
+    item?.type === "commandExecution" &&
+    isRunningCommandExecutionStatus(item.status) &&
+    hasUntimedInFlightTurnAfterLatestCompact(thread) &&
+    !hasExplicitItemTimestamp(item, timestamps)
+  );
+}
+
+function hasUntimedInFlightTurnAfterLatestCompact(thread: Thread) {
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  if (!latestCompact) {
+    return false;
+  }
+  return thread.turns
+    .slice(latestCompact.turnIndex + 1)
+    .some(
+      (turn) =>
+        isTurnInFlight(turn) && turnOrderTimestampSeconds(turn) === null,
+    );
 }
 
 function threadHasCompactItem(thread: Thread) {

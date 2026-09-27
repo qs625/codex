@@ -4351,6 +4351,183 @@ test("active compact turn keeps live agent delta after init context", () => {
   );
 });
 
+test("active compact thread keeps untimed live tool and child output after user turn", () => {
+  const threadAfterUser = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      makeTurn("turn-compact", [
+        {
+          ...makeCompactItem("compact-1"),
+          completedAtMs: 12_000,
+        },
+        makeAgentMessage("compact-1:summary", "compact summary"),
+        makeInitContextItem("ctx-1"),
+      ]),
+      {
+        ...makeTurn("turn-user", [
+          makeUserMessage("user-after-compact", "continue optimizing"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+  const command = makeCommandExecution({
+    id: "cmd-after-compact",
+    command: "pnpm test",
+  });
+  const childCompletion = makeCollabStatusItem("child-after-compact");
+
+  const withCommand = updateThreadItem(
+    threadAfterUser,
+    "turn-command",
+    command,
+  );
+  const updated = updateThreadItem(withCommand, "turn-child", childCompletion, {
+    completedAtMs: 12_001,
+    syntheticTurnStatus: "completed",
+  });
+  const entries = buildConversationEntries(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [
+      "compact-1",
+      "compact-1:summary",
+      "ctx-1",
+      "user-after-compact",
+      "cmd-after-compact",
+      "child-after-compact",
+    ],
+  );
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    [
+      "compact-1",
+      "compact-1:summary",
+      "ctx-1:section:0",
+      "ctx-1:section:1",
+      "user-after-compact",
+      "cmd-after-compact",
+      "child-after-compact",
+    ],
+  );
+});
+
+test("active compact thread rejects untimed stale child completion after user turn", () => {
+  const threadAfterUser = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      makeTurn("turn-compact", [
+        {
+          ...makeCompactItem("compact-1"),
+          completedAtMs: 12_000,
+        },
+      ]),
+      {
+        ...makeTurn("turn-user", [
+          makeUserMessage("user-after-compact", "continue optimizing"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    threadAfterUser,
+    "turn-old-child",
+    makeCollabStatusItem("old-child-completion"),
+    { syntheticTurnStatus: "completed" },
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-after-compact"],
+  );
+});
+
+test("active compact thread rejects untimed missing-turn command on timestamped later turn", () => {
+  const threadAfterTimestampedTurn = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      makeTurn("turn-compact", [
+        {
+          ...makeCompactItem("compact-1"),
+          completedAtMs: 12_000,
+        },
+      ]),
+      {
+        ...makeTurn("turn-user", [
+          makeUserMessage("user-after-compact", "continue optimizing"),
+        ]),
+        status: "running" as const,
+        startedAt: 13,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    threadAfterTimestampedTurn,
+    "turn-old-command",
+    makeCommandExecution({ id: "old-command" }),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-after-compact"],
+  );
+});
+
+test("active compact thread rejects timestamped stale missing-turn live item after user turn", () => {
+  const threadAfterUser = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      makeTurn("turn-compact", [
+        {
+          ...makeCompactItem("compact-1"),
+          completedAtMs: 12_000,
+        },
+      ]),
+      {
+        ...makeTurn("turn-user", [
+          makeUserMessage("user-after-compact", "continue optimizing"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    threadAfterUser,
+    "turn-old",
+    makeCommandExecution({ id: "old-command" }),
+    { completedAtMs: 12_000 },
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-after-compact"],
+  );
+});
+
 test("late backend compact message summary can arrive after the marker", () => {
   const compactedThread = updateThreadItem(
     makeThread(),
