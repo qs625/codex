@@ -12,6 +12,21 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-21
+  status: owner_paused_no_change
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-21
+  task_type: high_bar_frontend_backend_architecture_cleanup
+  depends_on: main `21476c208`; user asked to continue optimization after tranche 20 merge
+  files: `.codex/pm-progress.md`; no code files retained
+  base_commit: `21476c208`
+  next_action: Pause this tranche unless PM wants a narrower follow-up. Owner did not retain code changes because the best candidate failed the high-bar after validation exposed special setup semantics and rustfmt churn.
+  selection: Owner screened at least four candidates. Ranked #1 `codex-rs/app-server/src/bespoke_event_handling` internal test driver setup because several runtime event tests repeated ThreadService/start-thread/outgoing/watch-manager/semaphore/provider-id plumbing around `apply_bespoke_event_handling`; however implementation attempts exposed important non-uniform setup semantics: command/tool/guardian cases can depend on scoped outgoing identity and teardown ordering, with stack-overflow failures when forced through a common context. `rustfmt` on the parent module also tried to reformat included child modules, creating large unrelated churn. Code changes were fully reverted. Ranked #2 `plugin_list.rs` response-read helper extraction was deferred because the suite is large but plugin capability/setup semantics vary and payoff is mostly local RPC boilerplate. Ranked #3 `thread_read.rs` helper extraction was deferred because it is close to persisted history/read projection and thread listing/read hotspots. Ranked #4 `thread_status.rs` lifecycle driver cleanup was deferred because status timing is a lifecycle hotspot. Ranked #5 Electron main IPC cleanup was deferred because remaining cases touch Browser/Terminal lifecycle or had already been narrowed by prior preload/main adapter cleanup.
+  validation: exploratory validation only: first helper implementation got fixed reviewer approval, but owner validation failed with stack overflows in `bespoke_event_handling::tests::runtime_events::exec_command_begin_refreshes_provisional_command_started_item`, `builtin_poll_event_emits_started_and_completed_thread_items`, and `guardian_command_execution_notifications_wrap_review_lifecycle`; exact reruns showed restored hand-written setup passes for affected tests. No final code validation or build was run because no code change remains.
+  commit: none
+
 - id: compact-live-output-after-init-context
   status: installed_effective
   owner: /self/owner_dev_2
