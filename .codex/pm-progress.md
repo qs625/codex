@@ -12,6 +12,21 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-19
+  status: owner_completed
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-19
+  task_type: high_bar_frontend_backend_architecture_cleanup
+  depends_on: main `0411ca7f8`; user explicitly said to continue optimization after tranche 18 installed effective
+  files: `codex-rs/app-server/tests/common/mcp_process.rs`, `.codex/pm-progress.md`
+  base_commit: `0411ca7f8`
+  next_action: Hand back for PM merge decision; do not merge from owner thread.
+  selection: Owner screened at least four candidates under the high-bar tranche-19 gate. Selected `codex-rs/app-server/tests/common/mcp_process.rs` typed JSONRPC params adapter cleanup because the app-server integration test client has 75 identical `serde_json::to_value(params)` forwarding blocks across one coherent test-support boundary; each public helper can keep its explicit method string/type while sharing only serialization plumbing. Deferred frontend `conversation.ts` / `contextUsage.ts` item handling because it is user-visible display/model-context projection adjacent and would require broader product review. Deferred frontend `configSettings.ts` because conversion duplication is tied to settings semantics and UI workflows rather than a pure adapter seam. Deferred Rust `live_thread_runtime.rs` because it already uses a delegation macro and remaining custom cases are intentional/small. Deferred thread listing/archive/repair/status areas as high-risk persisted/lifecycle semantics.
+  validation: Reviewer `/self/owner_main/reviewer` approved behavior-preserving helper extraction. `rustfmt codex-rs/app-server/tests/common/mcp_process.rs` passed with existing nightly-only `imports_granularity` warning. `rustfmt --check codex-rs/app-server/tests/common/mcp_process.rs` passed with the same warning. `git diff --check -- .codex/pm-progress.md codex-rs/app-server/tests/common/mcp_process.rs` passed. `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all request_permissions` passed (1 test). `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all config_rpc` passed (16 tests). Broad `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all command_exec` matched all `suite::command_exec::*` tests, which passed, but exited 101 because it also matched unrelated `thread_resume::runtime_replays::thread_resume_replays_pending_command_execution_request_approval` with host skill/external tool metadata injection context; targeted rerun `cargo test --manifest-path codex-rs/Cargo.toml -p app-server --test all suite::command_exec:: -- --nocapture` passed (16 tests). `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` passed with existing linker `__eh_frame` warning and `proc-macro-error2` future-incompat warning.
+  commit: `b374edeb7` (`Consolidate MCP process request serialization`)
+
 - id: continuous-code-organization-tranche-18
   status: installed_effective
   owner: /self/owner_main

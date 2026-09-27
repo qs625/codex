@@ -101,6 +101,7 @@ use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnSteerParams;
 use app_server_protocol::WindowsSandboxSetupStartParams;
 use codex_login::default_client::CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR;
+use serde::Serialize;
 use tokio::process::Command;
 
 pub struct McpProcess {
@@ -355,8 +356,7 @@ impl McpProcess {
         &mut self,
         params: SendAddCreditsNudgeEmailParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("account/sendAddCreditsNudgeEmail", params)
+        self.send_params_request("account/sendAddCreditsNudgeEmail", params)
             .await
     }
 
@@ -365,8 +365,7 @@ impl McpProcess {
         &mut self,
         params: GetAccountParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("account/read", params).await
+        self.send_params_request("account/read", params).await
     }
 
     /// Send an `account/login/start` JSON-RPC request with ChatGPT auth tokens.
@@ -381,8 +380,8 @@ impl McpProcess {
             chatgpt_account_id,
             chatgpt_plan_type,
         };
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("account/login/start", params).await
+        self.send_params_request("account/login/start", params)
+            .await
     }
 
     /// Send a `feedback/upload` JSON-RPC request.
@@ -390,8 +389,7 @@ impl McpProcess {
         &mut self,
         params: FeedbackUploadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("feedback/upload", params).await
+        self.send_params_request("feedback/upload", params).await
     }
 
     /// Send a `thread/start` JSON-RPC request.
@@ -399,8 +397,7 @@ impl McpProcess {
         &mut self,
         params: ThreadStartParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/start", params).await
+        self.send_params_request("thread/start", params).await
     }
 
     /// Send a `thread/resume` JSON-RPC request.
@@ -408,8 +405,7 @@ impl McpProcess {
         &mut self,
         params: ThreadResumeParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/resume", params).await
+        self.send_params_request("thread/resume", params).await
     }
 
     /// Send a `thread/fork` JSON-RPC request.
@@ -417,8 +413,7 @@ impl McpProcess {
         &mut self,
         params: ThreadForkParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/fork", params).await
+        self.send_params_request("thread/fork", params).await
     }
 
     /// Send a `thread/archive` JSON-RPC request.
@@ -426,8 +421,7 @@ impl McpProcess {
         &mut self,
         params: ThreadArchiveParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/archive", params).await
+        self.send_params_request("thread/archive", params).await
     }
 
     /// Send a `thread/name/set` JSON-RPC request.
@@ -435,8 +429,7 @@ impl McpProcess {
         &mut self,
         params: ThreadSetNameParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/name/set", params).await
+        self.send_params_request("thread/name/set", params).await
     }
 
     /// Send a `thread/metadata/update` JSON-RPC request.
@@ -444,8 +437,8 @@ impl McpProcess {
         &mut self,
         params: ThreadMetadataUpdateParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/metadata/update", params).await
+        self.send_params_request("thread/metadata/update", params)
+            .await
     }
 
     /// Send a `thread/unsubscribe` JSON-RPC request.
@@ -453,8 +446,7 @@ impl McpProcess {
         &mut self,
         params: ThreadUnsubscribeParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/unsubscribe", params).await
+        self.send_params_request("thread/unsubscribe", params).await
     }
 
     /// Send a `thread/unarchive` JSON-RPC request.
@@ -462,8 +454,7 @@ impl McpProcess {
         &mut self,
         params: ThreadUnarchiveParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/unarchive", params).await
+        self.send_params_request("thread/unarchive", params).await
     }
 
     /// Send a `thread/compact/start` JSON-RPC request.
@@ -471,8 +462,8 @@ impl McpProcess {
         &mut self,
         params: ThreadCompactStartParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/compact/start", params).await
+        self.send_params_request("thread/compact/start", params)
+            .await
     }
 
     /// Send a `thread/backgroundTerminals/clean` JSON-RPC request.
@@ -480,8 +471,7 @@ impl McpProcess {
         &mut self,
         params: ThreadBackgroundTerminalsCleanParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/backgroundTerminals/clean", params)
+        self.send_params_request("thread/backgroundTerminals/clean", params)
             .await
     }
 
@@ -490,8 +480,7 @@ impl McpProcess {
         &mut self,
         params: ThreadApproveGuardianDeniedActionParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/approveGuardianDeniedAction", params)
+        self.send_params_request("thread/approveGuardianDeniedAction", params)
             .await
     }
 
@@ -500,8 +489,8 @@ impl McpProcess {
         &mut self,
         params: ThreadShellCommandParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/shellCommand", params).await
+        self.send_params_request("thread/shellCommand", params)
+            .await
     }
 
     /// Send a `thread/rollback` JSON-RPC request.
@@ -509,8 +498,7 @@ impl McpProcess {
         &mut self,
         params: ThreadRollbackParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/rollback", params).await
+        self.send_params_request("thread/rollback", params).await
     }
 
     /// Send a `thread/list` JSON-RPC request.
@@ -518,8 +506,7 @@ impl McpProcess {
         &mut self,
         params: ThreadListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/list", params).await
+        self.send_params_request("thread/list", params).await
     }
 
     /// Send a `thread/loaded/list` JSON-RPC request.
@@ -527,8 +514,7 @@ impl McpProcess {
         &mut self,
         params: ThreadLoadedListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/loaded/list", params).await
+        self.send_params_request("thread/loaded/list", params).await
     }
 
     /// Send a `thread/read` JSON-RPC request.
@@ -536,8 +522,7 @@ impl McpProcess {
         &mut self,
         params: ThreadReadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/read", params).await
+        self.send_params_request("thread/read", params).await
     }
 
     /// Send a `thread/turns/list` JSON-RPC request.
@@ -545,8 +530,7 @@ impl McpProcess {
         &mut self,
         params: ThreadTurnsListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/turns/list", params).await
+        self.send_params_request("thread/turns/list", params).await
     }
 
     /// Send a `thread/turns/items/list` JSON-RPC request.
@@ -554,8 +538,8 @@ impl McpProcess {
         &mut self,
         params: ThreadTurnsItemsListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/turns/items/list", params).await
+        self.send_params_request("thread/turns/items/list", params)
+            .await
     }
 
     /// Send a `model/list` JSON-RPC request.
@@ -563,8 +547,7 @@ impl McpProcess {
         &mut self,
         params: ModelListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("model/list", params).await
+        self.send_params_request("model/list", params).await
     }
 
     /// Send a `modelProvider/capabilities/read` JSON-RPC request.
@@ -572,8 +555,7 @@ impl McpProcess {
         &mut self,
         params: ModelProviderCapabilitiesReadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("modelProvider/capabilities/read", params)
+        self.send_params_request("modelProvider/capabilities/read", params)
             .await
     }
 
@@ -582,8 +564,8 @@ impl McpProcess {
         &mut self,
         params: ExperimentalFeatureListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("experimentalFeature/list", params).await
+        self.send_params_request("experimentalFeature/list", params)
+            .await
     }
 
     /// Send an `experimentalFeature/enablement/set` JSON-RPC request.
@@ -591,8 +573,7 @@ impl McpProcess {
         &mut self,
         params: app_server_protocol::ExperimentalFeatureEnablementSetParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("experimentalFeature/enablement/set", params)
+        self.send_params_request("experimentalFeature/enablement/set", params)
             .await
     }
 
@@ -610,8 +591,7 @@ impl McpProcess {
 
     /// Send an `app/list` JSON-RPC request.
     pub async fn send_apps_list_request(&mut self, params: AppsListParams) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("app/list", params).await
+        self.send_params_request("app/list", params).await
     }
 
     /// Send an `mcpServer/resource/read` JSON-RPC request.
@@ -619,8 +599,8 @@ impl McpProcess {
         &mut self,
         params: McpResourceReadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("mcpServer/resource/read", params).await
+        self.send_params_request("mcpServer/resource/read", params)
+            .await
     }
 
     /// Send an `mcpServer/tool/call` JSON-RPC request.
@@ -628,8 +608,8 @@ impl McpProcess {
         &mut self,
         params: McpServerToolCallParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("mcpServer/tool/call", params).await
+        self.send_params_request("mcpServer/tool/call", params)
+            .await
     }
 
     /// Send a `skills/list` JSON-RPC request.
@@ -637,8 +617,7 @@ impl McpProcess {
         &mut self,
         params: SkillsListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("skills/list", params).await
+        self.send_params_request("skills/list", params).await
     }
 
     /// Send a `hooks/list` JSON-RPC request.
@@ -646,8 +625,7 @@ impl McpProcess {
         &mut self,
         params: HooksListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("hooks/list", params).await
+        self.send_params_request("hooks/list", params).await
     }
 
     /// Send a `marketplace/add` JSON-RPC request.
@@ -655,8 +633,7 @@ impl McpProcess {
         &mut self,
         params: MarketplaceAddParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("marketplace/add", params).await
+        self.send_params_request("marketplace/add", params).await
     }
 
     /// Send a `marketplace/remove` JSON-RPC request.
@@ -664,8 +641,7 @@ impl McpProcess {
         &mut self,
         params: MarketplaceRemoveParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("marketplace/remove", params).await
+        self.send_params_request("marketplace/remove", params).await
     }
 
     /// Send a `marketplace/upgrade` JSON-RPC request.
@@ -673,8 +649,8 @@ impl McpProcess {
         &mut self,
         params: MarketplaceUpgradeParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("marketplace/upgrade", params).await
+        self.send_params_request("marketplace/upgrade", params)
+            .await
     }
 
     /// Send a `plugin/install` JSON-RPC request.
@@ -682,8 +658,7 @@ impl McpProcess {
         &mut self,
         params: PluginInstallParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("plugin/install", params).await
+        self.send_params_request("plugin/install", params).await
     }
 
     /// Send a `plugin/uninstall` JSON-RPC request.
@@ -691,8 +666,7 @@ impl McpProcess {
         &mut self,
         params: PluginUninstallParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("plugin/uninstall", params).await
+        self.send_params_request("plugin/uninstall", params).await
     }
 
     /// Send a `plugin/list` JSON-RPC request.
@@ -700,8 +674,7 @@ impl McpProcess {
         &mut self,
         params: PluginListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("plugin/list", params).await
+        self.send_params_request("plugin/list", params).await
     }
 
     /// Send a `plugin/read` JSON-RPC request.
@@ -709,8 +682,7 @@ impl McpProcess {
         &mut self,
         params: PluginReadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("plugin/read", params).await
+        self.send_params_request("plugin/read", params).await
     }
 
     /// Send a `plugin/skill/read` JSON-RPC request.
@@ -718,8 +690,7 @@ impl McpProcess {
         &mut self,
         params: PluginSkillReadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("plugin/skill/read", params).await
+        self.send_params_request("plugin/skill/read", params).await
     }
 
     /// Send an `mcpServerStatus/list` JSON-RPC request.
@@ -727,8 +698,8 @@ impl McpProcess {
         &mut self,
         params: ListMcpServerStatusParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("mcpServerStatus/list", params).await
+        self.send_params_request("mcpServerStatus/list", params)
+            .await
     }
 
     /// Send a JSON-RPC request with raw params for protocol-level validation tests.
@@ -744,8 +715,8 @@ impl McpProcess {
         &mut self,
         params: CollaborationModeListParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("collaborationMode/list", params).await
+        self.send_params_request("collaborationMode/list", params)
+            .await
     }
 
     /// Send a `mock/experimentalMethod` JSON-RPC request.
@@ -753,8 +724,8 @@ impl McpProcess {
         &mut self,
         params: MockExperimentalMethodParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("mock/experimentalMethod", params).await
+        self.send_params_request("mock/experimentalMethod", params)
+            .await
     }
 
     /// Send a `thread/memoryMode/set` JSON-RPC request (experimental).
@@ -762,8 +733,8 @@ impl McpProcess {
         &mut self,
         params: ThreadMemoryModeSetParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/memoryMode/set", params).await
+        self.send_params_request("thread/memoryMode/set", params)
+            .await
     }
 
     /// Send a `turn/start` JSON-RPC request.
@@ -771,8 +742,7 @@ impl McpProcess {
         &mut self,
         params: TurnStartParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("turn/start", params).await
+        self.send_params_request("turn/start", params).await
     }
 
     /// Send a raw `turn/start` JSON-RPC request.
@@ -787,22 +757,16 @@ impl McpProcess {
         &mut self,
         params: ClientLifecycleRegisterParams,
     ) -> anyhow::Result<i64> {
-        self.send_request(
-            "client/lifecycle/register",
-            Some(serde_json::to_value(params)?),
-        )
-        .await
+        self.send_params_request("client/lifecycle/register", params)
+            .await
     }
 
     pub async fn send_thread_client_recovery_record_request(
         &mut self,
         params: ThreadClientRecoveryRecordParams,
     ) -> anyhow::Result<i64> {
-        self.send_request(
-            "thread/clientRecovery/record",
-            Some(serde_json::to_value(params)?),
-        )
-        .await
+        self.send_params_request("thread/clientRecovery/record", params)
+            .await
     }
 
     /// Send a `command/exec` JSON-RPC request.
@@ -810,8 +774,7 @@ impl McpProcess {
         &mut self,
         params: CommandExecParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("command/exec", params).await
+        self.send_params_request("command/exec", params).await
     }
 
     /// Send a `process/spawn` JSON-RPC request.
@@ -819,8 +782,7 @@ impl McpProcess {
         &mut self,
         params: ProcessSpawnParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("process/spawn", params).await
+        self.send_params_request("process/spawn", params).await
     }
 
     /// Send a `process/writeStdin` JSON-RPC request.
@@ -828,8 +790,7 @@ impl McpProcess {
         &mut self,
         params: ProcessWriteStdinParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("process/writeStdin", params).await
+        self.send_params_request("process/writeStdin", params).await
     }
 
     /// Send a `process/resizePty` JSON-RPC request.
@@ -837,8 +798,7 @@ impl McpProcess {
         &mut self,
         params: ProcessResizePtyParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("process/resizePty", params).await
+        self.send_params_request("process/resizePty", params).await
     }
 
     /// Send a `process/kill` JSON-RPC request.
@@ -846,8 +806,7 @@ impl McpProcess {
         &mut self,
         params: ProcessKillParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("process/kill", params).await
+        self.send_params_request("process/kill", params).await
     }
 
     /// Send a `command/exec/write` JSON-RPC request.
@@ -855,8 +814,7 @@ impl McpProcess {
         &mut self,
         params: CommandExecWriteParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("command/exec/write", params).await
+        self.send_params_request("command/exec/write", params).await
     }
 
     /// Send a `command/exec/resize` JSON-RPC request.
@@ -864,8 +822,8 @@ impl McpProcess {
         &mut self,
         params: CommandExecResizeParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("command/exec/resize", params).await
+        self.send_params_request("command/exec/resize", params)
+            .await
     }
 
     /// Send a `command/exec/terminate` JSON-RPC request.
@@ -873,8 +831,8 @@ impl McpProcess {
         &mut self,
         params: CommandExecTerminateParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("command/exec/terminate", params).await
+        self.send_params_request("command/exec/terminate", params)
+            .await
     }
 
     /// Send a `turn/interrupt` JSON-RPC request.
@@ -882,8 +840,7 @@ impl McpProcess {
         &mut self,
         params: TurnInterruptParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("turn/interrupt", params).await
+        self.send_params_request("turn/interrupt", params).await
     }
 
     /// Send a `thread/realtime/start` JSON-RPC request.
@@ -891,8 +848,8 @@ impl McpProcess {
         &mut self,
         params: ThreadRealtimeStartParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/start", params).await
+        self.send_params_request("thread/realtime/start", params)
+            .await
     }
 
     /// Send a `thread/realtime/appendAudio` JSON-RPC request.
@@ -900,8 +857,7 @@ impl McpProcess {
         &mut self,
         params: ThreadRealtimeAppendAudioParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/appendAudio", params)
+        self.send_params_request("thread/realtime/appendAudio", params)
             .await
     }
 
@@ -910,8 +866,7 @@ impl McpProcess {
         &mut self,
         params: ThreadRealtimeAppendTextParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/appendText", params)
+        self.send_params_request("thread/realtime/appendText", params)
             .await
     }
 
@@ -920,16 +875,15 @@ impl McpProcess {
         &mut self,
         params: ThreadRealtimeStopParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/stop", params).await
+        self.send_params_request("thread/realtime/stop", params)
+            .await
     }
 
     pub async fn send_thread_realtime_list_voices_request(
         &mut self,
         params: ThreadRealtimeListVoicesParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/listVoices", params)
+        self.send_params_request("thread/realtime/listVoices", params)
             .await
     }
 
@@ -996,8 +950,7 @@ impl McpProcess {
         &mut self,
         params: TurnSteerParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("turn/steer", params).await
+        self.send_params_request("turn/steer", params).await
     }
 
     /// Send a `review/start` JSON-RPC request.
@@ -1005,103 +958,90 @@ impl McpProcess {
         &mut self,
         params: ReviewStartParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("review/start", params).await
+        self.send_params_request("review/start", params).await
     }
 
     pub async fn send_windows_sandbox_setup_start_request(
         &mut self,
         params: WindowsSandboxSetupStartParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("windowsSandbox/setupStart", params).await
+        self.send_params_request("windowsSandbox/setupStart", params)
+            .await
     }
 
     pub async fn send_config_read_request(
         &mut self,
         params: ConfigReadParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("config/read", params).await
+        self.send_params_request("config/read", params).await
     }
 
     pub async fn send_config_value_write_request(
         &mut self,
         params: ConfigValueWriteParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("config/value/write", params).await
+        self.send_params_request("config/value/write", params).await
     }
 
     pub async fn send_config_batch_write_request(
         &mut self,
         params: ConfigBatchWriteParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("config/batchWrite", params).await
+        self.send_params_request("config/batchWrite", params).await
     }
 
     pub async fn send_fs_read_file_request(
         &mut self,
         params: FsReadFileParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/readFile", params).await
+        self.send_params_request("fs/readFile", params).await
     }
 
     pub async fn send_fs_write_file_request(
         &mut self,
         params: FsWriteFileParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/writeFile", params).await
+        self.send_params_request("fs/writeFile", params).await
     }
 
     pub async fn send_fs_create_directory_request(
         &mut self,
         params: FsCreateDirectoryParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/createDirectory", params).await
+        self.send_params_request("fs/createDirectory", params).await
     }
 
     pub async fn send_fs_get_metadata_request(
         &mut self,
         params: FsGetMetadataParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/getMetadata", params).await
+        self.send_params_request("fs/getMetadata", params).await
     }
 
     pub async fn send_fs_read_directory_request(
         &mut self,
         params: FsReadDirectoryParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/readDirectory", params).await
+        self.send_params_request("fs/readDirectory", params).await
     }
 
     pub async fn send_fs_remove_request(&mut self, params: FsRemoveParams) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/remove", params).await
+        self.send_params_request("fs/remove", params).await
     }
 
     pub async fn send_fs_copy_request(&mut self, params: FsCopyParams) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/copy", params).await
+        self.send_params_request("fs/copy", params).await
     }
 
     pub async fn send_fs_watch_request(&mut self, params: FsWatchParams) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/watch", params).await
+        self.send_params_request("fs/watch", params).await
     }
 
     pub async fn send_fs_unwatch_request(
         &mut self,
         params: FsUnwatchParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("fs/unwatch", params).await
+        self.send_params_request("fs/unwatch", params).await
     }
 
     /// Send an `account/logout` JSON-RPC request.
@@ -1142,8 +1082,8 @@ impl McpProcess {
         &mut self,
         params: CancelLoginAccountParams,
     ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("account/login/cancel", params).await
+        self.send_params_request("account/login/cancel", params)
+            .await
     }
 
     /// Send a `fuzzyFileSearch` JSON-RPC request.
@@ -1250,6 +1190,14 @@ impl McpProcess {
         });
         self.send_jsonrpc_message(message).await?;
         Ok(request_id)
+    }
+
+    async fn send_params_request<P>(&mut self, method: &str, params: P) -> anyhow::Result<i64>
+    where
+        P: Serialize,
+    {
+        self.send_request(method, Some(serde_json::to_value(params)?))
+            .await
     }
 
     pub async fn send_response(
