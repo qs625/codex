@@ -12,6 +12,21 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-27
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-27
+  task_type: exclusive_large_production_code_quality_refactor
+  depends_on: main `7fc630daf`; user clarified not to keep doing small changes
+  files: TBD by owner after candidate inventory; target must be a production module/cluster in `codex-rs/` or `apps/root-worker-prototype/`, not test-only helpers
+  base_commit: `7fc630daf`
+  next_action: Owner must evaluate at least three production candidates and select another larger coherent module-boundary/code-organization tranche. Candidate should be meaningfully larger than a local helper extraction, preferably a cohesive production seam across request processing, Electron production adapters, or frontend state/data projection. If no safe larger tranche exists from current main, pause with evidence rather than shipping a small cleanup.
+  constraints: Preserve behavior, provider-visible tool/schema/descriptions, JSONRPC/API method params/errors, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, and external/native provider parity. Avoid recently touched compact/display and Git panel diff projection paths unless there is a separate bug-level reason.
+  validation: pending owner inventory, design, reviewer review, focused tests, formatting, `git diff --check`, and relevant debug build.
+  commit: pending
+
 - id: continuous-code-organization-tranche-26
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
