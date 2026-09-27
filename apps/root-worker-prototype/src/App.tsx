@@ -19,10 +19,11 @@ import {
   SidebarPanel,
   TreeContextMenu,
 } from "./components/Panels";
+import { type GitDiffPreviewState } from "./components/RightPanel";
 import {
-  type GitDiffPreviewState,
-} from "./components/RightPanel";
-import { BrowserPanel, type BrowserWorkspaceTabDescriptor } from "./components/BrowserPanel";
+  BrowserPanel,
+  type BrowserWorkspaceTabDescriptor,
+} from "./components/BrowserPanel";
 import {
   isSelfCommandShortcut,
   normalizeSelfCommandText,
@@ -79,9 +80,7 @@ import {
   type RuntimeRestartProgress,
 } from "./lib/runtimeRestartProgress";
 import type { RunConfigSelection } from "./lib/runConfig";
-import {
-  applyRunConfigOverride,
-} from "./lib/sendMessagePayload";
+import { applyRunConfigOverride } from "./lib/sendMessagePayload";
 import { submitThreadMessage } from "./lib/sendMessageFlow";
 import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
@@ -156,6 +155,7 @@ import {
   closeWorkspaceTabById,
   readStoredWorkspaceTabOrder,
   reorderWorkspaceTabs,
+  resolveActiveWorkspaceTabId,
   storeWorkspaceTabOrder,
   upsertWorkspaceTab,
   type WorkspaceObjectTab,
@@ -320,7 +320,9 @@ function workspaceTabForTerminal(
   };
 }
 
-function workspaceTabForGitDiff(state: GitDiffPreviewState): WorkspaceObjectTab | null {
+function workspaceTabForGitDiff(
+  state: GitDiffPreviewState,
+): WorkspaceObjectTab | null {
   if (!state.targetId) {
     return null;
   }
@@ -430,10 +432,13 @@ function App() {
     string | null
   >(null);
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceObjectTab[]>([]);
-  const [draggedWorkspaceTab, setDraggedWorkspaceTab] =
-    useState<string | null>(null);
-  const [rightPanelBrowserTabFocusRequest, setRightPanelBrowserTabFocusRequest] =
-    useState<{ tabId: string; token: number } | null>(null);
+  const [draggedWorkspaceTab, setDraggedWorkspaceTab] = useState<string | null>(
+    null,
+  );
+  const [
+    rightPanelBrowserTabFocusRequest,
+    setRightPanelBrowserTabFocusRequest,
+  ] = useState<{ tabId: string; token: number } | null>(null);
   const [
     rightPanelTerminalTabFocusRequest,
     setRightPanelTerminalTabFocusRequest,
@@ -465,11 +470,15 @@ function App() {
   const [fileTreeEntriesByPath, setFileTreeEntriesByPath] = useState<
     Record<string, FileTreeEntry[]>
   >({});
-  const [fileTreeLoadingPath, setFileTreeLoadingPath] = useState<string | null>(null);
+  const [fileTreeLoadingPath, setFileTreeLoadingPath] = useState<string | null>(
+    null,
+  );
   const [fileTreeErrorsByPath, setFileTreeErrorsByPath] = useState<
     Record<string, string>
   >({});
-  const [expandedTreeDirectories, setExpandedTreeDirectories] = useState<string[]>([]);
+  const [expandedTreeDirectories, setExpandedTreeDirectories] = useState<
+    string[]
+  >([]);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [voiceCaptureStatus, setVoiceCaptureStatus] =
@@ -558,13 +567,13 @@ function App() {
     selectedThreadId,
   );
   const selectedThreadGoal = selectedThreadId
-    ? goalsByThreadId[selectedThreadId] ?? null
+    ? (goalsByThreadId[selectedThreadId] ?? null)
     : null;
   const selectedThreadGoalAction = selectedThreadId
-    ? goalActionByThreadId[selectedThreadId] ?? null
+    ? (goalActionByThreadId[selectedThreadId] ?? null)
     : null;
   const selectedThreadGoalError = selectedThreadId
-    ? goalActionErrorsByThreadId[selectedThreadId] ?? null
+    ? (goalActionErrorsByThreadId[selectedThreadId] ?? null)
     : null;
   const selectedThread = useMemo(
     () =>
@@ -573,6 +582,9 @@ function App() {
         : null,
     [selectedThreadId, threads],
   );
+  const selectedThreadWorkspaceTabId = selectedThread
+    ? conversationWorkspaceTabId(selectedThread.id)
+    : null;
   const draft = selectedComposerDraft.text;
   const draftSkills = selectedComposerDraft.skills;
   const draftImages = selectedComposerDraft.images;
@@ -608,20 +620,13 @@ function App() {
 
   useEffect(() => {
     setActiveWorkspaceTabId((current) => {
-      if (!current || workspaceTabs.some((tab) => tab.id === current)) {
-        return current;
-      }
-      if (
-        selectedThread &&
-        workspaceTabs.some(
-          (tab) => tab.id === conversationWorkspaceTabId(selectedThread.id),
-        )
-      ) {
-        return conversationWorkspaceTabId(selectedThread.id);
-      }
-      return workspaceTabs[0]?.id ?? null;
+      return resolveActiveWorkspaceTabId(
+        workspaceTabs,
+        current,
+        selectedThreadWorkspaceTabId,
+      );
     });
-  }, [selectedThread, workspaceTabs]);
+  }, [selectedThreadWorkspaceTabId, workspaceTabs]);
 
   useEffect(() => {
     composerDraftsRef.current = composerDraftsByThreadId;
@@ -971,9 +976,7 @@ function App() {
       resizeStateRef.current = null;
       const pointerCapture = resizePointerCaptureRef.current;
       resizePointerCaptureRef.current = null;
-      if (
-        pointerCapture?.element.hasPointerCapture(pointerCapture.pointerId)
-      ) {
+      if (pointerCapture?.element.hasPointerCapture(pointerCapture.pointerId)) {
         pointerCapture.element.releasePointerCapture(pointerCapture.pointerId);
       }
       setIsRightPanelResizing(false);
@@ -1149,7 +1152,9 @@ function App() {
       return;
     }
 
-    setFilePreview(getProjectFilePreview(filePreviewByRootId, selectedTreeRootId));
+    setFilePreview(
+      getProjectFilePreview(filePreviewByRootId, selectedTreeRootId),
+    );
     setPreviewError(null);
     setIsLoadingPreview(false);
   }, [
@@ -1193,8 +1198,7 @@ function App() {
     [projectSidebar],
   );
   const todoItems = useMemo(
-    () =>
-      buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, "all"),
+    () => buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, "all"),
     [selectedThreadId, sessionThreads],
   );
   const collapsedSet = useMemo(() => new Set(collapsedPaths), [collapsedPaths]);
@@ -1232,14 +1236,16 @@ function App() {
       const excludedInitialThreadIds = payload.materializedSelfThreadId
         ? new Set([payload.materializedSelfThreadId])
         : undefined;
-      const preferredProjectThread =
-        pickBootstrapInitialProjectThread(normalizedThreads, {
+      const preferredProjectThread = pickBootstrapInitialProjectThread(
+        normalizedThreads,
+        {
           focusThreadId:
             payload.expectedRestart?.focusThreadId ??
             payload.autoResume?.focusThreadId,
           rememberedThreadId: readStoredSelectedThreadId(),
           excludedThreadIds: excludedInitialThreadIds,
-        });
+        },
+      );
       if (preferredProjectThread) {
         setSelectedThreadId(preferredProjectThread.id);
         return;
@@ -1385,10 +1391,7 @@ function App() {
     );
   }
 
-  function upsertThreadWithPending(
-    current: Thread[],
-    thread: Thread,
-  ) {
+  function upsertThreadWithPending(current: Thread[], thread: Thread) {
     return upsertThread(current, applyQueuedThreadUpdates(thread));
   }
 
@@ -1715,7 +1718,10 @@ function App() {
       setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
-    await createProjectThread(newProjectName.trim() || "Project chat", projectCwd);
+    await createProjectThread(
+      newProjectName.trim() || "Project chat",
+      projectCwd,
+    );
   }
 
   async function submitNewThreadDraft(draft: NewThreadDraft) {
@@ -1739,7 +1745,11 @@ function App() {
       setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
-    await createProjectThread(draft.taskName || "Project chat", projectCwd, draft);
+    await createProjectThread(
+      draft.taskName || "Project chat",
+      projectCwd,
+      draft,
+    );
   }
 
   async function createBlankChatThread() {
@@ -1936,7 +1946,8 @@ function App() {
     }
     setIsSending(true);
     setError(null);
-    const runConfigOverride = runConfigOverrideByThreadIdRef.current.get(threadId);
+    const runConfigOverride =
+      runConfigOverrideByThreadIdRef.current.get(threadId);
     const threadForSend = applyRunConfigOverride(
       selectedThread,
       runConfigOverride ?? null,
@@ -2126,8 +2137,9 @@ function App() {
     }
 
     const thread =
-      threadsRef.current.find((candidate) => candidate.id === selectedThreadId) ??
-      selectedThread;
+      threadsRef.current.find(
+        (candidate) => candidate.id === selectedThreadId,
+      ) ?? selectedThread;
     const currentTurn = getInterruptibleTurn(thread);
     if (!currentTurn) {
       return;
@@ -2394,7 +2406,9 @@ function App() {
     try {
       const thread = threads.find((candidate) => candidate.id === threadId);
       if (thread && isRootThread(thread)) {
-        throw new Error("Project chat cannot be deleted from the subagent menu.");
+        throw new Error(
+          "Project chat cannot be deleted from the subagent menu.",
+        );
       }
       const archive = window.codexDesktop.archiveThread;
       if (typeof archive !== "function") {
@@ -2599,12 +2613,14 @@ function App() {
     if (!approvalRequest) {
       const message = `Unsupported app-server request: ${request.method}`;
       setError(message);
-      void window.codexDesktop.rejectServerRequest({
-        requestId: request.id,
-        message,
-      }).catch((requestError) => {
-        setError(toErrorMessage(requestError));
-      });
+      void window.codexDesktop
+        .rejectServerRequest({
+          requestId: request.id,
+          message,
+        })
+        .catch((requestError) => {
+          setError(toErrorMessage(requestError));
+        });
       return;
     }
     upsertApprovalRequest(approvalRequest);
@@ -3115,7 +3131,9 @@ function App() {
     });
 
     try {
-      const payload = (await window.codexDesktop.listLocalDirectory(target)) as {
+      const payload = (await window.codexDesktop.listLocalDirectory(
+        target,
+      )) as {
         path: string;
         entries: FileTreeEntry[];
       };
@@ -3149,7 +3167,9 @@ function App() {
         selectedThreadIdRef.current === requestThreadId &&
         selectedThreadCwdRef.current === requestCwd
       ) {
-        setFileTreeLoadingPath((current) => (current === target ? null : current));
+        setFileTreeLoadingPath((current) =>
+          current === target ? null : current,
+        );
       }
     }
   }
@@ -3387,7 +3407,10 @@ function App() {
   }
 
   function openTerminalInWorkspace(
-    tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }> | null = null,
+    tab: Extract<
+      WorkspaceObjectDragPayload,
+      { kind: "terminal" }
+    > | null = null,
   ) {
     upsertWorkspaceObjectTab(workspaceTabForTerminal(tab, selectedThread));
   }
@@ -3403,7 +3426,10 @@ function App() {
     }));
     const tab = workspaceTabForGitDiff(state);
     if (tab) {
-      if (state.loading || workspaceTabsRef.current.some((item) => item.id === tab.id)) {
+      if (
+        state.loading ||
+        workspaceTabsRef.current.some((item) => item.id === tab.id)
+      ) {
         upsertWorkspaceObjectTab(tab, { activate: state.loading });
       }
     }
@@ -3463,7 +3489,7 @@ function App() {
         .closeBrowserTab(closingTab.browserTabId)
         .catch((error) => setError(toErrorMessage(error)));
     }
-    if (activeWorkspaceTabId !== tabId) {
+    if (visibleWorkspaceTabId !== tabId) {
       return;
     }
     const fallback =
@@ -3497,8 +3523,7 @@ function App() {
     if (payload.kind === "browser") {
       const tab = workspaceTabsRef.current.find(
         (item) =>
-          item.kind === "browser" &&
-          item.browserTabId === payload.browserTabId,
+          item.kind === "browser" && item.browserTabId === payload.browserTabId,
       );
       if (!tab) {
         return;
@@ -3624,8 +3649,13 @@ function App() {
     setIsRightPanelCollapsed(false);
   }
 
+  const visibleWorkspaceTabId = resolveActiveWorkspaceTabId(
+    workspaceTabs,
+    activeWorkspaceTabId,
+    selectedThreadWorkspaceTabId,
+  );
   const activeWorkspaceTab =
-    workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId) ?? null;
+    workspaceTabs.find((tab) => tab.id === visibleWorkspaceTabId) ?? null;
   const activeTerminalThread =
     activeWorkspaceTab?.kind === "terminal" && activeWorkspaceTab.threadId
       ? (threads.find((thread) => thread.id === activeWorkspaceTab.threadId) ??
@@ -3659,7 +3689,9 @@ function App() {
         className="workspace"
         style={{
           gridTemplateColumns: `${sidebarWidth}px ${PANEL_RESIZER_WIDTH}px minmax(0, 1fr) ${PANEL_RESIZER_WIDTH}px ${
-            isRightPanelCollapsed ? RIGHT_PANEL_COLLAPSED_WIDTH : rightPanelWidth
+            isRightPanelCollapsed
+              ? RIGHT_PANEL_COLLAPSED_WIDTH
+              : rightPanelWidth
           }px`,
         }}
       >
@@ -3669,7 +3701,9 @@ function App() {
           isCreatingChatThread={isCreatingChatThread}
           newProjectName={newProjectName}
           onArchiveChatThread={(threadId) => void archiveChatThread(threadId)}
-          onArchiveProjectThread={(threadId) => void archiveProjectThread(threadId)}
+          onArchiveProjectThread={(threadId) =>
+            void archiveProjectThread(threadId)
+          }
           onCreateChatThread={() => void createBlankChatThread()}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
@@ -3709,7 +3743,7 @@ function App() {
             aria-label="Workspace object tabs"
           >
             {workspaceTabs.map((tab) => {
-              const active = tab.id === activeWorkspaceTabId;
+              const active = tab.id === visibleWorkspaceTabId;
               const tabThread = getWorkspaceTabThread(tab, threads);
               return (
                 <button
@@ -3749,7 +3783,9 @@ function App() {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         event.stopPropagation();
-                        closeWorkspaceTab(tab.id, { closeOwnedBrowserTab: true });
+                        closeWorkspaceTab(tab.id, {
+                          closeOwnedBrowserTab: true,
+                        });
                       }
                     }}
                   >
@@ -3785,8 +3821,12 @@ function App() {
                 onCancelGoal={clearCurrentThreadGoalFromUi}
                 onConversationScroll={handleConversationScroll}
                 onDraftChange={handleDraftChange}
-                onHandleComposerPaste={(event) => void handleComposerPaste(event)}
-                onHandleImageSelection={(event) => void handleImageSelection(event)}
+                onHandleComposerPaste={(event) =>
+                  void handleComposerPaste(event)
+                }
+                onHandleImageSelection={(event) =>
+                  void handleImageSelection(event)
+                }
                 onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
                 onOpenArtifactUrl={handleOpenArtifactUrl}
                 onPauseGoal={pauseCurrentThreadGoal}
@@ -3813,7 +3853,13 @@ function App() {
               className="workspace-tab-panel"
               hidden={activeWorkspaceTab?.kind !== "file"}
             >
-              <Suspense fallback={<div className="preview-panel preview-empty">Loading preview...</div>}>
+              <Suspense
+                fallback={
+                  <div className="preview-panel preview-empty">
+                    Loading preview...
+                  </div>
+                }
+              >
                 <FilePreviewPanel
                   variant="workspace"
                   expandedTreeDirectories={expandedTreeDirectories}
@@ -3844,7 +3890,11 @@ function App() {
             >
               {activeWorkspaceTab?.kind === "diff" ? (
                 <div className="preview-panel diff-panel-workspace">
-                  <Suspense fallback={<div className="preview-empty">Loading Git diff...</div>}>
+                  <Suspense
+                    fallback={
+                      <div className="preview-empty">Loading Git diff...</div>
+                    }
+                  >
                     <GitDiffPreviewPanel
                       diff={activeWorkspaceDiffState.diff}
                       error={activeWorkspaceDiffState.error}
@@ -3867,7 +3917,9 @@ function App() {
                   }
                   resizing={isRightPanelResizing}
                   navigationRequest={browserNavigationRequest}
-                  onNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+                  onNavigationRequestHandled={
+                    handleBrowserNavigationRequestHandled
+                  }
                   onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
                   activeBrowserTabId={activeWorkspaceTab.browserTabId ?? null}
                 />
@@ -3908,7 +3960,9 @@ function App() {
         />
         <Suspense
           fallback={
-            <aside className={`right-panel ${isRightPanelCollapsed ? "collapsed" : ""}`}>
+            <aside
+              className={`right-panel ${isRightPanelCollapsed ? "collapsed" : ""}`}
+            >
               <div className="right-panel-body">
                 <div className="right-panel-content">
                   <div className="preview-empty">Loading panel...</div>
@@ -3924,7 +3978,9 @@ function App() {
             }
             browserPanelResizing={isRightPanelResizing}
             browserNavigationRequest={browserNavigationRequest}
-            onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
+            onBrowserNavigationRequestHandled={
+              handleBrowserNavigationRequestHandled
+            }
             workspaceTabsEnabled
             onGitDiffPreviewChange={handleGitDiffPreviewChange}
             onFocusCommandMonitor={handleThreadAnalysisCommandFocus}
@@ -3980,7 +4036,9 @@ function App() {
       <TreeContextMenu
         threads={threads}
         treeMenu={treeMenu}
-        onArchiveProjectThread={(threadId) => void archiveProjectThread(threadId)}
+        onArchiveProjectThread={(threadId) =>
+          void archiveProjectThread(threadId)
+        }
         onArchiveThread={(threadId) => void archiveThread(threadId)}
       />
       {isSettingsOpen ? (

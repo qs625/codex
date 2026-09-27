@@ -7,6 +7,7 @@ import {
   mergeWorkspaceTabOrder,
   readStoredWorkspaceTabOrder,
   reorderWorkspaceTabs,
+  resolveActiveWorkspaceTabId,
   sanitizeWorkspaceTabs,
   storeWorkspaceTabOrder,
   upsertWorkspaceTab,
@@ -40,8 +41,11 @@ test("reorderWorkspaceTabs moves object tabs before or after the target", () => 
   ];
 
   assert.deepEqual(
-    reorderWorkspaceTabs(tabs, "file:root:/tmp/b.ts", "file:root:/tmp/a.ts")
-      .map((item) => item.id),
+    reorderWorkspaceTabs(
+      tabs,
+      "file:root:/tmp/b.ts",
+      "file:root:/tmp/a.ts",
+    ).map((item) => item.id),
     ["conversation:root", "file:root:/tmp/b.ts", "file:root:/tmp/a.ts"],
   );
   assert.deepEqual(
@@ -56,16 +60,13 @@ test("reorderWorkspaceTabs moves object tabs before or after the target", () => 
 });
 
 test("upsertWorkspaceTab updates an existing object tab without duplicating it", () => {
-  const tabs = upsertWorkspaceTab(
-    [tab("conversation:root", "conversation")],
-    {
-      id: "conversation:root",
-      kind: "conversation",
-      title: "/root",
-      subtitle: "Complete",
-      threadId: "root",
-    },
-  );
+  const tabs = upsertWorkspaceTab([tab("conversation:root", "conversation")], {
+    id: "conversation:root",
+    kind: "conversation",
+    title: "/root",
+    subtitle: "Complete",
+    threadId: "root",
+  });
 
   assert.deepEqual(tabs, [
     {
@@ -93,6 +94,39 @@ test("closeWorkspaceTabById removes only the central workspace tab", () => {
   assert.deepEqual(
     closeWorkspaceTabById(tabs, "missing").map((item) => item.id),
     tabs.map((item) => item.id),
+  );
+});
+
+test("resolveActiveWorkspaceTabId keeps tab and panel visibility in sync", () => {
+  const tabs = [
+    tab("conversation:root", "conversation"),
+    tab("file:root:/tmp/a.ts", "file"),
+    tab("browser:main", "browser"),
+  ];
+
+  assert.equal(
+    resolveActiveWorkspaceTabId(
+      tabs,
+      "file:root:/tmp/a.ts",
+      "conversation:root",
+    ),
+    "file:root:/tmp/a.ts",
+  );
+  assert.equal(
+    resolveActiveWorkspaceTabId(
+      tabs,
+      "conversation:missing",
+      "conversation:root",
+    ),
+    "conversation:root",
+  );
+  assert.equal(
+    resolveActiveWorkspaceTabId(tabs, null, "conversation:missing"),
+    "conversation:root",
+  );
+  assert.equal(
+    resolveActiveWorkspaceTabId([], null, "conversation:root"),
+    null,
   );
 });
 
@@ -127,11 +161,10 @@ test("stored workspace object tab order is best effort", () => {
     ],
     readStoredWorkspaceTabOrder(storage),
   );
-  assert.deepEqual(ordered.map((item) => item.id), [
-    "file:root:/tmp/b.ts",
-    "conversation:root",
-    "file:root:/tmp/a.ts",
-  ]);
+  assert.deepEqual(
+    ordered.map((item) => item.id),
+    ["file:root:/tmp/b.ts", "conversation:root", "file:root:/tmp/a.ts"],
+  );
 
   storeWorkspaceTabOrder(ordered, storage);
 

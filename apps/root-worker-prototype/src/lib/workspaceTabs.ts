@@ -70,6 +70,20 @@ export function closeWorkspaceTabById<T extends { id: string }>(
   return tabs.filter((tab) => tab.id !== tabId);
 }
 
+export function resolveActiveWorkspaceTabId<T extends { id: string }>(
+  tabs: readonly T[],
+  activeTabId: string | null | undefined,
+  preferredTabId: string | null | undefined = null,
+): string | null {
+  if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) {
+    return activeTabId;
+  }
+  if (preferredTabId && tabs.some((tab) => tab.id === preferredTabId)) {
+    return preferredTabId;
+  }
+  return tabs[0]?.id ?? null;
+}
+
 export function sanitizeWorkspaceTabs(
   tabs: readonly WorkspaceObjectTab[],
 ): WorkspaceObjectTab[] {

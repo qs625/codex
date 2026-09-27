@@ -1563,7 +1563,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /function openConversationWorkspaceTab\(threadId: string\)/,
     /openConversationWorkspaceTab\(threadId\);[\s\S]*setSelectedThreadId\(threadId\);/,
     /useEffect\(\(\) => \{\s*if \(selectedThreadId\)/,
-    /workspaceTabs\.some\(\(tab\) => tab\.id === current\)/,
+    /const selectedThreadWorkspaceTabId = selectedThread[\s\S]*conversationWorkspaceTabId\(selectedThread\.id\)/,
+    /return resolveActiveWorkspaceTabId\([\s\S]*workspaceTabs,[\s\S]*current,[\s\S]*selectedThreadWorkspaceTabId/,
+    /const visibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*workspaceTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId/,
+    /workspaceTabs\.find\(\(tab\) => tab\.id === visibleWorkspaceTabId\)/,
+    /const active = tab\.id === visibleWorkspaceTabId;/,
     /threads\.some\(\(thread\) => thread\.id === tab\.threadId\)/,
     /const tabThread = getWorkspaceTabThread\(tab, threads\)/,
     /workspace-tab-dot \$\{threadDisplayStatusClass\(tabThread\)\}/,
@@ -1592,11 +1596,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /activeWorkspaceTab\?\.kind === "browser"[\s\S]*<BrowserPanel[\s\S]*variant="workspace"[\s\S]*activeBrowserTabId=\{activeWorkspaceTab\.browserTabId \?\? null\}/,
     /activeWorkspaceTab\?\.kind === "terminal"[\s\S]*<TerminalPanel[\s\S]*variant="workspace"[\s\S]*activeTerminalTabId=\{activeWorkspaceTab\.terminalTabId \?\? null\}/,
     /function gitDiffWorkspaceTabId\(targetId: string\)/,
-    /function workspaceTabForGitDiff\(state: GitDiffPreviewState\)/,
+    /function workspaceTabForGitDiff\([\s\S]*state: GitDiffPreviewState,[\s\S]*\): WorkspaceObjectTab \| null/,
     /kind: "diff"/,
     /gitDiffWorkspaceStateById/,
     /onGitDiffPreviewChange=\{handleGitDiffPreviewChange\}/,
-    /if \(state\.loading \|\| workspaceTabsRef\.current\.some\(\(item\) => item\.id === tab\.id\)\) \{[\s\S]*upsertWorkspaceObjectTab\(tab, \{ activate: state\.loading \}\)/,
+    /state\.loading \|\|[\s\S]*workspaceTabsRef\.current\.some\(\(item\) => item\.id === tab\.id\)[\s\S]*upsertWorkspaceObjectTab\(tab, \{ activate: state\.loading \}\)/,
     /activeWorkspaceTab\?\.kind === "diff"[\s\S]*<GitDiffPreviewPanel[\s\S]*diff=\{activeWorkspaceDiffState\.diff\}/,
     /activeWorkspaceTab\?\.kind !== "file"[\s\S]*<FilePreviewPanel[\s\S]*variant="workspace"[\s\S]*gitDiffPreview=\{null\}/,
   ]);
@@ -1635,7 +1639,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/,
     /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelView\("browser"\)/,
     /function closeWorkspaceTab\([\s\S]*options: \{ closeOwnedBrowserTab\?: boolean \} = \{\}[\s\S]*options\.closeOwnedBrowserTab[\s\S]*closingTab\?\.kind === "browser"[\s\S]*window\.codexDesktop[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
-    /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id, \{ closeOwnedBrowserTab: true \}\);[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id, \{ closeOwnedBrowserTab: true \}\);/,
+    /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id, \{ closeOwnedBrowserTab: true \}\);[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true/,
     /function handleReturnWorkspaceObjectToRightPanel\([\s\S]*payload\.kind === "browser"[\s\S]*closeWorkspaceTab\(tab\.id\);[\s\S]*setRightPanelView\("browser"\)[\s\S]*setRightPanelBrowserTabFocusRequest/,
   ]);
   assert.doesNotMatch(
@@ -1657,9 +1661,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     appSource.match(
       /^import\s+\{[^}]*\}\s+from "\.\/components\/RightPanel";/gm,
     ),
-    [
-      'import {\n  type GitDiffPreviewState,\n} from "./components/RightPanel";',
-    ],
+    ['import { type GitDiffPreviewState } from "./components/RightPanel";'],
   );
   assert.doesNotMatch(appSource, /^import "\.\/components\/RightPanel";/m);
   assertMatches(appSource, [
