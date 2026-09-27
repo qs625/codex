@@ -1,6 +1,8 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadFeedbackRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
+use codex_feedback::FeedbackAttachment;
+use std::collections::BTreeMap;
 use thread_service_api::ThreadAgentDirectoryRuntime;
 
 #[derive(Clone)]
@@ -96,115 +98,20 @@ impl FeedbackRequestProcessor {
         }
         let snapshot = self.feedback.snapshot(conversation_id);
         let thread_id = snapshot.thread_id.clone();
-        let (feedback_thread_ids, sqlite_feedback_logs, state_db_ctx) = if include_logs {
-            if let Some(log_db) = self.log_db.as_ref() {
-                log_db.flush().await;
-            }
-            let state_db_ctx = self.state_db.clone();
-            let feedback_thread_ids = match conversation_id {
-                Some(conversation_id) => match self
-                    .thread_runtime
-                    .list_agent_subtree_thread_ids(conversation_id)
-                    .await
-                {
-                    Ok(thread_ids) => thread_ids,
-                    Err(err) => {
-                        warn!(
-                            "failed to list feedback subtree for thread_id={conversation_id}: {err}"
-                        );
-                        vec![conversation_id]
-                    }
-                },
-                None => Vec::new(),
-            };
-            let sqlite_feedback_logs = if let Some(state_db_ctx) = state_db_ctx.as_ref()
-                && !feedback_thread_ids.is_empty()
-            {
-                let thread_id_texts = feedback_thread_ids
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>();
-                let thread_id_refs = thread_id_texts
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>();
-                match state_db_ctx
-                    .query_feedback_logs_for_threads(&thread_id_refs)
-                    .await
-                {
-                    Ok(logs) if logs.is_empty() => None,
-                    Ok(logs) => Some(logs),
-                    Err(err) => {
-                        let thread_ids = thread_id_texts.join(", ");
-                        warn!(
-                            "failed to query feedback logs from sqlite for thread_ids=[{thread_ids}]: {err}"
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            (feedback_thread_ids, sqlite_feedback_logs, state_db_ctx)
-        } else {
-            (Vec::new(), None, None)
-        };
-
-        let mut attachment_paths = Vec::new();
-        let mut seen_attachment_paths = HashSet::new();
-        if include_logs {
-            for feedback_thread_id in &feedback_thread_ids {
-                let Some(rollout_path) = self
-                    .resolve_rollout_path(*feedback_thread_id, state_db_ctx.as_ref())
-                    .await
-                else {
-                    continue;
-                };
-                if seen_attachment_paths.insert(rollout_path.clone()) {
-                    attachment_paths.push(FeedbackAttachmentPath {
-                        path: rollout_path,
-                        attachment_filename_override: None,
-                    });
-                }
-            }
-            if let Some(conversation_id) = conversation_id
-                && let Some(guardian_rollout_path) = self
-                    .thread_runtime
-                    .thread_guardian_trunk_rollout_path(conversation_id)
-                    .await
-                    .ok()
-                    .flatten()
-                && seen_attachment_paths.insert(guardian_rollout_path.clone())
-            {
-                attachment_paths.push(FeedbackAttachmentPath {
-                    path: guardian_rollout_path,
-                    attachment_filename_override: Some(auto_review_rollout_filename(
-                        conversation_id,
-                    )),
-                });
-            }
-        }
-        if let Some(extra_log_files) = extra_log_files {
-            for extra_log_file in extra_log_files {
-                if seen_attachment_paths.insert(extra_log_file.clone()) {
-                    attachment_paths.push(FeedbackAttachmentPath {
-                        path: extra_log_file,
-                        attachment_filename_override: None,
-                    });
-                }
-            }
-        }
-
-        let mut extra_attachments = Vec::new();
-        if include_logs
-            && let Some(doctor_report) =
-                super::feedback_doctor_report::doctor_feedback_report(&self.config).await
-        {
-            extra_attachments.push(doctor_report.attachment);
-            for (key, value) in doctor_report.tags {
-                upload_tags.entry(key).or_insert(value);
-            }
-        }
+        let log_plan = self
+            .feedback_log_upload_plan(conversation_id, include_logs)
+            .await;
+        let attachment_paths = self
+            .feedback_attachment_paths(
+                conversation_id,
+                include_logs,
+                &log_plan,
+                extra_log_files.unwrap_or_default(),
+            )
+            .await;
+        let extra_attachments = self
+            .feedback_extra_attachments(include_logs, &mut upload_tags)
+            .await;
 
         let session_source = self.thread_runtime.session_source();
 
@@ -218,7 +125,7 @@ impl FeedbackRequestProcessor {
                 extra_attachments: &extra_attachments,
                 extra_attachment_paths: &attachment_paths,
                 session_source: Some(session_source),
-                logs_override: sqlite_feedback_logs,
+                logs_override: log_plan.sqlite_feedback_logs,
             })
         })
         .await;
@@ -234,6 +141,96 @@ impl FeedbackRequestProcessor {
 
         upload_result.map_err(|err| internal_error(format!("failed to upload feedback: {err}")))?;
         Ok(FeedbackUploadResponse { thread_id })
+    }
+
+    async fn feedback_log_upload_plan(
+        &self,
+        conversation_id: Option<ThreadId>,
+        include_logs: bool,
+    ) -> FeedbackLogUploadPlan {
+        if !include_logs {
+            return FeedbackLogUploadPlan::default();
+        }
+        if let Some(log_db) = self.log_db.as_ref() {
+            log_db.flush().await;
+        }
+        let state_db_ctx = self.state_db.clone();
+        let feedback_thread_ids = self.feedback_thread_ids(conversation_id).await;
+        let sqlite_feedback_logs =
+            query_sqlite_feedback_logs(state_db_ctx.as_ref(), &feedback_thread_ids).await;
+        FeedbackLogUploadPlan {
+            feedback_thread_ids,
+            sqlite_feedback_logs,
+            state_db_ctx,
+        }
+    }
+
+    async fn feedback_thread_ids(&self, conversation_id: Option<ThreadId>) -> Vec<ThreadId> {
+        let Some(conversation_id) = conversation_id else {
+            return Vec::new();
+        };
+        match self
+            .thread_runtime
+            .list_agent_subtree_thread_ids(conversation_id)
+            .await
+        {
+            Ok(thread_ids) => thread_ids,
+            Err(err) => {
+                warn!("failed to list feedback subtree for thread_id={conversation_id}: {err}");
+                vec![conversation_id]
+            }
+        }
+    }
+
+    async fn feedback_attachment_paths(
+        &self,
+        conversation_id: Option<ThreadId>,
+        include_logs: bool,
+        log_plan: &FeedbackLogUploadPlan,
+        extra_log_files: Vec<PathBuf>,
+    ) -> Vec<FeedbackAttachmentPath> {
+        let mut builder = FeedbackAttachmentPathBuilder::default();
+        if include_logs {
+            for feedback_thread_id in &log_plan.feedback_thread_ids {
+                if let Some(rollout_path) = self
+                    .resolve_rollout_path(*feedback_thread_id, log_plan.state_db_ctx.as_ref())
+                    .await
+                {
+                    builder.push_rollout(rollout_path);
+                }
+            }
+            if let Some(conversation_id) = conversation_id
+                && let Some(guardian_rollout_path) = self
+                    .thread_runtime
+                    .thread_guardian_trunk_rollout_path(conversation_id)
+                    .await
+                    .ok()
+                    .flatten()
+            {
+                builder.push_guardian_rollout(conversation_id, guardian_rollout_path);
+            }
+        }
+        builder.extend_extra_logs(extra_log_files);
+        builder.into_paths()
+    }
+
+    async fn feedback_extra_attachments(
+        &self,
+        include_logs: bool,
+        upload_tags: &mut BTreeMap<String, String>,
+    ) -> Vec<FeedbackAttachment> {
+        if !include_logs {
+            return Vec::new();
+        }
+        let Some(doctor_report) =
+            super::feedback_doctor_report::doctor_feedback_report(&self.config).await
+        else {
+            return Vec::new();
+        };
+        for (key, value) in doctor_report.tags {
+            upload_tags.entry(key).or_insert(value);
+        }
+        vec![doctor_report.attachment]
     }
 
     async fn resolve_rollout_path(
@@ -263,4 +260,131 @@ impl FeedbackRequestProcessor {
 
 fn auto_review_rollout_filename(thread_id: ThreadId) -> String {
     format!("auto-review-rollout-{thread_id}.jsonl")
+}
+
+#[derive(Default)]
+struct FeedbackLogUploadPlan {
+    feedback_thread_ids: Vec<ThreadId>,
+    sqlite_feedback_logs: Option<Vec<u8>>,
+    state_db_ctx: Option<StateDbHandle>,
+}
+
+async fn query_sqlite_feedback_logs(
+    state_db_ctx: Option<&StateDbHandle>,
+    feedback_thread_ids: &[ThreadId],
+) -> Option<Vec<u8>> {
+    let state_db_ctx = state_db_ctx?;
+    if feedback_thread_ids.is_empty() {
+        return None;
+    }
+    let thread_id_texts = feedback_thread_ids
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let thread_id_refs = thread_id_texts
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    match state_db_ctx
+        .query_feedback_logs_for_threads(&thread_id_refs)
+        .await
+    {
+        Ok(logs) if logs.is_empty() => None,
+        Ok(logs) => Some(logs),
+        Err(err) => {
+            let thread_ids = thread_id_texts.join(", ");
+            warn!("failed to query feedback logs from sqlite for thread_ids=[{thread_ids}]: {err}");
+            None
+        }
+    }
+}
+
+#[derive(Default)]
+struct FeedbackAttachmentPathBuilder {
+    paths: Vec<FeedbackAttachmentPath>,
+    seen_paths: HashSet<PathBuf>,
+}
+
+impl FeedbackAttachmentPathBuilder {
+    fn push_rollout(&mut self, path: PathBuf) {
+        self.push(path, None);
+    }
+
+    fn push_guardian_rollout(&mut self, thread_id: ThreadId, path: PathBuf) {
+        self.push(path, Some(auto_review_rollout_filename(thread_id)));
+    }
+
+    fn extend_extra_logs(&mut self, paths: Vec<PathBuf>) {
+        for path in paths {
+            self.push(path, None);
+        }
+    }
+
+    fn push(&mut self, path: PathBuf, attachment_filename_override: Option<String>) {
+        if self.seen_paths.insert(path.clone()) {
+            self.paths.push(FeedbackAttachmentPath {
+                path,
+                attachment_filename_override,
+            });
+        }
+    }
+
+    fn into_paths(self) -> Vec<FeedbackAttachmentPath> {
+        self.paths
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feedback_attachment_path_builder_preserves_first_seen_path_order() {
+        let thread_id = test_thread_id();
+        let rollout_path = PathBuf::from("/tmp/thread.jsonl");
+        let guardian_path = PathBuf::from("/tmp/guardian.jsonl");
+        let extra_path = PathBuf::from("/tmp/extra.log");
+        let mut builder = FeedbackAttachmentPathBuilder::default();
+
+        builder.push_rollout(rollout_path.clone());
+        builder.push_guardian_rollout(thread_id, guardian_path.clone());
+        builder.extend_extra_logs(vec![
+            rollout_path.clone(),
+            extra_path.clone(),
+            guardian_path.clone(),
+        ]);
+
+        let paths = builder.into_paths();
+
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0].path, rollout_path);
+        assert_eq!(paths[0].attachment_filename_override, None);
+        assert_eq!(paths[1].path, guardian_path);
+        assert_eq!(
+            paths[1].attachment_filename_override,
+            Some(format!("auto-review-rollout-{thread_id}.jsonl"))
+        );
+        assert_eq!(paths[2].path, extra_path);
+        assert_eq!(paths[2].attachment_filename_override, None);
+    }
+
+    #[test]
+    fn feedback_attachment_path_builder_keeps_rollout_when_guardian_duplicates_path() {
+        let thread_id = test_thread_id();
+        let shared_path = PathBuf::from("/tmp/shared.jsonl");
+        let mut builder = FeedbackAttachmentPathBuilder::default();
+
+        builder.push_rollout(shared_path.clone());
+        builder.push_guardian_rollout(thread_id, shared_path.clone());
+
+        let paths = builder.into_paths();
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].path, shared_path);
+        assert_eq!(paths[0].attachment_filename_override, None);
+    }
+
+    fn test_thread_id() -> ThreadId {
+        ThreadId::from_string("00000000-0000-4000-8000-000000000128").expect("valid thread id")
+    }
 }
