@@ -4351,6 +4351,155 @@ test("active compact turn keeps live agent delta after init context", () => {
   );
 });
 
+test("active compact head keeps untimed follow-up user turn visible", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 12_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      makeTurn("turn-compact", [
+        compact,
+        makeAgentMessage("compact-1:summary", "compact summary"),
+        makeInitContextItem("ctx-1"),
+      ]),
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    segmentLoadedThread,
+    "turn-followup",
+    makeUserMessage("user-after-compact", "the next request"),
+  );
+  const entries = buildConversationEntries(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "compact-1:summary", "ctx-1", "user-after-compact"],
+  );
+  assert.equal(updated.turns.at(-1)?.id, "turn-followup");
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    [
+      "compact-1",
+      "compact-1:summary",
+      "ctx-1:section:0",
+      "ctx-1:section:1",
+      "user-after-compact",
+    ],
+  );
+});
+
+test("active compact follow-up user turn keeps later live assistant and tool output", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 12_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const withUser = updateThreadItem(
+    segmentLoadedThread,
+    "turn-followup",
+    makeUserMessage("user-after-compact", "the next request"),
+  );
+  const withAssistant = appendAgentDelta(
+    withUser,
+    "turn-followup",
+    "assistant-after-compact",
+    "working on it",
+  );
+  const updated = updateThreadItem(
+    withAssistant,
+    "turn-followup",
+    makeCommandExecution({
+      id: "cmd-after-compact",
+      command: "pnpm test",
+    }),
+  );
+  const entries = buildConversationEntries(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [
+      "compact-1",
+      "user-after-compact",
+      "assistant-after-compact",
+      "cmd-after-compact",
+    ],
+  );
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    [
+      "compact-1",
+      "user-after-compact",
+      "assistant-after-compact",
+      "cmd-after-compact",
+    ],
+  );
+});
+
+test("non-active compact head rejects untimed follow-up user items", () => {
+  const compactedThread = {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-compact", [
+        {
+          ...makeCompactItem("compact-1"),
+          completedAtMs: 12_000,
+        },
+      ]),
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    compactedThread,
+    "turn-old-user",
+    makeUserMessage("old-user", "old request"),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+});
+
+test("active compact head rejects timestamped stale follow-up user item", () => {
+  const compactedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      makeTurn("turn-compact", [
+        {
+          ...makeCompactItem("compact-1"),
+          completedAtMs: 12_000,
+        },
+      ]),
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    compactedThread,
+    "turn-old-user",
+    makeUserMessage("old-user", "old request"),
+    { completedAtMs: 12_000 },
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+});
+
 test("active compact thread keeps untimed live tool and child output after user turn", () => {
   const threadAfterUser = {
     ...makeThread(),
