@@ -57,6 +57,203 @@ impl ModelCatalogSnapshot {
     }
 }
 
+#[derive(Debug)]
+struct CatalogPage<T> {
+    data: Vec<T>,
+    next_cursor: Option<String>,
+}
+
+struct CatalogPagination {
+    limit: Option<u32>,
+    cursor: Option<String>,
+    total: usize,
+    item_name: &'static str,
+}
+
+impl CatalogPagination {
+    fn models(params: ModelListParams, total: usize) -> Self {
+        let ModelListParams {
+            limit,
+            cursor,
+            include_hidden: _,
+        } = params;
+        Self {
+            limit,
+            cursor,
+            total,
+            item_name: "models",
+        }
+    }
+
+    fn feature_flags(params: ExperimentalFeatureListParams, total: usize) -> Self {
+        let ExperimentalFeatureListParams { cursor, limit } = params;
+        Self {
+            limit,
+            cursor,
+            total,
+            item_name: "feature flags",
+        }
+    }
+
+    fn page<T: Clone>(&self, items: &[T]) -> Result<CatalogPage<T>, JSONRPCErrorError> {
+        debug_assert_eq!(self.total, items.len());
+        if self.total == 0 {
+            return Ok(CatalogPage {
+                data: Vec::new(),
+                next_cursor: None,
+            });
+        }
+
+        // Clamp to 1 so limit=0 cannot return a non-advancing page.
+        let effective_limit = self.limit.unwrap_or(self.total as u32).max(1) as usize;
+        let effective_limit = effective_limit.min(self.total);
+        let start = match &self.cursor {
+            Some(cursor) => cursor
+                .parse::<usize>()
+                .map_err(|_| invalid_request(format!("invalid cursor: {cursor}")))?,
+            None => 0,
+        };
+
+        if start > self.total {
+            return Err(invalid_request(format!(
+                "cursor {start} exceeds total {} {}",
+                self.item_name, self.total
+            )));
+        }
+
+        let end = start.saturating_add(effective_limit).min(self.total);
+        let data = items[start..end].to_vec();
+        let next_cursor = if end < self.total {
+            Some(end.to_string())
+        } else {
+            None
+        };
+
+        Ok(CatalogPage { data, next_cursor })
+    }
+}
+
+struct FeatureCatalogSnapshot {
+    features: Vec<ApiExperimentalFeature>,
+}
+
+impl FeatureCatalogSnapshot {
+    fn from_config(config: &Config, workspace_codex_plugins_enabled: bool) -> Self {
+        let features = FEATURES
+            .iter()
+            .map(|spec| feature_to_api(spec, config, workspace_codex_plugins_enabled))
+            .collect();
+        Self { features }
+    }
+}
+
+fn feature_to_api(
+    spec: &codex_features::FeatureSpec,
+    config: &Config,
+    workspace_codex_plugins_enabled: bool,
+) -> ApiExperimentalFeature {
+    let (stage, display_name, description, announcement) = match spec.stage {
+        Stage::Experimental {
+            name,
+            menu_description,
+            announcement,
+        } => (
+            ApiExperimentalFeatureStage::Beta,
+            Some(name.to_string()),
+            Some(menu_description.to_string()),
+            Some(announcement.to_string()),
+        ),
+        Stage::UnderDevelopment => (
+            ApiExperimentalFeatureStage::UnderDevelopment,
+            None,
+            None,
+            None,
+        ),
+        Stage::Stable => (ApiExperimentalFeatureStage::Stable, None, None, None),
+        Stage::Deprecated => (ApiExperimentalFeatureStage::Deprecated, None, None, None),
+        Stage::Removed => (ApiExperimentalFeatureStage::Removed, None, None, None),
+    };
+
+    ApiExperimentalFeature {
+        name: spec.key.to_string(),
+        stage,
+        display_name,
+        description,
+        announcement,
+        enabled: config.features.enabled(spec.id)
+            && workspace_allows_feature(spec.id, workspace_codex_plugins_enabled),
+        default_enabled: spec.default_enabled,
+    }
+}
+
+fn workspace_allows_feature(feature: Feature, workspace_codex_plugins_enabled: bool) -> bool {
+    workspace_codex_plugins_enabled || !matches!(feature, Feature::Apps | Feature::Plugins)
+}
+
+struct ThreadProviderCatalogSnapshot {
+    runtime_providers: Vec<thread_service_api::ThreadProviderRuntimeDescriptor>,
+    native_agent_types: Vec<AgentType>,
+    native_model_providers: Vec<String>,
+}
+
+impl ThreadProviderCatalogSnapshot {
+    fn into_response(self) -> ThreadProviderListResponse {
+        let external_model_selection = ThreadProviderModelSelection {
+            mode: ThreadProviderModelSelectionMode::ProviderDefault,
+            model_providers: Vec::new(),
+        };
+        let native_model_selection = ThreadProviderModelSelection {
+            mode: ThreadProviderModelSelectionMode::Catalog,
+            model_providers: self.native_model_providers,
+        };
+        let data = self
+            .runtime_providers
+            .into_iter()
+            .map(|provider| {
+                let is_native =
+                    provider.kind == thread_service_api::ThreadProviderRuntimeKind::Native;
+                ThreadProviderDescriptor {
+                    id: provider.id,
+                    display_name: provider.display_name,
+                    kind: provider_kind_to_api(provider.kind),
+                    description: provider.description,
+                    agent_types: if is_native {
+                        self.native_agent_types.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    model_selection: if is_native {
+                        native_model_selection.clone()
+                    } else {
+                        external_model_selection.clone()
+                    },
+                    capabilities: provider_capabilities_to_api(provider.capabilities),
+                }
+            })
+            .collect();
+        ThreadProviderListResponse { data }
+    }
+}
+
+struct CatalogCwdTargets {
+    cwds: Vec<PathBuf>,
+}
+
+impl CatalogCwdTargets {
+    fn from_requested(cwds: Vec<PathBuf>, fallback_cwd: &Path) -> Self {
+        let cwds = if cwds.is_empty() {
+            vec![fallback_cwd.to_path_buf()]
+        } else {
+            cwds
+        };
+        Self { cwds }
+    }
+
+    fn into_vec(self) -> Vec<PathBuf> {
+        self.cwds
+    }
+}
+
 fn skills_to_info(
     skills: &[SkillMetadata],
     disabled_paths: &HashSet<AbsolutePathBuf>,
@@ -353,49 +550,14 @@ impl CatalogRequestProcessor {
         &self,
         params: ModelListParams,
     ) -> Result<ModelListResponse, JSONRPCErrorError> {
-        let ModelListParams {
-            limit,
-            cursor,
-            include_hidden,
-        } = params;
+        let include_hidden = params.include_hidden.unwrap_or(false);
         let model_catalog = self
-            .collect_model_catalog(/*cwd*/ None, include_hidden.unwrap_or(false))
+            .collect_model_catalog(/*cwd*/ None, include_hidden)
             .await?;
-        let total = model_catalog.models.len();
-
-        if total == 0 {
-            return Ok(ModelListResponse {
-                data: Vec::new(),
-                next_cursor: None,
-            });
-        }
-
-        let effective_limit = limit.unwrap_or(total as u32).max(1) as usize;
-        let effective_limit = effective_limit.min(total);
-        let start = match cursor {
-            Some(cursor) => cursor
-                .parse::<usize>()
-                .map_err(|_| invalid_request(format!("invalid cursor: {cursor}")))?,
-            None => 0,
-        };
-
-        if start > total {
-            return Err(invalid_request(format!(
-                "cursor {start} exceeds total models {total}"
-            )));
-        }
-
-        let end = start.saturating_add(effective_limit).min(total);
-        let items = model_catalog.models[start..end].to_vec();
-        let next_cursor = if end < total {
-            Some(end.to_string())
-        } else {
-            None
-        };
-        Ok(ModelListResponse {
-            data: items,
-            next_cursor,
-        })
+        let CatalogPage { data, next_cursor } =
+            CatalogPagination::models(params, model_catalog.models.len())
+                .page(&model_catalog.models)?;
+        Ok(ModelListResponse { data, next_cursor })
     }
 
     async fn list_agent_types(
@@ -418,43 +580,12 @@ impl CatalogRequestProcessor {
         let model_catalog = self
             .collect_model_catalog_from_config(&config, /*include_hidden*/ false)
             .await;
-        let model_providers = model_catalog.model_provider_ids();
-
-        let external_model_selection = ThreadProviderModelSelection {
-            mode: ThreadProviderModelSelectionMode::ProviderDefault,
-            model_providers: Vec::new(),
+        let snapshot = ThreadProviderCatalogSnapshot {
+            runtime_providers: self.catalog_runtime.list_thread_providers(),
+            native_agent_types: native_agent_types(&config),
+            native_model_providers: model_catalog.model_provider_ids(),
         };
-        let native_agent_types = native_agent_types(&config);
-        let data = self
-            .catalog_runtime
-            .list_thread_providers()
-            .into_iter()
-            .map(|provider| {
-                let is_native =
-                    provider.kind == thread_service_api::ThreadProviderRuntimeKind::Native;
-                ThreadProviderDescriptor {
-                    id: provider.id,
-                    display_name: provider.display_name,
-                    kind: provider_kind_to_api(provider.kind),
-                    description: provider.description,
-                    agent_types: if is_native {
-                        native_agent_types.clone()
-                    } else {
-                        Vec::new()
-                    },
-                    model_selection: if is_native {
-                        ThreadProviderModelSelection {
-                            mode: ThreadProviderModelSelectionMode::Catalog,
-                            model_providers: model_providers.clone(),
-                        }
-                    } else {
-                        external_model_selection.clone()
-                    },
-                    capabilities: provider_capabilities_to_api(provider.capabilities),
-                }
-            })
-            .collect();
-        Ok(ThreadProviderListResponse { data })
+        Ok(snapshot.into_response())
     }
 
     async fn collect_model_catalog(
@@ -498,7 +629,6 @@ impl CatalogRequestProcessor {
         &self,
         params: ExperimentalFeatureListParams,
     ) -> Result<ExperimentalFeatureListResponse, JSONRPCErrorError> {
-        let ExperimentalFeatureListParams { cursor, limit } = params;
         let config =
             load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
         let auth = self.auth_manager.auth().await;
@@ -506,79 +636,11 @@ impl CatalogRequestProcessor {
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await;
 
-        let data = FEATURES
-            .iter()
-            .map(|spec| {
-                let (stage, display_name, description, announcement) = match spec.stage {
-                    Stage::Experimental {
-                        name,
-                        menu_description,
-                        announcement,
-                    } => (
-                        ApiExperimentalFeatureStage::Beta,
-                        Some(name.to_string()),
-                        Some(menu_description.to_string()),
-                        Some(announcement.to_string()),
-                    ),
-                    Stage::UnderDevelopment => (
-                        ApiExperimentalFeatureStage::UnderDevelopment,
-                        None,
-                        None,
-                        None,
-                    ),
-                    Stage::Stable => (ApiExperimentalFeatureStage::Stable, None, None, None),
-                    Stage::Deprecated => {
-                        (ApiExperimentalFeatureStage::Deprecated, None, None, None)
-                    }
-                    Stage::Removed => (ApiExperimentalFeatureStage::Removed, None, None, None),
-                };
-
-                ApiExperimentalFeature {
-                    name: spec.key.to_string(),
-                    stage,
-                    display_name,
-                    description,
-                    announcement,
-                    enabled: config.features.enabled(spec.id)
-                        && (workspace_codex_plugins_enabled
-                            || !matches!(spec.id, Feature::Apps | Feature::Plugins)),
-                    default_enabled: spec.default_enabled,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let total = data.len();
-        if total == 0 {
-            return Ok(ExperimentalFeatureListResponse {
-                data: Vec::new(),
-                next_cursor: None,
-            });
-        }
-
-        // Clamp to 1 so limit=0 cannot return a non-advancing page.
-        let effective_limit = limit.unwrap_or(total as u32).max(1) as usize;
-        let effective_limit = effective_limit.min(total);
-        let start = match cursor {
-            Some(cursor) => match cursor.parse::<usize>() {
-                Ok(idx) => idx,
-                Err(_) => return Err(invalid_request(format!("invalid cursor: {cursor}"))),
-            },
-            None => 0,
-        };
-
-        if start > total {
-            return Err(invalid_request(format!(
-                "cursor {start} exceeds total feature flags {total}"
-            )));
-        }
-
-        let end = start.saturating_add(effective_limit).min(total);
-        let data = data[start..end].to_vec();
-        let next_cursor = if end < total {
-            Some(end.to_string())
-        } else {
-            None
-        };
+        let feature_catalog =
+            FeatureCatalogSnapshot::from_config(&config, workspace_codex_plugins_enabled);
+        let CatalogPage { data, next_cursor } =
+            CatalogPagination::feature_flags(params, feature_catalog.features.len())
+                .page(&feature_catalog.features)?;
 
         Ok(ExperimentalFeatureListResponse { data, next_cursor })
     }
@@ -597,11 +659,7 @@ impl CatalogRequestProcessor {
         params: SkillsListParams,
     ) -> Result<SkillsListResponse, JSONRPCErrorError> {
         let SkillsListParams { cwds, force_reload } = params;
-        let cwds = if cwds.is_empty() {
-            vec![self.config.cwd.to_path_buf()]
-        } else {
-            cwds
-        };
+        let cwds = CatalogCwdTargets::from_requested(cwds, self.config.cwd.as_path()).into_vec();
 
         let config =
             load_latest_config_for_request(&self.config_manager, /*fallback_cwd*/ None).await?;
@@ -693,11 +751,7 @@ impl CatalogRequestProcessor {
         params: HooksListParams,
     ) -> Result<HooksListResponse, JSONRPCErrorError> {
         let HooksListParams { cwds } = params;
-        let cwds = if cwds.is_empty() {
-            vec![self.config.cwd.to_path_buf()]
-        } else {
-            cwds
-        };
+        let cwds = CatalogCwdTargets::from_requested(cwds, self.config.cwd.as_path()).into_vec();
 
         let auth = self.auth_manager.auth().await;
         let plugins_manager = Arc::clone(&self.plugins_manager);
@@ -807,5 +861,199 @@ impl CatalogRequestProcessor {
                 }
             })
             .map_err(|err| internal_error(format!("failed to update skill settings: {err}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thread_service::config::ConfigBuilder;
+
+    fn runtime_capabilities() -> thread_service_api::ThreadProviderRuntimeCapabilities {
+        thread_service_api::ThreadProviderRuntimeCapabilities {
+            start_thread: true,
+            send_input: true,
+            close_thread: true,
+            list_children: true,
+            restore_thread: false,
+            restore_snapshot: true,
+            event_stream: true,
+            spawn_child: false,
+            compact: false,
+            workflow: false,
+            poll_event: true,
+            command_session: false,
+            permissions: false,
+            dynamic_tools: false,
+            fork_thread: false,
+        }
+    }
+
+    fn runtime_provider(
+        id: &str,
+        kind: thread_service_api::ThreadProviderRuntimeKind,
+    ) -> thread_service_api::ThreadProviderRuntimeDescriptor {
+        thread_service_api::ThreadProviderRuntimeDescriptor {
+            id: id.to_string(),
+            display_name: format!("{id} display"),
+            description: format!("{id} description"),
+            kind,
+            external_root_provider: None,
+            capabilities: runtime_capabilities(),
+        }
+    }
+
+    #[test]
+    fn catalog_pagination_preserves_cursor_and_limit_semantics() {
+        let items = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
+        let page = CatalogPagination::models(
+            ModelListParams {
+                limit: Some(0),
+                cursor: Some("1".to_string()),
+                include_hidden: None,
+            },
+            items.len(),
+        )
+        .page(&items)
+        .expect("valid page");
+
+        assert_eq!(page.data, vec!["beta".to_string()]);
+        assert_eq!(page.next_cursor, Some("2".to_string()));
+
+        let page = CatalogPagination::models(
+            ModelListParams {
+                limit: Some(1),
+                cursor: Some("3".to_string()),
+                include_hidden: None,
+            },
+            items.len(),
+        )
+        .page(&items)
+        .expect("cursor at total returns empty terminal page");
+
+        assert!(page.data.is_empty());
+        assert_eq!(page.next_cursor, None);
+    }
+
+    #[test]
+    fn catalog_pagination_preserves_invalid_cursor_errors() {
+        let items = vec!["alpha".to_string(), "beta".to_string()];
+        let err = CatalogPagination::feature_flags(
+            ExperimentalFeatureListParams {
+                limit: Some(1),
+                cursor: Some("bad".to_string()),
+            },
+            items.len(),
+        )
+        .page(&items)
+        .expect_err("invalid cursor is rejected");
+        assert_eq!(err.code, crate::error_code::INVALID_REQUEST_ERROR_CODE);
+        assert_eq!(err.message, "invalid cursor: bad");
+
+        let err = CatalogPagination::feature_flags(
+            ExperimentalFeatureListParams {
+                limit: Some(1),
+                cursor: Some("3".to_string()),
+            },
+            items.len(),
+        )
+        .page(&items)
+        .expect_err("cursor beyond total is rejected");
+        assert_eq!(err.code, crate::error_code::INVALID_REQUEST_ERROR_CODE);
+        assert_eq!(err.message, "cursor 3 exceeds total feature flags 2");
+    }
+
+    #[tokio::test]
+    async fn feature_catalog_snapshot_preserves_workspace_plugin_policy() -> anyhow::Result<()> {
+        let codex_home = tempfile::TempDir::new()?;
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(codex_home.path().to_path_buf()))
+            .build()
+            .await?;
+
+        let enabled_snapshot = FeatureCatalogSnapshot::from_config(&config, true);
+        let disabled_snapshot = FeatureCatalogSnapshot::from_config(&config, false);
+
+        let apps_when_enabled = enabled_snapshot
+            .features
+            .iter()
+            .find(|feature| feature.name == "apps")
+            .expect("apps feature exists");
+        let apps_when_disabled = disabled_snapshot
+            .features
+            .iter()
+            .find(|feature| feature.name == "apps")
+            .expect("apps feature exists");
+        let shell_when_disabled = disabled_snapshot
+            .features
+            .iter()
+            .find(|feature| feature.name == "shell_tool")
+            .expect("shell_tool feature exists");
+
+        assert!(apps_when_enabled.default_enabled);
+        assert!(apps_when_enabled.enabled);
+        assert!(!apps_when_disabled.enabled);
+        assert!(shell_when_disabled.enabled);
+        assert_eq!(
+            apps_when_disabled.stage,
+            ApiExperimentalFeatureStage::Stable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn thread_provider_snapshot_preserves_native_and_external_projection() {
+        let native_agent_types = vec![AgentType {
+            name: "default".to_string(),
+            description: Some("Default agent".to_string()),
+            built_in: true,
+        }];
+        let snapshot = ThreadProviderCatalogSnapshot {
+            runtime_providers: vec![
+                runtime_provider(
+                    "native",
+                    thread_service_api::ThreadProviderRuntimeKind::Native,
+                ),
+                runtime_provider(
+                    "external",
+                    thread_service_api::ThreadProviderRuntimeKind::ExternalCli,
+                ),
+            ],
+            native_agent_types: native_agent_types.clone(),
+            native_model_providers: vec!["corp".to_string(), "openai".to_string()],
+        };
+
+        let response = snapshot.into_response();
+        let native = response
+            .data
+            .iter()
+            .find(|provider| provider.id == "native")
+            .expect("native provider projected");
+        assert_eq!(native.kind, ThreadProviderKind::Native);
+        assert_eq!(native.agent_types, native_agent_types);
+        assert_eq!(
+            native.model_selection.mode,
+            ThreadProviderModelSelectionMode::Catalog
+        );
+        assert_eq!(
+            native.model_selection.model_providers,
+            vec!["corp".to_string(), "openai".to_string()]
+        );
+
+        let external = response
+            .data
+            .iter()
+            .find(|provider| provider.id == "external")
+            .expect("external provider projected");
+        assert_eq!(external.kind, ThreadProviderKind::ExternalCli);
+        assert!(external.agent_types.is_empty());
+        assert_eq!(
+            external.model_selection.mode,
+            ThreadProviderModelSelectionMode::ProviderDefault
+        );
+        assert!(external.model_selection.model_providers.is_empty());
+        assert!(external.capabilities.start_thread);
+        assert!(!external.capabilities.restore_thread);
     }
 }
