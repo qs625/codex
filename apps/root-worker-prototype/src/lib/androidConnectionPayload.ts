@@ -8,6 +8,16 @@ export type AndroidConnectionPayload = {
   token?: string;
 };
 
+type AndroidConnectionPayloadSource =
+  | { kind: "json"; text: string }
+  | { kind: "uri"; text: string }
+  | { kind: "endpoint"; endpoint: string };
+
+type AndroidConnectionPayloadFields = {
+  endpoint: string;
+  token?: string;
+};
+
 export function normalizeAndroidConnectionEndpoint(endpoint: string) {
   return endpoint.trim();
 }
@@ -37,49 +47,49 @@ export function buildAndroidConnectionPayload({
   endpoint: string;
   token: string;
 }) {
-  const normalizedEndpoint = normalizeAndroidConnectionEndpoint(endpoint);
-  const normalizedToken = token.trim();
-  const payload: AndroidConnectionPayload = {
-    type: ANDROID_CONNECTION_PAYLOAD_TYPE,
-    version: ANDROID_CONNECTION_PAYLOAD_VERSION,
-    endpoint: normalizedEndpoint,
-    ...(normalizedToken ? { token: normalizedToken } : {}),
-  };
-  return JSON.stringify(payload);
+  return JSON.stringify(
+    buildAndroidConnectionPayloadObject({
+      endpoint,
+      token,
+    }),
+  );
 }
 
-export function parseAndroidConnectionPayload(raw: string): AndroidConnectionPayload {
+export function parseAndroidConnectionPayload(
+  raw: string,
+): AndroidConnectionPayload {
+  const source = classifyAndroidConnectionPayloadSource(raw);
+  switch (source.kind) {
+    case "json":
+      return parseJsonConnectionPayload(source.text);
+    case "uri":
+      return parseUriConnectionPayload(source.text);
+    case "endpoint":
+      return normalizePayload(source.endpoint, undefined);
+  }
+}
+
+function classifyAndroidConnectionPayloadSource(
+  raw: string,
+): AndroidConnectionPayloadSource {
   const text = raw.trim();
   if (!text) {
     throw new Error("Connection QR is empty.");
   }
   if (text.startsWith("{")) {
-    return parseJsonConnectionPayload(text);
+    return { kind: "json", text };
   }
   if (text.startsWith("morpheus://")) {
-    return parseUriConnectionPayload(text);
+    return { kind: "uri", text };
   }
   if (!validateAndroidConnectionEndpoint(text)) {
-    return {
-      type: ANDROID_CONNECTION_PAYLOAD_TYPE,
-      version: ANDROID_CONNECTION_PAYLOAD_VERSION,
-      endpoint: text,
-    };
+    return { kind: "endpoint", endpoint: text };
   }
   throw new Error("Connection QR must be a Morpheus connection payload.");
 }
 
 function parseJsonConnectionPayload(text: string): AndroidConnectionPayload {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("Connection QR contains invalid JSON.");
-  }
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("Connection QR payload must be an object.");
-  }
-  const payload = parsed as Record<string, unknown>;
+  const payload = parseJsonPayloadRecord(text);
   if (payload.type !== ANDROID_CONNECTION_PAYLOAD_TYPE) {
     throw new Error("Connection QR is not a Morpheus Android payload.");
   }
@@ -95,13 +105,21 @@ function parseJsonConnectionPayload(text: string): AndroidConnectionPayload {
   return normalizePayload(payload.endpoint, payload.token);
 }
 
-function parseUriConnectionPayload(text: string): AndroidConnectionPayload {
-  let url: URL;
+function parseJsonPayloadRecord(text: string): Record<string, unknown> {
+  let parsed: unknown;
   try {
-    url = new URL(text);
+    parsed = JSON.parse(text);
   } catch {
-    throw new Error("Connection URI is invalid.");
+    throw new Error("Connection QR contains invalid JSON.");
   }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Connection QR payload must be an object.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function parseUriConnectionPayload(text: string): AndroidConnectionPayload {
+  const url = parseConnectionUri(text);
   if (url.protocol !== "morpheus:" || url.hostname !== "connect") {
     throw new Error("Connection URI is not a Morpheus connect URI.");
   }
@@ -112,12 +130,31 @@ function parseUriConnectionPayload(text: string): AndroidConnectionPayload {
   return normalizePayload(endpoint, url.searchParams.get("token") ?? undefined);
 }
 
+function parseConnectionUri(text: string): URL {
+  try {
+    return new URL(text);
+  } catch {
+    throw new Error("Connection URI is invalid.");
+  }
+}
+
 function normalizePayload(endpoint: string, token: string | undefined) {
   const normalizedEndpoint = normalizeAndroidConnectionEndpoint(endpoint);
   const endpointError = validateAndroidConnectionEndpoint(normalizedEndpoint);
   if (endpointError) {
     throw new Error(endpointError);
   }
+  return buildAndroidConnectionPayloadObject({
+    endpoint: normalizedEndpoint,
+    token: token ?? "",
+  });
+}
+
+function buildAndroidConnectionPayloadObject({
+  endpoint,
+  token,
+}: AndroidConnectionPayloadFields): AndroidConnectionPayload {
+  const normalizedEndpoint = normalizeAndroidConnectionEndpoint(endpoint);
   const normalizedToken = token?.trim() ?? "";
   return {
     type: ANDROID_CONNECTION_PAYLOAD_TYPE,
