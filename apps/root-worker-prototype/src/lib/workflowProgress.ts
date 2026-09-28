@@ -5,7 +5,12 @@ import type {
   WorkflowSummary,
 } from "../types";
 
-export type WorkflowStageStatus = "completed" | "current" | "failed" | "aborted" | "pending";
+export type WorkflowStageStatus =
+  | "completed"
+  | "current"
+  | "failed"
+  | "aborted"
+  | "pending";
 
 export type WorkflowStageView = {
   id: string;
@@ -26,7 +31,12 @@ export type WorkflowTimelineItem = {
   updatedAt: number;
 };
 
-export type WorkflowStatusTone = "running" | "completed" | "failed" | "aborted" | "unknown";
+export type WorkflowStatusTone =
+  | "running"
+  | "completed"
+  | "failed"
+  | "aborted"
+  | "unknown";
 
 export type WorkflowRunView = {
   runId: string;
@@ -58,6 +68,43 @@ type WorkflowProgressRecord = {
   order: number;
 };
 
+class WorkflowProgressCollection {
+  readonly records: WorkflowProgressRecord[];
+  readonly workflowsById: Map<string, WorkflowSummary>;
+  private readonly recordsByRun: Map<string, WorkflowProgressRecord[]>;
+
+  private constructor(
+    records: WorkflowProgressRecord[],
+    workflowsById: Map<string, WorkflowSummary>,
+  ) {
+    this.records = records;
+    this.workflowsById = workflowsById;
+    this.recordsByRun = groupWorkflowProgressRecordsByRun(records);
+  }
+
+  static fromThread(
+    thread: Thread | null,
+    availableWorkflows: WorkflowSummary[],
+  ): WorkflowProgressCollection {
+    return new WorkflowProgressCollection(
+      collectWorkflowProgressRecords(thread),
+      new Map(availableWorkflows.map((workflow) => [workflow.id, workflow])),
+    );
+  }
+
+  runViews(): WorkflowRunView[] {
+    return [...this.recordsByRun.entries()]
+      .map(([runId, runRecords]) =>
+        buildWorkflowRunView(runId, runRecords, this.workflowsById),
+      )
+      .sort(compareWorkflowRuns);
+  }
+
+  recentTimeline(): WorkflowTimelineItem[] {
+    return recentWorkflowTimeline(this.records);
+  }
+}
+
 const FEATURE_DEV_STAGES: Array<{ id: string; label: string }> = [
   { id: "research", label: "Research" },
   { id: "implement", label: "Implement" },
@@ -71,28 +118,23 @@ export function buildWorkflowPanelViewModel(
   thread: Thread | null,
   availableWorkflows: WorkflowSummary[],
 ): WorkflowPanelViewModel {
-  const records = collectWorkflowProgressRecords(thread);
-  const workflowsById = new Map(availableWorkflows.map((workflow) => [workflow.id, workflow]));
-  const recordsByRun = new Map<string, WorkflowProgressRecord[]>();
-  for (const record of records) {
-    const existing = recordsByRun.get(record.event.runId) ?? [];
-    existing.push(record);
-    recordsByRun.set(record.event.runId, existing);
-  }
-
-  const runs = [...recordsByRun.entries()]
-    .map(([runId, runRecords]) => buildWorkflowRunView(runId, runRecords, workflowsById))
-    .sort(compareWorkflowRuns);
+  const collection = WorkflowProgressCollection.fromThread(
+    thread,
+    availableWorkflows,
+  );
+  const runs = collection.runViews();
   const selectedRun = selectWorkflowRun(runs);
   return {
     selectedRun,
     runs,
     availableWorkflows,
-    timeline: recentWorkflowTimeline(records),
+    timeline: collection.recentTimeline(),
   };
 }
 
-export function collectWorkflowProgressRecords(thread: Thread | null): WorkflowProgressRecord[] {
+export function collectWorkflowProgressRecords(
+  thread: Thread | null,
+): WorkflowProgressRecord[] {
   if (!thread) {
     return [];
   }
@@ -112,6 +154,16 @@ export function collectWorkflowProgressRecords(thread: Thread | null): WorkflowP
     }
   }
   return records.sort(compareWorkflowProgressRecords);
+}
+
+function groupWorkflowProgressRecordsByRun(records: WorkflowProgressRecord[]) {
+  const recordsByRun = new Map<string, WorkflowProgressRecord[]>();
+  for (const record of records) {
+    const existing = recordsByRun.get(record.event.runId) ?? [];
+    existing.push(record);
+    recordsByRun.set(record.event.runId, existing);
+  }
+  return recordsByRun;
 }
 
 function buildWorkflowRunView(
@@ -136,7 +188,8 @@ function buildWorkflowRunView(
     message: latestEvent.message,
     updatedAt: latestEvent.updatedAt,
     stages: workflowStagesForRun(latestEvent),
-    graphSource: latestEvent.workflowId === "feature-dev" ? "fallback" : "missing",
+    graphSource:
+      latestEvent.workflowId === "feature-dev" ? "fallback" : "missing",
     graphNote:
       latestEvent.workflowId === "feature-dev"
         ? "Using built-in feature-dev stage fallback; graph metadata is not in this update."
@@ -149,8 +202,11 @@ function selectWorkflowRun(runs: WorkflowRunView[]) {
   return runs.find((run) => run.statusTone === "running") ?? runs[0] ?? null;
 }
 
-function workflowStagesForRun(event: ThreadWorkflowRunProgressEvent): WorkflowStageView[] {
-  const stageTemplates = event.workflowId === "feature-dev" ? FEATURE_DEV_STAGES : [];
+function workflowStagesForRun(
+  event: ThreadWorkflowRunProgressEvent,
+): WorkflowStageView[] {
+  const stageTemplates =
+    event.workflowId === "feature-dev" ? FEATURE_DEV_STAGES : [];
   return stageTemplates.map((stage, index) => ({
     ...stage,
     status: stageStatusForRun(event.kind, index),
@@ -173,7 +229,9 @@ function stageStatusForRun(
   return index === 0 ? "current" : "pending";
 }
 
-function workflowTimelineItem(record: WorkflowProgressRecord): WorkflowTimelineItem {
+function workflowTimelineItem(
+  record: WorkflowProgressRecord,
+): WorkflowTimelineItem {
   return {
     id: record.itemId,
     runId: record.event.runId,
@@ -188,14 +246,18 @@ function workflowTimelineItem(record: WorkflowProgressRecord): WorkflowTimelineI
   };
 }
 
-function recentWorkflowTimeline(records: WorkflowProgressRecord[]): WorkflowTimelineItem[] {
+function recentWorkflowTimeline(
+  records: WorkflowProgressRecord[],
+): WorkflowTimelineItem[] {
   return [...records]
     .sort(compareWorkflowProgressRecordsDescending)
     .slice(0, WORKFLOW_TIMELINE_LIMIT)
     .map((record) => workflowTimelineItem(record));
 }
 
-function statusToneForKind(kind: ThreadWorkflowRunProgressKind): WorkflowStatusTone {
+function statusToneForKind(
+  kind: ThreadWorkflowRunProgressKind,
+): WorkflowStatusTone {
   switch (kind) {
     case "started":
     case "resumed":

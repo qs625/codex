@@ -118,6 +118,33 @@ test("buildWorkflowPanelViewModel selects latest active run before terminal runs
   assert.equal(model.selectedRun?.graphSource, "fallback");
 });
 
+test("buildWorkflowPanelViewModel groups records by run and orders runs by latest update", () => {
+  const model = buildWorkflowPanelViewModel(
+    threadWithWorkflowEvents([
+      workflowEvent("wf_first", "started", 10),
+      workflowEvent("wf_second", "started", 12),
+      workflowEvent("wf_first", "completed", 14, {
+        message: "first completed",
+      }),
+      workflowEvent("wf_second", "failed", 13, {
+        message: "second failed",
+      }),
+    ]),
+    [FEATURE_DEV],
+  );
+
+  assert.deepEqual(
+    model.runs.map((run) => run.runId),
+    ["wf_first", "wf_second"],
+  );
+  assert.equal(model.runs[0]?.statusTone, "completed");
+  assert.equal(model.runs[0]?.message, "first completed");
+  assert.equal(model.runs[0]?.timeline.length, 2);
+  assert.equal(model.runs[1]?.statusTone, "failed");
+  assert.equal(model.runs[1]?.message, "second failed");
+  assert.equal(model.runs[1]?.timeline.length, 2);
+});
+
 test("buildWorkflowPanelViewModel surfaces failed and aborted terminal states", () => {
   const failed = buildWorkflowPanelViewModel(
     threadWithWorkflowEvents([workflowEvent("wf_failed", "failed", 10)]),
@@ -149,15 +176,38 @@ test("buildWorkflowPanelViewModel handles missing graph metadata", () => {
 
 test("buildWorkflowPanelViewModel limits timeline to latest events first", () => {
   const events = Array.from({ length: 12 }, (_, index) =>
-    workflowEvent("wf_1", index % 2 === 0 ? "started" : "resumed", 100 + index, {
-      message: `event ${index}`,
-    }),
+    workflowEvent(
+      "wf_1",
+      index % 2 === 0 ? "started" : "resumed",
+      100 + index,
+      {
+        message: `event ${index}`,
+      },
+    ),
   );
-  const model = buildWorkflowPanelViewModel(threadWithWorkflowEvents(events), [FEATURE_DEV]);
+  const model = buildWorkflowPanelViewModel(threadWithWorkflowEvents(events), [
+    FEATURE_DEV,
+  ]);
 
   assert.equal(model.selectedRun?.timeline.length, 10);
   assert.equal(model.selectedRun?.timeline[0]?.message, "event 11");
   assert.equal(model.selectedRun?.timeline[9]?.message, "event 2");
+});
+
+test("buildWorkflowPanelViewModel keeps the panel timeline global across runs", () => {
+  const model = buildWorkflowPanelViewModel(
+    threadWithWorkflowEvents([
+      workflowEvent("wf_old", "started", 10, { message: "old started" }),
+      workflowEvent("wf_new", "started", 20, { message: "new started" }),
+      workflowEvent("wf_old", "completed", 30, { message: "old completed" }),
+    ]),
+    [FEATURE_DEV],
+  );
+
+  assert.deepEqual(
+    model.timeline.map((item) => item.message),
+    ["old completed", "new started", "old started"],
+  );
 });
 
 test("formatWorkflowStatus handles string and tagged object status", () => {
