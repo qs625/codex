@@ -327,7 +327,7 @@ test("SidebarPanel renders projects with nested subagents and no extra root row"
   assert.match(markup, /sidebar-window-drag-strip/);
   assert.match(
     markup,
-    /sidebar-actions[\s\S]*>New<[\s\S]*section-heading[\s\S]*<h2>Projects<\/h2>[\s\S]*2 projects · 0 chats/,
+    /class="sidebar-section-header project-list-header"[\s\S]*section-heading[\s\S]*<h2>Projects<\/h2>[\s\S]*2 projects · 0 chats[\s\S]*class="sidebar-action-button project-create-button"/,
   );
   assert.match(markup, /alpha/);
   assert.match(markup, /beta/);
@@ -479,7 +479,8 @@ test("SidebarPanel exposes project create and chat quick create", () => {
 
   const markup = renderSidebar(sidebar);
 
-  assert.match(markup, /New/);
+  assert.match(markup, /aria-label="New project or chat"/);
+  assert.match(markup, /class="sidebar-action-button project-create-button"/);
   assert.match(markup, /aria-label="New chat"/);
   assert.match(markup, /class="chat-create-button"/);
   assert.doesNotMatch(markup, /New Chat/);
@@ -492,11 +493,15 @@ test("SidebarPanel keeps project create visually quiet until hover or focus", ()
 
   assert.match(
     css,
+    /\.project-create-button \{[\s\S]*width: 24px;[\s\S]*height: 24px;[\s\S]*background: transparent;[\s\S]*color: #78716c;/,
+  );
+  assert.match(
+    css,
     /\.sidebar-action-button \{[\s\S]*opacity: 0;[\s\S]*pointer-events: none;[\s\S]*transition:[\s\S]*opacity 120ms ease;/,
   );
   assert.match(
     css,
-    /\.sidebar-section-header:hover \.sidebar-action-button,[\s\S]*\.sidebar-section-header:focus-within \.sidebar-action-button,[\s\S]*\.sidebar-action-button\[aria-expanded="true"\] \{[\s\S]*opacity: 1;[\s\S]*pointer-events: auto;/,
+    /\.project-list-header:hover \.project-create-button,[\s\S]*\.project-list-header:focus-within \.project-create-button,[\s\S]*\.project-create-button\[aria-expanded="true"\] \{[\s\S]*opacity: 1;[\s\S]*pointer-events: auto;/,
   );
   assert.match(
     css,

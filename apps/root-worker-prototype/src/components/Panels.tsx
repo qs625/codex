@@ -151,18 +151,25 @@ export function SidebarPanel({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-section-header">
+      <div className="sidebar-section-header project-list-header">
         <div className="sidebar-window-drag-strip" aria-hidden="true" />
+        <div className="section-heading">
+          <h2>Projects</h2>
+          <span>
+            {projectCount} projects · {chatCount} chats
+          </span>
+        </div>
         <div className="sidebar-actions">
           <button
             type="button"
-            className="sidebar-action-button"
+            className="sidebar-action-button project-create-button"
             onClick={() => setIsCreateMenuOpen((current) => !current)}
+            aria-label="New project or chat"
             aria-controls="new-thread-popover"
             aria-expanded={isCreateMenuOpen}
+            title="New project or chat"
           >
             <PlusIcon />
-            <span>New</span>
           </button>
           {isCreateMenuOpen ? (
             <NewThreadDialog
@@ -172,12 +179,6 @@ export function SidebarPanel({
               workspacePath={workspacePath}
             />
           ) : null}
-        </div>
-        <div className="section-heading">
-          <h2>Projects</h2>
-          <span>
-            {projectCount} projects · {chatCount} chats
-          </span>
         </div>
       </div>
 
