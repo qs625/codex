@@ -2147,17 +2147,30 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
       if (index !== 0) {
         return turn;
       }
+      const retainedPostCompactItems: ThreadItem[] = [];
+      const retainedPreCompactItems = turn.items
+        .slice(0, latestCompact.itemIndex)
+        .filter((item) => {
+          if (isPostCompactPreMarkerItem(item, latestCompact)) {
+            insertTurnItemByTimestamp(retainedPostCompactItems, item);
+            return false;
+          }
+          return (
+            isUserMessageItem(item) ||
+            isCompactSummaryResultItem(item, latestCompact.id)
+          );
+        });
       const items = [
-        ...turn.items
-          .slice(0, latestCompact.itemIndex)
-          .filter(
-            (item) =>
-              isUserMessageItem(item) ||
-              isCompactSummaryResultItem(item, latestCompact.id),
-          ),
+        ...retainedPreCompactItems,
         ...turn.items.slice(latestCompact.itemIndex),
       ];
-      return items.length === turn.items.length ? turn : { ...turn, items };
+      for (const item of retainedPostCompactItems) {
+        insertTurnItemByTimestamp(items, item);
+      }
+      return items.length === turn.items.length &&
+        retainedPostCompactItems.length === 0
+        ? turn
+        : { ...turn, items };
     })
     .filter((turn) => !isActiveSubscriptionsTurn(turn))
     .filter((turn) => !isActiveCommandsTurn(turn))
@@ -2181,6 +2194,24 @@ function isActiveSubscriptionsTurn(turn: Turn) {
 
 function isActiveCommandsTurn(turn: Turn) {
   return turn.id === "active-commands";
+}
+
+function isPostCompactPreMarkerItem(
+  item: ThreadItem,
+  latestCompact: { id: string; timestampMs?: number | null },
+) {
+  if (
+    isUserMessageItem(item) ||
+    isCompactSummaryResultItem(item, latestCompact.id) ||
+    !Number.isFinite(latestCompact.timestampMs)
+  ) {
+    return false;
+  }
+  const itemTimestampMs = threadItemOrderTimestampMs(item);
+  return (
+    itemTimestampMs !== null &&
+    itemTimestampMs > (latestCompact.timestampMs ?? Number.POSITIVE_INFINITY)
+  );
 }
 
 function isUserMessageItem(item: ThreadItem) {

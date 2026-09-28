@@ -4277,6 +4277,119 @@ test("active compact turn keeps live item output after init context", () => {
   );
 });
 
+test("compact pruning keeps timestamped current-turn output before a late marker visible", () => {
+  const normalized = normalizeThreadSnapshot({
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-compact", [
+          makeUserMessage("current-user", "continue fixing compact display"),
+          makeAgentMessage("stale-agent", "old ordinary output"),
+          {
+            ...makeAgentMessage("live-agent", "working on the current request"),
+            startedAtMs: 13_000,
+          },
+          {
+            ...makeCommandExecution({
+              id: "cmd-live",
+              command: "pnpm test",
+            }),
+            startedAtMs: 14_000,
+          },
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeAgentMessage("compact-1:summary", "compact summary"),
+          makeInitContextItem("ctx-1"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  });
+  const conversation = buildConversationState(normalized);
+
+  assert.deepEqual(
+    normalized.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [
+      "current-user",
+      "compact-1",
+      "compact-1:summary",
+      "ctx-1",
+      "live-agent",
+      "cmd-live",
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["current-user", "message"],
+      ["compact-1", "compact"],
+      ["compact-1:summary", "message"],
+      ["ctx-1:section:0", "tool"],
+      ["ctx-1:section:1", "tool"],
+      ["live-agent", "message"],
+      ["cmd-live", "tool"],
+    ],
+  );
+  assert.equal(
+    conversation.cells
+      .flatMap((cell) => cell.entries)
+      .map((entry) => entry.id)
+      .includes("stale-agent"),
+    false,
+  );
+});
+
+test("compact pruning reorders timestamped current-turn output even when no stale items are removed", () => {
+  const normalized = normalizeThreadSnapshot({
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-compact", [
+          makeUserMessage("current-user", "continue fixing compact display"),
+          {
+            ...makeAgentMessage("live-agent", "working on the current request"),
+            startedAtMs: 13_000,
+          },
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeAgentMessage("compact-1:summary", "compact summary"),
+          makeInitContextItem("ctx-1"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  });
+  const conversation = buildConversationState(normalized);
+
+  assert.deepEqual(
+    normalized.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["current-user", "compact-1", "compact-1:summary", "ctx-1", "live-agent"],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["current-user", "message"],
+      ["compact-1", "compact"],
+      ["compact-1:summary", "message"],
+      ["ctx-1:section:0", "tool"],
+      ["ctx-1:section:1", "tool"],
+      ["live-agent", "message"],
+    ],
+  );
+});
+
 test("active compact turn rejects timestamped stale item at compact boundary", () => {
   const compactedThread = {
     ...makeThread(),
