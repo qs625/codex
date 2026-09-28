@@ -59,6 +59,35 @@ test("reorderWorkspaceTabs moves object tabs before or after the target", () => 
   );
 });
 
+test("reorderWorkspaceTabs returns a copied order when ids cannot move", () => {
+  const tabs = [
+    tab("conversation:root", "conversation"),
+    tab("file:root:/tmp/a.ts", "file"),
+  ];
+
+  const sameTab = reorderWorkspaceTabs(
+    tabs,
+    "conversation:root",
+    "conversation:root",
+  );
+  assert.deepEqual(
+    sameTab.map((item) => item.id),
+    ["conversation:root", "file:root:/tmp/a.ts"],
+  );
+  assert.notEqual(sameTab, tabs);
+
+  const missingTarget = reorderWorkspaceTabs(
+    tabs,
+    "conversation:root",
+    "missing",
+  );
+  assert.deepEqual(
+    missingTarget.map((item) => item.id),
+    ["conversation:root", "file:root:/tmp/a.ts"],
+  );
+  assert.notEqual(missingTarget, tabs);
+});
+
 test("upsertWorkspaceTab updates an existing object tab without duplicating it", () => {
   const tabs = upsertWorkspaceTab([tab("conversation:root", "conversation")], {
     id: "conversation:root",
@@ -173,6 +202,32 @@ test("stored workspace object tab order is best effort", () => {
     "conversation:root",
     "file:root:/tmp/a.ts",
   ]);
+});
+
+test("stored workspace object tab order ignores unavailable storage and malformed data", () => {
+  assert.deepEqual(readStoredWorkspaceTabOrder(null), []);
+  assert.deepEqual(readStoredWorkspaceTabOrder(makeStorage("{bad json")), []);
+  assert.deepEqual(readStoredWorkspaceTabOrder(makeStorage("{}")), []);
+
+  const throwingStorage = {
+    getItem: () => {
+      throw new Error("storage unavailable");
+    },
+    setItem: () => {
+      throw new Error("storage unavailable");
+    },
+    read: () => null,
+  };
+
+  assert.deepEqual(readStoredWorkspaceTabOrder(throwingStorage), []);
+  assert.deepEqual(
+    storeWorkspaceTabOrder(
+      [tab("conversation:root", "conversation")],
+      throwingStorage,
+      [],
+    ),
+    ["conversation:root"],
+  );
 });
 
 test("workspace tab order storage preserves ids that are not live yet", () => {
