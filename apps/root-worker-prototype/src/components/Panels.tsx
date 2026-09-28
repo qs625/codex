@@ -140,9 +140,8 @@ export function SidebarPanel({
     if (!selectedThreadId) {
       return;
     }
-    const selectedRows = treeScrollRef.current?.querySelectorAll<HTMLElement>(
-      "[data-thread-id]",
-    );
+    const selectedRows =
+      treeScrollRef.current?.querySelectorAll<HTMLElement>("[data-thread-id]");
     const selectedRow = [...(selectedRows ?? [])].find(
       (row) => row.dataset.threadId === selectedThreadId,
     );
@@ -323,10 +322,11 @@ export function NewThreadPopover({
   >([]);
   const [threadProvidersProjectPath, setThreadProvidersProjectPath] =
     useState("");
-  const [threadProvidersError, setThreadProvidersError] = useState<string | null>(
-    null,
-  );
-  const [isLoadingThreadProviders, setIsLoadingThreadProviders] = useState(false);
+  const [threadProvidersError, setThreadProvidersError] = useState<
+    string | null
+  >(null);
+  const [isLoadingThreadProviders, setIsLoadingThreadProviders] =
+    useState(false);
   const [agentTypes, setAgentTypes] = useState<AgentTypeOption[]>([]);
   const [agentTypesProjectPath, setAgentTypesProjectPath] = useState("");
   const [agentTypesError, setAgentTypesError] = useState<string | null>(null);
@@ -340,7 +340,8 @@ export function NewThreadPopover({
   const hasSeededWorkspacePathRef = useRef(Boolean(workspacePath.trim()));
   const hasManualThreadStartParamsRef = useRef(false);
   const trimmedProjectPath = projectPath.trim();
-  const defaultThreadStartParams = defaultNewThreadStartParams(trimmedProjectPath);
+  const defaultThreadStartParams =
+    defaultNewThreadStartParams(trimmedProjectPath);
   const trimmedTaskName = taskName.trim();
   const pathPreview = trimmedTaskName ? `/${trimmedTaskName}` : "";
   const scopedThreadProviders = resolveNewThreadProjectScopedOptions({
@@ -393,14 +394,18 @@ export function NewThreadPopover({
   const selectableModelProviders = useMemo(
     () =>
       providerModelProviders.length > 0
-        ? modelProviders.filter((provider) => providerModelProviders.includes(provider))
+        ? modelProviders.filter((provider) =>
+            providerModelProviders.includes(provider),
+          )
         : modelProviders,
     [modelProviders, providerModelProviders],
   );
   const selectableModels = useMemo(
     () =>
       modelProvider
-        ? models.filter((modelOption) => modelOption.modelProvider === modelProvider)
+        ? models.filter(
+            (modelOption) => modelOption.modelProvider === modelProvider,
+          )
         : models.filter(
             (modelOption) =>
               selectableModelProviders.length === 0 ||
@@ -594,7 +599,9 @@ export function NewThreadPopover({
     }
     setModel(getNewThreadModelKey(nextModel));
     setModelProvider(nextModel.modelProvider ?? "");
-    setReasoningEffort(resolveReasoningEffortForModel(nextModel, reasoningEffort));
+    setReasoningEffort(
+      resolveReasoningEffortForModel(nextModel, reasoningEffort),
+    );
   };
 
   const submitDraft = (event: FormEvent<HTMLFormElement>) => {
@@ -651,7 +658,10 @@ export function NewThreadPopover({
           />
           <span>Chat without project</span>
         </label>
-        <p>Project chats are grouped by cwd; chats without a project stay in Chat.</p>
+        <p>
+          Project chats are grouped by cwd; chats without a project stay in
+          Chat.
+        </p>
       </fieldset>
 
       <label className="sidebar-create-field">
@@ -675,10 +685,13 @@ export function NewThreadPopover({
           </button>
         </div>
         <datalist id="sidebar-existing-projects">
-          {[...new Set([workspacePath, ...existingProjectPaths].filter(Boolean))]
-            .map((path) => (
-              <option key={path} value={path} />
-            ))}
+          {[
+            ...new Set(
+              [workspacePath, ...existingProjectPaths].filter(Boolean),
+            ),
+          ].map((path) => (
+            <option key={path} value={path} />
+          ))}
         </datalist>
       </label>
 
@@ -887,9 +900,12 @@ export function resolveNewThreadProviderControls({
     (isNative ? "catalog" : "providerDefault");
   return {
     effectiveThreadProvider,
-    agentTypes: selectedThreadProvider?.agentTypes ?? (isNative ? fallbackAgentTypes : []),
+    agentTypes:
+      selectedThreadProvider?.agentTypes ??
+      (isNative ? fallbackAgentTypes : []),
     modelProviders:
-      selectedThreadProvider?.modelSelection?.modelProviders ?? EMPTY_MODEL_PROVIDERS,
+      selectedThreadProvider?.modelSelection?.modelProviders ??
+      EMPTY_MODEL_PROVIDERS,
     canSelectModel: modelSelectionMode === "catalog",
     canStartThread: selectedThreadProvider?.capabilities.startThread ?? true,
   };
@@ -972,7 +988,11 @@ export function isValidNewThreadAgentPath(path: string) {
 
 export function defaultNewThreadStartParams(projectPath: string) {
   const normalizedProjectPath = projectPath.trim();
-  const basename = normalizedProjectPath.split(/[\\/]+/).filter(Boolean).pop() ?? "";
+  const basename =
+    normalizedProjectPath
+      .split(/[\\/]+/)
+      .filter(Boolean)
+      .pop() ?? "";
   const taskName = sanitizeAgentPathSegment(basename) || "project";
   return {
     taskName,
@@ -1030,7 +1050,8 @@ export function ProjectSection({
   const isCollapsed = collapsedProjectSet.has(project.id);
   const isSelected = project.tree.threadId === selectedThreadId;
   const containsSelected =
-    selectedThreadId != null && treeContainsThread(project.tree, selectedThreadId);
+    selectedThreadId != null &&
+    treeContainsThread(project.tree, selectedThreadId);
   const buttonClassName = [
     "tree-node-button",
     "project-tree-button",
@@ -1119,22 +1140,22 @@ export function ProjectSection({
           <TrashIcon />
         </button>
       </div>
-      {!isCollapsed ? (
-        project.tree.children.length > 0 ? (
-          project.tree.children.map((child) => (
-            <AgentTreeNode
-              key={child.key}
-              collapsedSet={collapsedSet}
-              depth={1}
-              node={child}
-              onSelect={onSelectThread}
-              onToggle={onToggleTreeNode}
-              onOpenMenu={onOpenMenu}
-              selectedThreadId={selectedThreadId}
-            />
-          ))
-        ) : null
-      ) : null}
+      {!isCollapsed
+        ? project.tree.children.length > 0
+          ? project.tree.children.map((child) => (
+              <AgentTreeNode
+                key={child.key}
+                collapsedSet={collapsedSet}
+                depth={1}
+                node={child}
+                onSelect={onSelectThread}
+                onToggle={onToggleTreeNode}
+                onOpenMenu={onOpenMenu}
+                selectedThreadId={selectedThreadId}
+              />
+            ))
+          : null
+        : null}
     </section>
   );
 }
@@ -2139,9 +2160,7 @@ function renderSlashSuggestion(suggestion: ComposerSlashSuggestion) {
     case "command":
       return (
         <>
-          <span className="composer-slash-option-name">
-            {suggestion.label}
-          </span>
+          <span className="composer-slash-option-name">{suggestion.label}</span>
           <span className="composer-slash-option-meta">
             Command · {suggestion.description}
           </span>
