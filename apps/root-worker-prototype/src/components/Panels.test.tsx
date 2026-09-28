@@ -517,6 +517,34 @@ test("SidebarPanel keeps project create visually quiet until hover or focus", ()
   );
 });
 
+test("SidebarPanel keeps project create dialog stable during unrelated rerenders", () => {
+  const source = readFileSync(new URL("./Panels.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const submitNewThreadDraftRef = useRef/);
+  assert.match(
+    source,
+    /submitNewThreadDraftRef\.current = onSubmitNewThreadDraft/,
+  );
+  assert.match(
+    source,
+    /const projectPathKey = projectSidebar\.projects[\s\S]*\.join\("\\u0000"\)/,
+  );
+  assert.match(
+    source,
+    /projectPathsRef\.current\?\.key !== projectPathKey[\s\S]*paths: projectSidebar\.projects\.map\(\(project\) => project\.cwd\)/,
+  );
+  assert.match(source, /const closeCreateMenu = useCallback/);
+  assert.match(source, /const submitNewThreadDraft = useCallback/);
+  assert.match(
+    source,
+    /<MemoizedNewThreadDialog[\s\S]*existingProjectPaths=\{projectPaths\}[\s\S]*onCancel=\{closeCreateMenu\}[\s\S]*onSubmit=\{submitNewThreadDraft\}/,
+  );
+  assert.match(
+    source,
+    /const MemoizedNewThreadDialog = memo\(NewThreadDialog\)/,
+  );
+});
+
 test("SidebarPanel disables chat quick create while a chat is being created", () => {
   const sidebar = makeSidebar();
 

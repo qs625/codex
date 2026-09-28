@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -130,11 +132,26 @@ export function SidebarPanel({
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const projectCount = projectSidebar.projects.length;
   const chatCount = projectSidebar.chat.conversations.length;
-  const projectPaths = projectSidebar.projects.map((project) => project.cwd);
-  const submitNewThreadDraft = (draft: NewThreadDraft) => {
+  const submitNewThreadDraftRef = useRef(onSubmitNewThreadDraft);
+  submitNewThreadDraftRef.current = onSubmitNewThreadDraft;
+  const projectPathKey = projectSidebar.projects
+    .map((project) => project.cwd)
+    .join("\u0000");
+  const projectPathsRef = useRef<{ key: string; paths: string[] } | null>(null);
+  if (projectPathsRef.current?.key !== projectPathKey) {
+    projectPathsRef.current = {
+      key: projectPathKey,
+      paths: projectSidebar.projects.map((project) => project.cwd),
+    };
+  }
+  const projectPaths = projectPathsRef.current?.paths ?? [];
+  const closeCreateMenu = useCallback(() => {
     setIsCreateMenuOpen(false);
-    onSubmitNewThreadDraft(draft);
-  };
+  }, []);
+  const submitNewThreadDraft = useCallback((draft: NewThreadDraft) => {
+    setIsCreateMenuOpen(false);
+    submitNewThreadDraftRef.current(draft);
+  }, []);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -171,9 +188,9 @@ export function SidebarPanel({
             <PlusIcon />
           </button>
           {isCreateMenuOpen ? (
-            <NewThreadDialog
+            <MemoizedNewThreadDialog
               existingProjectPaths={projectPaths}
-              onCancel={() => setIsCreateMenuOpen(false)}
+              onCancel={closeCreateMenu}
               onSubmit={submitNewThreadDraft}
               workspacePath={workspacePath}
             />
@@ -297,6 +314,8 @@ export function NewThreadDialog({
   }
   return createPortal(dialog, document.body);
 }
+
+const MemoizedNewThreadDialog = memo(NewThreadDialog);
 
 export function NewThreadPopover({
   existingProjectPaths,

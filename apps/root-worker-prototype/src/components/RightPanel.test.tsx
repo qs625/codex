@@ -1206,7 +1206,7 @@ test("browser native view hides under app overlays and restores with measured bo
   );
   assert.match(
     browserPanelSource,
-    /const showNativeBrowserView = async \(browserApi: BrowserPanelApi\) => \{[\s\S]*browserBoundsFromElement\([\s\S]*\.showBrowserView\(bounds\)/,
+    /const showNativeBrowserView = async \([\s\S]*browserApi: BrowserPanelApi,[\s\S]*tab: BrowserPanelTabState \| null = activeTab,[\s\S]*\) => \{[\s\S]*tabId: tab\.id,[\s\S]*\.showBrowserView\(bounds\)/,
   );
   assert.match(
     browserPanelSource,
@@ -2037,7 +2037,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /const workspaceSelectionMissing = !isManagerVariant && activeTab == null/,
     /workspaceBrowserTabCreatePendingRef\.current/,
     /const existingTabIds = new Set\([\s\S]*stateRef\.current\.tabs\.map\(\(tab\) => tab\.id\)[\s\S]*\);/,
-    /createBrowserTab\(\{ activate: false \}\)[\s\S]*resolveCreatedWorkspaceBrowserTab\([\s\S]*normalizedState\.tabs,[\s\S]*existingTabIds,[\s\S]*\)[\s\S]*onWorkspaceBrowserTabBound\?\.\(\{[\s\S]*browserTabId: createdTab\.id/,
+    /createBrowserTab\(\{ activate: false \}\)[\s\S]*resolveCreatedWorkspaceBrowserTab\([\s\S]*normalizedState\.tabs,[\s\S]*existingTabIds,[\s\S]*\)[\s\S]*showNativeBrowserView\(browserApi, createdTab\)[\s\S]*onWorkspaceBrowserTabBound\?\.\(\{[\s\S]*browserTabId: createdTab\.id/,
     /if \(workspaceSelectionMissing\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const normalized = normalizeBrowserUrl\(address\)/,
     /if \(workspaceSelectionMissing\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\)/,
     /function nextBrowserPanelSurfaceId\(\)/,
