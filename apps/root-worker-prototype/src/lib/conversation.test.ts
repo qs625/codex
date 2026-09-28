@@ -3287,7 +3287,7 @@ test("renders backend thread/read compact projection with summary and init conte
   );
 });
 
-test("hides pre-compact same-turn user messages while preserving post-compact user messages", () => {
+test("keeps compact-triggering same-turn user messages while hiding stale same-turn output", () => {
   const firstPrompt =
     "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";
   const followupPrompt = "等下刚才发送的user message没显示";
@@ -3355,14 +3355,22 @@ test("hides pre-compact same-turn user messages while preserving post-compact us
         ),
       )
       .map((cell) => cell.id),
-    ["item-16"],
+    ["item-12", "item-16"],
   );
   assert.deepEqual(
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
+      ["item-12", "message"],
       ["compact-1", "compact"],
       ["item-16", "message"],
     ],
+  );
+  assert.deepEqual(
+    state.cells
+      .flatMap((cell) => cell.entries)
+      .map((entry) => entry.id)
+      .filter((id) => id === "item-13" || id === "cmd-1"),
+    [],
   );
 });
 

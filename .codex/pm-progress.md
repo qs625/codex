@@ -8,9 +8,31 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: continuous large front+backend code organization. User asked to continue and not stop, and clarified not to keep doing small changes. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing larger coherent production/module-boundary refactors, architecture-level duplication removal, and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics. PM should keep dispatching coherent cleanup tranches while owner_main is free, but must not fall back to tiny helper/test-only cleanups just to keep momentum.
+Active goal: continuous large front+backend code organization is temporarily paused for higher-priority user-visible regressions. Current interrupt work: fix compact/display regression where after entering a user message that triggers compact, subsequent messages still do not appear in the conversation. Resume code organization only after user-visible regressions are fixed, merged, and installed-effective as needed.
 
 ## Active Work
+
+- id: compact-after-user-message-display-regression
+  status: completed_pending_pm_merge
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/compact-after-user-message-display-regression
+  task_type: frontend_conversation_compact_display_bugfix
+  depends_on: main `7cf28dcd1`; user reported that after entering a user message that triggers compact, subsequent messages still do not display
+  files: expected `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`, conversation display/virtualization helpers, and directly related component tests only unless root cause proves a narrower/lower layer
+  base_commit: `7cf28dcd1`
+  problem_contract: After compact is triggered by a user message, the conversation must immediately continue showing that user message and all subsequent live/display items in order. Compact summary/init context may replace earlier history, but it must not create a display boundary that drops later user messages, assistant/status/tool output, or child/command updates for the active turn.
+  prior_fix_context: Previous fixes `compact-live-output-after-init-context-regression` and `compact-user-message-after-compact-display` installed successfully for narrower scenarios. This new user report means at least one post-compact path remains uncovered or a previously fixed assumption is invalid in the current installed repro.
+  constraints: Preserve typed compact stale filtering for genuinely old pre-compact items, persisted history/protocol semantics, model-visible context, provider-visible contracts, workspace tab visibility fallback, and conversation virtualization correctness. Do not disable compact boundary filtering globally, revive stale pre-compact items, special-case exact text, parse raw markers, use CSS/visibility hacks, or treat right-panel/Thread Analysis updates as proof that conversation display is correct.
+  expected_investigation: Determine whether the failure is live item acceptance, persisted replay after compact, turn id/timestamp boundary classification, virtualized list key/cache/visibility, active workspace tab/panel visibility, or subscription/read merge order. Explain why the previous installed compact fixes and tests did not catch this scenario.
+  root_cause: Previous compact fixes covered `thread.ts` live item acceptance/merge, so compact-after missing-turn commands, follow-up `userMessage`, assistant/tool items could enter thread state and conversation entries. This regression was one layer later in `conversationCompact.ts`: when building main conversation cells around the compact row, same-turn cells before the compact marker were removed wholesale and only the compact summary cell remained, so the user message that triggered compact existed in thread state but was hidden from the main conversation list.
+  implementation: `conversationCompact.ts` now keeps same-turn pre-compact pure user message cells while still discarding same-turn stale assistant/tool/command/status output. Regression tests now cover compact-triggering same-turn user messages, post-compact user messages, and stale same-turn agent/command output exclusion; thread-level init-context-after-compact expectations were updated to the new main-cells contract.
+  validation_required: PM will require installed Runtime Capsule restart and self-debug after merge because this is a user-visible installed regression.
+  validation: Owner validation passed: `./node_modules/.bin/prettier --check apps/root-worker-prototype/src/lib/conversationCompact.ts apps/root-worker-prototype/src/lib/conversation.test.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx` (44 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (257 passed); `git diff --check HEAD~1 HEAD`. Fixed reviewer `/self/owner_dev_2/reviewer` approved in two rounds with no blocking findings.
+  risk: Low-to-medium frontend display/compact fix. It intentionally changes compact-row main cells so the user message that triggers compact remains visible. The old stale-output protection remains for assistant/tool/command/status entries, so pre-compact tool or agent output should not revive.
+  next_action: PM validate, merge to main, build Runtime Capsule, restart, and self-debug the installed conversation list.
+  commit: owner `ed6b92343`; PM merge will record merge hash
 
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
