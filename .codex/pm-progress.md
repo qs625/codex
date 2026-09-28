@@ -12,6 +12,26 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-50
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-50
+  task_type: exclusive_large_production_code_quality_refactor
+  depends_on: main `1c1f706f6`; user explicitly asked to keep going and not stop
+  files: TBD by owner after candidate screening; `.codex/pm-progress.md`
+  base_commit: `1c1f706f6`
+  next_action: Owner should screen at least 3 production candidates, choose a larger coherent production/module-boundary refactor with clear payoff, commit on this branch, reuse `/self/owner_main/reviewer` for independent review, and report selection, design, validation, risk, and merge recommendation. No immediate Runtime Capsule restart is expected unless owner discovers the selected path is user-visible, Runtime Capsule/Launcher adjacent, Browser/Terminal lifecycle altering, provider-visible schema altering, workflow runtime altering, thread lifecycle altering, process execution behavior altering, thread analysis monitor behavior altering, workspace tab behavior altering, request/response registry altering, request scheduling altering, MCP status/resource/tool/OAuth behavior altering, run configuration/model selection behavior altering, schedule display/occurrence behavior altering, or otherwise needs installed-state validation.
+  constraints: Preserve behavior, provider-visible tool/schema/descriptions, API/IPC/JSONRPC method params/errors/field names, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, process execution semantics, MCP resource/tool/OAuth/status behavior, run configuration/model selection semantics, schedule display/occurrence semantics, thread-analysis monitor semantics, workspace tab ordering/storage semantics, outgoing request/response callback semantics, request serialization/scheduling semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, workflow runtime semantics, login/account state-machine semantics, config write/read semantics, memory startup/consolidation semantics, and external/native provider parity. Do not restore broad facades or expand old registry surfaces. Avoid test-only cleanup, small helper-only churn, broad facade/registry consolidation, speculative rewrites, generated/vendor files, and any provider-visible contract or UI text/schema drift. Avoid recent touched paths: compact/display, Git diff, Settings config, feedback upload, apps/list, LSP file target, context usage, approval request, slash menu, Android payload, fuzzy search, workflow request handling, fs watch, account billing/rate-limit, catalog request projection, config manager write planning, memory startup wiring, request serialization queues, outgoing message registry, workspaceTabs, threadAnalysis monitor inventory, process_exec_processor, mcp_processor status list projection, runConfig model selection projection, and scheduleDisplay projection. Avoid high-risk paths by default: `mcp_tool.rs`, `safety_check_downgrade.rs`, external agent config/session import, plugins/marketplace installs, initialize, host_lifecycle, Browser/Terminal lifecycle, thread lifecycle/read/list/archive/status, Runtime Capsule/Launcher, workflow runtime, provider-visible schema/config/memory/process execution behavior, send-message payload/submission behavior, unless owner proposes a narrow seam and strong regression matrix. Do not work in `source_workspace-dev-3` or synchronize it; it still has unrelated Browser WIP.
+  selection: pending
+  production_issue: pending
+  implementation: pending
+  reviewer_result: pending
+  validation: pending
+  risk: pending
+  commit: pending
+
 - id: continuous-code-organization-tranche-49
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
