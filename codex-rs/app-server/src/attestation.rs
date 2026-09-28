@@ -63,9 +63,28 @@ async fn request_attestation_header_value_with_timeout(
     thread_id: protocol::ThreadId,
     timeout_duration: Duration,
 ) -> Option<String> {
+    request_attestation_outcome_with_timeout(
+        outgoing,
+        thread_state_manager,
+        thread_id,
+        timeout_duration,
+    )
+    .await
+    .header_value()
+}
+
+async fn request_attestation_outcome_with_timeout(
+    outgoing: Arc<OutgoingMessageSender>,
+    thread_state_manager: ThreadStateManager,
+    thread_id: protocol::ThreadId,
+    timeout_duration: Duration,
+) -> AppServerAttestationOutcome {
     let connection_id = thread_state_manager
         .first_attestation_capable_connection_for_thread(thread_id)
-        .await?;
+        .await;
+    let Some(connection_id) = connection_id else {
+        return AppServerAttestationOutcome::Unavailable;
+    };
 
     let connection_ids = [connection_id];
     let (request_id, rx) = outgoing
@@ -84,16 +103,14 @@ async fn request_attestation_header_value_with_timeout(
                 message = %err.message,
                 "attestation generation request failed"
             );
-            return app_server_attestation_header_value(
+            return AppServerAttestationOutcome::AppServerFailure(
                 AppServerAttestationStatus::RequestFailed,
-                /*token*/ None,
             );
         }
         Ok(Err(err)) => {
             warn!("attestation generation request canceled: {err}");
-            return app_server_attestation_header_value(
+            return AppServerAttestationOutcome::AppServerFailure(
                 AppServerAttestationStatus::RequestCanceled,
-                /*token*/ None,
             );
         }
         Err(_) => {
@@ -102,29 +119,48 @@ async fn request_attestation_header_value_with_timeout(
                 timeout_seconds = timeout_duration.as_secs(),
                 "attestation generation request timed out"
             );
-            return app_server_attestation_header_value(
+            return AppServerAttestationOutcome::AppServerFailure(
                 AppServerAttestationStatus::Timeout,
-                /*token*/ None,
             );
         }
     };
 
-    match serde_json::from_value::<AttestationGenerateResponse>(result) {
-        Ok(response) => app_server_attestation_header_value(
-            AppServerAttestationStatus::Ok,
-            Some(&response.token),
-        ),
-        Err(err) => {
-            warn!("failed to deserialize attestation generation response: {err}");
-            app_server_attestation_header_value(
-                AppServerAttestationStatus::MalformedResponse,
-                /*token*/ None,
-            )
+    AppServerAttestationOutcome::from_client_response(result)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AppServerAttestationOutcome {
+    ClientToken(String),
+    AppServerFailure(AppServerAttestationStatus),
+    Unavailable,
+}
+
+impl AppServerAttestationOutcome {
+    fn from_client_response(result: serde_json::Value) -> Self {
+        match serde_json::from_value::<AttestationGenerateResponse>(result) {
+            Ok(response) => Self::ClientToken(response.token),
+            Err(err) => {
+                warn!("failed to deserialize attestation generation response: {err}");
+                Self::AppServerFailure(AppServerAttestationStatus::MalformedResponse)
+            }
+        }
+    }
+
+    fn header_value(&self) -> Option<String> {
+        match self {
+            Self::ClientToken(token) => app_server_attestation_header_value(
+                AppServerAttestationStatus::Ok,
+                Some(token.as_str()),
+            ),
+            Self::AppServerFailure(status) => {
+                app_server_attestation_header_value(*status, /*token*/ None)
+            }
+            Self::Unavailable => None,
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppServerAttestationStatus {
     Ok,
     Timeout,
@@ -168,9 +204,12 @@ fn app_server_attestation_header_value(
 
 #[cfg(test)]
 mod tests {
+    use super::AppServerAttestationOutcome;
     use super::AppServerAttestationStatus;
     use super::app_server_attestation_header_value;
+    use app_server_protocol::AttestationGenerateResponse;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     #[test]
     fn app_server_attestation_header_value_wraps_opaque_client_payloads() {
@@ -212,6 +251,48 @@ mod tests {
                 /*token*/ None
             ),
             Some(r#"{"v":1,"s":4}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn app_server_attestation_outcome_projects_client_token() {
+        let result = serde_json::to_value(AttestationGenerateResponse {
+            token: "v1.client-token".to_string(),
+        })
+        .expect("serialize response");
+
+        let outcome = AppServerAttestationOutcome::from_client_response(result);
+
+        assert_eq!(
+            outcome,
+            AppServerAttestationOutcome::ClientToken("v1.client-token".to_string())
+        );
+        assert_eq!(
+            outcome.header_value(),
+            Some(r#"{"v":1,"s":0,"t":"v1.client-token"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn app_server_attestation_outcome_projects_malformed_response() {
+        let outcome = AppServerAttestationOutcome::from_client_response(json!({
+            "unexpected": true
+        }));
+
+        assert_eq!(
+            outcome,
+            AppServerAttestationOutcome::AppServerFailure(
+                AppServerAttestationStatus::MalformedResponse
+            )
+        );
+        assert_eq!(outcome.header_value(), Some(r#"{"v":1,"s":4}"#.to_string()));
+    }
+
+    #[test]
+    fn app_server_attestation_outcome_omits_header_when_unavailable() {
+        assert_eq!(
+            AppServerAttestationOutcome::Unavailable.header_value(),
+            None
         );
     }
 }
