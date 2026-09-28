@@ -118,6 +118,41 @@ test("terminal display preferences restore valid persisted values", () => {
   });
 });
 
+test("terminal display preferences keep persisted restore strict for numeric ranges", () => {
+  assert.deepEqual(
+    readTerminalDisplayPreferences(
+      makeStorage(
+        JSON.stringify({
+          fontFamily: "cascadia",
+          fontSize: 9,
+          lineHeight: 2.01,
+        }),
+      ),
+    ),
+    {
+      fontFamily: "cascadia",
+      fontSize: DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontSize,
+      lineHeight: DEFAULT_TERMINAL_DISPLAY_PREFERENCES.lineHeight,
+    },
+  );
+});
+
+test("terminal display preferences clamp and step interactive updates", () => {
+  const updated = updateTerminalDisplayPreferences(
+    DEFAULT_TERMINAL_DISPLAY_PREFERENCES,
+    {
+      fontSize: 100,
+      lineHeight: 1.234,
+    },
+  );
+
+  assert.deepEqual(updated, {
+    ...DEFAULT_TERMINAL_DISPLAY_PREFERENCES,
+    fontSize: 22,
+    lineHeight: 1.25,
+  });
+});
+
 test("terminal display preferences normalize updates and reset to defaults", () => {
   const storage = makeStorage();
   const updated = updateTerminalDisplayPreferences(
@@ -130,7 +165,10 @@ test("terminal display preferences normalize updates and reset to defaults", () 
   );
   storeTerminalDisplayPreferences(updated, storage);
 
-  assert.deepEqual(resetTerminalDisplayPreferences(storage), DEFAULT_TERMINAL_DISPLAY_PREFERENCES);
+  assert.deepEqual(
+    resetTerminalDisplayPreferences(storage),
+    DEFAULT_TERMINAL_DISPLAY_PREFERENCES,
+  );
   assert.deepEqual(
     readTerminalDisplayPreferences(storage),
     DEFAULT_TERMINAL_DISPLAY_PREFERENCES,

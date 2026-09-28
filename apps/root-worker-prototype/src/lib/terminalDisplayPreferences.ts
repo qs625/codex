@@ -13,8 +13,7 @@ export const TERMINAL_FONT_FAMILIES = [
   {
     id: "system",
     label: "System monospace",
-    value:
-      `${NERD_FONT_FAMILY_STACK}, "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace`,
+    value: `${NERD_FONT_FAMILY_STACK}, "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace`,
   },
   {
     id: "cascadia",
@@ -30,7 +29,8 @@ export const TERMINAL_FONT_FAMILIES = [
   },
 ] as const;
 
-export type TerminalFontFamilyId = (typeof TERMINAL_FONT_FAMILIES)[number]["id"];
+export type TerminalFontFamilyId =
+  (typeof TERMINAL_FONT_FAMILIES)[number]["id"];
 
 export type TerminalDisplayPreferences = {
   fontFamily: TerminalFontFamilyId;
@@ -40,17 +40,88 @@ export type TerminalDisplayPreferences = {
 
 type TerminalDisplayPreferencePatch = Partial<TerminalDisplayPreferences>;
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-export const DEFAULT_TERMINAL_DISPLAY_PREFERENCES: TerminalDisplayPreferences = {
-  fontFamily: "nerd",
-  fontSize: 12,
-  lineHeight: 1.18,
+type TerminalPreferenceNumberKey = "fontSize" | "lineHeight";
+type TerminalPreferenceNumberMode = "interactive" | "stored";
+type TerminalPreferenceNumberRule = {
+  key: TerminalPreferenceNumberKey;
+  fallback: number;
+  min: number;
+  max: number;
+  step: number;
 };
+
+export const DEFAULT_TERMINAL_DISPLAY_PREFERENCES: TerminalDisplayPreferences =
+  {
+    fontFamily: "nerd",
+    fontSize: 12,
+    lineHeight: 1.18,
+  };
 
 const FONT_SIZE_MIN = 10;
 const FONT_SIZE_MAX = 22;
 const LINE_HEIGHT_MIN = 1;
 const LINE_HEIGHT_MAX = 2;
+
+const TERMINAL_PREFERENCE_NUMBER_RULES: Record<
+  TerminalPreferenceNumberKey,
+  TerminalPreferenceNumberRule
+> = {
+  fontSize: {
+    key: "fontSize",
+    fallback: DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontSize,
+    min: FONT_SIZE_MIN,
+    max: FONT_SIZE_MAX,
+    step: 1,
+  },
+  lineHeight: {
+    key: "lineHeight",
+    fallback: DEFAULT_TERMINAL_DISPLAY_PREFERENCES.lineHeight,
+    min: LINE_HEIGHT_MIN,
+    max: LINE_HEIGHT_MAX,
+    step: 0.05,
+  },
+};
+
+class TerminalDisplayPreferenceSource {
+  private constructor(
+    private readonly candidate: Partial<TerminalDisplayPreferences>,
+  ) {}
+
+  static from(value: unknown) {
+    return new TerminalDisplayPreferenceSource(
+      value && typeof value === "object"
+        ? (value as Partial<TerminalDisplayPreferences>)
+        : {},
+    );
+  }
+
+  project(mode: TerminalPreferenceNumberMode): TerminalDisplayPreferences {
+    return {
+      fontFamily: this.fontFamily(),
+      fontSize: this.number(TERMINAL_PREFERENCE_NUMBER_RULES.fontSize, mode),
+      lineHeight: this.number(
+        TERMINAL_PREFERENCE_NUMBER_RULES.lineHeight,
+        mode,
+      ),
+    };
+  }
+
+  private fontFamily(): TerminalFontFamilyId {
+    return isTerminalFontFamily(this.candidate.fontFamily)
+      ? this.candidate.fontFamily
+      : DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontFamily;
+  }
+
+  private number(
+    rule: TerminalPreferenceNumberRule,
+    mode: TerminalPreferenceNumberMode,
+  ): number {
+    const value = this.candidate[rule.key];
+    return mode === "stored"
+      ? persistedNumber(value, rule)
+      : interactiveNumber(value, rule);
+  }
+}
 
 export function readTerminalDisplayPreferences(
   storage: PreferenceStorage | null | undefined = getLocalStorage(),
@@ -120,57 +191,13 @@ export function terminalFontFamilyValue(
 function normalizeTerminalDisplayPreferences(
   value: unknown,
 ): TerminalDisplayPreferences {
-  const candidate =
-    value && typeof value === "object"
-      ? (value as Partial<TerminalDisplayPreferences>)
-      : {};
-  return {
-    fontFamily: isTerminalFontFamily(candidate.fontFamily)
-      ? candidate.fontFamily
-      : DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontFamily,
-    fontSize: normalizeNumber(
-      candidate.fontSize,
-      DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontSize,
-      FONT_SIZE_MIN,
-      FONT_SIZE_MAX,
-      1,
-    ),
-    lineHeight: normalizeNumber(
-      candidate.lineHeight,
-      DEFAULT_TERMINAL_DISPLAY_PREFERENCES.lineHeight,
-      LINE_HEIGHT_MIN,
-      LINE_HEIGHT_MAX,
-      0.05,
-    ),
-  };
+  return TerminalDisplayPreferenceSource.from(value).project("interactive");
 }
 
 function readPersistedTerminalDisplayPreferences(
   value: unknown,
 ): TerminalDisplayPreferences {
-  const candidate =
-    value && typeof value === "object"
-      ? (value as Partial<TerminalDisplayPreferences>)
-      : {};
-  return {
-    fontFamily: isTerminalFontFamily(candidate.fontFamily)
-      ? candidate.fontFamily
-      : DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontFamily,
-    fontSize: isStoredNumberInRange(
-      candidate.fontSize,
-      FONT_SIZE_MIN,
-      FONT_SIZE_MAX,
-    )
-      ? candidate.fontSize
-      : DEFAULT_TERMINAL_DISPLAY_PREFERENCES.fontSize,
-    lineHeight: isStoredNumberInRange(
-      candidate.lineHeight,
-      LINE_HEIGHT_MIN,
-      LINE_HEIGHT_MAX,
-    )
-      ? candidate.lineHeight
-      : DEFAULT_TERMINAL_DISPLAY_PREFERENCES.lineHeight,
-  };
+  return TerminalDisplayPreferenceSource.from(value).project("stored");
 }
 
 function isTerminalFontFamily(value: unknown): value is TerminalFontFamilyId {
@@ -190,13 +217,17 @@ function isStoredNumberInRange(
   );
 }
 
-function normalizeNumber(
+function persistedNumber(
   value: unknown,
-  fallback: number,
-  min: number,
-  max: number,
-  step: number,
-): number {
+  { fallback, min, max }: TerminalPreferenceNumberRule,
+) {
+  return isStoredNumberInRange(value, min, max) ? value : fallback;
+}
+
+function interactiveNumber(
+  value: unknown,
+  { fallback, min, max, step }: TerminalPreferenceNumberRule,
+) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
   }
