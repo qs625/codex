@@ -3197,7 +3197,7 @@ test("lazy compact details include same-turn pre-compact output", () => {
   );
 });
 
-test("keeps compact summary messages visible while preserving later visible items", () => {
+test("pairs compact summary messages into the marker while preserving later visible items", () => {
   const state = buildConversationState(
     makeThreadWithTurns([
       makeTurn(
@@ -3239,18 +3239,13 @@ test("keeps compact summary messages visible while preserving later visible item
   assert.deepEqual(
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
-      ["compact-summary", "message"],
       ["compact-1", "compact"],
       ["after-compact", "message"],
     ],
   );
-  assert.equal(
-    state.cells[0]?.entries[0]?.text,
-    "Summarizing previous context.",
-  );
-  const compactEntry = state.cells[1]?.entries[0];
+  const compactEntry = state.cells[0]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
-  assert.equal(compactEntry?.compactSummary, null);
+  assert.equal(compactEntry?.compactSummary, "Summarizing previous context.");
   assert.equal(compactEntry?.archivedEntryCount, 1);
   assert.deepEqual(
     compactEntry?.archivedCells?.flatMap((cell) =>
@@ -3319,16 +3314,14 @@ test("renders backend thread/read compact projection with summary and init conte
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
       ["item-1", "compact"],
-      ["item-1:summary", "message"],
       ["ctx-1:section:0", "tool"],
     ],
   );
+  assert.equal(state.cells[0]?.entries[0]?.kind, "compact");
   assert.equal(
-    state.cells[1]?.entries[0]?.text,
+    state.cells[0]?.entries[0]?.compactSummary,
     "compact summary body from thread/read",
   );
-  assert.equal(state.cells[0]?.entries[0]?.kind, "compact");
-  assert.equal(state.cells[0]?.entries[0]?.compactSummary, null);
   assert.deepEqual(
     state.cells
       .flatMap((cell) => cell.entries)
@@ -3447,6 +3440,10 @@ test("compact read projection preserves command and tool evidence across the bou
 
   const compactEntry = state.cells[0]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
+  assert.equal(
+    compactEntry?.compactSummary,
+    "compact summary body from thread/read",
+  );
   assert.deepEqual(
     compactEntry?.archivedCells
       ?.flatMap((cell) => cell.entries)
@@ -3461,13 +3458,7 @@ test("compact read projection preserves command and tool evidence across the bou
   );
   assert.deepEqual(
     state.cells.flatMap((cell) => cell.entries.map((entry) => entry.id)),
-    [
-      "compact-1",
-      "compact-1:summary",
-      "post-agent",
-      "post-cmd",
-      "post-builtin",
-    ],
+    ["compact-1", "post-agent", "post-cmd", "post-builtin"],
   );
 });
 
@@ -3637,6 +3628,7 @@ test("multiple compactions keep only entries after the latest hidden compact bou
   );
   const compactEntry = state.cells[1]?.entries[0];
   assert.equal(compactEntry?.kind, "compact");
+  assert.equal(compactEntry?.compactSummary, null);
   assert.equal(compactEntry?.archivedEntryCount, 3);
   assert.deepEqual(
     compactEntry?.archivedCells?.map((cell) => [cell.id, cell.kind]),

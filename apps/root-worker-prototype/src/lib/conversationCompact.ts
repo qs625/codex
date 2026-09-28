@@ -68,6 +68,16 @@ function buildConversationCellsForSegment(
     }
 
     if (entry.kind === "compact") {
+      const trailingSummaryCell = takeTrailingCompactSummaryCell(cells, entry);
+      const nextEntry = entries[entryIndex + 1];
+      const nextSummaryText = nextEntry
+        ? nextCompactSummaryTextFromEntry(nextEntry, entry)
+        : null;
+      const compactSummary =
+        nextSummaryText ??
+        compactSummaryTextFromCell(trailingSummaryCell) ??
+        entry.compactSummary ??
+        null;
       const loadedDetails = options?.compactDetailsById?.[entry.id];
       const hydratedArchivedCells =
         loadedDetails?.archivedCells ?? entry.archivedCells ?? [];
@@ -104,19 +114,26 @@ function buildConversationCellsForSegment(
           loadedDetails
             ? {
                 ...entry,
+                compactSummary,
                 archivedCells,
                 archivedEntryCount,
               }
             : archivedCells.length > 0 || archivedEntryCount !== undefined
               ? {
                   ...entry,
+                  compactSummary,
                   archivedCells,
                   archivedEntryCount,
                 }
-              : entry,
+              : compactSummary
+                ? {
+                    ...entry,
+                    compactSummary,
+                  }
+                : entry,
         ],
       });
-      entryIndex += 1;
+      entryIndex += nextSummaryText === null ? 1 : 2;
       continue;
     }
 
@@ -297,6 +314,30 @@ function collectCompactTurnCellsBeforeCompact(
   );
 }
 
+function takeTrailingCompactSummaryCell(
+  cells: ConversationCell[],
+  compactEntry: ConversationEntry,
+) {
+  const cell = cells.at(-1);
+  if (!cell || !isTrailingLegacyCompactSummaryCell(cell, compactEntry)) {
+    return null;
+  }
+  cells.pop();
+  return cell;
+}
+
+function compactSummaryTextFromCell(cell: ConversationCell | null) {
+  if (!cell) {
+    return null;
+  }
+  const summary = cell.entries
+    .map((entry) => entry.text.trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+  return summary || null;
+}
+
 function shouldArchiveCellForCompact(
   cell: ConversationCell,
   compactTurnId: string | undefined,
@@ -342,19 +383,56 @@ function isCompactSummaryResultCell(
     cell.kind === "message" &&
     cell.entries.length > 0 &&
     cell.entries.every((entry) =>
-      isCompactSummaryResultEntry(entry, compactEntry.id),
+      isCompactSummaryResultEntry(entry, compactEntry),
     )
   );
 }
 
+function isTrailingLegacyCompactSummaryCell(
+  cell: ConversationCell,
+  compactEntry: ConversationEntry,
+) {
+  return (
+    cell.kind === "message" &&
+    cell.entries.length > 0 &&
+    cell.entries.every((entry) =>
+      isLegacyCompactSummaryEntryForTurn(entry, compactEntry.turnId),
+    )
+  );
+}
+
+function nextCompactSummaryTextFromEntry(
+  entry: ConversationEntry,
+  compactEntry: ConversationEntry,
+) {
+  if (!isCompactSummaryResultEntry(entry, compactEntry)) {
+    return null;
+  }
+  return entry.text;
+}
+
 function isCompactSummaryResultEntry(
   entry: ConversationEntry,
-  compactEntryId: string,
+  compactEntry: ConversationEntry,
 ) {
   return (
     entry.kind === "message" &&
     entry.role === "agent" &&
-    (entry.id === `${compactEntryId}:summary` || entry.id === "compact-summary")
+    (entry.id === `${compactEntry.id}:summary` ||
+      isLegacyCompactSummaryEntryForTurn(entry, compactEntry.turnId))
+  );
+}
+
+function isLegacyCompactSummaryEntryForTurn(
+  entry: ConversationEntry,
+  compactTurnId: string | undefined,
+) {
+  return (
+    entry.kind === "message" &&
+    entry.role === "agent" &&
+    entry.id === "compact-summary" &&
+    compactTurnId !== undefined &&
+    entry.turnId === compactTurnId
   );
 }
 
