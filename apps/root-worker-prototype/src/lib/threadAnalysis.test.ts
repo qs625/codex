@@ -532,6 +532,94 @@ test("keeps schedule and command monitors with matching ids separate", () => {
   );
 });
 
+test("uses schedule event fallback only when there is one schedule monitor", () => {
+  const singleSchedule = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "schedule-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_interval", interval_ms: 60_000 },
+          label: "daily digest",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          schedule_summary: "every 60000 ms",
+        },
+      },
+      {
+        type: "eventDrivenTool",
+        id: "schedule-event-1",
+        tool: "schedule_subscribe",
+        title: "Schedule triggered",
+        text: "unmatched event text",
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(singleSchedule.monitors.eventCount, 1);
+  assert.equal(
+    singleSchedule.monitors.sections[1]?.monitors[0]?.latestEvent,
+    "unmatched event text",
+  );
+
+  const twoSchedules = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "schedule-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_interval", interval_ms: 60_000 },
+          label: "daily digest",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule-1",
+          schedule_summary: "every 60000 ms",
+        },
+      },
+      {
+        type: "builtinToolCall",
+        id: "schedule-2",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_interval", interval_ms: 120_000 },
+          label: "nightly build",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule-2",
+          schedule_summary: "every 120000 ms",
+        },
+      },
+      {
+        type: "eventDrivenTool",
+        id: "schedule-event-1",
+        tool: "schedule_subscribe",
+        title: "Schedule triggered",
+        text: "unmatched event text",
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(twoSchedules.monitors.eventCount, 1);
+  assert.deepEqual(
+    twoSchedules.monitors.sections[1]?.monitors.map((monitor) => [
+      monitor.eventCount,
+      monitor.latestEvent,
+    ]),
+    [
+      [0, null],
+      [0, null],
+    ],
+  );
+});
+
 test("schedule unsubscribe does not remove command monitor with matching id", () => {
   const thread = {
     ...makeThread(

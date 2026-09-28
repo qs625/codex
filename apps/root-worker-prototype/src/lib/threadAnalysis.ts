@@ -224,66 +224,8 @@ function buildMonitorSections(
   thread: Thread | null,
   options: ThreadAnalysisOptions,
 ): ThreadAnalysis["monitors"] {
-  const monitors: InternalMonitorSummary[] = [];
-  const eventsByTool = new Map<string, MonitorEvent[]>();
-  const allowLiveCommandMonitors = threadAllowsLiveCommandMonitors(thread);
-
-  if (thread) {
-    for (const turn of thread.turns) {
-      for (const item of turn.items) {
-        applyMonitorItem(item, {
-          monitors,
-          eventsByTool,
-          allowLiveCommandMonitors,
-          allowCommandExecutionMonitors: false,
-        });
-      }
-    }
-    for (const item of thread.activeSubscriptionItems ?? []) {
-      applyMonitorItem(item, {
-        monitors,
-        eventsByTool,
-        allowLiveCommandMonitors,
-        allowCommandExecutionMonitors: false,
-      });
-    }
-    for (const item of selectActiveCommandItems(thread)) {
-      applyMonitorItem(item, {
-        monitors,
-        eventsByTool,
-        allowLiveCommandMonitors,
-        allowCommandExecutionMonitors: true,
-      });
-    }
-  }
-
-  const activeMonitors: InternalMonitorSummary[] = [];
-  for (const monitor of monitors) {
-    const tool = toolFromMonitorKind(monitor.kind);
-    const events = tool ? (eventsByTool.get(tool) ?? []) : [];
-    const matchingEvents = events.filter((event) =>
-      monitorMatchesEvent(monitor, event.matchText),
-    );
-    const fallbackEvents =
-      monitors.filter((candidate) => candidate.kind === monitor.kind).length ===
-      1
-        ? events
-        : [];
-    const observedEvents =
-      matchingEvents.length > 0 ? matchingEvents : fallbackEvents;
-
-    if (observedEvents.length > 0) {
-      activeMonitors.push({
-        ...monitor,
-        eventCount: observedEvents.length,
-        latestEvent: observedEvents.at(-1)?.displayText ?? null,
-      });
-      continue;
-    }
-
-    activeMonitors.push(monitor);
-  }
-
+  const inventory = MonitorInventory.fromThread(thread);
+  const activeMonitors = inventory.activeMonitors();
   const publicMonitors = activeMonitors.map(toPublicMonitorSummary);
   const sections = MONITOR_SECTIONS.map((section) => ({
     ...section,
@@ -292,80 +234,10 @@ function buildMonitorSections(
 
   return {
     totalCount: activeMonitors.length,
-    eventCount:
-      [...eventsByTool.values()].reduce(
-        (sum, events) => sum + events.length,
-        0,
-      ) +
-      activeMonitors
-        .filter((monitor) => monitor.kind === "command")
-        .reduce((sum, monitor) => sum + monitor.eventCount, 0),
+    eventCount: inventory.eventCount(activeMonitors),
     sections,
     scheduleAgenda: buildScheduleAgenda(activeMonitors, options),
   };
-}
-
-function applyMonitorItem(
-  item: ThreadItem,
-  state: {
-    monitors: InternalMonitorSummary[];
-    eventsByTool: Map<string, MonitorEvent[]>;
-    allowLiveCommandMonitors: boolean;
-    allowCommandExecutionMonitors: boolean;
-  },
-) {
-  const {
-    monitors,
-    eventsByTool,
-    allowLiveCommandMonitors,
-    allowCommandExecutionMonitors,
-  } = state;
-  if (isMonitorToolCall(item)) {
-    const monitor = buildMonitorSummary(item);
-    if (monitor) {
-      upsertMonitorSummary(monitors, monitor);
-    }
-    return;
-  }
-
-  if (isUnsubscribeToolCall(item)) {
-    removeUnsubscribedMonitor(monitors, item);
-    return;
-  }
-
-  if (item.type === "eventDrivenTool" && isMonitorTool(item.tool)) {
-    const events = eventsByTool.get(item.tool) ?? [];
-    events.push(buildMonitorEvent(item));
-    eventsByTool.set(item.tool, events);
-    return;
-  }
-
-  if (item.type === "commandExecution") {
-    if (!allowCommandExecutionMonitors) {
-      return;
-    }
-    if (!isRunningCommandExecutionStatus(item.status)) {
-      removeCommandMonitor(monitors, item.id);
-      return;
-    }
-    const commandMonitor = buildCommandMonitorSummary(item, allowLiveCommandMonitors);
-    if (commandMonitor) {
-      upsertMonitorSummary(monitors, commandMonitor);
-    }
-    return;
-  }
-}
-
-function removeCommandMonitor(
-  monitors: InternalMonitorSummary[],
-  commandId: string,
-) {
-  for (let index = monitors.length - 1; index >= 0; index -= 1) {
-    const monitor = monitors[index];
-    if (monitor?.kind === "command" && monitor.id === commandId) {
-      monitors.splice(index, 1);
-    }
-  }
 }
 
 function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {
@@ -411,6 +283,186 @@ function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {
         left.displayPath.localeCompare(right.displayPath),
     )
     .map(({ lastSeenOrder: _lastSeenOrder, ...file }) => file);
+}
+
+class MonitorInventory {
+  private readonly monitors: InternalMonitorSummary[] = [];
+  private readonly eventsByTool = new Map<string, MonitorEvent[]>();
+
+  private constructor(private readonly allowLiveCommandMonitors: boolean) {}
+
+  static fromThread(thread: Thread | null) {
+    const inventory = new MonitorInventory(
+      threadAllowsLiveCommandMonitors(thread),
+    );
+    if (!thread) {
+      return inventory;
+    }
+
+    for (const turn of thread.turns) {
+      for (const item of turn.items) {
+        inventory.applyItem(item, {
+          allowCommandExecutionMonitors: false,
+        });
+      }
+    }
+    for (const item of thread.activeSubscriptionItems ?? []) {
+      inventory.applyItem(item, {
+        allowCommandExecutionMonitors: false,
+      });
+    }
+    for (const item of selectActiveCommandItems(thread)) {
+      inventory.applyItem(item, {
+        allowCommandExecutionMonitors: true,
+      });
+    }
+    return inventory;
+  }
+
+  activeMonitors() {
+    return this.monitors.map((monitor) => this.withObservedEvents(monitor));
+  }
+
+  eventCount(activeMonitors: InternalMonitorSummary[]) {
+    return (
+      [...this.eventsByTool.values()].reduce(
+        (sum, events) => sum + events.length,
+        0,
+      ) +
+      activeMonitors
+        .filter((monitor) => monitor.kind === "command")
+        .reduce((sum, monitor) => sum + monitor.eventCount, 0)
+    );
+  }
+
+  private applyItem(
+    item: ThreadItem,
+    options: { allowCommandExecutionMonitors: boolean },
+  ) {
+    if (isMonitorToolCall(item)) {
+      const monitor = buildMonitorSummary(item);
+      if (monitor) {
+        this.upsertMonitor(monitor);
+      }
+      return;
+    }
+
+    if (isUnsubscribeToolCall(item)) {
+      this.removeUnsubscribedMonitor(item);
+      return;
+    }
+
+    if (item.type === "eventDrivenTool" && isMonitorTool(item.tool)) {
+      const events = this.eventsByTool.get(item.tool) ?? [];
+      events.push(buildMonitorEvent(item));
+      this.eventsByTool.set(item.tool, events);
+      return;
+    }
+
+    if (item.type === "commandExecution") {
+      this.applyCommandItem(item, options.allowCommandExecutionMonitors);
+    }
+  }
+
+  private applyCommandItem(
+    item: Extract<ThreadItem, { type: "commandExecution" }>,
+    allowCommandExecutionMonitors: boolean,
+  ) {
+    if (!allowCommandExecutionMonitors) {
+      return;
+    }
+    if (!isRunningCommandExecutionStatus(item.status)) {
+      this.removeCommandMonitor(item.id);
+      return;
+    }
+    const commandMonitor = buildCommandMonitorSummary(
+      item,
+      this.allowLiveCommandMonitors,
+    );
+    if (commandMonitor) {
+      this.upsertMonitor(commandMonitor);
+    }
+  }
+
+  private withObservedEvents(
+    monitor: InternalMonitorSummary,
+  ): InternalMonitorSummary {
+    const observedEvents = this.observedEventsFor(monitor);
+    if (observedEvents.length === 0) {
+      return monitor;
+    }
+    return {
+      ...monitor,
+      eventCount: observedEvents.length,
+      latestEvent: observedEvents.at(-1)?.displayText ?? null,
+    };
+  }
+
+  private observedEventsFor(monitor: MonitorSummary) {
+    const tool = toolFromMonitorKind(monitor.kind);
+    const events = tool ? (this.eventsByTool.get(tool) ?? []) : [];
+    const matchingEvents = events.filter((event) =>
+      monitorMatchesEvent(monitor, event.matchText),
+    );
+    if (matchingEvents.length > 0) {
+      return matchingEvents;
+    }
+    return this.monitorCountForKind(monitor.kind) === 1 ? events : [];
+  }
+
+  private monitorCountForKind(kind: MonitorKind) {
+    return this.monitors.filter((candidate) => candidate.kind === kind).length;
+  }
+
+  private removeCommandMonitor(commandId: string) {
+    for (let index = this.monitors.length - 1; index >= 0; index -= 1) {
+      const monitor = this.monitors[index];
+      if (monitor?.kind === "command" && monitor.id === commandId) {
+        this.monitors.splice(index, 1);
+      }
+    }
+  }
+
+  private removeUnsubscribedMonitor(
+    item: Extract<
+      ThreadItem,
+      { type: "eventDrivenToolCall" | "builtinToolCall" }
+    >,
+  ) {
+    if (
+      item.status !== "completed" ||
+      objectRecord(item.output).unsubscribed !== true
+    ) {
+      return;
+    }
+    const args = objectRecord(item.arguments);
+    const subscriptionId = stringOrNull(args.subscription_id);
+    if (!subscriptionId) {
+      return;
+    }
+
+    const monitorIndex = this.monitors.findIndex(
+      (monitor) =>
+        monitor.kind === "schedule" &&
+        monitor.subscriptionId === subscriptionId,
+    );
+    if (monitorIndex !== -1) {
+      this.monitors.splice(monitorIndex, 1);
+    }
+  }
+
+  private upsertMonitor(monitor: InternalMonitorSummary) {
+    const existingIndex = this.monitors.findIndex(
+      (existing) =>
+        existing.kind === monitor.kind &&
+        existing.subscriptionId === monitor.subscriptionId,
+    );
+    if (existingIndex === -1) {
+      this.monitors.push(monitor);
+      return;
+    }
+    this.monitors[existingIndex] = monitor;
+  }
 }
 
 function buildCommandMonitorSummary(
@@ -482,50 +534,6 @@ function buildMonitorSummary(
     scheduleRule: kind === "schedule" ? formatScheduleRule(schedule) : null,
     nextFireAt: kind === "schedule" ? stringOrNull(output.next_fire_at) : null,
   };
-}
-
-function removeUnsubscribedMonitor(
-  monitors: InternalMonitorSummary[],
-  item: Extract<
-    ThreadItem,
-    { type: "eventDrivenToolCall" | "builtinToolCall" }
-  >,
-) {
-  if (
-    item.status !== "completed" ||
-    objectRecord(item.output).unsubscribed !== true
-  ) {
-    return;
-  }
-  const args = objectRecord(item.arguments);
-  const subscriptionId = stringOrNull(args.subscription_id);
-  if (!subscriptionId) {
-    return;
-  }
-
-  const monitorIndex = monitors.findIndex(
-    (monitor) =>
-      monitor.kind === "schedule" && monitor.subscriptionId === subscriptionId,
-  );
-  if (monitorIndex !== -1) {
-    monitors.splice(monitorIndex, 1);
-  }
-}
-
-function upsertMonitorSummary(
-  monitors: InternalMonitorSummary[],
-  monitor: InternalMonitorSummary,
-) {
-  const existingIndex = monitors.findIndex(
-    (existing) =>
-      existing.kind === monitor.kind &&
-      existing.subscriptionId === monitor.subscriptionId,
-  );
-  if (existingIndex === -1) {
-    monitors.push(monitor);
-    return;
-  }
-  monitors[existingIndex] = monitor;
 }
 
 function toPublicMonitorSummary(
