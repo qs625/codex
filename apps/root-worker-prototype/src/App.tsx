@@ -4318,7 +4318,10 @@ function App() {
                   active
                   variant="workspace"
                   nativeOverlayActive={
-                    isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+                    workspaceAddMenuOpen ||
+                    isSelfCommandOpen ||
+                    isSettingsOpen ||
+                    isCreatingChatThread
                   }
                   resizing={isRightPanelResizing}
                   navigationRequest={null}
@@ -4383,7 +4386,10 @@ function App() {
           <RightPanel
             activeView={rightPanelView}
             browserNativeOverlayActive={
-              isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
+              workspaceAddMenuOpen ||
+              isSelfCommandOpen ||
+              isSettingsOpen ||
+              isCreatingChatThread
             }
             browserPanelResizing={isRightPanelResizing}
             browserNavigationRequest={browserNavigationRequest}

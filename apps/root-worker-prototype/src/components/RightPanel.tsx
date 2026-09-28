@@ -89,6 +89,7 @@ export {
   currentBrowserPanelApi,
   nextBrowserBoundsSequence,
   normalizeBrowserPanelState,
+  resolveCreatedWorkspaceBrowserTab,
   resolveBrowserPanelChromeLabels,
   resolveBrowserPanelTabSelection,
   shouldClearBrowserLocalError,

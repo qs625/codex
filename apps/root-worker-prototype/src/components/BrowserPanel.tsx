@@ -175,6 +175,7 @@ export function BrowserPanel({
   const [managerSelectedBrowserTabId, setManagerSelectedBrowserTabId] =
     useState<string | null>(null);
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
+  const stateRef = useRef<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
   const isManagerVariant = variant === "manager";
@@ -268,6 +269,7 @@ export function BrowserPanel({
 
   const applyBrowserState = (nextState: BrowserPanelState) => {
     const normalizedState = normalizeBrowserPanelState(nextState);
+    stateRef.current = normalizedState;
     setState(normalizedState);
     onBrowserTabIdsChangeRef.current?.(
       normalizedState.tabs.map((tab) => tab.id),
@@ -362,18 +364,17 @@ export function BrowserPanel({
       return;
     }
     workspaceBrowserTabCreatePendingRef.current = true;
+    const existingTabIds = new Set(stateRef.current.tabs.map((tab) => tab.id));
     setLocalError(null);
     void browserApi
-      .createBrowserTab({ activate: true })
+      .createBrowserTab({ activate: false })
       .then((nextState) => {
         const normalizedState = normalizeBrowserPanelState(nextState);
         applyBrowserState(normalizedState);
-        const createdTab =
-          normalizedState.tabs.find(
-            (tab) => tab.id === normalizedState.activeTabId,
-          ) ??
-          normalizedState.tabs.at(-1) ??
-          null;
+        const createdTab = resolveCreatedWorkspaceBrowserTab(
+          normalizedState.tabs,
+          existingTabIds,
+        );
         if (createdTab) {
           onWorkspaceBrowserTabBound?.({
             kind: "browser",
@@ -1086,6 +1087,19 @@ export function resolveBrowserPanelChromeLabels(
     headerTitle: "Browser",
     activeTabTitle: activeTab ? browserTabLabel(activeTab) : "New tab",
   };
+}
+
+export function resolveCreatedWorkspaceBrowserTab(
+  tabs: BrowserPanelTabState[],
+  existingTabIds: ReadonlySet<string>,
+) {
+  if (tabs.length === 0) {
+    return null;
+  }
+  if (existingTabIds.size === 0) {
+    return tabs.at(-1) ?? null;
+  }
+  return tabs.find((tab) => !existingTabIds.has(tab.id)) ?? tabs.at(-1) ?? null;
 }
 
 export function browserBoundsFromElement(
