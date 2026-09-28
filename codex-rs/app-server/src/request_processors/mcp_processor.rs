@@ -6,6 +6,7 @@ use futures::future::BoxFuture;
 use mcp_service_api::SharedMcpAuthHeaderProvider;
 use mcp_service_api::StaticMcpAuthHeaderProvider;
 use protocol::mcp::CallToolResult;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::io;
 
@@ -352,8 +353,7 @@ impl McpRequestProcessor {
         runtime_environment: McpRuntimeEnvironment,
     ) {
         let result = Self::list_mcp_server_status_response(
-            request_id.request_id.to_string(),
-            params,
+            McpServerStatusListRequest::from_protocol(request_id.request_id.to_string(), params),
             config,
             mcp_config,
             auth,
@@ -364,17 +364,12 @@ impl McpRequestProcessor {
     }
 
     async fn list_mcp_server_status_response(
-        request_id: String,
-        params: ListMcpServerStatusParams,
+        request: McpServerStatusListRequest,
         config: Config,
         mcp_config: mcp_types::McpConfig,
         auth: Option<CodexAuth>,
         runtime_environment: McpRuntimeEnvironment,
     ) -> Result<ListMcpServerStatusResponse, JSONRPCErrorError> {
-        let detail = match params.detail.unwrap_or(McpServerStatusDetail::Full) {
-            McpServerStatusDetail::Full => McpSnapshotDetail::Full,
-            McpServerStatusDetail::ToolsAndAuthOnly => McpSnapshotDetail::ToolsAndAuthOnly,
-        };
         let auth_snapshot = auth.as_ref().map(CodexAuth::request_auth_snapshot);
         let auth_context = codex_apps_auth_context(auth_snapshot.as_ref());
 
@@ -382,76 +377,19 @@ impl McpRequestProcessor {
             &mcp_config,
             auth_context.as_ref(),
             codex_apps_auth_provider(auth.as_ref()),
-            request_id,
+            request.request_id,
             runtime_environment,
-            detail,
+            request.detail,
         )
         .await;
 
         let effective_servers = effective_mcp_servers(&mcp_config, auth_context.as_ref());
-        let McpServerStatusSnapshot {
-            tools_by_server,
-            resources,
-            resource_templates,
-            auth_statuses,
-        } = snapshot;
-
-        let mut server_names: Vec<String> = config
-            .mcp_servers
-            .keys()
-            .cloned()
-            // Include runtime-added/plugin MCP servers that are present in the
-            // effective runtime config even when they are not user-declared in
-            // `config.mcp_servers`.
-            .chain(effective_servers.keys().cloned())
-            .chain(auth_statuses.keys().cloned())
-            .chain(resources.keys().cloned())
-            .chain(resource_templates.keys().cloned())
-            .collect();
-        server_names.sort();
-        server_names.dedup();
-
-        let total = server_names.len();
-        let limit = params.limit.unwrap_or(total as u32).max(1) as usize;
-        let effective_limit = limit.min(total);
-        let start = match params.cursor {
-            Some(cursor) => match cursor.parse::<usize>() {
-                Ok(idx) => idx,
-                Err(_) => return Err(invalid_request(format!("invalid cursor: {cursor}"))),
-            },
-            None => 0,
-        };
-
-        if start > total {
-            return Err(invalid_request(format!(
-                "cursor {start} exceeds total MCP servers {total}"
-            )));
-        }
-
-        let end = start.saturating_add(effective_limit).min(total);
-
-        let data: Vec<McpServerStatus> = server_names[start..end]
-            .iter()
-            .map(|name| McpServerStatus {
-                name: name.clone(),
-                tools: tools_by_server.get(name).cloned().unwrap_or_default(),
-                resources: resources.get(name).cloned().unwrap_or_default(),
-                resource_templates: resource_templates.get(name).cloned().unwrap_or_default(),
-                auth_status: auth_statuses
-                    .get(name)
-                    .cloned()
-                    .unwrap_or(CoreMcpAuthStatus::Unsupported)
-                    .into(),
-            })
-            .collect();
-
-        let next_cursor = if end < total {
-            Some(end.to_string())
-        } else {
-            None
-        };
-
-        Ok(ListMcpServerStatusResponse { data, next_cursor })
+        McpServerStatusInventory::from_snapshot(
+            config.mcp_servers.keys().cloned(),
+            effective_servers.keys().cloned(),
+            snapshot,
+        )
+        .into_response(request.page)
     }
 
     async fn read_mcp_resource(
@@ -573,6 +511,159 @@ impl McpRequestProcessor {
     }
 }
 
+struct McpServerStatusListRequest {
+    request_id: String,
+    detail: McpSnapshotDetail,
+    page: McpServerStatusPage,
+}
+
+impl McpServerStatusListRequest {
+    fn from_protocol(request_id: String, params: ListMcpServerStatusParams) -> Self {
+        let detail = match params.detail.unwrap_or(McpServerStatusDetail::Full) {
+            McpServerStatusDetail::Full => McpSnapshotDetail::Full,
+            McpServerStatusDetail::ToolsAndAuthOnly => McpSnapshotDetail::ToolsAndAuthOnly,
+        };
+        Self {
+            request_id,
+            detail,
+            page: McpServerStatusPage {
+                cursor: params.cursor,
+                limit: params.limit,
+            },
+        }
+    }
+}
+
+struct McpServerStatusPage {
+    cursor: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug)]
+struct McpServerStatusPageWindow {
+    start: usize,
+    end: usize,
+    next_cursor: Option<String>,
+}
+
+impl McpServerStatusPage {
+    fn window(&self, total: usize) -> Result<McpServerStatusPageWindow, JSONRPCErrorError> {
+        let limit = self.limit.unwrap_or(total as u32).max(1) as usize;
+        let effective_limit = limit.min(total);
+        let start = match self.cursor.as_deref() {
+            Some(cursor) => match cursor.parse::<usize>() {
+                Ok(idx) => idx,
+                Err(_) => return Err(invalid_request(format!("invalid cursor: {cursor}"))),
+            },
+            None => 0,
+        };
+
+        if start > total {
+            return Err(invalid_request(format!(
+                "cursor {start} exceeds total MCP servers {total}"
+            )));
+        }
+
+        let end = start.saturating_add(effective_limit).min(total);
+        let next_cursor = if end < total {
+            Some(end.to_string())
+        } else {
+            None
+        };
+
+        Ok(McpServerStatusPageWindow {
+            start,
+            end,
+            next_cursor,
+        })
+    }
+}
+
+struct McpServerStatusInventory {
+    server_names: Vec<String>,
+    tools_by_server: HashMap<String, HashMap<String, protocol::mcp::Tool>>,
+    resources: HashMap<String, Vec<protocol::mcp::Resource>>,
+    resource_templates: HashMap<String, Vec<protocol::mcp::ResourceTemplate>>,
+    auth_statuses: HashMap<String, CoreMcpAuthStatus>,
+}
+
+impl McpServerStatusInventory {
+    fn from_snapshot(
+        configured_servers: impl Iterator<Item = String>,
+        effective_servers: impl Iterator<Item = String>,
+        snapshot: McpServerStatusSnapshot,
+    ) -> Self {
+        let McpServerStatusSnapshot {
+            tools_by_server,
+            resources,
+            resource_templates,
+            auth_statuses,
+        } = snapshot;
+        let server_names = collect_mcp_status_server_names(
+            configured_servers,
+            effective_servers,
+            auth_statuses.keys().cloned(),
+            resources.keys().cloned(),
+            resource_templates.keys().cloned(),
+        );
+        Self {
+            server_names,
+            tools_by_server,
+            resources,
+            resource_templates,
+            auth_statuses,
+        }
+    }
+
+    fn into_response(
+        self,
+        page: McpServerStatusPage,
+    ) -> Result<ListMcpServerStatusResponse, JSONRPCErrorError> {
+        let page_window = page.window(self.server_names.len())?;
+        let data = self.server_names[page_window.start..page_window.end]
+            .iter()
+            .map(|name| McpServerStatus {
+                name: name.clone(),
+                tools: self.tools_by_server.get(name).cloned().unwrap_or_default(),
+                resources: self.resources.get(name).cloned().unwrap_or_default(),
+                resource_templates: self
+                    .resource_templates
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_default(),
+                auth_status: self
+                    .auth_statuses
+                    .get(name)
+                    .cloned()
+                    .unwrap_or(CoreMcpAuthStatus::Unsupported)
+                    .into(),
+            })
+            .collect();
+
+        Ok(ListMcpServerStatusResponse {
+            data,
+            next_cursor: page_window.next_cursor,
+        })
+    }
+}
+
+fn collect_mcp_status_server_names(
+    configured_servers: impl Iterator<Item = String>,
+    effective_servers: impl Iterator<Item = String>,
+    auth_servers: impl Iterator<Item = String>,
+    resource_servers: impl Iterator<Item = String>,
+    resource_template_servers: impl Iterator<Item = String>,
+) -> Vec<String> {
+    configured_servers
+        .chain(effective_servers)
+        .chain(auth_servers)
+        .chain(resource_servers)
+        .chain(resource_template_servers)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 async fn ensure_thread_mcp_runtime_available(
     live_thread_inspection: &(impl AppServerLiveThreadInspectionRuntime + ?Sized),
     runtime: &(impl McpProcessorRuntime + ?Sized),
@@ -650,6 +741,92 @@ mod tests {
         ensure_thread_mcp_runtime_available(&runtime, &runtime, thread_id)
             .await
             .expect("native MCP runtime should be accepted");
+    }
+
+    #[test]
+    fn mcp_status_server_names_are_sorted_and_deduplicated_across_sources() {
+        let names = collect_mcp_status_server_names(
+            ["configured", "shared"].into_iter().map(str::to_string),
+            ["effective", "shared"].into_iter().map(str::to_string),
+            ["auth"].into_iter().map(str::to_string),
+            ["resources", "configured"].into_iter().map(str::to_string),
+            ["templates"].into_iter().map(str::to_string),
+        );
+
+        assert_eq!(
+            names,
+            vec![
+                "auth".to_string(),
+                "configured".to_string(),
+                "effective".to_string(),
+                "resources".to_string(),
+                "shared".to_string(),
+                "templates".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mcp_status_inventory_projects_page_and_auth_fallbacks() {
+        let inventory = McpServerStatusInventory {
+            server_names: vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
+            tools_by_server: HashMap::new(),
+            resources: HashMap::new(),
+            resource_templates: HashMap::new(),
+            auth_statuses: HashMap::from([("beta".to_string(), CoreMcpAuthStatus::OAuth)]),
+        };
+
+        let response = inventory
+            .into_response(McpServerStatusPage {
+                cursor: Some("1".to_string()),
+                limit: Some(1),
+            })
+            .unwrap();
+
+        assert_eq!(response.next_cursor, Some("2".to_string()));
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].name, "beta");
+        assert_eq!(
+            response.data[0].auth_status,
+            app_server_protocol::McpAuthStatus::OAuth
+        );
+
+        let fallback = McpServerStatusInventory {
+            server_names: vec!["alpha".to_string()],
+            tools_by_server: HashMap::new(),
+            resources: HashMap::new(),
+            resource_templates: HashMap::new(),
+            auth_statuses: HashMap::new(),
+        }
+        .into_response(McpServerStatusPage {
+            cursor: None,
+            limit: None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            fallback.data[0].auth_status,
+            app_server_protocol::McpAuthStatus::Unsupported
+        );
+    }
+
+    #[test]
+    fn mcp_status_page_preserves_cursor_errors() {
+        let invalid = McpServerStatusPage {
+            cursor: Some("not-a-number".to_string()),
+            limit: Some(1),
+        }
+        .window(3)
+        .expect_err("invalid cursor should fail");
+        assert_eq!(invalid.message, "invalid cursor: not-a-number");
+
+        let out_of_range = McpServerStatusPage {
+            cursor: Some("4".to_string()),
+            limit: Some(1),
+        }
+        .window(3)
+        .expect_err("out of range cursor should fail");
+        assert_eq!(out_of_range.message, "cursor 4 exceeds total MCP servers 3");
     }
 
     struct FakeMcpRuntime {
