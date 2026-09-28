@@ -105,11 +105,30 @@ export function buildAgentTree(
 export function buildProjectAgentSidebar(
   threads: Thread[],
 ): ProjectAgentSidebar {
+  const inventory = buildProjectAgentSidebarInventory(threads);
+
+  return {
+    projects: buildSidebarProjectNodes(threads, inventory.projectGroups),
+    chat: buildSidebarChatSection(threads, inventory.chatThreads),
+  };
+}
+
+type ProjectAgentSidebarInventory = {
+  projectGroups: SidebarProjectRootGroup[];
+  chatThreads: Thread[];
+};
+
+type SidebarProjectRootGroup = {
+  cwd: string;
+  projectPath: string | null;
+  candidates: Thread[];
+};
+
+function buildProjectAgentSidebarInventory(
+  threads: Thread[],
+): ProjectAgentSidebarInventory {
   const parentlessThreads = threads.filter(isRootThread);
-  const projectRootCandidates = new Map<
-    string,
-    { cwd: string; projectPath: string | null; candidates: Thread[] }
-  >();
+  const projectGroupsById = new Map<string, SidebarProjectRootGroup>();
   const chatThreads: Thread[] = [];
 
   for (const thread of parentlessThreads) {
@@ -120,56 +139,96 @@ export function buildProjectAgentSidebar(
     }
     const projectPath = projectPathIdentityForThread(thread);
     const projectKey = projectIdentityKey(projectCwd, projectPath);
-    const group = projectRootCandidates.get(projectKey) ?? {
+    const group = projectGroupsById.get(projectKey) ?? {
       cwd: projectCwd,
       projectPath,
       candidates: [],
     };
     group.candidates.push(thread);
-    projectRootCandidates.set(projectKey, group);
+    projectGroupsById.set(projectKey, group);
   }
 
-  const projects = [...projectRootCandidates.values()]
-    .map(({ cwd, projectPath, candidates }) => {
-      const sortedCandidates = [...candidates].sort(
-        compareCanonicalProjectRoot,
-      );
-      const rootThread = sortedCandidates[0];
-      const projectLabel = projectPath ?? projectLabelFromCwd(cwd);
-      const duplicateRootThreadIds = sortedCandidates
-        .slice(1)
-        .map((thread) => thread.id);
-      const duplicateRootTrees = sortedCandidates
-        .slice(1)
-        .map((thread) =>
-          buildSidebarRootTree(threads, thread, withProjectConversationLabel),
-        );
-      const projectTree = buildSidebarRootTree(threads, rootThread, (node) =>
-        withProjectRootLabel(node, projectLabel),
-      );
-      projectTree.children.push(...duplicateRootTrees);
-      const projectThreadList = collectTreeThreads(projectTree);
-      const counts = countSidebarStatuses(projectThreadList);
+  return {
+    projectGroups: [...projectGroupsById.values()],
+    chatThreads,
+  };
+}
 
-      return {
-        id: projectNodeId(cwd, projectPath),
-        label: projectLabel,
-        subtitle: getAgentRoleLabel(rootThread),
-        cwd,
-        statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
-        updatedAt: Math.max(
-          ...projectThreadList.map((thread) => thread.updatedAt),
-        ),
-        tree: projectTree,
-        descendantCount: countDescendants(projectTree),
-        activeCount: counts.activeCount,
-        waitingCount: counts.waitingCount,
-        failedCount: counts.failedCount,
-        duplicateRootThreadIds,
-      } satisfies SidebarProjectNode;
-    })
+function buildSidebarProjectNodes(
+  threads: Thread[],
+  groups: readonly SidebarProjectRootGroup[],
+): SidebarProjectNode[] {
+  return groups
+    .map((group) => buildSidebarProjectNode(threads, group))
     .sort((left, right) => right.updatedAt - left.updatedAt);
+}
 
+function buildSidebarProjectNode(
+  threads: Thread[],
+  group: SidebarProjectRootGroup,
+): SidebarProjectNode {
+  const sortedCandidates = [...group.candidates].sort(
+    compareCanonicalProjectRoot,
+  );
+  const rootThread = sortedCandidates[0];
+  const projectLabel = group.projectPath ?? projectLabelFromCwd(group.cwd);
+  const duplicateRootThreads = sortedCandidates.slice(1);
+  const duplicateRootTrees = duplicateRootThreads.map((thread) =>
+    buildSidebarRootTree(threads, thread, withProjectConversationLabel),
+  );
+  const projectTree = buildSidebarRootTree(threads, rootThread, (node) =>
+    withProjectRootLabel(node, projectLabel),
+  );
+  projectTree.children.push(...duplicateRootTrees);
+
+  return buildSidebarProjectNodeFromTree({
+    cwd: group.cwd,
+    projectPath: group.projectPath,
+    projectLabel,
+    rootThread,
+    projectTree,
+    duplicateRootThreadIds: duplicateRootThreads.map((thread) => thread.id),
+  });
+}
+
+function buildSidebarProjectNodeFromTree({
+  cwd,
+  projectPath,
+  projectLabel,
+  rootThread,
+  projectTree,
+  duplicateRootThreadIds,
+}: {
+  cwd: string;
+  projectPath: string | null;
+  projectLabel: string;
+  rootThread: Thread;
+  projectTree: TreeNode;
+  duplicateRootThreadIds: string[];
+}): SidebarProjectNode {
+  const projectThreadList = collectTreeThreads(projectTree);
+  const counts = countSidebarStatuses(projectThreadList);
+
+  return {
+    id: projectNodeId(cwd, projectPath),
+    label: projectLabel,
+    subtitle: getAgentRoleLabel(rootThread),
+    cwd,
+    statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
+    updatedAt: Math.max(...projectThreadList.map((thread) => thread.updatedAt)),
+    tree: projectTree,
+    descendantCount: countDescendants(projectTree),
+    activeCount: counts.activeCount,
+    waitingCount: counts.waitingCount,
+    failedCount: counts.failedCount,
+    duplicateRootThreadIds,
+  };
+}
+
+function buildSidebarChatSection(
+  threads: Thread[],
+  chatThreads: readonly Thread[],
+): ProjectAgentSidebar["chat"] {
   const chatConversations = [...chatThreads]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .map((thread) =>
@@ -178,16 +237,13 @@ export function buildProjectAgentSidebar(
   const chatThreadsForStatus = chatConversations.flatMap(collectTreeThreads);
 
   return {
-    projects,
-    chat: {
-      id: "chat",
-      statusClass: aggregateSidebarStatus(chatThreadsForStatus),
-      updatedAt:
-        chatThreadsForStatus.length > 0
-          ? Math.max(...chatThreadsForStatus.map((thread) => thread.updatedAt))
-          : 0,
-      conversations: chatConversations,
-    },
+    id: "chat",
+    statusClass: aggregateSidebarStatus(chatThreadsForStatus),
+    updatedAt:
+      chatThreadsForStatus.length > 0
+        ? Math.max(...chatThreadsForStatus.map((thread) => thread.updatedAt))
+        : 0,
+    conversations: chatConversations,
   };
 }
 
