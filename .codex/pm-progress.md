@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: continuous large front+backend code organization is temporarily paused for higher-priority user-visible regressions. Current interrupt work: fix compact/display regression where after entering a user message that triggers compact, subsequent messages still do not appear in the conversation. Resume code organization only after user-visible regressions are fixed, merged, and installed-effective as needed.
+Active goal: continuous large front+backend code organization can resume after the higher-priority user-visible regressions were fixed, merged, and installed-effective in Runtime Capsule `sha256:b56210ccaa7079e7018e644319ccc6e6619e6ad9ec91199e446fa0ee7f9ac109`. Next queued PM work is to resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
 
 ## Active Work
 
