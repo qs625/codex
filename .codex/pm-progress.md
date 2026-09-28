@@ -8,9 +8,26 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: continuous large front+backend code organization. User asked to continue and not stop, and clarified not to keep doing small changes. Scope includes `codex-rs/` backend/runtime and `apps/root-worker-prototype/` frontend/Electron code, prioritizing larger coherent production/module-boundary refactors, architecture-level duplication removal, and code-size reduction while preserving product behavior, provider-visible contracts, persisted history/protocol semantics, and installed Runtime Capsule semantics. PM should keep dispatching coherent cleanup tranches while owner_main is free, but must not fall back to tiny helper/test-only cleanups just to keep momentum.
+Active goal: continuous large front+backend code organization is temporarily paused for higher-priority user-visible regressions. Current interrupt work: fix compact/display regression where after entering a user message that triggers compact, subsequent messages still do not appear in the conversation. Resume code organization only after user-visible regressions are fixed, merged, and installed-effective as needed.
 
 ## Active Work
+
+- id: compact-after-user-message-display-regression
+  status: dispatched
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/compact-after-user-message-display-regression
+  task_type: frontend_conversation_compact_display_bugfix
+  depends_on: main `7cf28dcd1`; user reported that after entering a user message that triggers compact, subsequent messages still do not display
+  files: expected `apps/root-worker-prototype/src/lib/thread.ts`, `apps/root-worker-prototype/src/lib/thread.test.ts`, conversation display/virtualization helpers, and directly related component tests only unless root cause proves a narrower/lower layer
+  base_commit: `7cf28dcd1`
+  problem_contract: After compact is triggered by a user message, the conversation must immediately continue showing that user message and all subsequent live/display items in order. Compact summary/init context may replace earlier history, but it must not create a display boundary that drops later user messages, assistant/status/tool output, or child/command updates for the active turn.
+  prior_fix_context: Previous fixes `compact-live-output-after-init-context-regression` and `compact-user-message-after-compact-display` installed successfully for narrower scenarios. This new user report means at least one post-compact path remains uncovered or a previously fixed assumption is invalid in the current installed repro.
+  constraints: Preserve typed compact stale filtering for genuinely old pre-compact items, persisted history/protocol semantics, model-visible context, provider-visible contracts, workspace tab visibility fallback, and conversation virtualization correctness. Do not disable compact boundary filtering globally, revive stale pre-compact items, special-case exact text, parse raw markers, use CSS/visibility hacks, or treat right-panel/Thread Analysis updates as proof that conversation display is correct.
+  expected_investigation: Determine whether the failure is live item acceptance, persisted replay after compact, turn id/timestamp boundary classification, virtualized list key/cache/visibility, active workspace tab/panel visibility, or subscription/read merge order. Explain why the previous installed compact fixes and tests did not catch this scenario.
+  validation_required: Add regression tests that model a user message causing compact and then at least one later user/assistant/live item that must remain visible. Run focused thread/conversation tests and any component/virtualization tests touched. PM will require installed Runtime Capsule restart and self-debug after merge because this is a user-visible installed regression.
+  next_action: owner_dev_2 to root-cause, implement the narrow semantic fix, reuse fixed reviewer `/self/owner_dev_2/reviewer`, and return commit plus validation evidence.
 
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
