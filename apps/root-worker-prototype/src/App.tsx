@@ -3480,6 +3480,66 @@ function App() {
     upsertWorkspaceObjectTab(workspaceTabForTerminal(tab, selectedThread));
   }
 
+  function bindWorkspaceBrowserTab(
+    workspaceTabId: string,
+    tab: BrowserWorkspaceTabDescriptor,
+  ) {
+    const currentTabs = workspaceTabsRef.current;
+    const existingTab = currentTabs.find((item) => item.id === workspaceTabId);
+    if (existingTab?.kind !== "browser" || existingTab.browserTabId) {
+      return;
+    }
+    const nextTab = workspaceTabForBrowser(tab);
+    const next = currentTabs.map((item) =>
+      item.id === workspaceTabId ? nextTab : item,
+    );
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    setActiveWorkspaceTabId((current) =>
+      current === workspaceTabId ? nextTab.id : current,
+    );
+    storedWorkspaceTabOrderRef.current = storedWorkspaceTabOrderRef.current.map(
+      (id) => (id === workspaceTabId ? nextTab.id : id),
+    );
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
+  }
+
+  function bindWorkspaceTerminalTab(
+    workspaceTabId: string,
+    tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
+  ) {
+    const currentTabs = workspaceTabsRef.current;
+    const existingTab = currentTabs.find((item) => item.id === workspaceTabId);
+    if (existingTab?.kind !== "terminal" || existingTab.terminalTabId) {
+      return;
+    }
+    const tabThreadId = tab.threadId ?? existingTab.threadId ?? null;
+    const tabThread = tabThreadId
+      ? (threads.find((thread) => thread.id === tabThreadId) ?? null)
+      : selectedThread;
+    const nextTab = workspaceTabForTerminal(tab, tabThread);
+    const next = currentTabs.map((item) =>
+      item.id === workspaceTabId ? nextTab : item,
+    );
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    setActiveWorkspaceTabId((current) =>
+      current === workspaceTabId ? nextTab.id : current,
+    );
+    storedWorkspaceTabOrderRef.current = storedWorkspaceTabOrderRef.current.map(
+      (id) => (id === workspaceTabId ? nextTab.id : id),
+    );
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
+  }
+
   function toggleWorkspaceAddMenu() {
     if (workspaceAddMenuOpen) {
       setWorkspaceAddMenuOpen(false);
@@ -4161,13 +4221,13 @@ function App() {
                     isSelfCommandOpen || isSettingsOpen || isCreatingChatThread
                   }
                   resizing={isRightPanelResizing}
-                  navigationRequest={browserNavigationRequest}
-                  onNavigationRequestHandled={
-                    handleBrowserNavigationRequestHandled
-                  }
+                  navigationRequest={null}
                   onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
                   onBrowserTabIdsChange={pruneMissingWorkspaceBrowserTabs}
                   activeBrowserTabId={activeWorkspaceTab.browserTabId ?? null}
+                  onWorkspaceBrowserTabBound={(tab) =>
+                    bindWorkspaceBrowserTab(activeWorkspaceTab.id, tab)
+                  }
                 />
               ) : null}
             </div>
@@ -4183,6 +4243,9 @@ function App() {
                   focusPanelRequestToken={terminalPanelFocusRequestToken}
                   onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
                   activeTerminalTabId={activeWorkspaceTab.terminalTabId ?? null}
+                  onWorkspaceTerminalTabBound={(tab) =>
+                    bindWorkspaceTerminalTab(activeWorkspaceTab.id, tab)
+                  }
                 />
               ) : null}
             </div>
