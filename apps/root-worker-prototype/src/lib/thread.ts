@@ -1382,10 +1382,26 @@ function canAppendUntimedLiveItemAfterCompactInTurn(
   },
 ) {
   return (
-    isThreadActive(thread) &&
     isTurnInFlight(turn) &&
-    !hasExplicitItemTimestamp(item, timestamps)
+    !hasExplicitItemTimestamp(item, timestamps) &&
+    (isThreadActive(thread) || hasPostCompactUserMessage(turn))
   );
+}
+
+function hasPostCompactUserMessage(turn: Turn) {
+  for (let index = turn.items.length - 1; index >= 0; index -= 1) {
+    const item = turn.items[index];
+    if (!item) {
+      continue;
+    }
+    if (item.type === "userMessage") {
+      return true;
+    }
+    if (item.type === "contextCompaction") {
+      return false;
+    }
+  }
+  return false;
 }
 
 function canCreateUntimedLiveTurnItemAfterCompact(

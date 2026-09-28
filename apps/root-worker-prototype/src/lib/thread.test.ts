@@ -4447,6 +4447,92 @@ test("active compact follow-up user turn keeps later live assistant and tool out
   );
 });
 
+test("recovered compact running turn keeps live assistant after post-compact user", () => {
+  const recoveredThread = {
+    ...makeThread(),
+    turns: [
+      {
+        ...makeTurn("turn-recovered", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeUserMessage("user-after-compact", "continue after restart"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = appendAgentDelta(
+    recoveredThread,
+    "turn-recovered",
+    "assistant-live",
+    "working live",
+  );
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-after-compact", "assistant-live"],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["user-after-compact", "message"],
+      ["assistant-live", "message"],
+    ],
+  );
+});
+
+test("recovered compact running turn keeps live tool output after post-compact user", () => {
+  const recoveredThread = {
+    ...makeThread(),
+    turns: [
+      {
+        ...makeTurn("turn-recovered", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeUserMessage("user-after-compact", "continue after restart"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    recoveredThread,
+    "turn-recovered",
+    makeCommandExecution({
+      id: "tool-live",
+      command: "git status --short",
+    }),
+  );
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-after-compact", "tool-live"],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["user-after-compact", "message"],
+      ["tool-live", "tool"],
+    ],
+  );
+});
+
 test("non-active compact head rejects untimed follow-up user items", () => {
   const compactedThread = {
     ...makeThread(),
