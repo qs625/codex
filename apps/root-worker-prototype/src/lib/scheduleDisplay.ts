@@ -29,121 +29,291 @@ const WEEKDAY_INDEX: Record<string, number> = {
 };
 
 export function formatScheduleArgument(value: unknown) {
-  const text = stringOrNull(value);
-  if (text) {
-    return text;
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const kind = stringOrNull(record.kind);
-  if (!kind) {
-    return safeJson(value);
-  }
-  switch (kind) {
-    case "every_interval":
-      return typeof record.interval_ms === "number"
-        ? `${kind} ${formatScheduleDuration(record.interval_ms)}`
-        : kind;
-    case "once_after":
-      return typeof record.delay_ms === "number"
-        ? `${kind} ${formatScheduleDuration(record.delay_ms)}`
-        : kind;
-    case "every_day_at":
-      return [kind, stringOrNull(record.time), stringOrNull(record.timezone)]
-        .filter(Boolean)
-        .join(" ");
-    case "every_week_at":
-      return [
-        kind,
-        formatScheduleWeekdays(record.weekdays),
-        stringOrNull(record.time),
-        stringOrNull(record.timezone),
-      ]
-        .filter(Boolean)
-        .join(" ");
-    case "once_at":
-      return [kind, stringOrNull(record.run_at)].filter(Boolean).join(" ");
-    default:
-      return kind;
-  }
+  return ScheduleDisplayValue.from(value)?.argumentText() ?? null;
 }
 
 export function formatScheduleRule(value: unknown) {
-  const text = stringOrNull(value);
-  if (text) {
-    return text;
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const kind = stringOrNull(record.kind);
-  switch (kind) {
-    case "every_interval":
-      return typeof record.interval_ms === "number"
-        ? `Every ${formatScheduleDurationWords(record.interval_ms)}`
-        : "Every interval";
-    case "once_after":
-      return typeof record.delay_ms === "number"
-        ? `Once after ${formatScheduleDurationWords(record.delay_ms)}`
-        : "Once after delay";
-    case "every_day_at":
-      return ["Daily", stringOrNull(record.time), stringOrNull(record.timezone)]
-        .filter(Boolean)
-        .join(" ");
-    case "every_week_at":
-      return [
-        "Weekly",
-        formatScheduleWeekdays(record.weekdays),
-        stringOrNull(record.time),
-        stringOrNull(record.timezone),
-      ]
-        .filter(Boolean)
-        .join(" ");
-    case "once_at":
-      return "Once";
-    default:
-      return formatScheduleArgument(value);
-  }
+  return ScheduleDisplayValue.from(value)?.ruleText() ?? null;
 }
 
 export function buildScheduleOccurrences(
   schedule: unknown,
   options: ScheduleOccurrenceOptions = {},
 ): ScheduleOccurrence[] {
-  if (!schedule || typeof schedule !== "object" || Array.isArray(schedule)) {
-    return [];
-  }
-  const record = schedule as Record<string, unknown>;
-  const kind = stringOrNull(record.kind);
-  const now = normalizeDate(options.now) ?? new Date();
-  const limit = positiveInteger(options.limit) ?? DEFAULT_OCCURRENCE_LIMIT;
-  const horizonDays =
-    positiveInteger(options.horizonDays) ?? DEFAULT_OCCURRENCE_HORIZON_DAYS;
-  const horizonEnd = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
+  return ScheduleOccurrenceProjection.from(schedule, options).occurrences();
+}
 
-  switch (kind) {
-    case "every_interval":
-      return buildIntervalOccurrences(record, now, horizonEnd, limit, options.nextFireAt);
-    case "once_after":
-      return oneShotOccurrence(
-        parseDate(options.nextFireAt) ??
-          (typeof record.delay_ms === "number"
-            ? new Date(now.getTime() + record.delay_ms)
-            : null),
-        now,
-        horizonEnd,
-      );
-    case "once_at":
-      return oneShotOccurrence(parseDate(record.run_at), now, horizonEnd);
-    case "every_day_at":
-      return buildDailyOccurrences(record, now, horizonEnd, limit);
-    case "every_week_at":
-      return buildWeeklyOccurrences(record, now, horizonEnd, limit);
-    default:
+class ScheduleDisplayValue {
+  private constructor(
+    private readonly source: unknown,
+    private readonly record: Record<string, unknown> | null,
+    private readonly text: string | null,
+  ) {}
+
+  static from(value: unknown) {
+    const text = stringOrNull(value);
+    if (text) {
+      return new ScheduleDisplayValue(value, /*record*/ null, text);
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    return new ScheduleDisplayValue(
+      value,
+      value as Record<string, unknown>,
+      /*text*/ null,
+    );
+  }
+
+  argumentText() {
+    if (this.text) {
+      return this.text;
+    }
+    const record = this.record;
+    if (!record) {
+      return null;
+    }
+    const kind = stringOrNull(record.kind);
+    if (!kind) {
+      return safeJson(this.source);
+    }
+    switch (kind) {
+      case "every_interval":
+        return typeof record.interval_ms === "number"
+          ? `${kind} ${formatScheduleDuration(record.interval_ms)}`
+          : kind;
+      case "once_after":
+        return typeof record.delay_ms === "number"
+          ? `${kind} ${formatScheduleDuration(record.delay_ms)}`
+          : kind;
+      case "every_day_at":
+        return [kind, stringOrNull(record.time), stringOrNull(record.timezone)]
+          .filter(Boolean)
+          .join(" ");
+      case "every_week_at":
+        return [
+          kind,
+          formatScheduleWeekdays(record.weekdays),
+          stringOrNull(record.time),
+          stringOrNull(record.timezone),
+        ]
+          .filter(Boolean)
+          .join(" ");
+      case "once_at":
+        return [kind, stringOrNull(record.run_at)].filter(Boolean).join(" ");
+      default:
+        return kind;
+    }
+  }
+
+  ruleText() {
+    if (this.text) {
+      return this.text;
+    }
+    const record = this.record;
+    if (!record) {
+      return null;
+    }
+    const kind = stringOrNull(record.kind);
+    switch (kind) {
+      case "every_interval":
+        return typeof record.interval_ms === "number"
+          ? `Every ${formatScheduleDurationWords(record.interval_ms)}`
+          : "Every interval";
+      case "once_after":
+        return typeof record.delay_ms === "number"
+          ? `Once after ${formatScheduleDurationWords(record.delay_ms)}`
+          : "Once after delay";
+      case "every_day_at":
+        return [
+          "Daily",
+          stringOrNull(record.time),
+          stringOrNull(record.timezone),
+        ]
+          .filter(Boolean)
+          .join(" ");
+      case "every_week_at":
+        return [
+          "Weekly",
+          formatScheduleWeekdays(record.weekdays),
+          stringOrNull(record.time),
+          stringOrNull(record.timezone),
+        ]
+          .filter(Boolean)
+          .join(" ");
+      case "once_at":
+        return "Once";
+      default:
+        return this.argumentText();
+    }
+  }
+}
+
+class ScheduleOccurrenceProjection {
+  private readonly now: Date;
+  private readonly horizonEnd: Date;
+  private readonly limit: number;
+  private readonly nextFireAt: string | null | undefined;
+
+  private constructor(
+    private readonly record: Record<string, unknown> | null,
+    options: ScheduleOccurrenceOptions,
+  ) {
+    this.now = normalizeDate(options.now) ?? new Date();
+    this.limit = positiveInteger(options.limit) ?? DEFAULT_OCCURRENCE_LIMIT;
+    const horizonDays =
+      positiveInteger(options.horizonDays) ?? DEFAULT_OCCURRENCE_HORIZON_DAYS;
+    this.horizonEnd = new Date(
+      this.now.getTime() + horizonDays * 24 * 60 * 60 * 1000,
+    );
+    this.nextFireAt = options.nextFireAt;
+  }
+
+  static from(schedule: unknown, options: ScheduleOccurrenceOptions) {
+    if (!schedule || typeof schedule !== "object" || Array.isArray(schedule)) {
+      return new ScheduleOccurrenceProjection(/*record*/ null, options);
+    }
+    return new ScheduleOccurrenceProjection(
+      schedule as Record<string, unknown>,
+      options,
+    );
+  }
+
+  occurrences() {
+    const kind = stringOrNull(this.record?.kind);
+    switch (kind) {
+      case "every_interval":
+        return this.intervalOccurrences();
+      case "once_after":
+        return this.onceAfterOccurrence();
+      case "once_at":
+        return this.oneShotOccurrence(parseDate(this.record?.run_at));
+      case "every_day_at":
+        return this.dailyOccurrences();
+      case "every_week_at":
+        return this.weeklyOccurrences();
+      default:
+        return [];
+    }
+  }
+
+  private intervalOccurrences() {
+    const intervalMs = this.numberField("interval_ms");
+    if (intervalMs === null || intervalMs <= 0) {
       return [];
+    }
+
+    let next =
+      parseDate(this.nextFireAt) ?? new Date(this.now.getTime() + intervalMs);
+    if (next.getTime() <= this.now.getTime()) {
+      const elapsed = this.now.getTime() - next.getTime();
+      const skippedIntervals = Math.floor(elapsed / intervalMs) + 1;
+      next = new Date(next.getTime() + skippedIntervals * intervalMs);
+    }
+
+    return this.collectForward(
+      next,
+      (date) => new Date(date.getTime() + intervalMs),
+    );
+  }
+
+  private onceAfterOccurrence() {
+    return this.oneShotOccurrence(
+      parseDate(this.nextFireAt) ??
+        this.numberField(
+          "delay_ms",
+          (delayMs) => new Date(this.now.getTime() + delayMs),
+        ),
+    );
+  }
+
+  private oneShotOccurrence(date: Date | null) {
+    if (
+      !date ||
+      date.getTime() <= this.now.getTime() ||
+      date.getTime() > this.horizonEnd.getTime()
+    ) {
+      return [];
+    }
+    return [{ startsAt: date.toISOString() }];
+  }
+
+  private dailyOccurrences() {
+    const time = parseClockTime(this.record?.time);
+    if (!time) {
+      return [];
+    }
+    const timezone = stringOrNull(this.record?.timezone);
+    return this.zonedOccurrences(time, timezone);
+  }
+
+  private weeklyOccurrences() {
+    const time = parseClockTime(this.record?.time);
+    const weekdays = parseWeekdays(this.record?.weekdays);
+    if (!time || weekdays.length === 0) {
+      return [];
+    }
+    const timezone = stringOrNull(this.record?.timezone);
+    return this.zonedOccurrences(time, timezone, (start) =>
+      weekdays.includes(start.weekday),
+    );
+  }
+
+  private zonedOccurrences(
+    time: ClockTime,
+    timezone: string | null,
+    includeStart: (start: ZonedDateStart) => boolean = () => true,
+  ) {
+    return zonedDateStarts(this.now, this.horizonEnd, timezone)
+      .filter(includeStart)
+      .map((start) =>
+        dateFromZonedParts(
+          start.year,
+          start.month,
+          start.day,
+          time.hour,
+          time.minute,
+          time.second,
+          timezone,
+        ),
+      )
+      .filter((date) => this.isWithinOccurrenceWindow(date))
+      .sort(compareDates)
+      .slice(0, this.limit)
+      .map((date) => ({ startsAt: date.toISOString() }));
+  }
+
+  private collectForward(
+    first: Date,
+    nextDate: (date: Date) => Date,
+  ): ScheduleOccurrence[] {
+    const occurrences: ScheduleOccurrence[] = [];
+    let next = first;
+    while (
+      occurrences.length < this.limit &&
+      next.getTime() <= this.horizonEnd.getTime()
+    ) {
+      occurrences.push({ startsAt: next.toISOString() });
+      next = nextDate(next);
+    }
+    return occurrences;
+  }
+
+  private isWithinOccurrenceWindow(date: Date) {
+    return (
+      date.getTime() > this.now.getTime() &&
+      date.getTime() <= this.horizonEnd.getTime()
+    );
+  }
+
+  private numberField(field: string): number | null;
+  private numberField<T>(field: string, map: (value: number) => T): T | null;
+  private numberField<T>(field: string, map?: (value: number) => T) {
+    const value = this.record?.[field];
+    if (typeof value !== "number") {
+      return null;
+    }
+    return map ? map(value) : value;
   }
 }
 
@@ -201,111 +371,18 @@ function formatScheduleWeekdays(value: unknown) {
   return weekdays.length > 0 ? weekdays.join(",") : null;
 }
 
-function buildIntervalOccurrences(
-  record: Record<string, unknown>,
-  now: Date,
-  horizonEnd: Date,
-  limit: number,
-  nextFireAt: string | null | undefined,
-) {
-  if (typeof record.interval_ms !== "number" || record.interval_ms <= 0) {
-    return [];
-  }
-  let next =
-    parseDate(nextFireAt) ?? new Date(now.getTime() + record.interval_ms);
-  if (next.getTime() <= now.getTime()) {
-    const elapsed = now.getTime() - next.getTime();
-    const skippedIntervals = Math.floor(elapsed / record.interval_ms) + 1;
-    next = new Date(next.getTime() + skippedIntervals * record.interval_ms);
-  }
+type ClockTime = {
+  hour: number;
+  minute: number;
+  second: number;
+};
 
-  const occurrences: ScheduleOccurrence[] = [];
-  while (
-    occurrences.length < limit &&
-    next.getTime() <= horizonEnd.getTime()
-  ) {
-    occurrences.push({ startsAt: next.toISOString() });
-    next = new Date(next.getTime() + record.interval_ms);
-  }
-  return occurrences;
-}
-
-function oneShotOccurrence(
-  date: Date | null,
-  now: Date,
-  horizonEnd: Date,
-) {
-  if (
-    !date ||
-    date.getTime() <= now.getTime() ||
-    date.getTime() > horizonEnd.getTime()
-  ) {
-    return [];
-  }
-  return [{ startsAt: date.toISOString() }];
-}
-
-function buildDailyOccurrences(
-  record: Record<string, unknown>,
-  now: Date,
-  horizonEnd: Date,
-  limit: number,
-) {
-  const time = parseClockTime(record.time);
-  if (!time) {
-    return [];
-  }
-  const timezone = stringOrNull(record.timezone);
-  const starts = zonedDateStarts(now, horizonEnd, timezone);
-  return starts
-    .map((start) =>
-      dateFromZonedParts(
-        start.year,
-        start.month,
-        start.day,
-        time.hour,
-        time.minute,
-        time.second,
-        timezone,
-      ),
-    )
-    .filter((date) => date.getTime() > now.getTime() && date.getTime() <= horizonEnd.getTime())
-    .sort(compareDates)
-    .slice(0, limit)
-    .map((date) => ({ startsAt: date.toISOString() }));
-}
-
-function buildWeeklyOccurrences(
-  record: Record<string, unknown>,
-  now: Date,
-  horizonEnd: Date,
-  limit: number,
-) {
-  const time = parseClockTime(record.time);
-  const weekdays = parseWeekdays(record.weekdays);
-  if (!time || weekdays.length === 0) {
-    return [];
-  }
-  const timezone = stringOrNull(record.timezone);
-  const starts = zonedDateStarts(now, horizonEnd, timezone);
-  return starts
-    .filter((start) => weekdays.includes(start.weekday))
-    .map((start) =>
-      dateFromZonedParts(
-        start.year,
-        start.month,
-        start.day,
-        time.hour,
-        time.minute,
-        time.second,
-        timezone,
-      ),
-    )
-    .filter((date) => date.getTime() > now.getTime() && date.getTime() <= horizonEnd.getTime())
-    .sort(compareDates)
-    .slice(0, limit)
-    .map((date) => ({ startsAt: date.toISOString() }));
-}
+type ZonedDateStart = {
+  year: number;
+  month: number;
+  day: number;
+  weekday: number;
+};
 
 function parseClockTime(value: unknown) {
   const text = stringOrNull(value);
@@ -335,7 +412,9 @@ function parseWeekdays(value: unknown) {
   }
   return value
     .map(stringOrNull)
-    .map((weekday) => (weekday ? WEEKDAY_INDEX[weekday.toLowerCase()] : undefined))
+    .map((weekday) =>
+      weekday ? WEEKDAY_INDEX[weekday.toLowerCase()] : undefined,
+    )
     .filter((weekday): weekday is number => typeof weekday === "number");
 }
 
@@ -344,7 +423,12 @@ function zonedDateStarts(now: Date, horizonEnd: Date, timezone: string | null) {
   const totalDays = Math.ceil(
     (horizonEnd.getTime() - now.getTime()) / (24 * 60 * 60 * 1000),
   );
-  const dates: Array<{ year: number; month: number; day: number; weekday: number }> = [];
+  const dates: Array<{
+    year: number;
+    month: number;
+    day: number;
+    weekday: number;
+  }> = [];
   const startUtc = Date.UTC(start.year, start.month - 1, start.day);
   for (let offset = 0; offset <= totalDays; offset += 1) {
     const date = new Date(startUtc + offset * 24 * 60 * 60 * 1000);
