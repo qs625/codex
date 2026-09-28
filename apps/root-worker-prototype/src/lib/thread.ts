@@ -1123,7 +1123,8 @@ function canMergeTurnSnapshotItems(thread: Thread, nextTurn: Turn) {
     !existingTurn &&
     threadHasCompactItem(thread) &&
     !isTurnSnapshotAfterLatestCompact(thread, nextTurn) &&
-    !isActiveInFlightTurnSnapshot(thread, nextTurn)
+    !isActiveInFlightTurnSnapshot(thread, nextTurn) &&
+    !isUntimedInFlightUserTurnAfterCompactAnchor(thread, nextTurn)
   ) {
     return false;
   }
@@ -1412,16 +1413,18 @@ function canCreateUntimedLiveTurnItemAfterCompact(
     completedAtMs?: number | null;
   },
 ) {
-  if (!isThreadActive(thread) || hasExplicitItemTimestamp(item, timestamps)) {
+  if (hasExplicitItemTimestamp(item, timestamps)) {
     return false;
   }
+  const hasRecoveredLiveAnchor =
+    hasUntimedInFlightPostCompactUserAnchor(thread);
   if (item && isUserMessageItem(item)) {
-    return true;
+    return isThreadActive(thread) || hasRecoveredLiveAnchor;
   }
   return (
     item?.type === "commandExecution" &&
     isRunningCommandExecutionStatus(item.status) &&
-    hasUntimedInFlightTurnAfterLatestCompact(thread)
+    (hasUntimedInFlightTurnAfterLatestCompact(thread) || hasRecoveredLiveAnchor)
   );
 }
 
@@ -1436,6 +1439,34 @@ function hasUntimedInFlightTurnAfterLatestCompact(thread: Thread) {
       (turn) =>
         isTurnInFlight(turn) && turnOrderTimestampSeconds(turn) === null,
     );
+}
+
+function hasUntimedInFlightPostCompactUserAnchor(thread: Thread) {
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  if (!latestCompact) {
+    return false;
+  }
+  return thread.turns.slice(latestCompact.turnIndex).some((turn, offset) => {
+    if (!isTurnInFlight(turn) || turnOrderTimestampSeconds(turn) !== null) {
+      return false;
+    }
+    const itemStartIndex = offset === 0 ? latestCompact.itemIndex + 1 : 0;
+    return turn.items
+      .slice(itemStartIndex)
+      .some((item) => item.type === "userMessage");
+  });
+}
+
+function isUntimedInFlightUserTurnAfterCompactAnchor(
+  thread: Thread,
+  turn: Turn,
+) {
+  return (
+    isTurnInFlight(turn) &&
+    turnOrderTimestampSeconds(turn) === null &&
+    turn.items.some((item) => item.type === "userMessage") &&
+    hasUntimedInFlightPostCompactUserAnchor(thread)
+  );
 }
 
 function threadHasCompactItem(thread: Thread) {
