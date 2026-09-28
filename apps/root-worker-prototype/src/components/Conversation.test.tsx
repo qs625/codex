@@ -693,15 +693,10 @@ test("virtual list renders backend compact summary read projection as a visible 
   assert.match(markup, /Context compacted/);
   assert.match(markup, /compact summary body from thread\/read/);
   assert.match(markup, /Init Context · User Preferences/);
-  const compactDetailsMarkup =
-    markup.match(
-      /<details class="compact-history-details">[\s\S]*?<\/details>/,
-    )?.[0] ?? "";
-  assert.match(compactDetailsMarkup, /old answer hidden by compact/);
-  const mainTimelineMarkup = markup.replace(compactDetailsMarkup, "");
-  assert.doesNotMatch(mainTimelineMarkup, /old answer hidden by compact/);
+  assert.match(markup, /Previous context · 1 item/);
+  assert.doesNotMatch(markup, /old answer hidden by compact/);
   const searchCurrentRowMarkup =
-    mainTimelineMarkup.match(
+    markup.match(
       /<div class="conversation-virtual-row search-match search-current"[\s\S]*?(?=<div class="conversation-virtual-row|$)/,
     )?.[0] ?? "";
   assert.match(searchCurrentRowMarkup, /compact summary body from thread\/read/);
@@ -712,6 +707,7 @@ test("virtual list renders backend compact summary read projection as a visible 
 test("compact rows show archived artifact evidence without inline previews", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
+      archivedHistoryInitiallyOpen
       entry={{
         id: "compact-with-artifact",
         kind: "compact",
@@ -796,6 +792,7 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   );
   const compactMarkup = renderToStaticMarkup(
     <CompactRow
+      archivedHistoryInitiallyOpen
       entry={{
         id: "compact-long-text",
         kind: "compact",
@@ -1407,7 +1404,7 @@ test("conversation measurements mark rows measured even when height matches the 
   );
 });
 
-test("compact rows render only the marker without grouped history body", () => {
+test("compact rows render the marker and full compact summary without grouped history body", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1424,7 +1421,7 @@ test("compact rows render only the marker without grouped history body", () => {
   );
 
   assert.match(markup, /Context compacted/);
-  assert.doesNotMatch(markup, /Compacted summary remains visible in the chat/);
+  assert.match(markup, /Compacted summary remains visible in the chat/);
   assert.match(markup, /09:43/);
   assert.doesNotMatch(markup, /button/);
   assert.doesNotMatch(markup, /load the archived conversation/);
@@ -1432,7 +1429,7 @@ test("compact rows render only the marker without grouped history body", () => {
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
 
-test("compact rows do not render compact summary text inline", () => {
+test("compact rows render compact summary text as readable markdown content", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1449,7 +1446,8 @@ test("compact rows do not render compact summary text inline", () => {
   );
 
   assert.match(markup, /Context compacted/);
-  assert.doesNotMatch(markup, /Preserve compact summary/);
+  assert.match(markup, /<div class="compact-summary-body">/);
+  assert.match(markup, /Preserve compact summary/);
   assert.doesNotMatch(markup, /Summary available/);
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
   assert.doesNotMatch(markup, /<summary>View summary<\/summary>/);
@@ -1477,7 +1475,7 @@ test("compact rows omit fallback text when summary is missing", () => {
   assert.doesNotMatch(markup, /View summary/);
 });
 
-test("compact row does not render large compact summary previews", () => {
+test("compact row renders large compact summaries without preview truncation", () => {
   const longSummary = `${"summary line\n".repeat(400)}UNBOUNDED_COMPACT_SENTINEL`;
   const markup = renderToStaticMarkup(
     <CompactRow
@@ -1496,9 +1494,9 @@ test("compact row does not render large compact summary previews", () => {
 
   assert.match(markup, /Context compacted/);
   assert.doesNotMatch(markup, /View summary/);
-  assert.doesNotMatch(markup, /summary line/);
+  assert.match(markup, /summary line/);
   assert.doesNotMatch(markup, /\[truncated: [\d,]+ characters omitted\]/);
-  assert.doesNotMatch(markup, /UNBOUNDED_COMPACT_SENTINEL/);
+  assert.match(markup, /UNBOUNDED_COMPACT_SENTINEL/);
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
 });
 
@@ -1535,11 +1533,12 @@ test("compact rows expose direct archived history evidence", () => {
     />,
   );
   assert.match(collapsedMarkup, /Previous context · 1 item/);
-  assert.match(collapsedMarkup, /old request/);
+  assert.doesNotMatch(collapsedMarkup, /old request/);
   assert.doesNotMatch(collapsedMarkup, /Compacted context/);
 
   const expandedMarkup = renderToStaticMarkup(
     <CompactRow
+      archivedHistoryInitiallyOpen
       entry={{
         id: "compact-1",
         kind: "compact",
@@ -1580,6 +1579,7 @@ test("compact rows expose direct archived history evidence", () => {
 test("expanded compact rows do not render nested compact groups from archived history", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
+      archivedHistoryInitiallyOpen
       entry={{
         id: "compact-2",
         kind: "compact",
