@@ -8,9 +8,51 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: continuous large front+backend code organization can resume after the higher-priority compact display and workspace Terminal/Browser instance coupling regressions were fixed, merged, and installed-effective in Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84`. Next queued PM work is to resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
+Active goal: fix newly reported installed UI regressions in Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84`: closing workspace Terminal/Browser still returns the same instance to the right panel, and the Project hover add button is missing. Then resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
 
 ## Active Work
+
+- id: project-hover-add-button-missing
+  status: pm_validated_ready_to_merge
+  owner: /self/owner_dev_2
+  reviewer: /self/owner_dev_2/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
+  branch: fix/project-hover-add-button
+  task_type: frontend_sidebar_ui_regression_fix
+  depends_on: main `a031e1e63`; installed Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84`; user reported the Project hover add button is missing
+  files: expected `apps/root-worker-prototype/src/components/Panels.tsx`, `apps/root-worker-prototype/src/components/Panels.test.tsx`, `apps/root-worker-prototype/src/styles.css`, or the actual sidebar component/style files found by root cause
+  base_commit: `a031e1e63`
+  product_contract: The Projects section add/create affordance should match the Chat section pattern: visually quiet by default, visible and clickable on Projects header hover/focus/expanded state, keyboard-focusable/accessibly labeled, and not permanently absent. The fix should not make the button always visually noisy or affect per-project delete/row hover affordances.
+  constraints: Preserve sidebar layout, project ordering/selection, project create flow, Chat add button behavior, Project delete button behavior, accessibility labels, and recent workspace/compact fixes. Do not solve with broad sidebar redesign, layout shifts, hidden-but-unclickable states, or CSS that makes the button visible only in tests but not installed hover/focus.
+  validation_required: Owner must reuse `/self/owner_dev_2/reviewer`, add or update focused style/source/component coverage for Projects hover/focus add button, and run focused Panels/style tests plus Prettier/diff check.
+  root_cause: Projects had a generic `New` affordance separated from the Projects heading line and without project-specific class/label, so it did not present like the Chat header hover `+` affordance in installed UI.
+  implementation: Projects header now has `project-list-header`; create button is a heading-line icon button with `sidebar-action-button project-create-button`, `aria-label`/`title`, and CSS selectors for hover/focus/open visible state. Chat create and project delete selectors remain unchanged.
+  validation: Owner validation passed after PM caught and owner fixed a Prettier issue in `Panels.tsx`. Fixed reviewer approved. PM validation passed: Prettier on `Panels.tsx`, `Panels.test.tsx`, `styles.css`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Panels.test.tsx`; `git diff --check HEAD~2 HEAD`.
+  risk: Low sidebar UI fix; requires installed self-debug hover/focus smoke after merge.
+  commit: owner `b40cce0cd`; follow-up `5ca402505`
+  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed Project hover affordance.
+
+- id: workspace-close-should-not-return-to-right-panel
+  status: pm_validated_ready_to_merge
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/workspace-close-no-right-return
+  task_type: frontend_workspace_browser_terminal_close_semantics_fix
+  depends_on: main `a031e1e63`; installed Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84`; user reported workspace Terminal and Browser still return to the right panel after closing
+  files: expected `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/RightPanel.test.tsx`, and Browser/Terminal panel tests/helpers if root cause requires
+  base_commit: `a031e1e63`
+  product_contract: Clicking the close affordance on a workspace Browser or Terminal tab means close/remove that workspace-owned instance, not return it to the right-side manager panel. The right panel must not show the same Browser/Terminal instance after the workspace tab is closed. Returning/moving an object back to the right panel remains allowed only through the explicit drag/drop return action or another explicit return affordance, not through close.
+  problem_model: The code still has an old protected contract (`workspace Browser and Terminal tabs can be returned to the right panel`) and derives right-panel detached ids directly from current workspace tabs. When a workspace tab is closed, its backend id is removed from the detached list, allowing the right manager to rediscover and show the same Browser/Terminal instance. Browser close already has a `closeOwnedBrowserTab` path for the tab close affordance, but installed behavior indicates the close/manager visibility lifecycle still lets Browser and Terminal reappear, especially Terminal where closing a workspace object likely only removes the workspace wrapper and leaves the terminal manager-visible.
+  constraints: Preserve explicit drag-back/return-to-right-panel semantics, workspace tab ordering/storage, Browser native view ownership, Browser stale-id pruning/not-found idempotence, Terminal session/process lifecycle invariants, add-menu creation/binding, and right-panel manager usability for manager-owned objects. Do not hide with CSS, timeouts, broad remounting, global right-panel disabling, or by treating every detached object as permanently hidden without a clear lifecycle. Do not regress compact display fixes.
+  expected_implementation: Separate workspace close from explicit return. Workspace close should either close/destroy the underlying Browser/Terminal tab/session when that is the correct existing capability, or maintain an explicit dismissed/closed workspace-owned id suppression until the backend object is gone; explicit return must keep the old move-back behavior and focus the right panel. Update tests that currently assert close returns the object to the right panel so they assert the new close semantics and separately cover explicit drag-back/return.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, update source-contract/component tests for Browser and Terminal close semantics, and rerun the focused workspace/RightPanel/TerminalPanel tests. PM will merge, build a Runtime Capsule, restart, and self-debug installed close behavior.
+  root_cause: Workspace close only removed the workspace wrapper tab. Because detached ids were derived from current workspace tabs, removing the wrapper released the backend Browser/Terminal id and the right manager could rediscover and show it; Terminal was especially visible because the backend terminal tab was not closed.
+  implementation: Workspace close button now passes close-owned Browser and Terminal options. Browser close calls `closeBrowserTab`, Terminal close calls `closeTerminalTab`, and pending close ids remain in detached id lists until backend close finishes to prevent transient right-panel revival. Non-not-found close errors restore the workspace tab and surface an error. Explicit return still uses bare `closeWorkspaceTab(tab.id)` and then focuses the right panel, so close and return are separate.
+  validation: Owner validation passed with fixed reviewer approval. PM validation passed: Prettier on App and RightPanel test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; `git diff --check HEAD~1 HEAD`.
+  risk: Medium frontend ownership/lifecycle fix; requires installed self-debug for Browser/Terminal close behavior.
+  commit: owner `6caffe8bf`
+  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed workspace close behavior.
 
 - id: compact-after-user-message-display-regression-reopen
   status: installed_effective
