@@ -5,9 +5,10 @@ import {
   ensureCurrentModelVisible,
   getRunModelLabel,
   normalizeModelListResponse,
+  resolveRunConfigDisplaySummary,
   resolveSelectionForModel,
 } from "./runConfig";
-import type { RunModel } from "../types";
+import type { RunModel, Thread } from "../types";
 
 function makeModel(overrides: Partial<RunModel>): RunModel {
   return {
@@ -22,6 +23,34 @@ function makeModel(overrides: Partial<RunModel>): RunModel {
     ],
     defaultReasoningEffort: "medium",
     isDefault: false,
+    ...overrides,
+  };
+}
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: "thread-1",
+    sessionId: "session-1",
+    forkedFromId: null,
+    preview: "",
+    ephemeral: false,
+    modelProvider: "openai",
+    model: null,
+    reasoningEffort: null,
+    createdAt: 1,
+    updatedAt: 1,
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+    path: null,
+    cwd: "/tmp",
+    cliVersion: "test",
+    source: "appServer",
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    skills: [],
+    turns: [],
     ...overrides,
   };
 }
@@ -220,6 +249,84 @@ test("resolveSelectionForModel carries model context metadata", () => {
       contextWindow: 128000,
       maxContextWindow: 256000,
       autoCompactTokenLimit: 90000,
+    },
+  );
+});
+
+test("resolveRunConfigDisplaySummary resolves inherited default model", () => {
+  assert.deepEqual(
+    resolveRunConfigDisplaySummary(makeThread(), [
+      makeModel({
+        model: "gpt-5.6",
+        displayName: "GPT-5.6",
+        modelProvider: "openai",
+        defaultReasoningEffort: "high",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "medium", description: "" },
+          { reasoningEffort: "high", description: "" },
+        ],
+        isDefault: true,
+      }),
+    ]),
+    {
+      modelLabel: "GPT-5.6 · openai",
+      reasoningLabel: "high",
+      selection: {
+        model: "gpt-5.6",
+        modelProvider: "openai",
+        reasoningEffort: "high",
+        contextWindow: null,
+        maxContextWindow: null,
+        autoCompactTokenLimit: null,
+      },
+      provenance: "inherited",
+    },
+  );
+});
+
+test("resolveRunConfigDisplaySummary keeps explicit current-only model concrete", () => {
+  assert.deepEqual(
+    resolveRunConfigDisplaySummary(
+      makeThread({
+        model: "thread-model",
+        modelProvider: "provider-a",
+        reasoningEffort: null,
+      }),
+      [],
+    ),
+    {
+      modelLabel: "thread-model · provider-a",
+      reasoningLabel: "unresolved reasoning",
+      selection: null,
+      provenance: "explicit",
+    },
+  );
+});
+
+test("resolveRunConfigDisplaySummary reports unresolved inherited config", () => {
+  assert.deepEqual(resolveRunConfigDisplaySummary(makeThread(), []), {
+    modelLabel: "unresolved model (openai)",
+    reasoningLabel: "unresolved reasoning",
+    selection: null,
+    provenance: "unresolved",
+  });
+});
+
+test("resolveRunConfigDisplaySummary does not use another provider default", () => {
+  assert.deepEqual(
+    resolveRunConfigDisplaySummary(makeThread({ modelProvider: "openai" }), [
+      makeModel({
+        model: "claude-sonnet",
+        displayName: "Claude Sonnet",
+        modelProvider: "anthropic",
+        isDefault: true,
+      }),
+    ]),
+    {
+      modelLabel: "unresolved model (openai)",
+      reasoningLabel: "unresolved reasoning",
+      selection: null,
+      provenance: "unresolved",
     },
   );
 });

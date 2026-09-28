@@ -3,6 +3,23 @@ import type { RunConfigSelection } from "./runConfig";
 import type { Thread } from "../types";
 
 export type RunConfigOverride = RunConfigSelection;
+export type ThreadRunConfigSelection = {
+  model: string | null;
+  modelProvider: string | null;
+  reasoningEffort: string | null;
+};
+
+export function applyRunConfigSelectionToThread(
+  thread: Thread,
+  selection: ThreadRunConfigSelection,
+): Thread {
+  return {
+    ...thread,
+    model: selection.model,
+    modelProvider: selection.modelProvider,
+    reasoningEffort: selection.reasoningEffort,
+  };
+}
 
 export function applyRunConfigOverride(
   thread: Thread | null,
@@ -11,12 +28,7 @@ export function applyRunConfigOverride(
   if (!thread || !override) {
     return thread;
   }
-  return {
-    ...thread,
-    model: override.model,
-    modelProvider: override.modelProvider ?? thread.modelProvider,
-    reasoningEffort: override.reasoningEffort,
-  };
+  return applyRunConfigSelectionToThread(thread, override);
 }
 
 export function buildSendMessagePayload({

@@ -87,7 +87,10 @@ import {
   type RuntimeRestartProgress,
 } from "./lib/runtimeRestartProgress";
 import type { RunConfigSelection } from "./lib/runConfig";
-import { applyRunConfigOverride } from "./lib/sendMessagePayload";
+import {
+  applyRunConfigOverride,
+  applyRunConfigSelectionToThread,
+} from "./lib/sendMessagePayload";
 import { submitThreadMessage } from "./lib/sendMessageFlow";
 import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
@@ -1637,14 +1640,9 @@ function App() {
           reasoningEffort: existingThread.reasoningEffort,
         }
       : null;
-    updateThreadLocally(threadId, (thread) => {
-      return {
-        ...thread,
-        model: selection.model,
-        modelProvider: selection.modelProvider ?? thread.modelProvider,
-        reasoningEffort: selection.reasoningEffort,
-      };
-    });
+    updateThreadLocally(threadId, (thread) =>
+      applyRunConfigSelectionToThread(thread, selection),
+    );
     return previousSelection;
   }
 

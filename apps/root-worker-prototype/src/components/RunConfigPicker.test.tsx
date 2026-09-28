@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { RunConfigPopoverContent } from "./RunConfigPicker";
-import type { RunModel } from "../types";
+import { RunConfigPicker, RunConfigPopoverContent } from "./RunConfigPicker";
+import type { RunModel, Thread } from "../types";
 
 function makeModel(overrides: Partial<RunModel> = {}): RunModel {
   return {
@@ -20,6 +20,34 @@ function makeModel(overrides: Partial<RunModel> = {}): RunModel {
     ],
     defaultReasoningEffort: "medium",
     isDefault: true,
+    ...overrides,
+  };
+}
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: "thread-1",
+    sessionId: "session-1",
+    forkedFromId: null,
+    preview: "",
+    ephemeral: false,
+    modelProvider: "openai",
+    model: null,
+    reasoningEffort: null,
+    createdAt: 1,
+    updatedAt: 1,
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+    path: null,
+    cwd: "/tmp",
+    cliVersion: "test",
+    source: "appServer",
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    skills: [],
+    turns: [],
     ...overrides,
   };
 }
@@ -59,6 +87,49 @@ test("run config popover renders model and reasoning radio groups", () => {
   assert.match(markup, /GPT-5/);
   assert.match(markup, /Balanced model/);
   assert.match(markup, /aria-checked="true"[^>]*>medium/);
+});
+
+test("run config trigger resolves inherited defaults for text and aria", () => {
+  const markup = renderToStaticMarkup(
+    <RunConfigPicker
+      disabled={false}
+      initialModelsForTest={[
+        makeModel({
+          model: "gpt-5.6",
+          displayName: "GPT-5.6",
+          modelProvider: "openai",
+          defaultReasoningEffort: "high",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "medium", description: "" },
+            { reasoningEffort: "high", description: "" },
+          ],
+          isDefault: true,
+        }),
+      ]}
+      onApply={() => {}}
+      selectedThread={makeThread()}
+    />,
+  );
+
+  assert.match(markup, /GPT-5\.6 · openai · high/);
+  assert.match(
+    markup,
+    /aria-label="运行配置，当前模型 GPT-5\.6 · openai，reasoning high"/,
+  );
+  assert.doesNotMatch(markup, /openai · default/);
+});
+
+test("run config trigger reports unresolved inherited config without default", () => {
+  const markup = renderToStaticMarkup(
+    <RunConfigPicker
+      disabled={false}
+      onApply={() => {}}
+      selectedThread={makeThread()}
+    />,
+  );
+
+  assert.match(markup, /unresolved model \(openai\) · unresolved reasoning/);
+  assert.doesNotMatch(markup, /default/);
 });
 
 test("run config popover opens above the composer with bounded height", () => {
