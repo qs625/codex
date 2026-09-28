@@ -497,6 +497,14 @@ test("SidebarPanel keeps project create visually quiet until hover or focus", ()
   );
   assert.match(
     css,
+    /\.project-list-header \{[\s\S]*grid-template-areas:[\s\S]*"heading actions";[\s\S]*-webkit-app-region: no-drag;/,
+  );
+  assert.match(
+    css,
+    /\.sidebar-window-drag-strip \{[\s\S]*grid-area: drag;[\s\S]*-webkit-app-region: drag;/,
+  );
+  assert.match(
+    css,
     /\.sidebar-action-button \{[\s\S]*opacity: 0;[\s\S]*pointer-events: none;[\s\S]*transition:[\s\S]*opacity 120ms ease;/,
   );
   assert.match(

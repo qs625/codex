@@ -457,6 +457,7 @@ a,
   grid-template-areas:
     "drag drag"
     "heading actions";
+  -webkit-app-region: no-drag;
 }
 
 body.macos-window-chrome .sidebar > .sidebar-section-header:first-child {
@@ -467,6 +468,7 @@ body.macos-window-chrome .sidebar > .sidebar-section-header:first-child {
 .sidebar-window-drag-strip {
   grid-area: drag;
   min-height: 22px;
+  -webkit-app-region: drag;
 }
 
 body.macos-window-chrome
