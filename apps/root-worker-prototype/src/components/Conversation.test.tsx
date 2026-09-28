@@ -78,7 +78,12 @@ test("approval request panel renders pending command approval actions", () => {
           ],
           status: "pending",
           error: null,
-          availableDecisions: ["accept", "acceptForSession", "decline", "cancel"],
+          availableDecisions: [
+            "accept",
+            "acceptForSession",
+            "decline",
+            "cancel",
+          ],
         },
       ]}
       onRespond={() => {}}
@@ -475,7 +480,8 @@ test("artifact row renders svg preview through the same sandbox", () => {
     <ArtifactRow
       entry={artifactEntry({
         mimeType: "image/svg+xml",
-        content: "<svg viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\" /></svg>",
+        content:
+          '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
       })}
     />,
   );
@@ -691,7 +697,7 @@ test("virtual list renders backend compact summary read projection as a visible 
   assert.doesNotMatch(markup, /compact-summary-details/);
 });
 
-test("compact rows do not render archived artifacts inline", () => {
+test("compact rows show archived artifact evidence without inline previews", () => {
   const markup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -715,8 +721,11 @@ test("compact rows do not render archived artifacts inline", () => {
   );
 
   assert.match(markup, /Context compacted/);
+  assert.match(markup, /Previous context · 1 item/);
+  assert.match(markup, /Inline artifact/);
+  assert.match(markup, /text\/html/);
   assert.doesNotMatch(markup, /class="artifact-row"/);
-  assert.doesNotMatch(markup, /Inline artifact/);
+  assert.doesNotMatch(markup, /class="artifact-card"/);
   assert.doesNotMatch(markup, /<iframe /);
   assert.doesNotMatch(markup, /Archived item/);
 });
@@ -840,7 +849,10 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
       onRespond={() => {}}
     />,
   );
-  const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const styles = readFileSync(
+    new URL("../styles.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(messageMarkup, /class="message-bubble"/);
   assert.match(messageMarkup, /class="markdown-content"/);
@@ -850,17 +862,15 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(toolMarkup, /completed_with_extremely_long_status_identifier/);
   assert.match(toolMarkup, /Session ID/);
   assert.match(compactMarkup, /Context compacted/);
-  assert.doesNotMatch(compactMarkup, /archive-tool-stack/);
-  assert.doesNotMatch(compactMarkup, new RegExp(longMethod));
-  assert.doesNotMatch(compactMarkup, new RegExp(longPath));
+  assert.match(compactMarkup, /Previous context · 1 item/);
+  assert.match(compactMarkup, /archive-tool-stack/);
+  assert.match(compactMarkup, new RegExp(longMethod));
+  assert.match(compactMarkup, new RegExp(longPath));
   assert.match(artifactMarkup, /class="artifact-card-copy"/);
   assert.match(artifactMarkup, new RegExp(longMethod));
   assert.match(approvalMarkup, /class="approval-request-metadata"/);
   assert.match(approvalMarkup, new RegExp(longMethod));
-  assert.match(
-    styles,
-    /\.conversation-virtual-row[\s\S]*max-width: 100%;/,
-  );
+  assert.match(styles, /\.conversation-virtual-row[\s\S]*max-width: 100%;/);
   assert.match(
     styles,
     /\.message-row,[\s\S]*\.archive-row \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/,
@@ -869,13 +879,22 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(styles, /\.tool-card \{[\s\S]*max-width: 100%;/);
   assert.match(styles, /\.markdown-content p[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.markdown-content a[\s\S]*overflow-wrap: anywhere;/);
-  assert.match(styles, /\.markdown-content code[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(
+    styles,
+    /\.markdown-content code[\s\S]*overflow-wrap: anywhere;/,
+  );
   assert.match(styles, /\.tool-card-copy span[\s\S]*overflow-wrap: anywhere;/);
-  assert.match(styles, /\.tool-card-copy strong[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(
+    styles,
+    /\.tool-card-copy strong[\s\S]*overflow-wrap: anywhere;/,
+  );
   assert.match(styles, /\.artifact-card \{[\s\S]*max-width: 100%;/);
   assert.match(styles, /\.artifact-card-head \{[^}]*flex-wrap: wrap;/);
   assert.match(styles, /\.artifact-card-copy \{[^}]*flex: 1 1 220px;/);
-  assert.match(styles, /\.artifact-card-copy strong[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(
+    styles,
+    /\.artifact-card-copy strong[\s\S]*overflow-wrap: anywhere;/,
+  );
   assert.match(styles, /\.artifact-preview-frame \{[\s\S]*min-height: 220px;/);
   assert.match(styles, /\.artifact-source pre[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-summary \{[^}]*flex-wrap: wrap;/);
@@ -884,17 +903,33 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(styles, /\.tool-card-meta \{[^}]*flex: 0 0 auto;/);
   assert.match(styles, /\.tool-status-badge \{[^}]*white-space: nowrap;/);
   assert.match(styles, /\.tool-status-badge \{[^}]*text-overflow: ellipsis;/);
-  assert.match(styles, /\.tool-status-badge \{[^}]*max-width: min\(100%, 22ch\);/);
+  assert.match(
+    styles,
+    /\.tool-status-badge \{[^}]*max-width: min\(100%, 22ch\);/,
+  );
   assert.doesNotMatch(
     styles,
     /\.tool-status-badge \{[^}]*overflow-wrap: anywhere;/,
   );
   assert.match(styles, /\.tool-card-body pre[\s\S]*overflow-wrap: anywhere;/);
-  assert.match(styles, /\.tool-output-block summary[\s\S]*overflow-wrap: anywhere;/);
-  assert.match(styles, /\.compact-card,[\s\S]*\.archive-card \{[\s\S]*flex: 1 1 auto;/);
+  assert.match(
+    styles,
+    /\.tool-output-block summary[\s\S]*overflow-wrap: anywhere;/,
+  );
+  assert.match(
+    styles,
+    /\.compact-card,[\s\S]*\.archive-card \{[\s\S]*flex: 1 1 auto;/,
+  );
   assert.match(styles, /\.archive-cell \{[\s\S]*min-width: 0;/);
-  assert.match(styles, /\.approval-request-metadata dd[\s\S]*white-space: normal;/);
-  assert.match(styles, /\.approval-request-metadata dd[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.compact-history-body \{[\s\S]*min-width: 0;/);
+  assert.match(
+    styles,
+    /\.approval-request-metadata dd[\s\S]*white-space: normal;/,
+  );
+  assert.match(
+    styles,
+    /\.approval-request-metadata dd[\s\S]*overflow-wrap: anywhere;/,
+  );
   assert.match(styles, /\.attachment-chip \{[\s\S]*max-width: 100%;/);
   assert.match(styles, /\.attachment-chip span[\s\S]*overflow-wrap: anywhere;/);
 });
@@ -1054,10 +1089,9 @@ test("terminal output preview appends streaming growth without replaying full ou
       text: "line two\n",
     },
   );
-  assert.deepEqual(
-    planTerminalOutputPreviewWrite("line one\n", "line one\n"),
-    { kind: "noop" },
-  );
+  assert.deepEqual(planTerminalOutputPreviewWrite("line one\n", "line one\n"), {
+    kind: "noop",
+  });
   assert.deepEqual(
     planTerminalOutputPreviewWrite("old output\n", "new output\n"),
     {
@@ -1072,14 +1106,23 @@ test("terminal output preview appends streaming growth without replaying full ou
 });
 
 test("terminal output preview resets through the xterm write queue", () => {
-  const source = readFileSync(new URL("./Conversation.tsx", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./Conversation.tsx", import.meta.url),
+    "utf8",
+  );
   const previewStart = source.indexOf("function TerminalOutputPreview");
-  const previewEnd = source.indexOf("function toolOutputClassName", previewStart);
+  const previewEnd = source.indexOf(
+    "function toolOutputClassName",
+    previewStart,
+  );
   const previewSource = source.slice(previewStart, previewEnd);
 
   assert.notEqual(previewStart, -1);
   assert.notEqual(previewEnd, -1);
-  assert.match(previewSource, /terminal\.write\(`\$\{TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE\}/);
+  assert.match(
+    previewSource,
+    /terminal\.write\(`\$\{TERMINAL_OUTPUT_PREVIEW_RESET_SEQUENCE\}/,
+  );
   assert.doesNotMatch(previewSource, /terminal\.clear\(\)/);
 });
 
@@ -1447,7 +1490,7 @@ test("compact row does not render large compact summary previews", () => {
   assert.doesNotMatch(markup, /<details class="compact-summary-details">/);
 });
 
-test("compact rows do not render grouped history body when expanded", () => {
+test("compact rows expose direct archived history evidence", () => {
   const collapsedMarkup = renderToStaticMarkup(
     <CompactRow
       entry={{
@@ -1479,8 +1522,9 @@ test("compact rows do not render grouped history body when expanded", () => {
       }}
     />,
   );
+  assert.match(collapsedMarkup, /Previous context · 1 item/);
+  assert.match(collapsedMarkup, /old request/);
   assert.doesNotMatch(collapsedMarkup, /Compacted context/);
-  assert.doesNotMatch(collapsedMarkup, /old request/);
 
   const expandedMarkup = renderToStaticMarkup(
     <CompactRow
@@ -1515,9 +1559,9 @@ test("compact rows do not render grouped history body when expanded", () => {
   );
 
   assert.match(expandedMarkup, /Context compacted/);
-  assert.doesNotMatch(expandedMarkup, /Previous conversation/);
+  assert.match(expandedMarkup, /Previous context · 1 item/);
+  assert.match(expandedMarkup, /old request/);
   assert.doesNotMatch(expandedMarkup, /Compacted context/);
-  assert.doesNotMatch(expandedMarkup, /old request/);
   assert.doesNotMatch(expandedMarkup, /recent request/);
 });
 

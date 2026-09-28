@@ -46,6 +46,7 @@ type CompactRowProps = {
   entry: ConversationEntry;
   onOpenLocalFile?: (target: string) => void;
   onOpenArtifactUrl?: (url: string) => void;
+  showArchivedHistory?: boolean;
 };
 
 type ArchivedHistoryRowProps = {
@@ -1678,7 +1679,15 @@ function formatProgressDuration(totalMilliseconds: number) {
 
 export const CompactRow = memo(function CompactRow({
   entry,
+  onOpenLocalFile,
+  onOpenArtifactUrl,
+  showArchivedHistory = true,
 }: CompactRowProps) {
+  const archivedCells = entry.archivedCells ?? [];
+  const archivedEntryCount = entry.archivedEntryCount ?? archivedCells.length;
+  const hasArchivedHistory =
+    showArchivedHistory && (archivedCells.length > 0 || archivedEntryCount > 0);
+
   return (
     <section className="compact-row" aria-label="Context compacted">
       <div className="event-icon compact-icon">
@@ -1693,6 +1702,28 @@ export const CompactRow = memo(function CompactRow({
             <time>{entry.timestamp}</time>
           </div>
         </div>
+        {hasArchivedHistory ? (
+          <details className="compact-history-details">
+            <summary>
+              Previous context · {archivedEntryCount} item
+              {archivedEntryCount === 1 ? "" : "s"}
+            </summary>
+            <div className="compact-history-body">
+              {archivedCells.map((cell) => (
+                <div
+                  key={cell.id}
+                  className={`archive-cell archive-cell-${cell.kind}`}
+                >
+                  {renderArchivedConversationCell(
+                    cell,
+                    onOpenLocalFile,
+                    onOpenArtifactUrl,
+                  )}
+                </div>
+              ))}
+            </div>
+          </details>
+        ) : null}
       </div>
     </section>
   );
@@ -1775,11 +1806,28 @@ function renderNestedConversationCell(
     return <EventRow entry={cell.entries[0]} />;
   }
   if (cell.kind === "artifact") {
+    const entry = cell.entries[0];
+    const artifact = entry?.artifact;
+    const title = artifact?.title?.trim() || entry?.text || "Artifact";
+    const mimeType = normalizeArtifactMimeType(
+      artifact?.source?.mimeType ?? artifact?.mimeType,
+    );
+    const artifactUrl =
+      artifact?.source?.type === "url" ? artifact.source.url : null;
     return (
-      <ArtifactRow
-        entry={cell.entries[0]}
-        onOpenArtifactUrl={onOpenArtifactUrl}
-      />
+      <div className="compact-nested-item">
+        <strong>{title}</strong>
+        <span>{mimeType}</span>
+        {artifactUrl ? (
+          <button
+            type="button"
+            className="artifact-action"
+            onClick={() => onOpenArtifactUrl?.(artifactUrl)}
+          >
+            Open
+          </button>
+        ) : null}
+      </div>
     );
   }
   if (cell.kind === "compact") {
@@ -1788,6 +1836,7 @@ function renderNestedConversationCell(
         entry={cell.entries[0]}
         onOpenLocalFile={onOpenLocalFile}
         onOpenArtifactUrl={onOpenArtifactUrl}
+        showArchivedHistory={false}
       />
     );
   }

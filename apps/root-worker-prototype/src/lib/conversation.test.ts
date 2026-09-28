@@ -3287,6 +3287,139 @@ test("renders backend thread/read compact projection with summary and init conte
   );
 });
 
+test("compact read projection preserves command and tool evidence across the boundary", () => {
+  const state = buildConversationState(
+    makeThreadWithTurns([
+      makeTurn(
+        [
+          {
+            type: "userMessage",
+            id: "old-user",
+            content: [{ type: "text", text: "old request" }],
+          },
+          {
+            type: "commandExecution",
+            id: "old-cmd",
+            command: "pnpm test",
+            cwd: "/repo",
+            status: "completed",
+            aggregatedOutput: null,
+            exitCode: 0,
+            durationMs: 10,
+          },
+          {
+            type: "commandExecutionNotification",
+            id: "old-cmd:notification:exit",
+            commandItemId: "old-cmd",
+            kind: "exit",
+            message: "Command exit notification received.",
+            output: "passed",
+            exitCode: 0,
+            createdAtMs: 1,
+          },
+          {
+            type: "builtinToolCall",
+            id: "old-builtin",
+            tool: "schedule_subscribe",
+            arguments: { label: "watch", schedule: "every 5 minutes" },
+            status: "completed",
+            output: { subscription_id: "sub-1" },
+          },
+          {
+            type: "dynamicToolCall",
+            id: "old-dynamic",
+            namespace: "functions",
+            tool: "read",
+            arguments: { path: "/repo/file.ts" },
+            status: "completed",
+            contentItems: [{ text: "old dynamic output" }],
+            success: true,
+            durationMs: 5,
+          },
+        ],
+        { id: "turn-old" },
+      ),
+      makeTurn(
+        [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+          },
+          {
+            type: "agentMessage",
+            id: "compact-1:summary",
+            text: "compact summary body from thread/read",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        { id: "compact-turn", startedAt: 2, completedAt: 2 },
+      ),
+      makeTurn(
+        [
+          {
+            type: "agentMessage",
+            id: "post-agent",
+            text: "continued after compact",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "commandExecution",
+            id: "post-cmd",
+            command: "git status --short",
+            cwd: "/repo",
+            status: "running",
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
+          },
+          {
+            type: "builtinToolCall",
+            id: "post-builtin",
+            tool: "poll_event",
+            arguments: {},
+            status: "completed",
+            output: { source_hint: "inter_agent" },
+          },
+        ],
+        {
+          id: "turn-post",
+          status: "running",
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+        },
+      ),
+    ]),
+  );
+
+  const compactEntry = state.cells[0]?.entries[0];
+  assert.equal(compactEntry?.kind, "compact");
+  assert.deepEqual(
+    compactEntry?.archivedCells
+      ?.flatMap((cell) => cell.entries)
+      .map((entry) => entry.id),
+    [
+      "old-user",
+      "old-cmd",
+      "old-cmd:notification:exit",
+      "old-builtin",
+      "old-dynamic",
+    ],
+  );
+  assert.deepEqual(
+    state.cells.flatMap((cell) => cell.entries.map((entry) => entry.id)),
+    [
+      "compact-1",
+      "compact-1:summary",
+      "post-agent",
+      "post-cmd",
+      "post-builtin",
+    ],
+  );
+});
+
 test("keeps compact-triggering same-turn user messages while hiding stale same-turn output", () => {
   const firstPrompt =
     "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";

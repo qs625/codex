@@ -4071,6 +4071,31 @@ body.macos-window-chrome
   display: none;
 }
 
+.compact-history-details {
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
+.compact-history-details > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  color: #57534e;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.compact-history-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.compact-history-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 16px 16px;
+}
+
 .compact-copy,
 .archive-copy {
   flex: 1 1 auto;
