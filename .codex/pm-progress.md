@@ -13,22 +13,23 @@ Active goal: continuous large front+backend code organization. User asked to con
 ## Active Work
 
 - id: workspace-tab-add-button-menu
-  status: dispatched
+  status: completed_pending_merge
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
   branch: feature/workspace-tab-add-menu
   task_type: frontend_workspace_ui_feature
   depends_on: main `7cf28dcd1`; user requested workspace tab bar add button with chooser for Terminal, Browser, Chat
-  files: expected workspace tab bar / workspace tab model / relevant frontend component tests; exact files TBD by owner after inspection; `.codex/pm-progress.md`
+  files: `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/styles.css`, `apps/root-worker-prototype/src/components/RightPanel.test.tsx`, `.codex/pm-progress.md`
   base_commit: `7cf28dcd1`
   product_contract: Add a compact add button in the workspace tab bar. Clicking it opens a small anchored chooser/popover in the workspace tab bar context with three explicit choices: Terminal, Browser, Chat. Choosing Terminal should create/select a workspace Terminal tab using the same semantics as existing right-panel-to-workspace Terminal entry points. Choosing Browser should create/select a workspace Browser tab using the existing Browser workspace semantics. Choosing Chat should create/select a Chat/conversation workspace tab without changing thread runtime state or sending any message. The chooser should close after selection, on outside click/Escape, and should not steal focus from running terminal/browser sessions except as needed to select the created tab. No destructive action or extra confirmation is needed.
   design_contract: Reuse the existing workspace tab bar visual language: small icon/button affordance near tab controls, lightweight anchored popover/menu, compact rows with label and subtle description/icon if existing icon primitives are available. Do not introduce a large modal, marketing-style empty state, global command palette, or redesign of workspace tabs. Keep keyboard/mouse accessibility reasonable with button labels/aria labels and Escape/outside-close behavior if the existing component patterns support it.
   constraints: Preserve existing workspace tab ordering/storage, Browser/Terminal lifecycle, right-panel detach/return semantics, conversation thread lifecycle/read/list/status, send-message behavior, provider-visible schema, API/IPC shape, persisted history/protocol semantics, Runtime Capsule/Launcher semantics, and external/native provider parity. Do not alter Terminal process/session behavior, Browser native view ownership, or thread creation/send semantics beyond using existing workspace tab creation pathways.
-  validation: pending
-  reviewer_result: pending
-  risk: pending
-  commit: pending
+  implementation: Added a compact add button to the workspace tab strip with an anchored lightweight menu containing Terminal, Browser, and Chat. Terminal and Browser selections reuse existing `openTerminalInWorkspace` / `openBrowserInWorkspace` workspace tab semantics. Chat selection reuses the existing blank Chat thread path and closes the chooser immediately; it does not send a message. The menu toggles from the add button and closes on selection, outside pointerdown, Escape, resize, or scroll. The visual treatment reuses existing workspace tab density/colors and keeps the actual `tablist` separate from the add command for accessibility.
+  validation: Owner validation passed. Initial `pnpm --dir apps/root-worker-prototype exec prettier --check src/App.tsx src/styles.css src/components/RightPanel.test.tsx` reported formatting drift in `src/App.tsx` and `src/styles.css`; after `pnpm --dir apps/root-worker-prototype exec prettier --write src/App.tsx src/styles.css src/components/RightPanel.test.tsx`, final Prettier check passed. `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx` passed, covering workspace tab source-contract assertions. `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/workspaceTabs.test.ts` passed with 9 tests. `pnpm --dir apps/root-worker-prototype build` passed with existing chunk-size warning only. `git diff --check` passed.
+  reviewer_result: Fixed reviewer `/self/owner_dev/reviewer` approved in two rounds. First review found no blockers and confirmed the add button/menu uses existing Terminal, Browser, and Chat creation semantics without touching Browser native ownership, Terminal lifecycle, or thread/send-message runtime. Second review after Prettier/test assertion fixes confirmed the tablist/add-command ARIA split, overflow movement to `.workspace-tab-list`, and multiline source assertions remained behavior-preserving.
+  risk: Low frontend workspace UI feature. It adds a compact tab-bar command and fixed-position chooser, so remaining risk is visual positioning edge cases on very narrow windows or future tab strip layout changes. The implementation avoids backend/runtime/schema/IPC changes, reuses existing workspace tab helpers, keeps Browser/Terminal lifecycle and Chat send-message semantics untouched, and preserves workspace tab ordering/storage.
+  commit: owner handoff reports final commit hash; PM merge will record merge hash
 
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
