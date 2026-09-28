@@ -13,7 +13,7 @@ Active goal: continuous large front+backend code organization is temporarily pau
 ## Active Work
 
 - id: compact-after-user-message-display-regression
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -31,11 +31,12 @@ Active goal: continuous large front+backend code organization is temporarily pau
   validation_required: PM will require installed Runtime Capsule restart and self-debug after merge because this is a user-visible installed regression.
   validation: Owner validation passed: `./node_modules/.bin/prettier --check apps/root-worker-prototype/src/lib/conversationCompact.ts apps/root-worker-prototype/src/lib/conversation.test.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx` (44 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (257 passed); `git diff --check HEAD~1 HEAD`. Fixed reviewer `/self/owner_dev_2/reviewer` approved in two rounds with no blocking findings. PM validation after merge passed: Prettier check on touched TS/TSX/CSS files; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (257 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/components/RightPanel.test.tsx src/lib/workspaceTabs.test.ts` passed; `git diff --check HEAD~2 HEAD`.
   risk: Low-to-medium frontend display/compact fix. It intentionally changes compact-row main cells so the user message that triggers compact remains visible. The old stale-output protection remains for assistant/tool/command/status entries, so pre-compact tool or agent output should not revive.
-  next_action: Build Runtime Capsule from main `24d30df86`, restart, and self-debug the installed conversation list.
-  commit: owner `ed6b92343`; merge `f18d9e023`; pending capsule delivery at main `24d30df86`
+  next_action: No further action unless user reproduces another compact/display issue. Installed Runtime Capsule `sha256:b56210ccaa7079e7018e644319ccc6e6619e6ad9ec91199e446fa0ee7f9ac109` is effective.
+  installed_validation: PM built Runtime Capsule `sha256:b56210ccaa7079e7018e644319ccc6e6619e6ad9ec91199e446fa0ee7f9ac109` from sourceCommit `5c19bb0a0cdd8a1a4079fb5da04569d1283b3dd4`; restart `call_SVwusv5MX8htmgpeQiN70dbv` completed. Installed self-debug attached to Electron CDP `127.0.0.1:9222`, confirmed `control.json` selected/externalCurrent/activeLaunch and renderer URL all point at the new release, console had 0 errors / 0 warnings, and the main conversation list continued rendering post-restart/self-debug messages in the active `/self` tab after the compacted context.
+  commit: owner `ed6b92343`; merge `f18d9e023`; installed effective via sourceCommit `5c19bb0a`
 
 - id: workspace-tab-add-button-menu
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -54,8 +55,9 @@ Active goal: continuous large front+backend code organization is temporarily pau
   follow_up_bug: User reported that after closing a workspace Browser tab, the Browser content/native view can remain visible in the right panel briefly before disappearing. PM paused merge and dispatched owner_dev to root-cause and fix on the same branch. Expected contract: closing a Browser workspace tab must immediately converge tab strip, selected workspace tab, RightPanel active surface, and Browser native view visibility/ownership; no timeout/CSS hiding/stale selected-id workaround; add-menu behavior and Browser/Terminal/Chat creation semantics must remain intact. Owner root-caused stale derivation from the old visible tab / global Browser active tab: when an explicit workspace Browser tab id was missing, `BrowserPanel` could fall back to a global active Browser tab and workspace commands could be issued with `tabId: null`, causing stale content/native view to remain or revive.
   follow_up_implementation: `closeWorkspaceTab` now computes the current visible tab from the synchronous pre-close `currentTabs + activeWorkspaceTabId + selectedThreadWorkspaceTabId` state and immediately sets a valid fallback active id. Workspace Browser variants no longer fall back to the global Browser tab when their explicit workspace Browser tab id is missing, and the workspace Browser toolbar is hidden in that missing-selection state so Go/Reload/Stop cannot dispatch `tabId: null` commands. Added RightPanel regressions for closing/invalidating workspace Browser tabs without showing other Browser content.
   follow_up_validation: Owner validation passed: `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx`; `./node_modules/.bin/prettier --check apps/root-worker-prototype/src/App.tsx apps/root-worker-prototype/src/components/BrowserPanel.tsx apps/root-worker-prototype/src/components/RightPanel.test.tsx`; `git diff --check`; `git diff --check HEAD~1 HEAD`. Fixed reviewer `/self/owner_dev/reviewer` first found missing workspace selection could still issue `tabId: null`; owner fixed it and reviewer approved. PM validation after merge passed: Prettier check on touched TS/TSX/CSS files; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/components/RightPanel.test.tsx src/lib/workspaceTabs.test.ts` passed; `git diff --check HEAD~2 HEAD`.
-  next_action: Build Runtime Capsule from main `24d30df86`, restart, and self-debug workspace add menu plus Browser close behavior in the installed client.
-  commit: owner add-menu `1a78e09ca`; owner Browser-close bugfix `daa7d1355`; merge `24d30df86`; pending capsule delivery
+  next_action: No further action unless user reproduces a workspace tab issue. Installed Runtime Capsule `sha256:b56210ccaa7079e7018e644319ccc6e6619e6ad9ec91199e446fa0ee7f9ac109` is effective.
+  installed_validation: PM built Runtime Capsule `sha256:b56210ccaa7079e7018e644319ccc6e6619e6ad9ec91199e446fa0ee7f9ac109` from sourceCommit `5c19bb0a0cdd8a1a4079fb5da04569d1283b3dd4`; restart `call_SVwusv5MX8htmgpeQiN70dbv` completed. Installed self-debug confirmed add workspace button exists, opens a menu with Terminal / Browser / Chat, and Browser workspace tab behavior is installed: selecting a Browser tab shows its Browser panel, closing it immediately removes the Browser tab, returns active tab to `/self`, and leaves no visible Browser/native viewport panel.
+  commit: owner add-menu `1a78e09ca`; owner Browser-close bugfix `daa7d1355`; merge `24d30df86`; installed effective via sourceCommit `5c19bb0a`
 
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
