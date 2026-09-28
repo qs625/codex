@@ -162,9 +162,7 @@ declare global {
         title: string;
         body?: string | null;
       }) => Promise<{ ok: boolean; reason?: string }>;
-      relaunchApp: (payload?: {
-        reason?: string | null;
-      }) => Promise<{
+      relaunchApp: (payload?: { reason?: string | null }) => Promise<{
         ok: boolean;
         relaunching: boolean;
         alreadyRequested?: boolean;
@@ -217,17 +215,15 @@ declare global {
         expectedVersion?: string | null;
         reloadUserConfig?: boolean;
       }) => Promise<unknown>;
-      readAccount: (payload?: {
-        refreshToken?: boolean;
-      }) => Promise<unknown>;
+      readAccount: (payload?: { refreshToken?: boolean }) => Promise<unknown>;
       getAndroidConnectionInfo: () => Promise<AndroidConnectionInfo>;
-      startAccountLogin: (payload:
-        | { type: "apiKey"; apiKey: string }
-        | { type: "chatgpt"; codexStreamlinedLogin?: boolean }
-        | { type: "chatgptDeviceCode" }) => Promise<unknown>;
-      cancelAccountLogin: (payload: {
-        loginId: string;
-      }) => Promise<unknown>;
+      startAccountLogin: (
+        payload:
+          | { type: "apiKey"; apiKey: string }
+          | { type: "chatgpt"; codexStreamlinedLogin?: boolean }
+          | { type: "chatgptDeviceCode" },
+      ) => Promise<unknown>;
+      cancelAccountLogin: (payload: { loginId: string }) => Promise<unknown>;
       listAgentTypes: (cwd?: string) => Promise<{
         data: Array<{
           name: string;
@@ -352,7 +348,10 @@ declare global {
         byteSize: number;
         bytes: ArrayBuffer;
       }>;
-      readGitSnapshot: (cwd: string, options?: { ref?: string | null }) => Promise<{
+      readGitSnapshot: (
+        cwd: string,
+        options?: { ref?: string | null },
+      ) => Promise<{
         available: boolean;
         root: string | null;
         treeRoot: string | null;
@@ -390,7 +389,10 @@ declare global {
         }>;
         error: string | null;
       }>;
-      readGitCommitFiles: (cwd: string, hash: string) => Promise<{
+      readGitCommitFiles: (
+        cwd: string,
+        hash: string,
+      ) => Promise<{
         available: boolean;
         files: Array<{
           path: string;
@@ -551,6 +553,10 @@ declare global {
       hideBrowserView: (options?: {
         surfaceId?: string | null;
       }) => Promise<BrowserPanelState>;
+      captureBrowserView: (options?: {
+        surfaceId?: string | null;
+        tabId?: string | null;
+      }) => Promise<{ dataUrl: string | null }>;
       setBrowserViewBounds: (bounds: {
         x: number;
         y: number;
@@ -593,7 +599,9 @@ declare global {
         surfaceId?: string | null;
         tabId?: string | null;
       }) => Promise<BrowserPanelState>;
-      getTerminalState: (threadId?: string | null) => Promise<TerminalPanelState>;
+      getTerminalState: (
+        threadId?: string | null,
+      ) => Promise<TerminalPanelState>;
       createTerminal: (payload: {
         cwd?: string | null;
         size?: { rows: number; cols: number };

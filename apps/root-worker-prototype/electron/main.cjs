@@ -123,9 +123,7 @@ const {
   isPackagedApp,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
-const {
-  showSystemNotification,
-} = require("./systemNotification.cjs");
+const { showSystemNotification } = require("./systemNotification.cjs");
 const {
   createAppRelaunchAdapter,
   createClientRelaunchNotificationHandler,
@@ -167,9 +165,7 @@ const {
   writePayloadFailureEvidence,
 } = require("./runtimeLaunchState.cjs");
 const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
-const {
-  startRemoteDebuggingProxy,
-} = require("./remoteDebuggingProxy.cjs");
+const { startRemoteDebuggingProxy } = require("./remoteDebuggingProxy.cjs");
 const {
   activeCommandForTerminalFocus,
   addUserTerminal,
@@ -216,7 +212,8 @@ const computerUseOverlayBridge = createComputerUseOverlayBridgeServer({
   beforeUpdate: () => app.whenReady(),
   logger: console,
 });
-process.env[COMPUTER_USE_OVERLAY_SOCKET_ENV] = computerUseOverlayBridge.socketPath;
+process.env[COMPUTER_USE_OVERLAY_SOCKET_ENV] =
+  computerUseOverlayBridge.socketPath;
 const appServerClient = new AppServerClient({ autoStart: false });
 void computerUseOverlayBridge
   .start()
@@ -247,7 +244,7 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
     broadcast("codex:status", {
       ...appServerClient.status,
       ...status,
-  }),
+    }),
   logger: console,
 });
 const installedArtifactUpdateLifecycle =
@@ -294,7 +291,11 @@ const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 
-const remoteDebuggingConfig = applyRemoteDebuggingConfig(app, process.env, console);
+const remoteDebuggingConfig = applyRemoteDebuggingConfig(
+  app,
+  process.env,
+  console,
+);
 let remoteDebuggingProxy = null;
 
 function browserPanelTrace(event, tab, details = {}) {
@@ -357,7 +358,9 @@ function browserPanelTrace(event, tab, details = {}) {
       panelWindowFocused:
         panel && !panel.window.isDestroyed() ? panel.window.isFocused() : null,
       panelWindowMinimized:
-        panel && !panel.window.isDestroyed() ? panel.window.isMinimized() : null,
+        panel && !panel.window.isDestroyed()
+          ? panel.window.isMinimized()
+          : null,
       browserSessionPartition,
       ...webContentsState,
       ...details,
@@ -556,8 +559,7 @@ ipcMain.handle("codex:relaunchApp", async (_event, payload = {}) => {
 
 ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
-  const expectedRestart =
-    await getRuntimeRestartController().recoverPending();
+  const expectedRestart = await getRuntimeRestartController().recoverPending();
   const recoveryOccurrenceId =
     expectedRestart.recoveryOccurrenceId ??
     startupRuntimeRecovery.recoveryOccurrenceId;
@@ -581,8 +583,7 @@ ipcMain.handle("codex:bootstrap", async () => {
     logger: console,
   });
   const initialListResult = await listThreads(defaultWorkspace);
-  const initialAutoResume =
-    await runRecoveryFanout(initialListResult.threads);
+  const initialAutoResume = await runRecoveryFanout(initialListResult.threads);
   const listResult = await listThreads(defaultWorkspace);
   const lateAutoResume = await runRecoveryFanout(listResult.threads);
   const autoResume = mergeAutoResumeResults(
@@ -617,7 +618,11 @@ ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
   ],
   ["codex:writeConfigValue", "config/value/write", (payload) => payload],
   ["codex:batchWriteConfig", "config/batchWrite", (payload) => payload],
-  ["codex:listWorkflows", "workflow/list", (cwd = defaultWorkspace) => ({ cwd })],
+  [
+    "codex:listWorkflows",
+    "workflow/list",
+    (cwd = defaultWorkspace) => ({ cwd }),
+  ],
   [
     "codex:readAccount",
     "account/read",
@@ -636,7 +641,11 @@ ipcMain.handle("codex:androidConnectionInfo", async () => {
 [
   ["codex:startAccountLogin", "account/login/start", (payload) => payload],
   ["codex:cancelAccountLogin", "account/login/cancel", (payload) => payload],
-  ["codex:listAgentTypes", "agentType/list", (cwd = defaultWorkspace) => ({ cwd })],
+  [
+    "codex:listAgentTypes",
+    "agentType/list",
+    (cwd = defaultWorkspace) => ({ cwd }),
+  ],
   [
     "codex:listThreadProviders",
     "threadProvider/list",
@@ -649,7 +658,8 @@ ipcMain.handle("codex:androidConnectionInfo", async () => {
 ipcMain.handle("codex:selectProjectDirectory", async (event, defaultPath) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(window ?? undefined, {
-    defaultPath: typeof defaultPath === "string" ? defaultPath : defaultWorkspace,
+    defaultPath:
+      typeof defaultPath === "string" ? defaultPath : defaultWorkspace,
     properties: ["openDirectory"],
   });
   if (result.canceled || result.filePaths.length === 0) {
@@ -743,12 +753,9 @@ ipcMain.handle(
 );
 
 ipcMain.handle("codex:readCompactHistory", async (_event, threadId) => {
-  return readThread(
-    threadId,
-    true,
-    threadRuntimeById.get(threadId) ?? null,
-    { includeCompactReplacementHistory: true },
-  );
+  return readThread(threadId, true, threadRuntimeById.get(threadId) ?? null, {
+    includeCompactReplacementHistory: true,
+  });
 });
 
 ipcMain.handle("codex:setThreadRunConfig", async (_event, payload) => {
@@ -817,8 +824,27 @@ ipcMain.handle("codex:browser:show", async (event, bounds) => {
 
 ipcMain.handle("codex:browser:hide", async (event, options) => {
   const panel = browserPanelForEvent(event);
-  detachBrowserPanel(panel, { surfaceId: browserSurfaceIdFromPayload(options) });
+  detachBrowserPanel(panel, {
+    surfaceId: browserSurfaceIdFromPayload(options),
+  });
   return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:capture", async (event, options) => {
+  const panel = browserPanelForEvent(event);
+  const surfaceId = browserSurfaceIdFromPayload(options);
+  const tabId =
+    browserTabIdFromPayload(options) ??
+    panel.attachedTabIdBySurfaceId.get(surfaceId) ??
+    null;
+  const tab = tabId
+    ? (panel.tabs.find((candidate) => candidate.id === tabId) ?? null)
+    : activeBrowserPanelTab(panel);
+  if (!tab || tab.view.webContents.isDestroyed()) {
+    return { dataUrl: null };
+  }
+  const image = await tab.view.webContents.capturePage();
+  return { dataUrl: image.isEmpty() ? null : image.toDataURL() };
 });
 
 ipcMain.handle("codex:browser:setBounds", async (event, bounds) => {
@@ -923,7 +949,11 @@ ipcMain.handle("codex:browser:reload", async (event, options) => {
     tab.pendingNavigationSurfaceId = browserSurfaceIdFromPayload(options);
     tab.pendingNavigationStartUrl = tab.state.url || null;
     tab.pendingNavigationTarget = tab.view.webContents.getURL() || null;
-    scheduleBrowserPanelPendingNavigationTimeout(panel, tab, navigationSequence);
+    scheduleBrowserPanelPendingNavigationTimeout(
+      panel,
+      tab,
+      navigationSequence,
+    );
     tab.state.error = null;
     tab.state.loading = true;
     tab.view.webContents.reload();
@@ -1056,7 +1086,9 @@ ipcMain.handle("codex:terminal:write", async (event, payload) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, payload.tabId);
   if (!terminalTabSupports(tab, "write")) {
-    throw new Error("Terminal input is not supported by this execution environment");
+    throw new Error(
+      "Terminal input is not supported by this execution environment",
+    );
   }
   await appServerClient.request("terminal/session/write", {
     ...terminalControlTarget(panel, tab),
@@ -1069,7 +1101,9 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, payload.tabId);
   if (!terminalTabSupports(tab, "resize")) {
-    throw new Error("Terminal resize is not supported by this execution environment");
+    throw new Error(
+      "Terminal resize is not supported by this execution environment",
+    );
   }
   const size = normalizeTerminalSize(payload.size);
   await appServerClient.request("terminal/session/resize", {
@@ -1082,23 +1116,29 @@ ipcMain.handle("codex:terminal:resize", async (event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("codex:terminal:updatePreferredSize", async (_event, payload) => {
-  const threadId = typeof payload?.threadId === "string" ? payload.threadId : "";
-  if (!threadId) {
-    throw new Error("Thread id is required to update terminal size");
-  }
-  await appServerClient.request("terminal/preferredSize/update", {
-    threadId,
-    size: normalizeTerminalSize(payload.size),
-  });
-  return { ok: true };
-});
+ipcMain.handle(
+  "codex:terminal:updatePreferredSize",
+  async (_event, payload) => {
+    const threadId =
+      typeof payload?.threadId === "string" ? payload.threadId : "";
+    if (!threadId) {
+      throw new Error("Thread id is required to update terminal size");
+    }
+    await appServerClient.request("terminal/preferredSize/update", {
+      threadId,
+      size: normalizeTerminalSize(payload.size),
+    });
+    return { ok: true };
+  },
+);
 
 ipcMain.handle("codex:terminal:terminate", async (event, tabId) => {
   const panel = terminalPanelForEvent(event);
   const tab = requireTerminalTab(panel, tabId);
   if (!terminalTabSupports(tab, "terminate")) {
-    throw new Error("Terminal termination is not supported by this execution environment");
+    throw new Error(
+      "Terminal termination is not supported by this execution environment",
+    );
   }
   await appServerClient.request(
     "terminal/session/terminate",
@@ -1146,7 +1186,9 @@ registerIpcHandler("codex:lspDefinition", (payload) =>
   }),
 );
 
-registerIpcHandler("codex:lspStatus", (filePath) => lspManager.status(filePath));
+registerIpcHandler("codex:lspStatus", (filePath) =>
+  lspManager.status(filePath),
+);
 
 ipcMain.handle("codex:sendMessage", async (_event, payload) => {
   const input = buildTurnInput(payload);
@@ -1170,7 +1212,10 @@ ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
 });
 
 ipcMain.handle("codex:respondServerRequest", async (_event, payload) => {
-  await appServerClient.respondToServerRequest(payload.requestId, payload.result);
+  await appServerClient.respondToServerRequest(
+    payload.requestId,
+    payload.result,
+  );
   return { ok: true };
 });
 
@@ -1237,12 +1282,14 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 app.whenReady().then(() => {
   registerLocalFilePreviewProtocol();
   startRemoteDebuggingCompatibilityProxy();
-  configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
-    allowDefaultSessionPermission({
-      webContents,
-      permission,
-      isBrowserPanelWebContents,
-    }),
+  configurePermissionHandlers(
+    session.defaultSession,
+    ({ webContents, permission }) =>
+      allowDefaultSessionPermission({
+        webContents,
+        permission,
+        isBrowserPanelWebContents,
+      }),
   );
   configurePermissionHandlers(
     session.fromPartition(browserSessionPartition),
@@ -1413,8 +1460,7 @@ function routeTerminalNotification(notification) {
     if (panel.refreshPromise) {
       panel.pendingNotifications.push(notification);
       if (
-        panel.pendingNotifications.length >
-        MAX_PENDING_TERMINAL_NOTIFICATIONS
+        panel.pendingNotifications.length > MAX_PENDING_TERMINAL_NOTIFICATIONS
       ) {
         panel.pendingNotifications.splice(
           0,
@@ -1487,10 +1533,7 @@ function applyTerminalNotification(panel, notification, allowRefresh) {
         candidate.processId === params.processId &&
         candidate.generation === params.generation,
     );
-    if (
-      tab &&
-      appendTerminalOutput(tab, params.deltaBase64, params.sequence)
-    ) {
+    if (tab && appendTerminalOutput(tab, params.deltaBase64, params.sequence)) {
       tab.backgroundActivity = panel.state.activeTabId !== tab.id;
       sendTerminalPanelDelta(panel, {
         type: "delta",
@@ -1668,7 +1711,7 @@ function terminalControlTarget(panel, tab) {
     processId: tab.processId,
     resumeToken:
       tab.origin === "user"
-        ? panel.userTerminalResumeTokens.get(tab.processId) ?? null
+        ? (panel.userTerminalResumeTokens.get(tab.processId) ?? null)
         : null,
   };
 }
@@ -1738,7 +1781,9 @@ async function createBrowserPanelDebugTarget(target) {
 
   const window = firstAvailableWindow();
   if (!window) {
-    throw new Error("No Root Worker window is available for Browser panel tabs");
+    throw new Error(
+      "No Root Worker window is available for Browser panel tabs",
+    );
   }
 
   const panel = browserPanelForWindow(window);
@@ -1749,14 +1794,17 @@ async function createBrowserPanelDebugTarget(target) {
         requireVisiblePanel: false,
       }).catch((error) => {
         tab.state.loading = false;
-        tab.state.error = error instanceof Error ? error.message : String(error);
+        tab.state.error =
+          error instanceof Error ? error.message : String(error);
         sendBrowserPanelState(panel);
       });
     } else {
       await loadBrowserPanelTabAboutBlankBootstrap(panel, tab);
     }
     sendBrowserPanelState(panel);
-    const targetId = await waitForBrowserPanelDevToolsTarget(tab.view.webContents);
+    const targetId = await waitForBrowserPanelDevToolsTarget(
+      tab.view.webContents,
+    );
     return { targetId, tabId: tab.id };
   } catch (error) {
     await closeBrowserPanelTab(panel, tab.id);
@@ -1803,7 +1851,9 @@ async function waitForBrowserPanelDevToolsTarget(webContents) {
         if (!candidate || !candidate.id) {
           return false;
         }
-        return electronWebContents.fromDevToolsTargetId(candidate.id) === webContents;
+        return (
+          electronWebContents.fromDevToolsTargetId(candidate.id) === webContents
+        );
       });
       if (target) {
         if (DEBUG_BROWSER_PANEL) {
@@ -1840,7 +1890,11 @@ async function waitForBrowserPanelVisibleNavigationTarget(
   if (!panel.visibleSurfaceIds.has(surfaceId)) {
     throw new Error("Browser page is not visible in the panel");
   }
-  if (!browserPanelBoundsAreVisible(browserPanelBoundsForSurface(panel, surfaceId))) {
+  if (
+    !browserPanelBoundsAreVisible(
+      browserPanelBoundsForSurface(panel, surfaceId),
+    )
+  ) {
     throw new Error("Browser page has no visible panel bounds");
   }
   ensureBrowserPanelTabAttachedForNavigation(panel, tab, {
@@ -1865,10 +1919,7 @@ async function waitForBrowserPanelVisibleNavigationTarget(
 async function waitForBrowserPanelNavigationTarget(
   panel,
   tab,
-  {
-    requireVisiblePanel = true,
-    surfaceId = DEFAULT_BROWSER_SURFACE_ID,
-  } = {},
+  { requireVisiblePanel = true, surfaceId = DEFAULT_BROWSER_SURFACE_ID } = {},
 ) {
   if (requireVisiblePanel) {
     await waitForBrowserPanelVisibleNavigationTarget(panel, tab, surfaceId);
@@ -2015,7 +2066,10 @@ function sendBrowserPanelState(panel) {
         tabCount: panel.tabs.length,
       });
     }
-    panel.window.webContents.send("codex:browser:state", browserPanelState(panel));
+    panel.window.webContents.send(
+      "codex:browser:state",
+      browserPanelState(panel),
+    );
   }
 }
 
@@ -2106,7 +2160,8 @@ async function loadBrowserPanelTabUrl(
     await ensureBrowserPanelTabInitialNavigationBootstrap(panel, tab);
   }
   const navigationSequence = ++tab.navigationSequence;
-  const navigationStartUrl = tab.view.webContents.getURL() || tab.state.url || null;
+  const navigationStartUrl =
+    tab.view.webContents.getURL() || tab.state.url || null;
   browserPanelTrace("navigate:start", tab, {
     requestedTarget: target,
     normalizedUrl: normalized.url,
@@ -2123,7 +2178,9 @@ async function loadBrowserPanelTabUrl(
   tab.pendingNavigationTarget = normalized.url;
   tab.state.error = null;
   tab.state.loading = true;
-  if (shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: navigationStartUrl })) {
+  if (
+    shouldStopBrowserPanelLoadBeforeNavigation({ startUrl: navigationStartUrl })
+  ) {
     browserPanelTrace("navigate:preload-stop", tab, {
       navigationSequence,
       navigationStartUrl,
@@ -2137,7 +2194,10 @@ async function loadBrowserPanelTabUrl(
     });
   }
   sendBrowserPanelState(panel);
-  const observedNavigation = observeBrowserPanelTargetNavigation(tab, navigationSequence);
+  const observedNavigation = observeBrowserPanelTargetNavigation(
+    tab,
+    navigationSequence,
+  );
   try {
     browserPanelTrace("navigate:load-url", tab, {
       navigationSequence,
@@ -2193,7 +2253,9 @@ async function loadBrowserPanelTabUrl(
     }
     await delay(100);
     updateBrowserPanelLocationState(tab);
-    if (browserPanelTabHasFinishedTarget(tab, normalized.url, navigationSequence)) {
+    if (
+      browserPanelTabHasFinishedTarget(tab, normalized.url, navigationSequence)
+    ) {
       if (tab.navigationSequence === navigationSequence) {
         try {
           await waitForBrowserPanelNavigationTarget(panel, tab, {
@@ -2216,7 +2278,8 @@ async function loadBrowserPanelTabUrl(
     }
     if (tab.navigationSequence === navigationSequence) {
       failBrowserPanelNavigation(panel, tab, {
-        errorDescription: error instanceof Error ? error.message : String(error),
+        errorDescription:
+          error instanceof Error ? error.message : String(error),
         validatedUrl: normalized.url,
       });
     }
@@ -2234,33 +2297,27 @@ function bindBrowserPanelTab(panel, tab) {
     return { action: "deny" };
   });
 
-  tab.view.webContents.on("will-navigate", (event, url) =>
-    {
-      browserPanelEventTrace("will-navigate", tab, {
-        url,
-        isMainFrame: event?.isMainFrame ?? null,
-      });
-      guardBrowserPanelNavigation(panel, tab, event, url);
-    },
-  );
-  tab.view.webContents.on("will-frame-navigate", (event, url) =>
-    {
-      browserPanelEventTrace("will-frame-navigate", tab, {
-        url,
-        isMainFrame: event?.isMainFrame ?? null,
-      });
-      guardBrowserPanelNavigation(panel, tab, event, url);
-    },
-  );
-  tab.view.webContents.on("will-redirect", (event, url) =>
-    {
-      browserPanelEventTrace("will-redirect", tab, {
-        url,
-        isMainFrame: event?.isMainFrame ?? null,
-      });
-      guardBrowserPanelNavigation(panel, tab, event, url);
-    },
-  );
+  tab.view.webContents.on("will-navigate", (event, url) => {
+    browserPanelEventTrace("will-navigate", tab, {
+      url,
+      isMainFrame: event?.isMainFrame ?? null,
+    });
+    guardBrowserPanelNavigation(panel, tab, event, url);
+  });
+  tab.view.webContents.on("will-frame-navigate", (event, url) => {
+    browserPanelEventTrace("will-frame-navigate", tab, {
+      url,
+      isMainFrame: event?.isMainFrame ?? null,
+    });
+    guardBrowserPanelNavigation(panel, tab, event, url);
+  });
+  tab.view.webContents.on("will-redirect", (event, url) => {
+    browserPanelEventTrace("will-redirect", tab, {
+      url,
+      isMainFrame: event?.isMainFrame ?? null,
+    });
+    guardBrowserPanelNavigation(panel, tab, event, url);
+  });
   tab.view.webContents.on(
     "did-start-navigation",
     (event, url, isInPlace, isMainFrame) => {
@@ -2268,9 +2325,10 @@ function bindBrowserPanelTab(panel, tab) {
         url: browserNavigationEventTarget(event, url),
         legacyUrl: url,
         isInPlace,
-        isMainFrame: typeof event?.isMainFrame === "boolean"
-          ? event.isMainFrame
-          : isMainFrame,
+        isMainFrame:
+          typeof event?.isMainFrame === "boolean"
+            ? event.isMainFrame
+            : isMainFrame,
       });
     },
   );
@@ -2281,9 +2339,10 @@ function bindBrowserPanelTab(panel, tab) {
         url: browserNavigationEventTarget(event, url),
         legacyUrl: url,
         isInPlace,
-        isMainFrame: typeof event?.isMainFrame === "boolean"
-          ? event.isMainFrame
-          : isMainFrame,
+        isMainFrame:
+          typeof event?.isMainFrame === "boolean"
+            ? event.isMainFrame
+            : isMainFrame,
       });
     },
   );
@@ -2299,14 +2358,19 @@ function bindBrowserPanelTab(panel, tab) {
         tab.pendingNavigationSequence = navigationSequence;
         tab.pendingNavigationRequiresVisiblePanel = true;
         tab.pendingNavigationSurfaceId =
-          panel.attachedTabIdBySurfaceId.get(DEFAULT_BROWSER_SURFACE_ID) === tab.id
+          panel.attachedTabIdBySurfaceId.get(DEFAULT_BROWSER_SURFACE_ID) ===
+          tab.id
             ? DEFAULT_BROWSER_SURFACE_ID
             : (Array.from(panel.attachedTabIdBySurfaceId.entries()).find(
                 ([, attachedTabId]) => attachedTabId === tab.id,
               )?.[0] ?? DEFAULT_BROWSER_SURFACE_ID);
         tab.pendingNavigationStartUrl = tab.state.url || null;
         tab.pendingNavigationTarget = currentUrl || null;
-        scheduleBrowserPanelPendingNavigationTimeout(panel, tab, navigationSequence);
+        scheduleBrowserPanelPendingNavigationTimeout(
+          panel,
+          tab,
+          navigationSequence,
+        );
       }
     }
     tab.state.loading = shouldExposeBrowserPanelLoading({
@@ -2439,7 +2503,7 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     browserPanelTrace("observer:settle", tab, {
       navigationSequence,
       outcome: callback === resolveObserved ? "resolve" : "reject",
-      value: value instanceof Error ? value.message : value ?? null,
+      value: value instanceof Error ? value.message : (value ?? null),
     });
     cleanup();
     callback(value);
@@ -2480,9 +2544,10 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
       : null;
   };
   const handleStart = (event, legacyUrl, _isInPlace, legacyIsMainFrame) => {
-    const isMainFrame = typeof event?.isMainFrame === "boolean"
-      ? event.isMainFrame
-      : legacyIsMainFrame !== false;
+    const isMainFrame =
+      typeof event?.isMainFrame === "boolean"
+        ? event.isMainFrame
+        : legacyIsMainFrame !== false;
     if (!isMainFrame || tab.navigationSequence !== navigationSequence) {
       return;
     }
@@ -2500,7 +2565,10 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
     }
   };
   const handleNavigate = (_event, url) => {
-    browserPanelTrace("observer:did-navigate", tab, { navigationSequence, url });
+    browserPanelTrace("observer:did-navigate", tab, {
+      navigationSequence,
+      url,
+    });
     const committedUrl = acceptedCommittedUrl(url);
     if (committedUrl) {
       committedUrlForSequence = committedUrl;
@@ -2617,7 +2685,10 @@ function observeBrowserPanelTargetNavigation(tab, navigationSequence) {
   };
   const handleDestroyed = () => {
     browserPanelTrace("observer:destroyed", tab, { navigationSequence });
-    settle(rejectObserved, new Error("Browser panel webContents was destroyed"));
+    settle(
+      rejectObserved,
+      new Error("Browser panel webContents was destroyed"),
+    );
   };
   const promise = new Promise((resolve, reject) => {
     resolveObserved = resolve;
@@ -2644,7 +2715,9 @@ function completeBrowserPanelNavigation(panel, tab, navigationSequence = null) {
     tab.pendingNavigationSequence !== null &&
     tab.pendingNavigationSequence !== navigationSequence
   ) {
-    browserPanelTrace("navigation:complete:skip-sequence", tab, { navigationSequence });
+    browserPanelTrace("navigation:complete:skip-sequence", tab, {
+      navigationSequence,
+    });
     return;
   }
   tab.pendingDeferredFailure = null;
@@ -2675,7 +2748,8 @@ async function completeBrowserPanelNavigationWhenTargetReady(
   } catch (error) {
     if (tab.pendingNavigationSequence === navigationSequence) {
       failBrowserPanelNavigation(panel, tab, {
-        errorDescription: error instanceof Error ? error.message : String(error),
+        errorDescription:
+          error instanceof Error ? error.message : String(error),
         validatedUrl: tab.pendingNavigationTarget,
       });
     }
@@ -2726,7 +2800,10 @@ function scheduleBrowserPanelPendingNavigationTimeout(
 ) {
   clearBrowserPanelPendingNavigationTimeout(tab);
   tab.pendingNavigationTimeout = setTimeout(() => {
-    browserPanelTrace("navigation:timeout", tab, { navigationSequence, timeoutMs });
+    browserPanelTrace("navigation:timeout", tab, {
+      navigationSequence,
+      timeoutMs,
+    });
     if (
       tab.pendingNavigationSequence !== navigationSequence ||
       tab.view.webContents.isDestroyed()
@@ -2888,7 +2965,11 @@ function waitForBrowserPanelLoadStop(webContents, timeoutMs = 1_000) {
 }
 
 function activeBrowserPanelTab(panel) {
-  return panel.tabs.find((tab) => tab.id === panel.activeTabId) ?? panel.tabs[0] ?? null;
+  return (
+    panel.tabs.find((tab) => tab.id === panel.activeTabId) ??
+    panel.tabs[0] ??
+    null
+  );
 }
 
 function selectBrowserPanelTab(panel, tabId) {
@@ -2957,7 +3038,8 @@ function removeDestroyedBrowserPanelTab(panel, tab) {
   if (panel.tabs.length === 0) {
     createBrowserPanelTab(panel, { activate: true });
   } else if (wasActive) {
-    const nextTab = panel.tabs[Math.min(index, panel.tabs.length - 1)] ?? panel.tabs[0];
+    const nextTab =
+      panel.tabs[Math.min(index, panel.tabs.length - 1)] ?? panel.tabs[0];
     panel.activeTabId = nextTab.id;
     if (panel.visibleSurfaceIds.has(DEFAULT_BROWSER_SURFACE_ID)) {
       attachActiveBrowserPanelView(panel, { raise: true });
@@ -3073,7 +3155,11 @@ function ensureBrowserPanelTabAttachedForNavigation(
   if (!panel.visibleSurfaceIds.has(surfaceId)) {
     throw new Error("Browser page is not visible in the panel");
   }
-  if (!browserPanelBoundsAreVisible(browserPanelBoundsForSurface(panel, surfaceId))) {
+  if (
+    !browserPanelBoundsAreVisible(
+      browserPanelBoundsForSurface(panel, surfaceId),
+    )
+  ) {
     throw new Error("Browser page has no visible panel bounds");
   }
   if (!attachBrowserPanelTabView(panel, { surfaceId, tab, raise })) {
@@ -3293,12 +3379,10 @@ function reloadWindowRenderer(window) {
     webContents.on("did-fail-load", handleFail);
     try {
       if (!isDev) {
-        void window
-          .loadFile(builtRendererPath())
-          .catch((error) => {
-            cleanup();
-            reject(error);
-          });
+        void window.loadFile(builtRendererPath()).catch((error) => {
+          cleanup();
+          reject(error);
+        });
       } else if (typeof webContents.reloadIgnoringCache === "function") {
         webContents.reloadIgnoringCache();
       } else {
@@ -3357,8 +3441,7 @@ function getRuntimeRestartController() {
                 ...status,
               }),
             logger: console,
-            reason:
-              notification.params?.reason ?? notification.method ?? null,
+            reason: notification.params?.reason ?? notification.method ?? null,
             requestId: notification.params?.requestId ?? null,
           },
         ),
@@ -3472,7 +3555,12 @@ async function listSkills(cwd) {
   };
 }
 
-async function readThread(threadId, includeTurns, runtime = null, options = {}) {
+async function readThread(
+  threadId,
+  includeTurns,
+  runtime = null,
+  options = {},
+) {
   const response = await appServerClient.request("thread/read", {
     threadId,
     includeTurns,
@@ -3486,7 +3574,10 @@ async function subscribeThread(threadId) {
     includeTurns: false,
   });
   const existingRuntime = threadRuntimeById.get(threadId) ?? null;
-  const runtime = resolveRuntimeForResume(existingRuntime, response.thread ?? response);
+  const runtime = resolveRuntimeForResume(
+    existingRuntime,
+    response.thread ?? response,
+  );
   rememberThreadRuntime(threadId, runtime);
   return {
     thread: response.thread
@@ -3499,7 +3590,8 @@ async function unsubscribeThread(threadId) {
   const response = await appServerClient.request("thread/unsubscribe", {
     threadId,
   });
-  const status = response.status === "unsubscribed" ? "unsubscribed" : "notSubscribed";
+  const status =
+    response.status === "unsubscribed" ? "unsubscribed" : "notSubscribed";
   return { status };
 }
 
@@ -3749,7 +3841,9 @@ function normalizeThreadGoal(goal) {
     objective: goal?.objective ?? "",
     status: normalizeStatusValue(goal?.status),
     tokenBudget:
-      goal?.tokenBudget === undefined ? goal?.token_budget ?? null : goal.tokenBudget,
+      goal?.tokenBudget === undefined
+        ? (goal?.token_budget ?? null)
+        : goal.tokenBudget,
     tokensUsed: Number(goal?.tokensUsed ?? goal?.tokens_used ?? 0),
     timeUsedSeconds: Number(
       goal?.timeUsedSeconds ?? goal?.time_used_seconds ?? 0,
@@ -3780,8 +3874,9 @@ function normalizeItem(item, options = {}) {
       const hasReplacementHistory = replacementHistory !== null;
       return {
         ...item,
-        replacementHistory:
-          options.includeCompactReplacementHistory ? replacementHistory : null,
+        replacementHistory: options.includeCompactReplacementHistory
+          ? replacementHistory
+          : null,
         replacementHistoryStatus: hasReplacementHistory
           ? replacementHistory.length > 0
             ? "available"
@@ -4069,7 +4164,9 @@ function localFilePreviewTargetForUrl(url) {
   ) {
     return null;
   }
-  const token = decodeURIComponent(parsed.pathname.split("/").filter(Boolean)[0] ?? "");
+  const token = decodeURIComponent(
+    parsed.pathname.split("/").filter(Boolean)[0] ?? "",
+  );
   const target = localFilePreviewTargetsByToken.get(token);
   if (!target || target.mimeType !== "application/pdf") {
     return null;

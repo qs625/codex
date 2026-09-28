@@ -22,7 +22,6 @@ import {
 import { type GitDiffPreviewState } from "./components/RightPanel";
 import {
   BrowserPanel,
-  type BrowserNativeOcclusionRect,
   type BrowserWorkspaceTabDescriptor,
 } from "./components/BrowserPanel";
 import {
@@ -444,8 +443,6 @@ function App() {
     left: number;
     top: number;
   } | null>(null);
-  const [workspaceAddMenuOcclusionRect, setWorkspaceAddMenuOcclusionRect] =
-    useState<BrowserNativeOcclusionRect | null>(null);
   const [draggedWorkspaceTab, setDraggedWorkspaceTab] = useState<string | null>(
     null,
   );
@@ -629,7 +626,6 @@ function App() {
 
   useEffect(() => {
     if (!workspaceAddMenuOpen) {
-      setWorkspaceAddMenuOcclusionRect(null);
       return;
     }
 
@@ -679,45 +675,6 @@ function App() {
       );
     };
   }, [workspaceAddMenuOpen]);
-
-  useLayoutEffect(() => {
-    if (!workspaceAddMenuOpen || !workspaceAddMenuPosition) {
-      setWorkspaceAddMenuOcclusionRect(null);
-      return undefined;
-    }
-    const menu = workspaceAddMenuRef.current;
-    if (!menu) {
-      return undefined;
-    }
-
-    const updateWorkspaceAddMenuOcclusion = () => {
-      const rect = menu.getBoundingClientRect();
-      setWorkspaceAddMenuOcclusionRect((current) => {
-        const next = {
-          left: Math.max(0, Math.round(rect.left)),
-          top: Math.max(0, Math.round(rect.top)),
-          right: Math.max(0, Math.round(rect.right)),
-          bottom: Math.max(0, Math.round(rect.bottom)),
-        };
-        if (
-          current?.left === next.left &&
-          current.top === next.top &&
-          current.right === next.right &&
-          current.bottom === next.bottom
-        ) {
-          return current;
-        }
-        return next;
-      });
-    };
-
-    updateWorkspaceAddMenuOcclusion();
-    const resizeObserver = new ResizeObserver(updateWorkspaceAddMenuOcclusion);
-    resizeObserver.observe(menu);
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [workspaceAddMenuOpen, workspaceAddMenuPosition]);
 
   useEffect(() => {
     const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
@@ -3621,11 +3578,6 @@ function App() {
 
   const browserNativeModalOverlayActive =
     isSelfCommandOpen || isSettingsOpen || isCreatingChatThread;
-  const workspaceBrowserNativeOcclusionRects = useMemo(
-    () =>
-      workspaceAddMenuOcclusionRect ? [workspaceAddMenuOcclusionRect] : [],
-    [workspaceAddMenuOcclusionRect],
-  );
 
   function handleGitDiffPreviewChange(state: GitDiffPreviewState) {
     setGitDiffPreview(state);
@@ -4369,7 +4321,7 @@ function App() {
                   active
                   variant="workspace"
                   nativeOverlayActive={browserNativeModalOverlayActive}
-                  nativeOcclusionRects={workspaceBrowserNativeOcclusionRects}
+                  nativePreviewOverlayActive={workspaceAddMenuOpen}
                   resizing={isRightPanelResizing}
                   navigationRequest={null}
                   onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
