@@ -1651,7 +1651,7 @@ export function ConversationPanel({
           <div className="composer-metadata-row">
             <div className="composer-thread-meta">
               <RunConfigPicker
-                disabled={isSending || activeTurnId != null}
+                disabled={isSending}
                 onApply={onUpdateRunConfig}
                 selectedThread={selectedThread}
               />

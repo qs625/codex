@@ -113,6 +113,34 @@ test("applyRunConfigOverride uses pending config for immediate sends", () => {
   );
 });
 
+test("buildSendMessagePayload uses the latest run config even while active", () => {
+  assert.deepEqual(
+    buildSendMessagePayload({
+      draft: {
+        text: "next",
+        skills: [],
+        images: [],
+      },
+      thread: makeThread({
+        lifecycleStatus: { type: "active", activeFlags: ["running"] },
+        model: "gpt-5.6",
+        modelProvider: "modelhub",
+        reasoningEffort: "medium",
+      }),
+      threadId: "thread-1",
+    }),
+    {
+      threadId: "thread-1",
+      model: "gpt-5.6",
+      modelProvider: "modelhub",
+      effort: "medium",
+      text: "next",
+      skills: [],
+      images: [],
+    },
+  );
+});
+
 test("applyRunConfigOverride preserves explicit provider-neutral selection", () => {
   const thread = makeThread({
     model: "gpt-5",
