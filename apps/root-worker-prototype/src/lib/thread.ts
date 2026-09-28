@@ -790,12 +790,14 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
   const turnMatcher = createTurnItemMatcher(
     buildTurnItemIndex([{ turn: normalizedTurn, items: normalizedTurn.items }]),
   );
-  const turns = [
-    ...thread.turns.flatMap((existing) =>
-      getRetainedUnmatchedTurn(existing, turnMatcher),
-    ),
-    normalizedTurn,
-  ];
+  const turns = thread.turns.flatMap((existing) =>
+    getRetainedUnmatchedTurn(existing, turnMatcher),
+  );
+  if (turnHasCompactItem(normalizedTurn)) {
+    insertCompactTurnByBoundaryTimestamp(turns, normalizedTurn);
+  } else {
+    turns.push(normalizedTurn);
+  }
   return updateStatsForNewLiveCompactions(
     thread,
     pruneThreadSnapshotToLatestCompact({ ...thread, turns }),
@@ -1702,12 +1704,47 @@ function insertTurnByTimestamp(turns: Turn[], turn: Turn) {
   turns.splice(insertIndex, 0, turn);
 }
 
+function insertCompactTurnByBoundaryTimestamp(turns: Turn[], turn: Turn) {
+  const timestampMs = compactTurnBoundaryTimestampMs(turn);
+  if (timestampMs === null) {
+    turns.push(turn);
+    return;
+  }
+  const insertIndex = turns.findIndex((candidate) => {
+    const candidateTimestampMs = turnOrderTimestampMs(candidate);
+    return candidateTimestampMs === null
+      ? isTurnInFlight(candidate)
+      : candidateTimestampMs > timestampMs;
+  });
+  if (insertIndex === -1) {
+    turns.push(turn);
+    return;
+  }
+  turns.splice(insertIndex, 0, turn);
+}
+
 function turnOrderTimestampSeconds(turn: Turn) {
   const timestampSeconds = turn.startedAt ?? turn.completedAt;
   return typeof timestampSeconds === "number" &&
     Number.isFinite(timestampSeconds)
     ? timestampSeconds
     : null;
+}
+
+function turnOrderTimestampMs(turn: Turn) {
+  const timestampSeconds = turnOrderTimestampSeconds(turn);
+  return timestampSeconds === null ? null : timestampSeconds * 1000;
+}
+
+function compactTurnBoundaryTimestampMs(turn: Turn) {
+  return (
+    turnOrderTimestampMs(turn) ??
+    turn.items
+      .filter((item) => item.type === "contextCompaction")
+      .map(threadItemOrderTimestampMs)
+      .find((timestampMs) => timestampMs !== null) ??
+    null
+  );
 }
 
 function threadItemOrderTimestampMs(item: ThreadItem) {
