@@ -677,6 +677,57 @@ test("BrowserPanel manager selection ignores workspace-owned tabs", () => {
   assert.equal(withLocalManagerSelection.activeTab?.id, "browser-c");
 });
 
+test("BrowserPanel workspace selection does not fall back after its tab closes", () => {
+  const tabs = [
+    {
+      id: "browser-a",
+      title: "A",
+      url: "https://closed.example",
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    },
+    {
+      id: "browser-b",
+      title: "B",
+      url: "https://still-open.example",
+      loading: false,
+      canGoBack: true,
+      canGoForward: false,
+      error: null,
+    },
+  ];
+
+  const selectedWorkspaceTab = resolveBrowserPanelTabSelection({
+    tabs,
+    activeTabId: "browser-b",
+    activeBrowserTabId: "browser-a",
+    isManagerVariant: false,
+  });
+  assert.equal(selectedWorkspaceTab.activeTab?.id, "browser-a");
+
+  const closedWorkspaceTab = resolveBrowserPanelTabSelection({
+    tabs: [tabs[1]],
+    activeTabId: "browser-b",
+    activeBrowserTabId: "browser-a",
+    isManagerVariant: false,
+  });
+  assert.equal(closedWorkspaceTab.activeTab, null);
+  assert.deepEqual(
+    closedWorkspaceTab.renderedTabs.map((tab) => tab.id),
+    ["browser-b"],
+  );
+
+  const blankWorkspaceBrowser = resolveBrowserPanelTabSelection({
+    tabs: [tabs[1]],
+    activeTabId: "browser-b",
+    activeBrowserTabId: null,
+    isManagerVariant: false,
+  });
+  assert.equal(blankWorkspaceBrowser.activeTab?.id, "browser-b");
+});
+
 test("BrowserPanel workspace variant renders a minimal URL toolbar without manager chrome", () => {
   const markup = renderToStaticMarkup(
     <BrowserPanel
@@ -685,7 +736,7 @@ test("BrowserPanel workspace variant renders a minimal URL toolbar without manag
       nativeOverlayActive={false}
       resizing={false}
       navigationRequest={null}
-      activeBrowserTabId="browser-tab-1"
+      activeBrowserTabId={null}
     />,
   );
 
@@ -702,6 +753,24 @@ test("BrowserPanel workspace variant renders a minimal URL toolbar without manag
   assert.doesNotMatch(markup, /browser-tab-strip/);
   assert.doesNotMatch(markup, /aria-label="New browser tab"/);
   assert.doesNotMatch(markup, /browser-status-row/);
+});
+
+test("BrowserPanel workspace variant hides controls for a missing explicit tab", () => {
+  const markup = renderToStaticMarkup(
+    <BrowserPanel
+      variant="workspace"
+      active
+      nativeOverlayActive={false}
+      resizing={false}
+      navigationRequest={null}
+      activeBrowserTabId="closed-browser-tab"
+    />,
+  );
+
+  assert.match(markup, /Browser tab closed\./);
+  assert.doesNotMatch(markup, /browser-toolbar-workspace/);
+  assert.doesNotMatch(markup, /aria-label="Workspace browser URL"/);
+  assert.doesNotMatch(markup, /class="browser-go-button"/);
 });
 
 test("browser and terminal rail entries are real workspace drag sources", () => {
@@ -981,7 +1050,7 @@ test("browser native view hides under app overlays and restores with measured bo
   );
   assert.match(
     browserPanelSource,
-    /\}, \[active, activeTab\?\.id, managerNativeViewBlocked, nativeOverlayActive, resizing\]\);/,
+    /\}, \[[\s\S]*active,[\s\S]*activeTab\?\.id,[\s\S]*managerNativeViewBlocked,[\s\S]*nativeOverlayActive,[\s\S]*resizing,[\s\S]*\]\);/,
   );
   assert.match(
     browserPanelSource,
@@ -1135,7 +1204,7 @@ test("browser panel header stays product chrome while tabs use page titles", () 
   );
   assert.match(
     browserPanelSource,
-    /<span className="browser-tab-title">\{browserTabLabel\(tab\)\}<\/span>/,
+    /<span className="browser-tab-title">[\s\S]*\{browserTabLabel\(tab\)\}[\s\S]*<\/span>/,
   );
 });
 
@@ -1586,7 +1655,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /threads\.some\(\(thread\) => thread\.id === tab\.threadId\)/,
     /const tabThread = getWorkspaceTabThread\(tab, threads\)/,
     /workspace-tab-dot \$\{threadDisplayStatusClass\(tabThread\)\}/,
+    /const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*currentTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId/,
     /closeWorkspaceTabById\(currentTabs, tabId\)/,
+    /if \(currentVisibleWorkspaceTabId !== tabId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const fallback =[\s\S]*next\[closingIndex\][\s\S]*setActiveWorkspaceTabId\(fallback\?\.id \?\? null\)/,
     /event\.stopPropagation\(\);[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true/,
     /async function openFilePathInWorkspace\(target: string\)/,
     /return \{ preview, rootId: requestRootId \}/,
@@ -1654,6 +1725,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/,
     /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelView\("browser"\)/,
     /function closeWorkspaceTab\([\s\S]*options: \{ closeOwnedBrowserTab\?: boolean \} = \{\}[\s\S]*options\.closeOwnedBrowserTab[\s\S]*closingTab\?\.kind === "browser"[\s\S]*window\.codexDesktop[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
+    /function closeWorkspaceTab\([\s\S]*const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*currentTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId,[\s\S]*\);[\s\S]*if \(currentVisibleWorkspaceTabId !== tabId\)[\s\S]*setActiveWorkspaceTabId\(fallback\?\.id \?\? null\)/,
     /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true/,
     /function handleReturnWorkspaceObjectToRightPanel\([\s\S]*payload\.kind === "browser"[\s\S]*closeWorkspaceTab\(tab\.id\);[\s\S]*setRightPanelView\("browser"\)[\s\S]*setRightPanelBrowserTabFocusRequest/,
   ]);
@@ -1776,12 +1848,14 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   const managerChromeSource = sourceSlice(
     browserPanelSource,
     "{isManagerVariant ? (",
-    "{!isManagerVariant ? (",
+    "{!isManagerVariant && !workspaceSelectionMissing ? (",
   );
   assertMatches(browserSelectionSource, [
     /const detachedBrowserTabIdSet = new Set\(detachedBrowserTabIds\)/,
     /tabs\.filter\(\(tab\) => !detachedBrowserTabIdSet\.has\(tab\.id\)\)/,
     /managerSelectedBrowserTabId \?\? activeTabId/,
+    /const hasExplicitWorkspaceSelection =[\s\S]*!isManagerVariant && activeBrowserTabId != null/,
+    /hasExplicitWorkspaceSelection \? null : \(renderedTabs\[0\] \?\? null\)/,
   ]);
   assertMatches(browserPanelSource, [
     /function resolveBrowserPanelTabSelection/,
@@ -1795,9 +1869,14 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /managerHasDetachedTabs && activeTab == null/,
     /if \(isManagerVariant && managerHasDetachedTabs && !activeTab\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\);/,
     /const shouldHideNativeView =[\s\S]*managerNativeViewBlocked/,
+    /const shouldHideNativeView =[\s\S]*!activeTab[\s\S]*managerNativeViewBlocked/,
+    /const workspaceSelectionMissing =[\s\S]*!isManagerVariant && activeBrowserTabId != null && activeTab == null/,
+    /if \(workspaceSelectionMissing\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const normalized = normalizeBrowserUrl\(address\)/,
+    /if \(workspaceSelectionMissing\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\)/,
     /function nextBrowserPanelSurfaceId\(\)/,
     /const browserSurfaceIdRef = useRef\(nextBrowserPanelSurfaceId\(\)\)/,
     /hideBrowserView\(\{ surfaceId \}\)/,
+    /Browser tab closed\./,
     /Browser content is open in workspace\./,
     /const browserSurfaceRef = useRef\(\{/,
     /detachedBrowserTabIds/,
@@ -1805,13 +1884,13 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /const lastAddressTabIdRef = useRef<string \| null>\(null\)/,
     /const syncAddressFromTab = \(/,
     /addressInputFocusedRef\.current && !tabChanged/,
-    /const handleAddressInputBlur = \(event: React\.FocusEvent<HTMLInputElement>\) => \{/,
+    /const handleAddressInputBlur = \([\s\S]*event: React\.FocusEvent<HTMLInputElement>,[\s\S]*\) => \{/,
     /event\.currentTarget\.form\?\.contains\(nextFocusedElement\)[\s\S]*return;[\s\S]*syncAddressFromTab\(activeTab\)/,
     /onFocus=\{\(\) => \{[\s\S]*addressInputFocusedRef\.current = true/,
     /aria-label="Browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/,
     /aria-label="Workspace browser URL"[\s\S]*onBlur=\{handleAddressInputBlur\}/,
     /isManagerVariant \? "browser-panel-manager" : "browser-panel-workspace"/,
-    /!isManagerVariant \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/,
+    /!isManagerVariant && !workspaceSelectionMissing \? \([\s\S]*browser-toolbar browser-toolbar-workspace[\s\S]*aria-label="Workspace browser URL"[\s\S]*\) : null/,
     /<div ref=\{viewportRef\} className="browser-native-viewport">/,
   ]);
   assertDoesNotMatchAny(rightPanelSource, [/nativeViewSuppressed/]);
@@ -1833,6 +1912,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
   assertMatches(surfaceApplySource, [
     /const surfaceDetachedTabIds = new Set\(surface\.detachedBrowserTabIds\)/,
     /surface\.managerSelectedBrowserTabId/,
+    /surface\.activeBrowserTabId[\s\S]*\?\s*\(normalizedState\.tabs\.find\([\s\S]*surface\.activeBrowserTabId[\s\S]*\) \?\? null\)/,
     /!surfaceDetachedTabIds\.has\(normalizedActiveTab\.id\)/,
     /syncAddressFromTab\(surfaceActiveTab\)/,
   ]);

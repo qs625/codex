@@ -108,16 +108,16 @@ export function resolveBrowserPanelTabSelection({
       ? tabs.filter((tab) => !detachedBrowserTabIdSet.has(tab.id))
       : tabs;
   const renderedTabs = isManagerVariant ? managerVisibleTabs : tabs;
-  const selectedBrowserTabId =
-    isManagerVariant
-      ? (managerSelectedBrowserTabId ?? activeTabId)
-      : activeBrowserTabId
-        ? activeBrowserTabId
-        : activeTabId;
+  const selectedBrowserTabId = isManagerVariant
+    ? (managerSelectedBrowserTabId ?? activeTabId)
+    : activeBrowserTabId
+      ? activeBrowserTabId
+      : activeTabId;
+  const hasExplicitWorkspaceSelection =
+    !isManagerVariant && activeBrowserTabId != null;
   const activeTab =
     renderedTabs.find((tab) => tab.id === selectedBrowserTabId) ??
-    renderedTabs[0] ??
-    null;
+    (hasExplicitWorkspaceSelection ? null : (renderedTabs[0] ?? null));
   const managerHasDetachedTabs =
     isManagerVariant && detachedBrowserTabIdSet.size > 0;
   const managerActiveTabDetached =
@@ -222,9 +222,13 @@ export function BrowserPanel({
     ],
   );
   const managerNativeViewBlocked =
-    managerActiveTabDetached ||
-    (managerHasDetachedTabs && activeTab == null);
-  const displayUrl = activeTab?.url ?? (!isManagerVariant ? state.url : "") ?? "";
+    managerActiveTabDetached || (managerHasDetachedTabs && activeTab == null);
+  const workspaceSelectionMissing =
+    !isManagerVariant && activeBrowserTabId != null && activeTab == null;
+  const displayUrl =
+    activeTab?.url ??
+    (!isManagerVariant && !workspaceSelectionMissing ? state.url : "") ??
+    "";
   const error = activeTab
     ? (localError ?? activeTab.error ?? state.error)
     : localError;
@@ -244,7 +248,9 @@ export function BrowserPanel({
     }
     setAddress(tab?.url ?? "");
   };
-  const handleAddressInputBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+  const handleAddressInputBlur = (
+    event: React.FocusEvent<HTMLInputElement>,
+  ) => {
     addressInputFocusedRef.current = false;
     const nextFocusedElement = event.relatedTarget;
     if (
@@ -263,27 +269,30 @@ export function BrowserPanel({
     const normalizedActiveTab =
       normalizedState.tabs.find(
         (tab) => tab.id === normalizedState.activeTabId,
-      ) ?? normalizedState.tabs[0] ?? null;
+      ) ??
+      normalizedState.tabs[0] ??
+      null;
     const surface = browserSurfaceRef.current;
     const surfaceDetachedTabIds = new Set(surface.detachedBrowserTabIds);
     const surfaceActiveTab =
       !surface.isManagerVariant && surface.activeBrowserTabId
-        ? (normalizedState.tabs.find((tab) => tab.id === surface.activeBrowserTabId) ??
-          normalizedActiveTab)
+        ? (normalizedState.tabs.find(
+            (tab) => tab.id === surface.activeBrowserTabId,
+          ) ?? null)
         : surface.isManagerVariant
-          ? (surface.managerSelectedBrowserTabId
+          ? ((surface.managerSelectedBrowserTabId
               ? (normalizedState.tabs.find(
-                (tab) =>
-                  tab.id === surface.managerSelectedBrowserTabId &&
-                  !surfaceDetachedTabIds.has(tab.id),
-              ) ?? null)
+                  (tab) =>
+                    tab.id === surface.managerSelectedBrowserTabId &&
+                    !surfaceDetachedTabIds.has(tab.id),
+                ) ?? null)
               : null) ??
             (normalizedActiveTab &&
-              !surfaceDetachedTabIds.has(normalizedActiveTab.id)
+            !surfaceDetachedTabIds.has(normalizedActiveTab.id)
               ? normalizedActiveTab
               : (normalizedState.tabs.find(
-                (tab) => !surfaceDetachedTabIds.has(tab.id),
-              ) ?? null))
+                  (tab) => !surfaceDetachedTabIds.has(tab.id),
+                ) ?? null)))
           : normalizedActiveTab;
     syncAddressFromTab(surfaceActiveTab);
     if (shouldClearBrowserLocalError(normalizedState, normalizedActiveTab)) {
@@ -307,12 +316,13 @@ export function BrowserPanel({
     const nextState = await browserApi.showBrowserView(bounds);
     applyBrowserState(nextState);
   };
-  const selectBrowserTabForSurfaceIfNeeded = async (browserApi: BrowserPanelApi) => {
+  const selectBrowserTabForSurfaceIfNeeded = async (
+    browserApi: BrowserPanelApi,
+  ) => {
     if (!isManagerVariant) {
       return;
     }
-    const targetTabId =
-      activeTab?.id ?? null;
+    const targetTabId = activeTab?.id ?? null;
     if (!targetTabId || state.activeTabId === targetTabId) {
       return;
     }
@@ -385,7 +395,9 @@ export function BrowserPanel({
         tabId: activeTab?.id ?? null,
       });
       applyBrowserState(nextState);
-    })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
+    })().catch((navigationError) =>
+      setLocalError(toBrowserError(navigationError)),
+    );
   }, [
     activeTab,
     isManagerVariant,
@@ -457,7 +469,11 @@ export function BrowserPanel({
     let boundsUpdateFrame: number | null = null;
     let lastSentBounds: BrowserViewBounds | null = null;
     const shouldHideNativeView =
-      !active || nativeOverlayActive || resizing || managerNativeViewBlocked;
+      !active ||
+      !activeTab ||
+      nativeOverlayActive ||
+      resizing ||
+      managerNativeViewBlocked;
     const hideBrowserViewIfOwned = () => {
       void browserApi
         .hideBrowserView({ surfaceId })
@@ -526,9 +542,18 @@ export function BrowserPanel({
       window.removeEventListener("resize", scheduleBoundsUpdate);
       void browserApi.hideBrowserView({ surfaceId });
     };
-  }, [active, activeTab?.id, managerNativeViewBlocked, nativeOverlayActive, resizing]);
+  }, [
+    active,
+    activeTab?.id,
+    managerNativeViewBlocked,
+    nativeOverlayActive,
+    resizing,
+  ]);
 
   const navigate = () => {
+    if (workspaceSelectionMissing) {
+      return;
+    }
     const normalized = normalizeBrowserUrl(address);
     if (!normalized.ok) {
       setLocalError(normalized.reason);
@@ -554,13 +579,18 @@ export function BrowserPanel({
         tabId: activeTab?.id ?? null,
       });
       applyBrowserState(nextState);
-    })().catch((navigationError) => setLocalError(toBrowserError(navigationError)));
+    })().catch((navigationError) =>
+      setLocalError(toBrowserError(navigationError)),
+    );
   };
 
   const runCommand = (
     command: (browserApi: BrowserPanelApi) => Promise<BrowserPanelState>,
     fallbackError: string,
   ) => {
+    if (workspaceSelectionMissing) {
+      return;
+    }
     const browserApi = currentBrowserPanelApi();
     if (!browserApi) {
       setLocalError("In-app browser is unavailable in this environment.");
@@ -588,10 +618,7 @@ export function BrowserPanel({
       return;
     }
     setLocalError(null);
-    runCommand(
-      (api) => api.createBrowserTab(),
-      "Could not create a tab.",
-    );
+    runCommand((api) => api.createBrowserTab(), "Could not create a tab.");
   };
 
   const selectTab = (tabId: string) => {
@@ -644,7 +671,8 @@ export function BrowserPanel({
                   return;
                 }
                 runCommand(
-                  (browserApi) => browserApi.openLink(displayUrl).then(() => state),
+                  (browserApi) =>
+                    browserApi.openLink(displayUrl).then(() => state),
                   "Could not open the page externally.",
                 );
               }}
@@ -653,7 +681,11 @@ export function BrowserPanel({
             </button>
           </header>
 
-          <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+          <div
+            className="browser-tab-strip"
+            role="tablist"
+            aria-label="Browser tabs"
+          >
             <div className="browser-tabs">
               {renderedTabs.map((tab) => {
                 const isActive = tab.id === activeTab?.id;
@@ -671,7 +703,9 @@ export function BrowserPanel({
                       title={browserTabLabel(tab)}
                       onClick={() => selectTab(tab.id)}
                       onDoubleClick={() =>
-                        onOpenBrowserTabInWorkspace?.(browserTabDragPayload(tab))
+                        onOpenBrowserTabInWorkspace?.(
+                          browserTabDragPayload(tab),
+                        )
                       }
                       onDragStart={(event) =>
                         writeWorkspaceObjectDragData(
@@ -680,8 +714,12 @@ export function BrowserPanel({
                         )
                       }
                     >
-                      <span className={`browser-tab-dot ${tab.loading ? "loading" : ""}`} />
-                      <span className="browser-tab-title">{browserTabLabel(tab)}</span>
+                      <span
+                        className={`browser-tab-dot ${tab.loading ? "loading" : ""}`}
+                      />
+                      <span className="browser-tab-title">
+                        {browserTabLabel(tab)}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -753,7 +791,9 @@ export function BrowserPanel({
                   onClick={() =>
                     runCommand(
                       (browserApi) =>
-                        browserApi.browserGoForward(activeBrowserCommandTarget()),
+                        browserApi.browserGoForward(
+                          activeBrowserCommandTarget(),
+                        ),
                       "Could not go forward.",
                     )
                   }
@@ -770,8 +810,12 @@ export function BrowserPanel({
                     runCommand(
                       (browserApi) =>
                         activeTab.loading
-                          ? browserApi.stopBrowserView(activeBrowserCommandTarget())
-                          : browserApi.reloadBrowserView(activeBrowserCommandTarget()),
+                          ? browserApi.stopBrowserView(
+                              activeBrowserCommandTarget(),
+                            )
+                          : browserApi.reloadBrowserView(
+                              activeBrowserCommandTarget(),
+                            ),
                       "Could not update the page.",
                     )
                   }
@@ -798,7 +842,9 @@ export function BrowserPanel({
               </form>
 
               <div className="browser-status-row" role="status">
-                <span className={`browser-status-dot ${activeTab.loading ? "loading" : "idle"}`} />
+                <span
+                  className={`browser-status-dot ${activeTab.loading ? "loading" : "idle"}`}
+                />
                 <span title={error ?? displayUrl}>
                   {error ?? (displayUrl || "Ready")}
                 </span>
@@ -807,7 +853,7 @@ export function BrowserPanel({
           ) : null}
         </>
       ) : null}
-      {!isManagerVariant ? (
+      {!isManagerVariant && !workspaceSelectionMissing ? (
         <form
           className="browser-toolbar browser-toolbar-workspace"
           onSubmit={(event) => {
@@ -858,7 +904,9 @@ export function BrowserPanel({
                 (browserApi) =>
                   activeTab?.loading
                     ? browserApi.stopBrowserView(activeBrowserCommandTarget())
-                    : browserApi.reloadBrowserView(activeBrowserCommandTarget()),
+                    : browserApi.reloadBrowserView(
+                        activeBrowserCommandTarget(),
+                      ),
                 "Could not update the page.",
               )
             }
@@ -891,6 +939,11 @@ export function BrowserPanel({
             <BrowserIcon />
             <span>Browser content is open in workspace.</span>
           </div>
+        ) : workspaceSelectionMissing ? (
+          <div className="browser-empty">
+            <BrowserIcon />
+            <span>Browser tab closed.</span>
+          </div>
         ) : !displayUrl && isManagerVariant ? (
           <div className="browser-empty">
             <BrowserIcon />
@@ -905,7 +958,8 @@ export function BrowserPanel({
 export function normalizeBrowserPanelState(
   state: BrowserPanelState | BrowserPanelActiveState,
 ): BrowserPanelState {
-  const candidateState = state as Partial<BrowserPanelState> & BrowserPanelActiveState;
+  const candidateState = state as Partial<BrowserPanelState> &
+    BrowserPanelActiveState;
   const tabs =
     Array.isArray(candidateState.tabs) && candidateState.tabs.length > 0
       ? candidateState.tabs

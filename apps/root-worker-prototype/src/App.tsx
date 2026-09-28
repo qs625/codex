@@ -3575,6 +3575,11 @@ function App() {
       return;
     }
     const closingTab = currentTabs[closingIndex];
+    const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId(
+      currentTabs,
+      activeWorkspaceTabId,
+      selectedThreadWorkspaceTabId,
+    );
     const next = closeWorkspaceTabById(currentTabs, tabId);
     workspaceTabsRef.current = next;
     setWorkspaceTabs(next);
@@ -3594,16 +3599,26 @@ function App() {
         .closeBrowserTab(closingTab.browserTabId)
         .catch((error) => setError(toErrorMessage(error)));
     }
-    if (visibleWorkspaceTabId !== tabId) {
+    if (currentVisibleWorkspaceTabId !== tabId) {
       return;
     }
     const fallback =
       next[closingIndex] ?? next[closingIndex - 1] ?? next[0] ?? null;
-    if (fallback) {
-      activateWorkspaceTab(fallback);
+    setActiveWorkspaceTabId(fallback?.id ?? null);
+    if (fallback?.kind === "conversation" && fallback.threadId) {
+      selectThread(fallback.threadId);
       return;
     }
-    setActiveWorkspaceTabId(null);
+    if (fallback?.kind === "terminal") {
+      setTerminalPanelFocusRequestToken((current) => current + 1);
+      return;
+    }
+    if (fallback?.kind === "file" && fallback.path) {
+      setFilePanelView("preview");
+      if (filePreview?.path !== fallback.path) {
+        void loadFilePreview(fallback.path, { preserveRightPanel: true });
+      }
+    }
   }
 
   function handleWorkspaceObjectDragOver(event: DragEvent<HTMLElement>) {
