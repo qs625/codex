@@ -13,7 +13,7 @@ Active goal: continuous large front+backend code organization is temporarily pau
 ## Active Work
 
 - id: compact-after-user-message-display-regression
-  status: dispatched
+  status: completed_pending_pm_merge
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -26,8 +26,13 @@ Active goal: continuous large front+backend code organization is temporarily pau
   prior_fix_context: Previous fixes `compact-live-output-after-init-context-regression` and `compact-user-message-after-compact-display` installed successfully for narrower scenarios. This new user report means at least one post-compact path remains uncovered or a previously fixed assumption is invalid in the current installed repro.
   constraints: Preserve typed compact stale filtering for genuinely old pre-compact items, persisted history/protocol semantics, model-visible context, provider-visible contracts, workspace tab visibility fallback, and conversation virtualization correctness. Do not disable compact boundary filtering globally, revive stale pre-compact items, special-case exact text, parse raw markers, use CSS/visibility hacks, or treat right-panel/Thread Analysis updates as proof that conversation display is correct.
   expected_investigation: Determine whether the failure is live item acceptance, persisted replay after compact, turn id/timestamp boundary classification, virtualized list key/cache/visibility, active workspace tab/panel visibility, or subscription/read merge order. Explain why the previous installed compact fixes and tests did not catch this scenario.
-  validation_required: Add regression tests that model a user message causing compact and then at least one later user/assistant/live item that must remain visible. Run focused thread/conversation tests and any component/virtualization tests touched. PM will require installed Runtime Capsule restart and self-debug after merge because this is a user-visible installed regression.
-  next_action: owner_dev_2 to root-cause, implement the narrow semantic fix, reuse fixed reviewer `/self/owner_dev_2/reviewer`, and return commit plus validation evidence.
+  root_cause: Previous compact fixes covered `thread.ts` live item acceptance/merge, so compact-after missing-turn commands, follow-up `userMessage`, assistant/tool items could enter thread state and conversation entries. This regression was one layer later in `conversationCompact.ts`: when building main conversation cells around the compact row, same-turn cells before the compact marker were removed wholesale and only the compact summary cell remained, so the user message that triggered compact existed in thread state but was hidden from the main conversation list.
+  implementation: `conversationCompact.ts` now keeps same-turn pre-compact pure user message cells while still discarding same-turn stale assistant/tool/command/status output. Regression tests now cover compact-triggering same-turn user messages, post-compact user messages, and stale same-turn agent/command output exclusion; thread-level init-context-after-compact expectations were updated to the new main-cells contract.
+  validation_required: PM will require installed Runtime Capsule restart and self-debug after merge because this is a user-visible installed regression.
+  validation: Owner validation passed: `./node_modules/.bin/prettier --check apps/root-worker-prototype/src/lib/conversationCompact.ts apps/root-worker-prototype/src/lib/conversation.test.ts apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` (77 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx` (44 passed); `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` (257 passed); `git diff --check HEAD~1 HEAD`. Fixed reviewer `/self/owner_dev_2/reviewer` approved in two rounds with no blocking findings.
+  risk: Low-to-medium frontend display/compact fix. It intentionally changes compact-row main cells so the user message that triggers compact remains visible. The old stale-output protection remains for assistant/tool/command/status entries, so pre-compact tool or agent output should not revive.
+  next_action: PM validate, merge to main, build Runtime Capsule, restart, and self-debug the installed conversation list.
+  commit: owner `ed6b92343`; PM merge will record merge hash
 
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
