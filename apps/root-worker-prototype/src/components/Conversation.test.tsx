@@ -685,8 +685,8 @@ test("virtual list renders backend compact summary read projection as a visible 
       focusedItem={null}
       onOpenLocalFile={() => {}}
       onOpenArtifactUrl={() => {}}
-      searchCurrentCellId="item-1:summary"
-      searchMatchCellIds={new Set(["item-1:summary"])}
+      searchCurrentCellId="item-1"
+      searchMatchCellIds={new Set(["item-1"])}
     />,
   );
 
@@ -695,6 +695,10 @@ test("virtual list renders backend compact summary read projection as a visible 
   assert.match(markup, /Init Context · User Preferences/);
   assert.match(markup, /Previous context · 1 item/);
   assert.doesNotMatch(markup, /old answer hidden by compact/);
+  assert.doesNotMatch(
+    markup,
+    /data-conversation-entry-ids="item-1:summary"/,
+  );
   const searchCurrentRowMarkup =
     markup.match(
       /<div class="conversation-virtual-row search-match search-current"[\s\S]*?(?=<div class="conversation-virtual-row|$)/,

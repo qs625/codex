@@ -4530,10 +4530,14 @@ test("compact projection archives timestamped current-turn output before a late 
     [
       ["current-user", "message"],
       ["compact-1", "compact"],
-      ["compact-1:summary", "message"],
       ["ctx-1:section:0", "tool"],
       ["ctx-1:section:1", "tool"],
     ],
+  );
+  assert.equal(
+    conversation.cells.find((cell) => cell.id === "compact-1")?.entries[0]
+      ?.compactSummary,
+    "compact summary",
   );
   assert.deepEqual(
     conversation.cells
@@ -4593,10 +4597,14 @@ test("compact projection archives same-turn output before a late marker", () => 
     [
       ["current-user", "message"],
       ["compact-1", "compact"],
-      ["compact-1:summary", "message"],
       ["ctx-1:section:0", "tool"],
       ["ctx-1:section:1", "tool"],
     ],
+  );
+  assert.equal(
+    conversation.cells.find((cell) => cell.id === "compact-1")?.entries[0]
+      ?.compactSummary,
+    "compact summary",
   );
   assert.deepEqual(
     conversation.cells
@@ -5517,11 +5525,15 @@ test("late compact turn snapshot preserves existing live follow-up cells", () =>
     conversation.cells.map((cell) => [cell.id, cell.kind]),
     [
       ["compact-1", "compact"],
-      ["compact-1:summary", "message"],
       ["ctx-1:section:0", "tool"],
       ["ctx-1:section:1", "tool"],
       ["user-live", "message"],
     ],
+  );
+  assert.equal(
+    conversation.cells.find((cell) => cell.id === "compact-1")?.entries[0]
+      ?.compactSummary,
+    "compact summary",
   );
   assert.equal(
     conversation.cells
