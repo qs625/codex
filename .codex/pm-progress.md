@@ -8,12 +8,12 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: fix newly reported installed UI regressions in Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84`: closing workspace Terminal/Browser still returns the same instance to the right panel, and the Project hover add button is missing. Then resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
+Active goal: continuous large front+backend code organization can resume after the higher-priority workspace close ownership and Project hover add button regressions were fixed, merged, and installed-effective in Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd`. Next queued PM work is to resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
 
 ## Active Work
 
 - id: project-hover-add-button-missing
-  status: pm_validated_ready_to_merge
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -27,13 +27,14 @@ Active goal: fix newly reported installed UI regressions in Runtime Capsule `sha
   validation_required: Owner must reuse `/self/owner_dev_2/reviewer`, add or update focused style/source/component coverage for Projects hover/focus add button, and run focused Panels/style tests plus Prettier/diff check.
   root_cause: Projects had a generic `New` affordance separated from the Projects heading line and without project-specific class/label, so it did not present like the Chat header hover `+` affordance in installed UI.
   implementation: Projects header now has `project-list-header`; create button is a heading-line icon button with `sidebar-action-button project-create-button`, `aria-label`/`title`, and CSS selectors for hover/focus/open visible state. Chat create and project delete selectors remain unchanged.
-  validation: Owner validation passed after PM caught and owner fixed a Prettier issue in `Panels.tsx`. Fixed reviewer approved. PM validation passed: Prettier on `Panels.tsx`, `Panels.test.tsx`, `styles.css`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Panels.test.tsx`; `git diff --check HEAD~2 HEAD`.
-  risk: Low sidebar UI fix; requires installed self-debug hover/focus smoke after merge.
-  commit: owner `b40cce0cd`; follow-up `5ca402505`
-  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed Project hover affordance.
+  validation: Owner validation passed after PM caught and owner fixed a Prettier issue in `Panels.tsx`. Fixed reviewer approved. PM validation passed on dev and main: Prettier on `Panels.tsx`, `Panels.test.tsx`, `styles.css`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Panels.test.tsx`; main combined focused suite with RightPanel/Terminal/workspace tests; `git diff --check`.
+  installed_validation: PM built Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd` from sourceCommit `0a3c5581f8e9b95887edbb1bb06e1d30db57896a`; restart `call_kbkCmQTYmOdkK0Pu0bCZRrAU` completed. Installed self-debug confirmed control selected/externalCurrent/active payload/renderer URL all point at the new release, console 0 errors / 0 warnings, Project header contains `New project or chat` icon button, button default computed style is opacity 0 / pointer-events none, and after hovering the Projects header it becomes opacity 1 / pointer-events auto.
+  risk: Low sidebar UI fix. No further action unless user reproduces another sidebar affordance issue.
+  commit: owner `b40cce0cd`; follow-up `5ca402505`; merge `e46059944`; installed effective via sourceCommit `0a3c5581f`
+  next_action: No further action unless user reproduces another Project hover add issue.
 
 - id: workspace-close-should-not-return-to-right-panel
-  status: pm_validated_ready_to_merge
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -49,10 +50,11 @@ Active goal: fix newly reported installed UI regressions in Runtime Capsule `sha
   validation_required: Owner must reuse `/self/owner_dev/reviewer`, update source-contract/component tests for Browser and Terminal close semantics, and rerun the focused workspace/RightPanel/TerminalPanel tests. PM will merge, build a Runtime Capsule, restart, and self-debug installed close behavior.
   root_cause: Workspace close only removed the workspace wrapper tab. Because detached ids were derived from current workspace tabs, removing the wrapper released the backend Browser/Terminal id and the right manager could rediscover and show it; Terminal was especially visible because the backend terminal tab was not closed.
   implementation: Workspace close button now passes close-owned Browser and Terminal options. Browser close calls `closeBrowserTab`, Terminal close calls `closeTerminalTab`, and pending close ids remain in detached id lists until backend close finishes to prevent transient right-panel revival. Non-not-found close errors restore the workspace tab and surface an error. Explicit return still uses bare `closeWorkspaceTab(tab.id)` and then focuses the right panel, so close and return are separate.
-  validation: Owner validation passed with fixed reviewer approval. PM validation passed: Prettier on App and RightPanel test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; `git diff --check HEAD~1 HEAD`.
-  risk: Medium frontend ownership/lifecycle fix; requires installed self-debug for Browser/Terminal close behavior.
-  commit: owner `6caffe8bf`
-  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed workspace close behavior.
+  validation: Owner validation passed with fixed reviewer approval. PM validation passed on dev and main: Prettier on App and RightPanel test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; main combined focused suite including Panels; `git diff --check`.
+  installed_validation: PM built Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd` from sourceCommit `0a3c5581f8e9b95887edbb1bb06e1d30db57896a`; restart `call_kbkCmQTYmOdkK0Pu0bCZRrAU` completed. Installed self-debug confirmed release identity and console 0 errors / 0 warnings. Workspace Browser created from the add menu while right panel stayed Thread Analysis; closing the Browser workspace tab left only `/self` active, right panel stayed Thread Analysis, and no Browser panel remained. Workspace Terminal created from the add menu with a real shell surface while right panel stayed Thread Analysis; closing the Terminal workspace tab left only `/self` active, right panel stayed Thread Analysis, and no Terminal panel/tab strip remained.
+  risk: Medium frontend ownership/lifecycle fix. No further action unless user reproduces another workspace close/return issue.
+  commit: owner `6caffe8bf`; merge `c5186dae0`; installed effective via sourceCommit `0a3c5581f`
+  next_action: No further action unless user reproduces another workspace close ownership issue.
 
 - id: compact-after-user-message-display-regression-reopen
   status: installed_effective
