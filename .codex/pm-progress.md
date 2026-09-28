@@ -13,7 +13,7 @@ Active goal: fix two newly reported installed UI regressions from 2026-09-28: (1
 ## Active Work
 
 - id: compact-after-current-message-still-hidden
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -32,12 +32,13 @@ Active goal: fix two newly reported installed UI regressions from 2026-09-28: (1
   why_prior_tests_missed: Prior compact tests covered post-compact user messages, later compact snapshots, and compact-after live append paths, but not the ordering shape where same-turn timestamped current output precedes a late compact marker in the array, including the pure-move case where no stale item is otherwise removed.
   implementation: Merged owner commit `711858299` as `53bfcc671`. Compact pruning now recognizes marker-preceding items whose order timestamp is strictly later than the latest compact boundary, removes them from the retained pre-marker slice, and reinserts them after the compact marker by timestamp. Untimestamped items and items at or before the compact boundary remain stale-filtered; user messages and compact summary result items remain retained by the existing rules.
   validation: Owner validation passed with fixed reviewer approval after reviewer found and owner fixed a pure-move short-circuit issue. PM main validation passed: Prettier on `apps/root-worker-prototype/src/lib/thread.ts` and `apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/lib/thread.test.ts src/components/Conversation.test.tsx` passed; `git diff --check HEAD~1 HEAD` passed.
+  installed_validation: PM first built and installed Runtime Capsule `sha256:52a99045784afa7f51e43b9bb090f9e2e173776ae7f28eb1c665da8afa8a5ff7` from main `0953fd373`; restart `call_orzSFRMrE9K0uEBGba1Mg3me` completed. Then after merging the Browser/add-popup fix, PM built final Runtime Capsule `sha256:95599851c0936c5f237b22e3d0eab4bc55f47315440c92c68cc85746b6a2444c` from main `7660081cc`; restart `call_vCpdHL0NGcWEYL7bddhX1wIZ` completed. Installed self-debug confirmed control selected/externalCurrent/active payload and renderer URL point at the final release, console 0 errors / 0 warnings, live conversation agent/tool rows render after compact rows, and compact row tail still contains live tool output rather than being entirely hidden.
   risk: Low-to-medium compact pruning ordering fix. The release condition is narrow: item must have a finite timestamp strictly later than compact boundary; stale pre-compact output stays filtered.
   commit: owner `711858299`; merge `53bfcc671`
-  next_action: Build Runtime Capsule from main, request restart, and self-debug installed conversation visibility for compact-after-current-message path.
+  next_action: No further action unless user reproduces another compact/display issue.
 
 - id: workspace-browser-create-flashes-right-panel-and-covers-add-popup
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -54,9 +55,10 @@ Active goal: fix two newly reported installed UI regressions from 2026-09-28: (1
   root_cause: Workspace Browser auto-create used `createBrowserTab({ activate: true })`, which updated the global Browser active tab and could make the right-side Browser manager refresh/flash. Separately, the workspace add menu was not part of the Browser native overlay hide conditions, so the native Browser view could cover the DOM popup.
   implementation: Merged owner commit `fe6093cac` as `7f1bd6bcc`. Workspace Browser auto-create now uses `activate: false` and binds the workspace tab with `resolveCreatedWorkspaceBrowserTab`, using before/after tab id differences and an initial-empty-state fallback to the appended tab. `workspaceAddMenuOpen` is now included in workspace and right BrowserPanel `nativeOverlayActive`, hiding the native Browser view under the add popup.
   validation: Owner validation passed with fixed reviewer approval after reviewer caught the initial-empty-state binding edge. PM main validation passed: Prettier on App/BrowserPanel/RightPanel/RightPanel.test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/lib/workspaceTabs.test.ts`; `node --test apps/root-worker-prototype/electron/browserPanelTabs.test.cjs apps/root-worker-prototype/electron/browserPanelSurface.test.cjs`; `git diff --check HEAD~1 HEAD`.
+  installed_validation: PM built Runtime Capsule `sha256:95599851c0936c5f237b22e3d0eab4bc55f47315440c92c68cc85746b6a2444c` from main `7660081cc`; restart `call_vCpdHL0NGcWEYL7bddhX1wIZ` completed. Installed self-debug confirmed control selected/externalCurrent/active payload and renderer URL point at final release, console 0 errors / 0 warnings. Opening the workspace add menu showed a visible `.workspace-tab-add-menu` at z-index 70 with pointer events enabled and Browser/Terminal/Chat items. Selecting Browser created a workspace Browser tab while right panel text/state remained unchanged instead of switching/flashing to Browser. With workspace Browser active, reopening the add menu kept it visible and topmost; `elementFromPoint` at the menu center resolved to the menu's Browser label, not Browser/native content.
   risk: Medium frontend/native Browser view layering and manager selection isolation fix. Requires installed self-debug for real native popup layering and no right-panel Browser flash.
   commit: owner `fe6093cac`; merge `7f1bd6bcc`
-  next_action: Build Runtime Capsule from main, request restart, and self-debug installed Browser workspace add behavior.
+  next_action: No further action unless user reproduces another workspace Browser/add popup issue.
 
 - id: conversation-live-assistant-messages-not-displayed
   status: installed_effective
