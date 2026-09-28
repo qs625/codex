@@ -62,12 +62,12 @@ export function RunConfigPicker({
   const supportedEfforts = selectedModel
     ? getSupportedReasoningEfforts(selectedModel)
     : [];
-  const canApply =
-    selectedThread != null &&
-    selectedModel != null &&
-    !selectedModel.current &&
-    draftReasoningEffort != null &&
-    !disabled;
+  const canApply = isRunConfigApplyEnabled({
+    disabled,
+    draftReasoningEffort,
+    selectedModel,
+    selectedThread,
+  });
   const hasChanged =
     selectedThread != null &&
     (draftModel !==
@@ -345,6 +345,26 @@ export function RunConfigPicker({
   );
 }
 
+export function isRunConfigApplyEnabled({
+  disabled,
+  draftReasoningEffort,
+  selectedModel,
+  selectedThread,
+}: {
+  disabled: boolean;
+  draftReasoningEffort: string | null;
+  selectedModel: RunModel | null;
+  selectedThread: Thread | null;
+}) {
+  return (
+    selectedThread != null &&
+    selectedModel != null &&
+    !selectedModel.current &&
+    draftReasoningEffort != null &&
+    !disabled
+  );
+}
+
 export function RunConfigPopoverContent({
   canApply,
   disabled,
@@ -485,9 +505,7 @@ export function RunConfigPopoverContent({
       ) : null}
 
       {disabled ? (
-        <div className="run-config-state">
-          当前 turn 正在运行，结束后可应用切换
-        </div>
+        <div className="run-config-state">正在发送消息，稍后可应用切换</div>
       ) : null}
 
       <div className="run-config-actions">

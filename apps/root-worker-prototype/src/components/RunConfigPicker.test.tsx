@@ -4,7 +4,11 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { RunConfigPicker, RunConfigPopoverContent } from "./RunConfigPicker";
+import {
+  isRunConfigApplyEnabled,
+  RunConfigPicker,
+  RunConfigPopoverContent,
+} from "./RunConfigPicker";
 import type { RunModel, Thread } from "../types";
 
 function makeModel(overrides: Partial<RunModel> = {}): RunModel {
@@ -232,14 +236,54 @@ test("run config popover renders empty model state", () => {
   assert.match(markup, /disabled="">应用/);
 });
 
-test("run config popover shows fallback and disables apply while running", () => {
+test("run config popover allows applying while a turn is running", () => {
+  const activeThread = makeThread({
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+  });
+  const markup = renderPopover({
+    canApply: true,
+    disabled: false,
+    fallbackMessage: "已回退到该模型默认 reasoning",
+  });
+  const panelsSource = readFileSync(
+    new URL("./Panels.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(markup, /已回退到该模型默认 reasoning/);
+  assert.doesNotMatch(markup, /当前 turn 正在运行，结束后可应用切换/);
+  assert.match(markup, /<button type="button" class="primary">应用<\/button>/);
+  assert.equal(
+    isRunConfigApplyEnabled({
+      disabled: false,
+      draftReasoningEffort: "medium",
+      selectedModel: makeModel(),
+      selectedThread: activeThread,
+    }),
+    true,
+  );
+  assert.match(panelsSource, /<RunConfigPicker[\s\S]*disabled=\{isSending\}/);
+  assert.doesNotMatch(
+    panelsSource,
+    /<RunConfigPicker[\s\S]*disabled=\{isSending \|\| activeTurnId != null\}/,
+  );
+});
+
+test("run config popover still disables apply while sending a message", () => {
   const markup = renderPopover({
     canApply: false,
     disabled: true,
-    fallbackMessage: "已回退到该模型默认 reasoning",
   });
 
-  assert.match(markup, /已回退到该模型默认 reasoning/);
-  assert.match(markup, /当前 turn 正在运行，结束后可应用切换/);
+  assert.match(markup, /正在发送消息，稍后可应用切换/);
   assert.match(markup, /disabled="">应用/);
+  assert.equal(
+    isRunConfigApplyEnabled({
+      disabled: true,
+      draftReasoningEffort: "medium",
+      selectedModel: makeModel(),
+      selectedThread: makeThread(),
+    }),
+    false,
+  );
 });
