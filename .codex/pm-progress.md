@@ -13,7 +13,7 @@ Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28
 ## Active Work
 
 - id: workspace-browser-add-menu-content-missing
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -28,11 +28,16 @@ Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28
   expected_investigation: Reproduce in installed or dev path and determine whether the content is missing because the backend/native active tab was never selected for the workspace surface, bounds/visibility were not applied after bind, overlay hide condition stayed active, or BrowserPanel content rendering short-circuited. Explain why the prior self-debug only checked tab creation/right-panel/popup layering and missed content visibility.
   expected_implementation: Add a provider-neutral/frontend ownership boundary that allows workspace Browser to display its bound native tab without mutating the right-panel manager selected state. If backend selection is required for native view display, introduce a workspace-scoped display/show call or narrow frontend call path that does not update manager selection. Ensure overlay hide applies while popup is open and clears immediately after close/selection with bounds re-applied. Add focused regression tests that prove workspace Browser add creates a visible content surface, while right-panel manager state remains unchanged.
   validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused RightPanel/BrowserPanel/workspace tests, relevant Electron Browser native-view tests if touched, Prettier, and `git diff --check`. PM will merge, build Runtime Capsule, restart, and self-debug installed Browser add flow including content visibility, right-panel non-flash, and popup layering.
-  commit: pending
-  next_action: owner_dev to reproduce/root-cause/fix and hand back commit, reviewer result, validation, risk, and merge recommendation.
+  root_cause: The previous isolation fix changed workspace Browser auto-create to `activate: false`, which preserved right-panel manager state but did not explicitly show the newly created tab in the workspace native surface. Installed clients could therefore bind/select the workspace Browser tab while the native Browser content surface remained unattached/blank.
+  why_prior_validation_missed: The previous installed self-debug checked workspace tab creation, right-panel non-flash, and add-menu top-layer behavior, but did not validate that inactive-create immediately attached visible native Browser content for the workspace surface.
+  implementation: Merged owner commit `737f920f4` as `d3c5155fe`. `showNativeBrowserView` now accepts an explicit target tab and sends bounds with `surfaceId + tabId`. Workspace Browser auto-create still uses `activate: false`, but after resolving `createdTab` it calls `showNativeBrowserView(browserApi, createdTab)` when active, overlay is clear, and not resizing.
+  validation: Owner validation passed with fixed reviewer approval. PM main validation passed: Prettier on BrowserPanel/Panels/RightPanel.test/Panels.test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/Panels.test.tsx src/lib/workspaceTabs.test.ts`; `node --test apps/root-worker-prototype/electron/browserPanelTabs.test.cjs apps/root-worker-prototype/electron/browserPanelSurface.test.cjs`; `git diff --check HEAD~1 HEAD`.
+  risk: Medium native Browser surface activation fix. Requires installed self-debug to confirm real content is visible, right panel remains unpolluted, and popup layering still holds.
+  commit: owner `737f920f4`; merge `d3c5155fe`
+  next_action: Build Runtime Capsule from main, request restart, and self-debug installed Browser add flow including content visibility.
 
 - id: project-add-popup-dropdown-disappears-on-output
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -47,8 +52,12 @@ Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28
   expected_investigation: Reproduce or source-trace which event closes the project popup/dropdown during message output. Identify whether it is unmount/remount, blur/focusout, scroll, outside-pointer logic, or state reset. Compare with the existing workspace add-menu fix so the popup stability model is consistent across top-level add menus.
   expected_implementation: Make popup/dropdown lifetime depend on explicit user dismissal and real target invalidation, not on unrelated output refresh. If needed, narrow dismissal listeners to trusted pointer/keyboard events and ignore internal/virtualized/conversation layout churn. Add component/source tests simulating live output or rerender while dropdown is open and asserting it remains open, plus outside/Escape still closes.
   validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused Panels/project popup tests and any shared popup/dropdown tests, Prettier, and `git diff --check`. PM will verify installed behavior after merge/restart.
-  commit: pending
-  next_action: owner_dev to fix together with workspace Browser content regression if file/semantic conflicts are manageable; otherwise report split recommendation.
+  root_cause: Project add dialog lived under `SidebarPanel`; unrelated conversation/output updates could rerender the parent. The native `<select>` dropdown is sensitive to React rerender even when popup state stays open, so background output could collapse the open dropdown.
+  implementation: Merged owner commit `737f920f4` as `d3c5155fe`. `NewThreadDialog` is memoized, `existingProjectPaths` is stabilized by a project cwd key/ref, and cancel/submit callbacks are stable while still invoking the latest submit callback through a ref.
+  validation: Owner validation passed with fixed reviewer approval. PM main validation passed with the same focused suite as the Browser content fix, including new `SidebarPanel keeps project create dialog stable during unrelated rerenders` source contract.
+  risk: Low-to-medium popup stability fix. Requires installed self-debug for native select/dropdown stability during live output.
+  commit: owner `737f920f4`; merge `d3c5155fe`
+  next_action: Build Runtime Capsule from main, request restart, and self-debug installed Project add popup/dropdown stability during output refresh.
 
 - id: compact-after-current-message-still-hidden
   status: installed_effective
