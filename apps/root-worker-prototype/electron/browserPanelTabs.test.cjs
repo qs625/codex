@@ -1,9 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {
-  readSource,
-  sourceSlice,
-} = require("./sourceAssertions.cjs");
+const { readSource, sourceSlice } = require("./sourceAssertions.cjs");
 
 const {
   closeBrowserPanelTabLifecycle,
@@ -89,7 +86,10 @@ test("nextBrowserTabIdAfterClose selects previous neighbor for active last tab",
 });
 
 test("nextBrowserTabIdAfterClose returns null when the last tab closes", () => {
-  assert.equal(nextBrowserTabIdAfterClose([{ id: "tab-a" }], "tab-a", "tab-a"), null);
+  assert.equal(
+    nextBrowserTabIdAfterClose([{ id: "tab-a" }], "tab-a", "tab-a"),
+    null,
+  );
 });
 
 test("shouldDetachAttachedBrowserPanelView skips destroyed windows and tabs", () => {
@@ -339,17 +339,15 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     /ipcMain\.handle\("codex:browser:show"[\s\S]*const surfaceId = browserSurfaceIdFromPayload\(bounds\);[\s\S]*const tabId = browserTabIdFromPayload\(bounds\);[\s\S]*setBrowserPanelBounds\(panel, browserBoundsFromPayload\(bounds\), \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);[\s\S]*attachBrowserPanel\(panel, \{[\s\S]*surfaceId,[\s\S]*tabId,[\s\S]*\}\);/,
   );
   assert.match(
-    surfaceSource,
-    /visibleSurfaceIds: new Set\(\)/,
+    mainSource,
+    /ipcMain\.handle\("codex:browser:capture"[\s\S]*const surfaceId = browserSurfaceIdFromPayload\(options\);[\s\S]*const tabId =[\s\S]*browserTabIdFromPayload\(options\)[\s\S]*panel\.attachedTabIdBySurfaceId\.get\(surfaceId\)[\s\S]*const tab = tabId[\s\S]*activeBrowserPanelTab\(panel\);[\s\S]*tab\.view\.webContents\.capturePage\(\);[\s\S]*image\.toDataURL\(\)/,
   );
+  assert.match(surfaceSource, /visibleSurfaceIds: new Set\(\)/);
   assert.match(
     surfaceSource,
     /boundsBySurfaceId: new Map\(\[[\s\S]*DEFAULT_BROWSER_SURFACE_ID[\s\S]*initialBoundsUpdate\.bounds/,
   );
-  assert.match(
-    surfaceSource,
-    /attachedTabIdBySurfaceId: new Map\(\)/,
-  );
+  assert.match(surfaceSource, /attachedTabIdBySurfaceId: new Map\(\)/);
   assert.match(
     mainSource,
     /function attachBrowserPanel\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*showBrowserPanelSurface\(panel, surfaceId\);[\s\S]*attachBrowserPanelTabView\(panel, \{[\s\S]*surfaceId,[\s\S]*tab:[\s\S]*tabId[\s\S]*activeBrowserPanelTab\(panel\),[\s\S]*raise,[\s\S]*\}\);/,
@@ -363,7 +361,11 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     /function setBrowserPanelBounds\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*tabId = null[\s\S]*panel\.boundsBySurfaceId\.set\(surfaceId, update\.bounds\);[\s\S]*panel\.visibleSurfaceIds\.has\(surfaceId\)[\s\S]*attachBrowserPanelTabView\(panel, \{ surfaceId, tab \}\);/,
   );
   assert.doesNotMatch(
-    sourceSlice(mainSource, "function setBrowserPanelBounds(", "function sendBrowserPanelState(panel)"),
+    sourceSlice(
+      mainSource,
+      "function setBrowserPanelBounds(",
+      "function sendBrowserPanelState(panel)",
+    ),
     /attachActiveBrowserPanelView\(panel, \{ raise: true \}\)/,
     "passive Browser bounds refresh must not raise the native view and steal focus",
   );
@@ -394,7 +396,10 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   assert.doesNotMatch(
     attachFunction.slice(
       attachFunction.indexOf("isBrowserPanelTabAlreadyAttached"),
-      attachFunction.indexOf("return true;", attachFunction.indexOf("isBrowserPanelTabAlreadyAttached")) + "return true;".length,
+      attachFunction.indexOf(
+        "return true;",
+        attachFunction.indexOf("isBrowserPanelTabAlreadyAttached"),
+      ) + "return true;".length,
     ),
     /removeChildView|addChildView|detachBrowserPanelTabView|detachAttachedBrowserPanelView/,
     "same-tab raises should avoid native view reparenting churn",
@@ -403,13 +408,18 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     mainSource,
     /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*attachBrowserPanelTabView\(panel, \{ surfaceId, tab, raise \}\)/,
   );
-  assert.match(
+  const ensureAttachedFunction = sourceSlice(
     mainSource,
-    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*if \(!panel\.visibleSurfaceIds\.has\(surfaceId\)\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);/,
+    "function ensureBrowserPanelTabAttachedForNavigation(",
+    "function detachAttachedBrowserPanelView",
   );
   assert.match(
-    mainSource,
-    /function ensureBrowserPanelTabAttachedForNavigation\([\s\S]*browserPanelBoundsAreVisible\(browserPanelBoundsForSurface\(panel, surfaceId\)\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
+    ensureAttachedFunction,
+    /if \(!panel\.visibleSurfaceIds\.has\(surfaceId\)\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);/,
+  );
+  assert.match(
+    ensureAttachedFunction,
+    /browserPanelBoundsAreVisible\([\s\S]*browserPanelBoundsForSurface\(panel, surfaceId\),[\s\S]*\)[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);/,
   );
   const visibleNavigationTargetFunction = sourceSlice(
     mainSource,
@@ -418,7 +428,7 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
   );
   assert.match(
     visibleNavigationTargetFunction,
-    /if \(!panel\.visibleSurfaceIds\.has\(surfaceId\)\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*if \(!browserPanelBoundsAreVisible\(browserPanelBoundsForSurface\(panel, surfaceId\)\)\) \{[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{[\s\S]*raise: true,[\s\S]*surfaceId,[\s\S]*\}\);/,
+    /if \(!panel\.visibleSurfaceIds\.has\(surfaceId\)\) \{[\s\S]*throw new Error\("Browser page is not visible in the panel"\);[\s\S]*if \([\s\S]*!browserPanelBoundsAreVisible\([\s\S]*browserPanelBoundsForSurface\(panel, surfaceId\),[\s\S]*\)[\s\S]*\) \{[\s\S]*throw new Error\("Browser page has no visible panel bounds"\);[\s\S]*ensureBrowserPanelTabAttachedForNavigation\(panel, tab, \{[\s\S]*raise: true,[\s\S]*surfaceId,[\s\S]*\}\);/,
     "visible Browser navigation must still require a visible attached native view",
   );
   assert.match(
@@ -450,7 +460,10 @@ test("browser panel native view lifecycle raises only on explicit show or tab ac
     mainSource,
     /function stopBrowserPanelNavigation\(tab\) \{[\s\S]*tab\.pendingNavigationSequence = null;[\s\S]*tab\.pendingNavigationRequiresVisiblePanel = true;[\s\S]*tab\.pendingNavigationSurfaceId = DEFAULT_BROWSER_SURFACE_ID;[\s\S]*tab\.pendingNavigationTarget = null;/,
   );
-  assert.match(mainSource, /function detachBrowserPanelTabFromAllSurfaces\(panel, tab\)/);
+  assert.match(
+    mainSource,
+    /function detachBrowserPanelTabFromAllSurfaces\(panel, tab\)/,
+  );
   assert.match(mainSource, /function detachAllBrowserPanelViews\(panel\)/);
 });
 
@@ -477,8 +490,12 @@ test("direct CDP-created Browser tabs do not force native attach while hidden", 
     "direct CDP target creation must not directly attach or raise the native view",
   );
   assert.match(
-    mainSource,
-    /async function waitForBrowserPanelNavigationTarget\([\s\S]*surfaceId = DEFAULT_BROWSER_SURFACE_ID,[\s\S]*if \(requireVisiblePanel\) \{[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab, surfaceId\);[\s\S]*return;[\s\S]*\}[\s\S]*await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);[\s\S]*\}/,
+    sourceSlice(
+      mainSource,
+      "async function waitForBrowserPanelNavigationTarget(",
+      "function fetchRemoteDebuggingJson",
+    ),
+    /surfaceId = DEFAULT_BROWSER_SURFACE_ID[\s\S]*if \(requireVisiblePanel\) \{[\s\S]*await waitForBrowserPanelVisibleNavigationTarget\(panel, tab, surfaceId\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(!remoteDebuggingConfig\.enabled\) \{[\s\S]*return;[\s\S]*\}[\s\S]*await waitForBrowserPanelDevToolsTarget\(tab\.view\.webContents\);/,
     "hidden CDP-created Browser targets must still require DevTools target publication",
   );
 });

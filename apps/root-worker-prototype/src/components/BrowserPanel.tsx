@@ -30,15 +30,6 @@ type BrowserViewBounds = {
   sequence?: number;
 };
 
-export type BrowserNativeOcclusionRect = {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-};
-
-const EMPTY_NATIVE_OCCLUSION_RECTS: readonly BrowserNativeOcclusionRect[] = [];
-
 export type BrowserPanelTabState = {
   id: string;
   url: string | null;
@@ -65,6 +56,7 @@ type BrowserPanelApi = Pick<
   Window["codexDesktop"],
   | "browserGoBack"
   | "browserGoForward"
+  | "captureBrowserView"
   | "closeBrowserTab"
   | "createBrowserTab"
   | "hideBrowserView"
@@ -142,7 +134,7 @@ export function BrowserPanel({
   active = true,
   variant = "manager",
   nativeOverlayActive,
-  nativeOcclusionRects = EMPTY_NATIVE_OCCLUSION_RECTS,
+  nativePreviewOverlayActive = false,
   resizing,
   navigationRequest,
   onNavigationRequestHandled,
@@ -156,7 +148,7 @@ export function BrowserPanel({
   active?: boolean;
   variant?: "manager" | "workspace";
   nativeOverlayActive: boolean;
-  nativeOcclusionRects?: readonly BrowserNativeOcclusionRect[];
+  nativePreviewOverlayActive?: boolean;
   resizing: boolean;
   navigationRequest: { url: string; token: number } | null;
   onNavigationRequestHandled?: (token: number) => void;
@@ -172,7 +164,20 @@ export function BrowserPanel({
   const passiveBoundsCorrectionRef = useRef<(() => void) | null>(null);
   const addressInputFocusedRef = useRef(false);
   const lastAddressTabIdRef = useRef<string | null>(null);
-  const nativeOcclusionRectsRef = useRef(nativeOcclusionRects);
+  const nativePreviewRequestRef = useRef(0);
+  const nativePreviewOverlayActiveRef = useRef(nativePreviewOverlayActive);
+  const nativePreviewWasActiveRef = useRef(false);
+  const lastNativeFrozenPreviewRef = useRef<{
+    dataUrl: string;
+    tabId: string;
+  } | null>(null);
+  const nativePreviewRestoreRef = useRef({
+    active,
+    activeTab: null as BrowserPanelTabState | null,
+    managerNativeViewBlocked: false,
+    nativeOverlayActive,
+    resizing,
+  });
   const workspaceBrowserTabCreatePendingRef = useRef(false);
   const browserSurfaceRef = useRef({
     activeBrowserTabId,
@@ -189,10 +194,15 @@ export function BrowserPanel({
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const stateRef = useRef<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [nativeFrozenPreview, setNativeFrozenPreview] = useState<string | null>(
+    null,
+  );
+  const [nativeFrozenPreviewUnavailable, setNativeFrozenPreviewUnavailable] =
+    useState(false);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
   const isManagerVariant = variant === "manager";
   onBrowserTabIdsChangeRef.current = onBrowserTabIdsChange;
-  nativeOcclusionRectsRef.current = nativeOcclusionRects;
+  nativePreviewOverlayActiveRef.current = nativePreviewOverlayActive;
   browserSurfaceRef.current = {
     activeBrowserTabId,
     detachedBrowserTabIds,
@@ -242,6 +252,13 @@ export function BrowserPanel({
   const managerNativeViewBlocked =
     managerActiveTabDetached || (managerHasDetachedTabs && activeTab == null);
   const workspaceSelectionMissing = !isManagerVariant && activeTab == null;
+  nativePreviewRestoreRef.current = {
+    active,
+    activeTab,
+    managerNativeViewBlocked,
+    nativeOverlayActive,
+    resizing,
+  };
   const displayUrl =
     activeTab?.url ??
     (!isManagerVariant && !workspaceSelectionMissing ? state.url : "") ??
@@ -329,17 +346,14 @@ export function BrowserPanel({
     if (!viewport || !tab) {
       return;
     }
-    const bounds = applyBrowserNativeTopOcclusion(
-      {
-        ...browserBoundsFromElement(
-          viewport,
-          nextBrowserBoundsSequence(boundsSequenceRef),
-        ),
-        surfaceId: browserSurfaceIdRef.current,
-        tabId: tab.id,
-      },
-      nativeOcclusionRectsRef.current,
-    );
+    const bounds = {
+      ...browserBoundsFromElement(
+        viewport,
+        nextBrowserBoundsSequence(boundsSequenceRef),
+      ),
+      surfaceId: browserSurfaceIdRef.current,
+      tabId: tab.id,
+    };
     const nextState = await browserApi.showBrowserView(bounds);
     applyBrowserState(nextState);
   };
@@ -566,18 +580,14 @@ export function BrowserPanel({
         .then((nextState) => applyBrowserState(nextState))
         .catch((error) => setLocalError(toBrowserError(error)));
     };
-    const measureBounds = () =>
-      applyBrowserNativeTopOcclusion(
-        {
-          ...browserBoundsFromElement(
-            viewport,
-            nextBrowserBoundsSequence(boundsSequenceRef),
-          ),
-          surfaceId,
-          tabId: activeTab?.id ?? null,
-        },
-        nativeOcclusionRectsRef.current,
-      );
+    const measureBounds = () => ({
+      ...browserBoundsFromElement(
+        viewport,
+        nextBrowserBoundsSequence(boundsSequenceRef),
+      ),
+      surfaceId,
+      tabId: activeTab?.id ?? null,
+    });
     const sendBounds = () => {
       const bounds = measureBounds();
       if (browserBoundsMatch(lastSentBounds, bounds)) {
@@ -641,8 +651,100 @@ export function BrowserPanel({
   ]);
 
   useEffect(() => {
-    passiveBoundsCorrectionRef.current?.();
-  }, [nativeOcclusionRects]);
+    const browserApi = currentBrowserPanelApi();
+    const surfaceId = browserSurfaceIdRef.current;
+    const requestId = nativePreviewRequestRef.current + 1;
+    nativePreviewRequestRef.current = requestId;
+
+    if (!nativePreviewOverlayActive) {
+      const shouldRestoreNativeView = nativePreviewWasActiveRef.current;
+      nativePreviewWasActiveRef.current = false;
+      setNativeFrozenPreview(null);
+      setNativeFrozenPreviewUnavailable(false);
+      if (
+        shouldRestoreNativeView &&
+        browserApi &&
+        active &&
+        activeTab &&
+        !nativeOverlayActive &&
+        !resizing &&
+        !managerNativeViewBlocked
+      ) {
+        void showNativeBrowserView(browserApi).catch((error) =>
+          setLocalError(toBrowserError(error)),
+        );
+      }
+      return undefined;
+    }
+    if (
+      !browserApi ||
+      !active ||
+      !activeTab ||
+      nativeOverlayActive ||
+      resizing ||
+      managerNativeViewBlocked
+    ) {
+      return undefined;
+    }
+
+    void (async () => {
+      let previewDataUrl: string | null = null;
+      try {
+        const preview = await browserApi.captureBrowserView({
+          surfaceId,
+          tabId: activeTab.id,
+        });
+        previewDataUrl = preview?.dataUrl ?? null;
+      } catch {
+        previewDataUrl = null;
+      }
+      if (nativePreviewRequestRef.current !== requestId) {
+        return;
+      }
+      const lastFrozenPreview = lastNativeFrozenPreviewRef.current;
+      const frozenPreview =
+        previewDataUrl ??
+        (lastFrozenPreview?.tabId === activeTab.id
+          ? lastFrozenPreview.dataUrl
+          : null);
+      if (previewDataUrl) {
+        lastNativeFrozenPreviewRef.current = {
+          dataUrl: previewDataUrl,
+          tabId: activeTab.id,
+        };
+      }
+      setNativeFrozenPreview(frozenPreview);
+      setNativeFrozenPreviewUnavailable(!frozenPreview);
+      const nextState = await browserApi.hideBrowserView({ surfaceId });
+      if (nativePreviewRequestRef.current === requestId) {
+        nativePreviewWasActiveRef.current = true;
+        applyBrowserState(nextState);
+        return;
+      }
+      const restore = nativePreviewRestoreRef.current;
+      if (
+        !nativePreviewOverlayActiveRef.current &&
+        restore.active &&
+        restore.activeTab &&
+        !restore.nativeOverlayActive &&
+        !restore.resizing &&
+        !restore.managerNativeViewBlocked
+      ) {
+        await showNativeBrowserView(browserApi, restore.activeTab);
+      }
+    })().catch((error) => setLocalError(toBrowserError(error)));
+
+    return () => {
+      nativePreviewRequestRef.current += 1;
+    };
+  }, [
+    active,
+    activeTab?.id,
+    managerNativeViewBlocked,
+    nativeOverlayActive,
+    nativePreviewOverlayActive,
+    resizing,
+  ]);
 
   const navigate = () => {
     if (workspaceSelectionMissing) {
@@ -1028,6 +1130,22 @@ export function BrowserPanel({
       ) : null}
 
       <div ref={viewportRef} className="browser-native-viewport">
+        {nativeFrozenPreview ? (
+          <img
+            alt=""
+            aria-hidden="true"
+            className="browser-native-frozen-preview"
+            src={nativeFrozenPreview}
+          />
+        ) : nativeFrozenPreviewUnavailable ? (
+          <div
+            aria-hidden="true"
+            className="browser-native-frozen-preview browser-native-frozen-preview-empty"
+          >
+            <BrowserIcon />
+            <span>Browser preview paused</span>
+          </div>
+        ) : null}
         {managerNativeViewBlocked ? (
           <div className="browser-empty">
             <BrowserIcon />
@@ -1148,33 +1266,6 @@ export function browserBoundsFromElement(
   };
 }
 
-export function applyBrowserNativeTopOcclusion<
-  T extends BrowserViewBounds & Record<string, unknown>,
->(bounds: T, occlusionRects: readonly BrowserNativeOcclusionRect[]): T {
-  if (occlusionRects.length === 0 || bounds.width <= 0 || bounds.height <= 0) {
-    return bounds;
-  }
-  const boundsRight = bounds.x + bounds.width;
-  const boundsBottom = bounds.y + bounds.height;
-  const nextY = occlusionRects.reduce((currentY, rect) => {
-    const overlapsX = rect.left < boundsRight && rect.right > bounds.x;
-    const overlapsY = rect.top < boundsBottom && rect.bottom > bounds.y;
-    if (!overlapsX || !overlapsY) {
-      return currentY;
-    }
-    return Math.max(currentY, Math.ceil(rect.bottom));
-  }, bounds.y);
-  if (nextY <= bounds.y) {
-    return bounds;
-  }
-  const clampedY = Math.min(nextY, boundsBottom);
-  return {
-    ...bounds,
-    y: clampedY,
-    height: Math.max(0, boundsBottom - clampedY),
-  };
-}
-
 export function nextBrowserBoundsSequence(ref: { current: number }): number {
   const sequence = Math.max(ref.current + 1, Date.now());
   ref.current = sequence;
@@ -1202,6 +1293,7 @@ export function currentBrowserPanelApi(): BrowserPanelApi | null {
   if (
     !browserApi?.browserGoBack ||
     !browserApi.browserGoForward ||
+    !browserApi.captureBrowserView ||
     !browserApi.closeBrowserTab ||
     !browserApi.createBrowserTab ||
     !browserApi.hideBrowserView ||

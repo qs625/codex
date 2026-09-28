@@ -6225,6 +6225,31 @@ body.macos-window-chrome
   overflow: hidden;
 }
 
+.browser-native-frozen-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.browser-native-frozen-preview-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  background: #ffffff;
+  color: #78716c;
+  font-size: 12px;
+}
+
+.browser-native-frozen-preview-empty svg {
+  width: 28px;
+  height: 28px;
+}
+
 .browser-panel-workspace {
   background: #ffffff;
 }

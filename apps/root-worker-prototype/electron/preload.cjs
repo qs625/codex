@@ -65,7 +65,7 @@ const invokeChannels = {
       showBrowserView:show hideBrowserView:hide setBrowserViewBounds:setBounds
       navigateBrowserView:navigate createBrowserTab:newTab selectBrowserTab:selectTab
       closeBrowserTab:closeTab browserGoBack:goBack browserGoForward:goForward
-      reloadBrowserView:reload stopBrowserView:stop
+      reloadBrowserView:reload stopBrowserView:stop captureBrowserView:capture
     `,
   ),
   ...invokeChannelGroup(
