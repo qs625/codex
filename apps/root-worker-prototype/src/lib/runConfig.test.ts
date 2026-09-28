@@ -180,6 +180,29 @@ test("resolveSelectionForModel falls back to model default effort", () => {
   });
 });
 
+test("resolveSelectionForModel falls back to first supported effort when default is not listed", () => {
+  assert.deepEqual(
+    resolveSelectionForModel(
+      makeModel({
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "" },
+          { reasoningEffort: "high", description: "" },
+        ],
+        defaultReasoningEffort: "medium",
+      }),
+      null,
+    ),
+    {
+      model: "model-a",
+      modelProvider: null,
+      reasoningEffort: "low",
+      contextWindow: null,
+      maxContextWindow: null,
+      autoCompactTokenLimit: null,
+    },
+  );
+});
+
 test("resolveSelectionForModel carries model context metadata", () => {
   assert.deepEqual(
     resolveSelectionForModel(
