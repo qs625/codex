@@ -8,12 +8,35 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: fix the installed Browser workspace close regression where closing a workspace Browser still returns it to the right panel and then right-panel close reports not found, while also hiding the user-visible Terminal `Reattach` affordance. Current installed Runtime Capsule is `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd`. Then resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
+Active goal: resume validation/integration of `continuous-code-organization-tranche-55` after installed validation completed for the conversation live display, Browser workspace close stale suppression, Terminal `Reattach` affordance removal, and Project header hover fixes. Current installed Runtime Capsule is `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd` from main `5dae2e01b`.
 
 ## Active Work
 
+- id: conversation-live-assistant-messages-not-displayed
+  status: installed_effective
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/conversation-live-assistant-display
+  task_type: frontend_conversation_display_regression_fix
+  depends_on: main `c333c8fba`; installed Runtime Capsule `sha256:6b8538d7034f76291c306872f538012d5f007fc48b3eff0aa415cb25d011909f`; user reported current conversation messages still do not display after restart
+  files: expected `apps/root-worker-prototype/src/components/Conversation*.tsx`, `apps/root-worker-prototype/src/lib/conversation*.ts`, `apps/root-worker-prototype/src/lib/thread*.ts`, thread snapshot/live merge helpers, and focused tests as root cause requires
+  base_commit: `c333c8fba`
+  product_contract: The main conversation is the primary audit surface. During a running turn, user messages, assistant commentary/progress/final output, tool call/output rows, status rows, and later persisted replay must appear in the conversation in order. RightPanel/Thread Analysis or internal runtime state is not a substitute for visible conversation evidence. Compact/init-context boundaries may summarize older history, but must never hide subsequent live assistant messages or current-turn tool/progress rows.
+  installed_evidence: After restart request `call_vnvzgbmSsFpWoHiAtFpmb3cR` completed, self-debug attached to renderer URL under release `6b8538...`. DOM snapshot showed only init-context rows plus the user's restart recovery message and a `Thinking` status. Multiple PM commentary/progress messages from the active turn did not create any `message-row-assistant`/article rows; `articleCount` remained 12 and the last article was the user message.
+  problem_model: Likely failure is in live event acceptance/projection, running-turn assistant/commentary item mapping, conversation cell construction, or virtual-list/live snapshot merge after restart/compact—not in user perception. Need determine whether backend sends live assistant/progress ThreadItems and frontend drops them, or backend persists/snapshots omit them until final.
+  constraints: Preserve typed display path (`EventMsg -> ThreadItem`), persisted history/protocol semantics, compact stale filtering, tool row grouping, virtualization scroll behavior, workspace tab state, provider-visible/model-visible contracts, and recent Browser/Terminal/Project UI fixes. Do not hide with CSS, force-scroll as the only fix, parse raw markers, special-case this PM text/thread id, disable compact filtering globally, or treat final-only display as acceptable.
+  expected_implementation: Reproduce with installed/self-debug evidence and source tests. Identify the exact missing edge (live commentary/progress item production, thread snapshot merge, conversation projection, or virtualized rendering). Fix at the narrow durable boundary so live assistant/commentary/progress rows appear during the running turn and replay after reload. Add regression tests covering running-turn assistant commentary/progress display after a user message/restart-like recovered thread, plus any compact boundary case if implicated.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused conversation/thread/component tests plus Prettier/diff check. If backend/app-server path is touched, run relevant Rust focused tests and debug app-server build. PM will merge, build Runtime Capsule, restart, and self-debug installed conversation visibility.
+  root_cause: After Runtime Capsule restart/compact recovery, a running turn could be restored without active lifecycle while still containing a post-compact user message. The compact live item gate in `thread.ts` rejected later untimed live assistant/tool items unless the thread looked active, so commentary/progress rows and tool rows were present in the runtime flow but were not accepted into the main conversation display state.
+  implementation: Merged `1bc16ae4b` as `5dae2e01b`. The frontend compact live item gate now accepts untimed live assistant/tool items for an in-flight recovered turn when the turn contains a post-compact user message. Added `hasPostCompactUserMessage` and tests for recovered/non-active compact running turns preserving live assistant delta and live tool output.
+  validation: Owner validation and fixed reviewer approval passed. PM main validation passed: Prettier on `apps/root-worker-prototype/src/lib/thread.ts` and `apps/root-worker-prototype/src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts src/lib/conversation.test.ts src/components/Conversation.test.tsx` passed with 381 tests; `git diff --check HEAD~1 HEAD` passed.
+  installed_validation: PM built Runtime Capsule `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd` from main `5dae2e01b`; restart `call_4q4PpLYVNc7GtaUfIkuSSKLT` completed. Installed self-debug confirmed control selected/externalCurrent/active payload and renderer URL all point at the new release, console 0 errors / 0 warnings, and the main conversation now shows `message-row-agent` rows for live PM commentary plus command/tool rows during the running turn after restart.
+  commit: owner `1bc16ae4b`; merge `5dae2e01b`; installed effective via release `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd`
+  next_action: No further action unless user reproduces another conversation display regression.
+
 - id: workspace-browser-close-still-returns-not-found
-  status: pm_validated_ready_to_merge
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -31,11 +54,12 @@ Active goal: fix the installed Browser workspace close regression where closing 
   implementation: Added durable `closedWorkspaceBrowserTabIds` suppression. Workspace close-owned Browser ids remain detached/suppressed until BrowserPanel reports live browser ids no longer include them; backend not-found is treated as already closed and keeps UI converged. Non-not-found errors release suppression and restore the workspace tab. Explicit return still uses bare close and does not suppress. RightPanel now forwards `onBrowserTabIdsChange` to keep suppression cleanup connected through the manager BrowserPanel.
   validation: Owner validation passed with fixed reviewer approval after reviewer caught missing RightPanel callback forwarding. PM validation passed: ignored-whitespace diff confirmed RightPanel behavior change is callback plumbing plus formatting; Prettier on App/RightPanel/TerminalPanel/tests; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; `git diff --check HEAD~1 HEAD`.
   risk: Medium Browser manager/workspace ownership race fix. Requires installed self-debug close/reopen/not-found regression check.
-  commit: owner `d72e10190`
-  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed Browser workspace close behavior.
+  installed_validation: PM built Runtime Capsule `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd` from main `5dae2e01b`; restart `call_4q4PpLYVNc7GtaUfIkuSSKLT` completed. Installed self-debug confirmed Browser workspace tab creation while right panel stayed on Terminal, workspace close removed the Browser tab leaving only `/self` and Chat workspace tabs, no visible errors, console 0 errors / 0 warnings, and opening the right Browser panel afterward showed only manager-owned `New tab` with no stale workspace Browser id and no `Browser tab not found`.
+  commit: owner `d72e10190`; merge `57f3ffcc1`; installed effective via release `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd`
+  next_action: No further action unless user reproduces another Browser workspace close/stale-id issue.
 
 - id: terminal-hide-reattach-affordance
-  status: pm_validated_ready_to_merge
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -51,8 +75,9 @@ Active goal: fix the installed Browser workspace close regression where closing 
   implementation: Removed the visible `terminal-reattach-button` / `Reattach {state.detachedCount}` block from TerminalPanel. Backend `reattachTerminalTabs` IPC/API and detached bookkeeping remain for internal/runtime use.
   validation: Owner validation passed with fixed reviewer approval. PM validation passed together with Browser close fix: Prettier on touched files; RightPanel/TerminalPanel/workspaceTabs focused tests; `git diff --check`.
   risk: Low Terminal UI polish. Requires installed self-debug to confirm no visible Reattach affordance.
-  commit: owner `d72e10190`
-  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed Terminal UI.
+  installed_validation: PM built Runtime Capsule `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd` from main `5dae2e01b`; restart `call_4q4PpLYVNc7GtaUfIkuSSKLT` completed. Installed self-debug switched to the right Terminal panel and confirmed heading `Terminal`, no `.terminal-reattach-button`, no visible button text/aria matching `Reattach`, and console 0 errors / 0 warnings.
+  commit: owner `d72e10190`; merge `57f3ffcc1`; installed effective via release `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd`
+  next_action: No further action unless user reproduces another Terminal reattach affordance issue.
 
 - id: project-hover-add-button-missing
   status: installed_effective
@@ -70,9 +95,9 @@ Active goal: fix the installed Browser workspace close regression where closing 
   root_cause: Projects had a generic `New` affordance separated from the Projects heading line and without project-specific class/label, so it did not present like the Chat header hover `+` affordance in installed UI.
   implementation: Projects header now has `project-list-header`; create button is a heading-line icon button with `sidebar-action-button project-create-button`, `aria-label`/`title`, and CSS selectors for hover/focus/open visible state. Chat create and project delete selectors remain unchanged.
   validation: Owner validation passed after PM caught and owner fixed a Prettier issue in `Panels.tsx`. Fixed reviewer approved. PM validation passed on dev and main: Prettier on `Panels.tsx`, `Panels.test.tsx`, `styles.css`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Panels.test.tsx`; main combined focused suite with RightPanel/Terminal/workspace tests; `git diff --check`.
-  installed_validation: PM built Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd` from sourceCommit `0a3c5581f8e9b95887edbb1bb06e1d30db57896a`; restart `call_kbkCmQTYmOdkK0Pu0bCZRrAU` completed. Installed self-debug confirmed control selected/externalCurrent/active payload/renderer URL all point at the new release, console 0 errors / 0 warnings, Project header contains `New project or chat` icon button, button default computed style is opacity 0 / pointer-events none, and after hovering the Projects header it becomes opacity 1 / pointer-events auto.
+  installed_validation: PM built Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd` from sourceCommit `0a3c5581f8e9b95887edbb1bb06e1d30db57896a`; restart `call_kbkCmQTYmOdkK0Pu0bCZRrAU` completed. Installed self-debug confirmed control selected/externalCurrent/active payload/renderer URL all point at the new release, console 0 errors / 0 warnings, Project header contains `New project or chat` icon button, button default computed style is opacity 0 / pointer-events none, and after hovering the Projects header it becomes opacity 1 / pointer-events auto. Follow-up hit-area fix `765570643` merged as `82d4bbc66` and installed via Runtime Capsule `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd` from main `5dae2e01b`; restart `call_4q4PpLYVNc7GtaUfIkuSSKLT` completed. Installed self-debug confirmed the Projects header is `-webkit-app-region: no-drag`, the top drag strip remains `drag`, the button is hidden by default (opacity 0 / pointer-events none), and moving the pointer over the left Projects heading/count area changes it to opacity 1 / pointer-events auto.
   risk: Low sidebar UI fix. No further action unless user reproduces another sidebar affordance issue.
-  commit: owner `b40cce0cd`; follow-up `5ca402505`; merge `e46059944`; installed effective via sourceCommit `0a3c5581f`
+  commit: owner `b40cce0cd`; follow-up `5ca402505`; hover hit-area follow-up `765570643`; merges `e46059944`, `82d4bbc66`; installed effective via release `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd`
   next_action: No further action unless user reproduces another Project hover add issue.
 
 - id: workspace-close-should-not-return-to-right-panel
