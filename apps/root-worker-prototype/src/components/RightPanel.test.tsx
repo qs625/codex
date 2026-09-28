@@ -863,7 +863,7 @@ test("workspace object drag data carries concrete browser and terminal tab ident
   });
 });
 
-test("detached workspace objects are hidden from the right panel until their workspace tab closes", () => {
+test("detached workspace objects are hidden from the right panel while workspace-owned", () => {
   const { appSource, browserPanelSource, terminalPanelSource } = readSources([
     "app",
     "browserPanel",
@@ -879,11 +879,11 @@ test("detached workspace objects are hidden from the right panel until their wor
 
   assert.match(
     appSource,
-    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\[workspaceTabs\]/,
+    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\.\.\.closingWorkspaceBrowserTabIds[\s\S]*\[closingWorkspaceBrowserTabIds, workspaceTabs\]/,
   );
   assert.match(
     appSource,
-    /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\[workspaceTabs\]/,
+    /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\.\.\.closingWorkspaceTerminalTabIds[\s\S]*\[closingWorkspaceTerminalTabIds, workspaceTabs\]/,
   );
   assert.doesNotMatch(
     detachedOwnershipSource,
@@ -907,7 +907,7 @@ test("detached workspace objects are hidden from the right panel until their wor
   assert.match(terminalPanelSource, /Terminal session is open in workspace\./);
 });
 
-test("workspace Browser and Terminal tabs can be returned to the right panel", () => {
+test("workspace Browser and Terminal tabs can be explicitly returned to the right panel", () => {
   const {
     appSource,
     rightPanelSource,
@@ -983,6 +983,39 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
     terminalPanelSource,
     /!visibleTabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusTerminalTabRequest\.tabId === state\.activeTabId[\s\S]*lastTerminalTabFocusRequestTokenRef\.current =[\s\S]*focusTerminalTabRequest\.token;[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*\.selectTerminalTab\(focusTerminalTabRequest\.tabId\)[\s\S]*requestTerminalViewportFocus\(focusTerminalTabRequest\.tabId\)/,
   );
+});
+
+test("workspace Browser and Terminal close buttons close owned instances without returning them right", () => {
+  const { appSource } = readSources(["app"]);
+  const closeWorkspaceTabSource = sourceSlice(
+    appSource,
+    "function closeWorkspaceTab(",
+    "function handleWorkspaceObjectDragOver",
+  );
+  const closeButtonStart = appSource.indexOf('className="workspace-tab-close"');
+  const closeButtonSource = appSource.slice(
+    closeButtonStart,
+    appSource.indexOf("</span>", closeButtonStart),
+  );
+
+  assert.match(
+    closeWorkspaceTabSource,
+    /options: \{[\s\S]*closeOwnedBrowserTab\?: boolean;[\s\S]*closeOwnedTerminalTab\?: boolean;[\s\S]*\} = \{\}/,
+  );
+  assert.match(
+    closeWorkspaceTabSource,
+    /options\.closeOwnedBrowserTab[\s\S]*rememberClosingWorkspaceBrowserTab\(closingTab\.browserTabId\)[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)[\s\S]*isBrowserTabNotFoundError\(error\)[\s\S]*restoreWorkspaceTabAfterFailedClose\(closingTab\)[\s\S]*forgetClosingWorkspaceBrowserTab\(closingTab\.browserTabId!\)/,
+  );
+  assert.match(
+    closeWorkspaceTabSource,
+    /options\.closeOwnedTerminalTab[\s\S]*rememberClosingWorkspaceTerminalTab\(closingTab\.terminalTabId\)[\s\S]*\.closeTerminalTab\(closingTab\.terminalTabId\)[\s\S]*isTerminalTabNotFoundError\(error\)[\s\S]*restoreWorkspaceTabAfterFailedClose\(closingTab\)[\s\S]*forgetClosingWorkspaceTerminalTab\(closingTab\.terminalTabId!\)/,
+  );
+  assert.match(
+    closeButtonSource,
+    /closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true,[\s\S]*closeOwnedTerminalTab: true/,
+  );
+  assert.doesNotMatch(closeButtonSource, /setRightPanelView/);
+  assert.doesNotMatch(closeButtonSource, /FocusRequest/);
 });
 
 test("browserBoundsFromElement measures the visible viewport rect with sequence", () => {
@@ -1724,8 +1757,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /browserNativeViewSuppressed/,
   ]);
   assertMatches(appSource, [
-    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\[workspaceTabs\]/,
-    /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\[workspaceTabs\]/,
+    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\.\.\.closingWorkspaceBrowserTabIds[\s\S]*\[closingWorkspaceBrowserTabIds, workspaceTabs\]/,
+    /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\.\.\.closingWorkspaceTerminalTabIds[\s\S]*\[closingWorkspaceTerminalTabIds, workspaceTabs\]/,
     /detachedBrowserTabIds=\{detachedWorkspaceBrowserTabIds\}/,
     /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/,
     /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/,
@@ -1733,10 +1766,11 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /onBrowserTabIdsChange=\{pruneMissingWorkspaceBrowserTabs\}/,
     /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/,
     /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelView\("browser"\)/,
-    /function closeWorkspaceTab\([\s\S]*options: \{ closeOwnedBrowserTab\?: boolean \} = \{\}[\s\S]*options\.closeOwnedBrowserTab[\s\S]*closingTab\?\.kind === "browser"[\s\S]*window\.codexDesktop[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
+    /function closeWorkspaceTab\([\s\S]*closeOwnedBrowserTab\?: boolean;[\s\S]*closeOwnedTerminalTab\?: boolean;[\s\S]*options\.closeOwnedBrowserTab[\s\S]*closingTab\?\.kind === "browser"[\s\S]*window\.codexDesktop[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
+    /function closeWorkspaceTab\([\s\S]*options\.closeOwnedTerminalTab[\s\S]*closingTab\?\.kind === "terminal"[\s\S]*window\.codexDesktop[\s\S]*\.closeTerminalTab\(closingTab\.terminalTabId\)/,
     /\.catch\(\(error\) => \{[\s\S]*isBrowserTabNotFoundError\(error\)[\s\S]*return;[\s\S]*setError\(toErrorMessage\(error\)\)/,
     /function closeWorkspaceTab\([\s\S]*const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*currentTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId,[\s\S]*\);[\s\S]*if \(currentVisibleWorkspaceTabId !== tabId\)[\s\S]*const fallback =[\s\S]*activateWorkspaceFallbackTab\(fallback\)/,
-    /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true/,
+    /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true,[\s\S]*closeOwnedTerminalTab: true[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true,[\s\S]*closeOwnedTerminalTab: true/,
     /function handleReturnWorkspaceObjectToRightPanel\([\s\S]*payload\.kind === "browser"[\s\S]*closeWorkspaceTab\(tab\.id\);[\s\S]*setRightPanelView\("browser"\)[\s\S]*setRightPanelBrowserTabFocusRequest/,
   ]);
   assert.doesNotMatch(
@@ -1745,6 +1779,13 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
       appSource.indexOf("function handleSetRightPanelView"),
     ),
     /closeOwnedBrowserTab/,
+  );
+  assert.doesNotMatch(
+    appSource.slice(
+      appSource.indexOf("function handleReturnWorkspaceObjectToRightPanel"),
+      appSource.indexOf("function handleSetRightPanelView"),
+    ),
+    /closeOwnedTerminalTab/,
   );
   assertMatches(appSource, [
     /function handleThreadAnalysisCommandFocus[\s\S]*setRightPanelView\("terminal"\)/,
