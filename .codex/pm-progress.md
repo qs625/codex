@@ -12,6 +12,26 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-55
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-55
+  task_type: exclusive_large_production_code_quality_refactor
+  depends_on: main `7cf28dcd1`; user explicitly asked to keep going and not stop
+  files: TBD by owner after candidate screening; `.codex/pm-progress.md`
+  base_commit: `7cf28dcd1`
+  next_action: Owner should screen at least 3 production candidates, choose a larger coherent production/module-boundary refactor with clear payoff, commit on this branch, reuse `/self/owner_main/reviewer` for independent review, and report selection, design, validation, risk, and merge recommendation. No immediate Runtime Capsule restart is expected unless owner discovers the selected path is user-visible, Runtime Capsule/Launcher adjacent, Browser/Terminal lifecycle altering, provider-visible schema altering, workflow runtime/request handling altering, thread lifecycle/read/status altering, project sidebar projection altering, conversation display/compact altering, process execution behavior altering, Windows sandbox setup behavior altering, thread analysis monitor behavior altering, workspace tab behavior altering, request/response registry altering, request scheduling altering, MCP status/resource/tool/OAuth behavior altering, run configuration/model selection behavior altering, schedule display/occurrence behavior altering, attestation transport behavior altering, Workflow RightPanel user-visible semantics altering, or otherwise needs installed-state validation.
+  constraints: Preserve behavior, provider-visible tool/schema/descriptions, API/IPC/JSONRPC method params/errors/field names, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, project sidebar projection semantics, conversation display/compact merge semantics, process execution semantics, Windows sandbox setup semantics, MCP resource/tool/OAuth/status behavior, run configuration/model selection semantics, schedule display/occurrence semantics, thread-analysis monitor semantics, workspace tab ordering/storage semantics, outgoing request/response callback semantics, request serialization/scheduling semantics, Browser/Terminal lifecycle, Runtime Capsule/Launcher semantics, workflow runtime/request handling semantics, Workflow RightPanel view-model semantics, login/account state-machine semantics, config write/read semantics, memory startup/consolidation semantics, attestation request/header semantics, and external/native provider parity. Do not restore broad facades or expand old registry surfaces. Avoid test-only cleanup, small helper-only churn, broad facade/registry consolidation, speculative rewrites, generated/vendor files, and any provider-visible contract or UI text/schema drift. Avoid recent touched paths: compact/display, Git diff, Settings config, feedback upload, apps/list, LSP file target, context usage, approval request, slash menu, Android payload, fuzzy search, workflow request handling, workflowProgress RightPanel view-model, fs watch, account billing/rate-limit, catalog request projection, config manager write planning, memory startup wiring, request serialization queues, outgoing message registry, workspaceTabs, threadAnalysis monitor inventory, process_exec_processor, mcp_processor status list projection, runConfig model selection projection, scheduleDisplay projection, windows_sandbox_processor setup projection, thread.ts project sidebar projection, conversationToolPresentation presentation helpers, and app-server attestation outcome/projection. Avoid high-risk paths by default: `mcp_tool.rs`, `safety_check_downgrade.rs`, external agent config/session import, plugins/marketplace installs, initialize, host_lifecycle, Browser/Terminal lifecycle, thread lifecycle/read/list/archive/status, conversation compact/display filtering, Runtime Capsule/Launcher, workflow runtime/request handling, provider-visible schema/config/memory/process execution behavior, send-message payload/submission behavior, attestation transport/websocket handshake behavior, unless owner proposes a narrow seam and strong regression matrix. Do not work in `source_workspace-dev-3` or synchronize it; it still has unrelated Browser WIP.
+  selection: pending
+  production_issue: pending
+  implementation: pending
+  reviewer_result: pending
+  validation: pending
+  risk: pending
+  commit: pending
+
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
