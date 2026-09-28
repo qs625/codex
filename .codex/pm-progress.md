@@ -12,6 +12,24 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: workspace-tab-add-button-menu
+  status: dispatched
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: feature/workspace-tab-add-menu
+  task_type: frontend_workspace_ui_feature
+  depends_on: main `7cf28dcd1`; user requested workspace tab bar add button with chooser for Terminal, Browser, Chat
+  files: expected workspace tab bar / workspace tab model / relevant frontend component tests; exact files TBD by owner after inspection; `.codex/pm-progress.md`
+  base_commit: `7cf28dcd1`
+  product_contract: Add a compact add button in the workspace tab bar. Clicking it opens a small anchored chooser/popover in the workspace tab bar context with three explicit choices: Terminal, Browser, Chat. Choosing Terminal should create/select a workspace Terminal tab using the same semantics as existing right-panel-to-workspace Terminal entry points. Choosing Browser should create/select a workspace Browser tab using the existing Browser workspace semantics. Choosing Chat should create/select a Chat/conversation workspace tab without changing thread runtime state or sending any message. The chooser should close after selection, on outside click/Escape, and should not steal focus from running terminal/browser sessions except as needed to select the created tab. No destructive action or extra confirmation is needed.
+  design_contract: Reuse the existing workspace tab bar visual language: small icon/button affordance near tab controls, lightweight anchored popover/menu, compact rows with label and subtle description/icon if existing icon primitives are available. Do not introduce a large modal, marketing-style empty state, global command palette, or redesign of workspace tabs. Keep keyboard/mouse accessibility reasonable with button labels/aria labels and Escape/outside-close behavior if the existing component patterns support it.
+  constraints: Preserve existing workspace tab ordering/storage, Browser/Terminal lifecycle, right-panel detach/return semantics, conversation thread lifecycle/read/list/status, send-message behavior, provider-visible schema, API/IPC shape, persisted history/protocol semantics, Runtime Capsule/Launcher semantics, and external/native provider parity. Do not alter Terminal process/session behavior, Browser native view ownership, or thread creation/send semantics beyond using existing workspace tab creation pathways.
+  validation: pending
+  reviewer_result: pending
+  risk: pending
+  commit: pending
+
 - id: continuous-code-organization-tranche-54
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
