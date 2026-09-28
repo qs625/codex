@@ -138,6 +138,15 @@ export function resolveRunConfigDisplaySummary(
     };
   }
 
+  if (!thread.model) {
+    return {
+      modelLabel: thread.modelProvider ?? "provider default",
+      reasoningLabel: thread.reasoningEffort ?? "default",
+      selection: null,
+      provenance: "inherited",
+    };
+  }
+
   if (thread.model) {
     return {
       modelLabel: thread.modelProvider
@@ -150,10 +159,8 @@ export function resolveRunConfigDisplaySummary(
   }
 
   return {
-    modelLabel: thread.modelProvider
-      ? `unresolved model (${thread.modelProvider})`
-      : "unresolved model",
-    reasoningLabel: thread.reasoningEffort ?? "unresolved reasoning",
+    modelLabel: "provider default",
+    reasoningLabel: "default",
     selection: null,
     provenance: "unresolved",
   };
@@ -179,16 +186,7 @@ function resolveDisplayModelForThread(thread: Thread, models: RunModel[]) {
     );
   }
 
-  const providerDefault = models.find(
-    (model) =>
-      model.isDefault &&
-      (thread.modelProvider == null ||
-        (model.modelProvider ?? null) === thread.modelProvider),
-  );
-  if (providerDefault || thread.modelProvider != null) {
-    return providerDefault ?? null;
-  }
-  return models.find((model) => model.isDefault) ?? null;
+  return null;
 }
 
 type CurrentRunModelTarget = {
