@@ -151,6 +151,223 @@ use super::*;
     }
 
     #[test]
+    fn command_events_create_missing_explicit_turn_during_replay() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "pre-command progress".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "exec-late".into(),
+                started_at_ms: 100,
+                process_id: Some("pid-1".into()),
+                turn_id: "turn-command".into(),
+                command: vec!["echo".into(), "done".into()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![ParsedCommand::Unknown {
+                    cmd: "echo done".into(),
+                }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: Some(1000),
+                notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "exec-late".into(),
+                process_id: Some("pid-1".into()),
+                turn_id: "turn-command".into(),
+                completed_at_ms: 123,
+                command: vec!["echo".into(), "done".into()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![ParsedCommand::Unknown {
+                    cmd: "echo done".into(),
+                }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: Some(1000),
+                notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+                stdout: "done\n".into(),
+                stderr: String::new(),
+                aggregated_output: "done\n".into(),
+                exit_code: 0,
+                duration: Duration::from_millis(5),
+                formatted_output: "done\n".into(),
+                status: CoreExecCommandStatus::Completed,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "turn-command");
+        assert_eq!(
+            turns[1].items,
+            vec![ThreadItem::CommandExecution {
+                id: "exec-late".into(),
+                command: "echo done".into(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("pid-1".into()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::Completed,
+                initial_wait_ms: Some(1000),
+                notify_on: Some(CommandExecutionNotifyOn::Exit),
+                command_actions: vec![CommandAction::Unknown {
+                    command: "echo done".into(),
+                }],
+                aggregated_output: Some("done\n".into()),
+                exit_code: Some(0),
+                duration_ms: Some(5),
+            }]
+        );
+    }
+
+    #[test]
+    fn command_events_do_not_pollute_different_active_turn() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-active".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "active turn output".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "exec-missing".into(),
+                process_id: Some("pid-1".into()),
+                turn_id: "turn-missing".into(),
+                completed_at_ms: 123,
+                command: vec!["echo".into(), "done".into()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![ParsedCommand::Unknown {
+                    cmd: "echo done".into(),
+                }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
+                stdout: "done\n".into(),
+                stderr: String::new(),
+                aggregated_output: "done\n".into(),
+                exit_code: 0,
+                duration: Duration::from_millis(5),
+                formatted_output: "done\n".into(),
+                status: CoreExecCommandStatus::Completed,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-active");
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::AgentMessage {
+                id: "item-1".into(),
+                text: "active turn output".into(),
+                phase: None,
+                memory_citation: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn same_turn_compact_replay_keeps_later_assistant_and_command_items() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "trigger compact".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                skills: Vec::new(),
+            })),
+            RolloutItem::Compacted(CompactedItem {
+                message: String::new(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "visible after compact".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "exec-after-compact".into(),
+                started_at_ms: 100,
+                process_id: Some("pid-1".into()),
+                turn_id: "turn-compact".into(),
+                command: vec!["git".into(), "status".into(), "--short".into()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![ParsedCommand::Unknown {
+                    cmd: "git status --short".into(),
+                }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "exec-after-compact".into(),
+                process_id: Some("pid-1".into()),
+                turn_id: "turn-compact".into(),
+                completed_at_ms: 123,
+                command: vec!["git".into(), "status".into(), "--short".into()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![ParsedCommand::Unknown {
+                    cmd: "git status --short".into(),
+                }],
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
+                stdout: " M file.ts\n".into(),
+                stderr: String::new(),
+                aggregated_output: " M file.ts\n".into(),
+                exit_code: 0,
+                duration: Duration::from_millis(12),
+                formatted_output: " M file.ts\n".into(),
+                status: CoreExecCommandStatus::Completed,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-compact");
+        assert_eq!(
+            turns[0].items.iter().map(ThreadItem::id).collect::<Vec<_>>(),
+            vec![
+                "item-1",
+                "item-2",
+                "item-3",
+                "exec-after-compact",
+            ]
+        );
+        assert!(matches!(
+            &turns[0].items[2],
+            ThreadItem::AgentMessage { text, .. } if text == "visible after compact"
+        ));
+        assert!(matches!(
+            &turns[0].items[3],
+            ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::Completed,
+                ..
+            } if id == "exec-after-compact"
+        ));
+    }
+
+    #[test]
     fn replays_command_execution_notification_completed_item() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
@@ -511,4 +728,3 @@ use super::*;
             }]
         );
     }
-

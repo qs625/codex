@@ -2,7 +2,7 @@ import {
   buildContextUsageAnalysis,
   type ContextUsageAnalysis,
 } from "./contextUsage";
-import type { Thread, ThreadItem } from "../types";
+import type { Thread, ThreadItem, Turn } from "../types";
 import {
   isRunningCommandExecutionStatus,
   selectActiveCommandItems,
@@ -251,7 +251,7 @@ function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {
   >();
   let changeOrder = 0;
 
-  for (const turn of thread.turns) {
+  for (const turn of getAnalysisTurns(thread)) {
     for (const item of turn.items) {
       if (item.type !== "fileChange" || item.status !== "completed") {
         continue;
@@ -299,17 +299,17 @@ class MonitorInventory {
       return inventory;
     }
 
-    for (const turn of thread.turns) {
+    for (const item of thread.activeSubscriptionItems ?? []) {
+      inventory.applyItem(item, {
+        allowCommandExecutionMonitors: false,
+      });
+    }
+    for (const turn of getAnalysisTurns(thread)) {
       for (const item of turn.items) {
         inventory.applyItem(item, {
           allowCommandExecutionMonitors: false,
         });
       }
-    }
-    for (const item of thread.activeSubscriptionItems ?? []) {
-      inventory.applyItem(item, {
-        allowCommandExecutionMonitors: false,
-      });
     }
     for (const item of selectActiveCommandItems(thread)) {
       inventory.applyItem(item, {
@@ -463,6 +463,43 @@ class MonitorInventory {
     }
     this.monitors[existingIndex] = monitor;
   }
+}
+
+function getAnalysisTurns(thread: Thread): Turn[] {
+  const latestCompact = findLatestCompactPosition(thread.turns);
+  if (latestCompact === null) {
+    return thread.turns;
+  }
+  const compactTurn = thread.turns[latestCompact.turnIndex];
+  if (!compactTurn) {
+    return thread.turns.slice(latestCompact.turnIndex);
+  }
+  return [
+    {
+      ...compactTurn,
+      items: compactTurn.items.slice(latestCompact.itemIndex),
+    },
+    ...thread.turns.slice(latestCompact.turnIndex + 1),
+  ];
+}
+
+function findLatestCompactPosition(turns: readonly Turn[]) {
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = turns[turnIndex];
+    if (!turn) {
+      continue;
+    }
+    for (
+      let itemIndex = turn.items.length - 1;
+      itemIndex >= 0;
+      itemIndex -= 1
+    ) {
+      if (turn.items[itemIndex]?.type === "contextCompaction") {
+        return { turnIndex, itemIndex };
+      }
+    }
+  }
+  return null;
 }
 
 function buildCommandMonitorSummary(

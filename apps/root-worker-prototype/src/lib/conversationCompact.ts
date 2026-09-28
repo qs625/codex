@@ -29,10 +29,19 @@ export function extractCompactConversationDetails(
   for (const entry of entries) {
     if (entry.kind === "compact" && entry.id === compactEntryId) {
       const prefixCells = buildConversationCellsForSegment(priorEntries);
-      const archivedCells = collectArchivedCellsForCompact(
+      const archivedCellsBeforeCompactTurn = collectArchivedCellsForCompact(
         prefixCells,
         entry.turnId,
       );
+      const compactTurnCells = collectCompactTurnCellsBeforeCompact(
+        prefixCells,
+        entry.turnId,
+        entry,
+      );
+      const archivedCells = [
+        ...archivedCellsBeforeCompactTurn,
+        ...compactTurnCells,
+      ];
       return {
         archivedCells,
         archivedEntryCount: countConversationEntries(archivedCells),
@@ -66,19 +75,19 @@ function buildConversationCellsForSegment(
         cells,
         entry.turnId,
       );
-      const archivedCells =
-        localArchivedCells.length > 0
-          ? localArchivedCells
-          : hydratedArchivedCells;
-      const archivedEntryCount =
-        localArchivedCells.length > 0
-          ? countConversationEntries(localArchivedCells)
-          : (loadedDetails?.archivedEntryCount ?? entry.archivedEntryCount);
       const compactTurnCells = collectCompactTurnCellsBeforeCompact(
         cells,
         entry.turnId,
         entry,
       );
+      const archivedCells =
+        localArchivedCells.length > 0 || compactTurnCells.length > 0
+          ? [...localArchivedCells, ...compactTurnCells]
+          : hydratedArchivedCells;
+      const archivedEntryCount =
+        localArchivedCells.length > 0 || compactTurnCells.length > 0
+          ? countConversationEntries(archivedCells)
+          : (loadedDetails?.archivedEntryCount ?? entry.archivedEntryCount);
       if (localArchivedCells.length > 0 || compactTurnCells.length > 0) {
         const visibleCells = cells.filter(
           (cell) =>

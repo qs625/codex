@@ -3517,7 +3517,7 @@ test("mergeThreadSnapshot keeps older restored reasoning before newer live tool 
   );
 });
 
-test("upsertThread prunes items before the latest compact boundary", () => {
+test("upsertThread keeps backend items around the compact boundary", () => {
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3534,11 +3534,11 @@ test("upsertThread prunes items before the latest compact boundary", () => {
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "after-compact"],
+    ["old-user", "old-agent", "compact-1", "after-compact"],
   );
 });
 
-test("upsertThread preserves active subscriptions across compact pruning", () => {
+test("upsertThread preserves active subscriptions while keeping compact facts", () => {
   const scheduleMonitor = makeScheduleSubscribe();
   const thread = upsertThread([], {
     ...makeThread(),
@@ -3558,7 +3558,7 @@ test("upsertThread preserves active subscriptions across compact pruning", () =>
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "after-compact"],
+    ["old-user", "old-agent", "compact-1", "after-compact"],
   );
   assert.deepEqual(
     thread.activeSubscriptionItems?.map((item) => item.id),
@@ -3582,7 +3582,7 @@ test("upsertThread preserves active subscriptions across compact pruning", () =>
   );
 });
 
-test("upsertThread preserves active commands across compact pruning", () => {
+test("upsertThread preserves active commands while keeping compact facts", () => {
   const command = makeCommandExecution({
     id: "exec-1",
     command: "cargo test",
@@ -3609,7 +3609,7 @@ test("upsertThread preserves active commands across compact pruning", () => {
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "after-compact"],
+    ["old-user", "old-agent", "compact-1", "after-compact"],
   );
   assert.deepEqual(thread.activeCommandItems, [command]);
 });
@@ -3672,7 +3672,7 @@ test("upsertThread does not revive pre-compact subscriptions after empty compact
   );
 });
 
-test("upsertThread preserves compact summary while pruning compact-turn items before the marker", () => {
+test("upsertThread preserves compact summary before the marker", () => {
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3690,7 +3690,7 @@ test("upsertThread preserves compact summary while pruning compact-turn items be
   );
 });
 
-test("upsertThread keeps backend compact message summary after the marker", () => {
+test("upsertThread preserves backend facts around compact markers", () => {
   const thread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -3705,11 +3705,68 @@ test("upsertThread keeps backend compact message summary after the marker", () =
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "compact-1:summary", "after-compact"],
+    ["old-agent", "compact-1", "compact-1:summary", "after-compact"],
   );
 });
 
-test("mergeThreadSnapshot keeps only the latest compact boundary", () => {
+test("mergeThreadSnapshot keeps same-turn persisted output after compact marker", () => {
+  const merged = mergeThreadSnapshot(null, {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-compact", [
+        makeUserMessage("user-compact", "trigger compact"),
+        makeCompactItem("compact-1"),
+        makeAgentMessage("assistant-after-compact", "visible after compact"),
+        makeCommandExecution({
+          id: "cmd-after-compact",
+          command: "git status --short",
+          status: "completed",
+          exitCode: 0,
+          durationMs: 12,
+        }),
+        makeCommandNotification({
+          id: "cmd-after-compact:notification:exit",
+          commandItemId: "cmd-after-compact",
+          createdAtMs: 13_000,
+        }),
+      ]),
+      makeTurn("turn-followup", [
+        makeUserMessage("user-followup", "new turn also works"),
+      ]),
+    ],
+    stats: { compactionCount: 1 },
+  });
+  const conversation = buildConversationState(merged);
+
+  assert.deepEqual(
+    merged.turns.map((turn) => [turn.id, turn.items.map((item) => item.id)]),
+    [
+      [
+        "turn-compact",
+        [
+          "user-compact",
+          "compact-1",
+          "assistant-after-compact",
+          "cmd-after-compact",
+          "cmd-after-compact:notification:exit",
+        ],
+      ],
+      ["turn-followup", ["user-followup"]],
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["user-compact", "message"],
+      ["compact-1", "compact"],
+      ["assistant-after-compact", "message"],
+      ["cmd-after-compact", "tool"],
+      ["user-followup", "message"],
+    ],
+  );
+});
+
+test("mergeThreadSnapshot preserves backend compact boundaries as typed facts", () => {
   const firstTurn = {
     id: "first-turn",
     items: [
@@ -3741,10 +3798,10 @@ test("mergeThreadSnapshot keeps only the latest compact boundary", () => {
     turns: [firstTurn, secondTurn],
   });
 
-  assert.deepEqual(merged.turns, [secondTurn]);
+  assert.deepEqual(merged.turns, [firstTurn, secondTurn]);
 });
 
-test("updateThreadItem prunes live state when a compact notification arrives", () => {
+test("updateThreadItem keeps live facts when a compact notification arrives", () => {
   const thread = updateThreadItem(
     {
       ...makeThread(),
@@ -3766,9 +3823,134 @@ test("updateThreadItem prunes live state when a compact notification arrives", (
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-summary", "compact-1"],
+    [
+      "old-user",
+      "old-agent",
+      "pre-compact-agent",
+      "compact-summary",
+      "compact-1",
+    ],
   );
   assert.deepEqual(thread.stats, { compactionCount: 3 });
+});
+
+test("compact-triggering turn archives pre-marker output without deleting typed facts", () => {
+  const compacted = updateThreadItem(
+    {
+      ...makeThread(),
+      lifecycleStatus: { type: "active", activeFlags: ["running"] },
+      turns: [
+        {
+          ...makeTurn("turn-compact", [
+            makeUserMessage("user-compact", "trigger compact and continue"),
+            makeAgentMessage("assistant-stale", "old output before compact"),
+            makeCommandExecution({
+              id: "cmd-stale",
+              command: "pnpm test",
+              status: "completed",
+              exitCode: 0,
+              durationMs: 12,
+            }),
+          ]),
+          status: "running",
+          completedAt: null,
+          durationMs: null,
+        },
+      ],
+    },
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+  const conversation = buildConversationState(compacted);
+
+  assert.deepEqual(
+    compacted.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["user-compact", "assistant-stale", "cmd-stale", "compact-1"],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["user-compact", "message"],
+      ["compact-1", "compact"],
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells
+      .find((cell) => cell.id === "compact-1")
+      ?.entries.flatMap((entry) =>
+        entry.kind === "compact"
+          ? (entry.archivedCells ?? []).map((cell) => cell.id)
+          : [],
+      ),
+    ["assistant-stale", "cmd-stale"],
+  );
+});
+
+test("compact-triggering turn keeps same-turn output after compact even when thread metadata is stale", () => {
+  const recoveredCompactTurn = {
+    ...makeThread(),
+    lifecycleStatus: {
+      type: "final",
+      result: { type: "completed", lastAgentMessage: null },
+    },
+    turns: [
+      {
+        ...makeTurn("turn-compact", [
+          makeUserMessage("user-compact", "trigger compact"),
+          makeCompactItem("compact-1"),
+        ]),
+        status: "running" as const,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const withAssistant = appendAgentDelta(
+    recoveredCompactTurn,
+    "turn-compact",
+    "assistant-after-compact",
+    "visible after compact",
+  );
+  const withCommand = updateThreadItem(
+    withAssistant,
+    "turn-compact",
+    makeCommandExecution({
+      id: "cmd-after-compact",
+      command: "git status --short",
+    }),
+  );
+  const updated = updateThreadItem(
+    withCommand,
+    "turn-compact",
+    makeCommandNotification({
+      id: "cmd-after-compact:notification:exit",
+      commandItemId: "cmd-after-compact",
+      createdAtMs: 13_000,
+    }),
+  );
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [
+      "user-compact",
+      "compact-1",
+      "assistant-after-compact",
+      "cmd-after-compact",
+      "cmd-after-compact:notification:exit",
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["user-compact", "message"],
+      ["compact-1", "compact"],
+      ["assistant-after-compact", "message"],
+      ["cmd-after-compact", "tool"],
+    ],
+  );
 });
 
 test("updateThreadItem does not double count duplicate compact notifications", () => {
@@ -3799,7 +3981,7 @@ test("updateThreadItem does not double count duplicate compact notifications", (
   assert.deepEqual(duplicate.stats, { compactionCount: 3 });
 });
 
-test("updateThreadItem ignores ambiguous stale compact notifications after pruning", () => {
+test("updateThreadItem keeps explicit compact notifications after an existing marker", () => {
   const thread = {
     ...makeThread(),
     stats: { compactionCount: 2 },
@@ -3814,9 +3996,9 @@ test("updateThreadItem ignores ambiguous stale compact notifications after pruni
 
   assert.deepEqual(
     stale.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-2"],
+    ["compact-2", "compact-1"],
   );
-  assert.deepEqual(stale.stats, { compactionCount: 2 });
+  assert.deepEqual(stale.stats, { compactionCount: 3 });
 });
 
 test("updateThreadItem accepts timestamped compact notifications after latest compact", () => {
@@ -3840,7 +4022,7 @@ test("updateThreadItem accepts timestamped compact notifications after latest co
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-3"],
+    ["compact-2", "compact-3"],
   );
   assert.deepEqual(updated.stats, { compactionCount: 3 });
 });
@@ -3919,7 +4101,7 @@ test("updateThreadTurn updates compact stats for live compact turns", () => {
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-summary", "compact-5"],
+    ["old-user", "old-agent", "compact-summary", "compact-5"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 5 });
 });
@@ -3952,13 +4134,13 @@ test("turn completed notifications merge compact items and update analysis", () 
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-summary", "compact-3"],
+    ["old-user", "old-agent", "compact-summary", "compact-3"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 3 });
   assert.equal(analysis.runtime.compactionCount, 3);
 });
 
-test("turn completed notifications ignore ambiguous stale compact snapshots", () => {
+test("turn completed notifications keep explicit compact snapshots", () => {
   const thread = updateThreadTurnNotification(
     {
       ...makeThread(),
@@ -3980,9 +4162,9 @@ test("turn completed notifications ignore ambiguous stale compact snapshots", ()
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-2"],
+    ["compact-1"],
   );
-  assert.deepEqual(thread.stats, { compactionCount: 2 });
+  assert.deepEqual(thread.stats, { compactionCount: 3 });
 });
 
 test("turn completed notifications accept compact snapshots after latest compact", () => {
@@ -4013,7 +4195,7 @@ test("turn completed notifications accept compact snapshots after latest compact
   assert.deepEqual(thread.stats, { compactionCount: 3 });
 });
 
-test("turn completed notifications do not restore compact-pruned old turns", () => {
+test("turn completed notifications keep explicit old turn snapshots", () => {
   const thread = updateThreadTurnNotification(
     {
       ...makeThread(),
@@ -4038,7 +4220,7 @@ test("turn completed notifications do not restore compact-pruned old turns", () 
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-1", "old-user", "old-agent"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 1 });
 });
@@ -4072,7 +4254,7 @@ test("pending turn completed compact notifications update stats after snapshot",
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-summary", "compact-3"],
+    ["old-user", "old-agent", "compact-summary", "compact-3"],
   );
   assert.deepEqual(updated.stats, { compactionCount: 3 });
   assert.equal(buildThreadAnalysis(updated, 0).runtime.compactionCount, 3);
@@ -4146,7 +4328,7 @@ test("send response turn snapshots merge compact items and update stats", () => 
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-2"],
+    ["old-user", "old-agent", "compact-2"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 2 });
 });
@@ -4174,7 +4356,7 @@ test("updateThreadItem preserves active subscriptions when a compact notificatio
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-summary", "compact-1"],
+    ["old-user", "old-agent", "compact-summary", "compact-1"],
   );
   assert.deepEqual(
     thread.activeSubscriptionItems?.map((item) => item.id),
@@ -4198,7 +4380,7 @@ test("updateThreadItem preserves active subscriptions when a compact notificatio
   );
 });
 
-test("late same-turn item notifications preserve compact summary without re-adding ordinary items", () => {
+test("late same-turn item notifications preserve compact summary and ordinary facts", () => {
   const compactedThread = updateThreadItem(
     {
       ...makeThread(),
@@ -4261,7 +4443,7 @@ test("late same-turn item notifications preserve compact summary without re-addi
     lateOrdinaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-summary", "compact-1"],
+    ["compact-summary", "compact-1", "ordinary-agent"],
   );
 });
 
@@ -4295,7 +4477,7 @@ test("active compact turn keeps live item output after init context", () => {
   );
 });
 
-test("compact pruning keeps timestamped current-turn output before a late marker visible", () => {
+test("compact projection archives timestamped current-turn output before a late marker", () => {
   const normalized = normalizeThreadSnapshot({
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -4335,11 +4517,12 @@ test("compact pruning keeps timestamped current-turn output before a late marker
     normalized.turns.flatMap((turn) => turn.items.map((item) => item.id)),
     [
       "current-user",
+      "stale-agent",
+      "live-agent",
+      "cmd-live",
       "compact-1",
       "compact-1:summary",
       "ctx-1",
-      "live-agent",
-      "cmd-live",
     ],
   );
   assert.deepEqual(
@@ -4350,9 +4533,19 @@ test("compact pruning keeps timestamped current-turn output before a late marker
       ["compact-1:summary", "message"],
       ["ctx-1:section:0", "tool"],
       ["ctx-1:section:1", "tool"],
-      ["live-agent", "message"],
-      ["cmd-live", "tool"],
     ],
+  );
+  assert.deepEqual(
+    conversation.cells
+      .find((cell) => cell.id === "compact-1")
+      ?.entries.flatMap((entry) =>
+        entry.kind === "compact"
+          ? (entry.archivedCells ?? []).flatMap((cell) =>
+              cell.entries.map((archivedEntry) => archivedEntry.id),
+            )
+          : [],
+      ),
+    ["stale-agent", "live-agent", "cmd-live"],
   );
   assert.equal(
     conversation.cells
@@ -4363,7 +4556,7 @@ test("compact pruning keeps timestamped current-turn output before a late marker
   );
 });
 
-test("compact pruning reorders timestamped current-turn output even when no stale items are removed", () => {
+test("compact projection archives same-turn output before a late marker", () => {
   const normalized = normalizeThreadSnapshot({
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -4393,7 +4586,7 @@ test("compact pruning reorders timestamped current-turn output even when no stal
 
   assert.deepEqual(
     normalized.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["current-user", "compact-1", "compact-1:summary", "ctx-1", "live-agent"],
+    ["current-user", "live-agent", "compact-1", "compact-1:summary", "ctx-1"],
   );
   assert.deepEqual(
     conversation.cells.map((cell) => [cell.id, cell.kind]),
@@ -4403,12 +4596,21 @@ test("compact pruning reorders timestamped current-turn output even when no stal
       ["compact-1:summary", "message"],
       ["ctx-1:section:0", "tool"],
       ["ctx-1:section:1", "tool"],
-      ["live-agent", "message"],
     ],
+  );
+  assert.deepEqual(
+    conversation.cells
+      .find((cell) => cell.id === "compact-1")
+      ?.entries.flatMap((entry) =>
+        entry.kind === "compact"
+          ? (entry.archivedCells ?? []).map((cell) => cell.id)
+          : [],
+      ),
+    ["live-agent"],
   );
 });
 
-test("active compact turn rejects timestamped stale item at compact boundary", () => {
+test("active compact turn keeps timestamped item at compact boundary", () => {
   const compactedThread = {
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -4438,7 +4640,7 @@ test("active compact turn rejects timestamped stale item at compact boundary", (
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "compact-1:summary", "ctx-1"],
+    ["compact-1", "compact-1:summary", "ctx-1", "old-at-boundary"],
   );
 });
 
@@ -4736,7 +4938,7 @@ test("recovered compact running turn keeps later live visible items after post-c
   );
 });
 
-test("recovered compact running turn rejects stale command notifications before compact", () => {
+test("recovered compact running turn keeps explicit command notifications before compact", () => {
   const recoveredThread = {
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -4770,7 +4972,7 @@ test("recovered compact running turn rejects stale command notifications before 
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "user-after-compact"],
+    ["compact-1", "user-after-compact", "cmd-old:notification:exit"],
   );
 });
 
@@ -4892,7 +5094,7 @@ test("recovered compact thread accepts second live user turn snapshot", () => {
   );
 });
 
-test("non-active compact head rejects untimed follow-up user items", () => {
+test("non-active compact head keeps untimed follow-up user items", () => {
   const compactedThread = {
     ...makeThread(),
     turns: [
@@ -4914,11 +5116,11 @@ test("non-active compact head rejects untimed follow-up user items", () => {
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-1", "old-user"],
   );
 });
 
-test("active compact head rejects timestamped stale follow-up user item", () => {
+test("active compact head keeps timestamped follow-up user item", () => {
   const compactedThread = {
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -4942,7 +5144,7 @@ test("active compact head rejects timestamped stale follow-up user item", () => 
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-1", "old-user"],
   );
 });
 
@@ -5013,7 +5215,7 @@ test("active compact thread keeps untimed live tool and child output after user 
   );
 });
 
-test("active compact thread rejects untimed stale child completion after user turn", () => {
+test("active compact thread keeps untimed child completion after user turn", () => {
   const threadAfterUser = {
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -5046,11 +5248,11 @@ test("active compact thread rejects untimed stale child completion after user tu
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "user-after-compact"],
+    ["compact-1", "user-after-compact", "old-child-completion"],
   );
 });
 
-test("active compact thread rejects untimed missing-turn command on timestamped later turn", () => {
+test("active compact thread keeps untimed missing-turn command on timestamped later turn", () => {
   const threadAfterTimestampedTurn = {
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -5082,11 +5284,11 @@ test("active compact thread rejects untimed missing-turn command on timestamped 
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "user-after-compact"],
+    ["compact-1", "user-after-compact", "old-command"],
   );
 });
 
-test("active compact thread rejects timestamped stale missing-turn live item after user turn", () => {
+test("active compact thread keeps timestamped missing-turn live item after user turn", () => {
   const threadAfterUser = {
     ...makeThread(),
     lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
@@ -5119,7 +5321,7 @@ test("active compact thread rejects timestamped stale missing-turn live item aft
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "user-after-compact"],
+    ["compact-1", "user-after-compact", "old-command"],
   );
 });
 
@@ -5181,7 +5383,7 @@ test("late backend compact message summary delta can create the exact summary it
     lateOrdinaryDelta.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1"],
+    ["compact-1", "ordinary-agent"],
   );
 });
 
@@ -5304,7 +5506,10 @@ test("late compact turn snapshot preserves existing live follow-up cells", () =>
   assert.deepEqual(
     updated.turns.map((turn) => [turn.id, turn.items.map((item) => item.id)]),
     [
-      ["turn-compact", ["compact-1", "compact-1:summary", "ctx-1"]],
+      [
+        "turn-compact",
+        ["stale-agent", "compact-1", "compact-1:summary", "ctx-1"],
+      ],
       ["turn-live", ["user-live"]],
     ],
   );
@@ -5325,9 +5530,19 @@ test("late compact turn snapshot preserves existing live follow-up cells", () =>
       .includes("stale-agent"),
     false,
   );
+  assert.deepEqual(
+    conversation.cells
+      .find((cell) => cell.id === "compact-1")
+      ?.entries.flatMap((entry) =>
+        entry.kind === "compact"
+          ? (entry.archivedCells ?? []).map((cell) => cell.id)
+          : [],
+      ),
+    ["stale-agent"],
+  );
 });
 
-test("non-active compact head rejects old user turn snapshots without a timestamp", () => {
+test("non-active compact head keeps user turn snapshots without guessing staleness", () => {
   const compact = {
     ...makeCompactItem("compact-1"),
     completedAtMs: 2_000,
@@ -5347,7 +5562,7 @@ test("non-active compact head rejects old user turn snapshots without a timestam
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-1", "user-old"],
   );
 });
 
@@ -5382,7 +5597,7 @@ test("compact head replays pending live user item when snapshot arrives later", 
   );
 });
 
-test("segment compact head rejects late assistant delta for a pruned old turn", () => {
+test("segment compact head accepts late assistant delta for its explicit turn", () => {
   const compact = {
     ...makeCompactItem("compact-1"),
     completedAtMs: 2_000,
@@ -5402,7 +5617,7 @@ test("segment compact head rejects late assistant delta for a pruned old turn", 
 
   assert.deepEqual(
     updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1"],
+    ["compact-1", "old-agent"],
   );
 });
 
@@ -5440,7 +5655,7 @@ test("segment compact head accepts later live inter-agent followup item", () => 
   assert.equal(updated.turns.at(-1)?.id, "turn-live");
 });
 
-test("same-turn pruned items with the compact boundary timestamp do not reappear", () => {
+test("same-turn items around the compact boundary remain typed facts", () => {
   const compactedThread = updateThreadItem(
     {
       ...makeThread(),
@@ -5474,7 +5689,7 @@ test("same-turn pruned items with the compact boundary timestamp do not reappear
     equalBoundaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-summary", "compact-1"],
+    ["compact-summary", "compact-1", "ordinary-agent"],
   );
   assert.deepEqual(
     afterBoundaryThread.turns.flatMap((turn) =>
@@ -5484,7 +5699,7 @@ test("same-turn pruned items with the compact boundary timestamp do not reappear
   );
 });
 
-test("compact-pruned threads do not create synthetic turns for old missing notifications", () => {
+test("compact threads keep explicit old-turn notifications as typed facts", () => {
   const compactedThread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -5506,11 +5721,11 @@ test("compact-pruned threads do not create synthetic turns for old missing notif
     lateOldTurnThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1", "after-compact"],
+    ["old-agent", "compact-1", "after-compact"],
   );
 });
 
-test("compact-pruned threads do not create synthetic turns for legacy compact summaries", () => {
+test("compact threads keep legacy compact summary notifications as typed facts", () => {
   const compactedThread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -5537,17 +5752,17 @@ test("compact-pruned threads do not create synthetic turns for legacy compact su
     lateLegacySummaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1", "after-compact"],
+    ["compact-1", "after-compact", "compact-summary"],
   );
   assert.deepEqual(
     lateTimestampedLegacySummaryThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1", "after-compact"],
+    ["compact-1", "after-compact", "compact-summary"],
   );
 });
 
-test("late old turn lifecycle cannot reopen compact-pruned turns", () => {
+test("late old turn lifecycle keeps old turns without deleting compact facts", () => {
   const compactedThread = upsertThread([], {
     ...makeThread(),
     turns: [
@@ -5572,7 +5787,7 @@ test("late old turn lifecycle cannot reopen compact-pruned turns", () => {
     lateOldItemThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1"],
+    ["old-agent", "compact-1"],
   );
 });
 
@@ -5601,7 +5816,7 @@ test("compacted threads can still create later turns with timestamps after the c
 
   assert.deepEqual(
     withItemThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "new-agent"],
+    ["old-agent", "compact-1", "new-agent"],
   );
 });
 
@@ -5631,11 +5846,11 @@ test("late old child completion does not attach to a later active turn after com
     lateCompletionThread.turns.flatMap((turn) =>
       turn.items.map((item) => item.id),
     ),
-    ["compact-1"],
+    ["old-agent", "old-child-completion", "compact-1"],
   );
 });
 
-test("compact-pruned threads still update items retained after the compact marker", () => {
+test("compact threads still update items retained after the compact marker", () => {
   const thread = updateThreadItem(
     {
       ...makeThread(),
@@ -5658,7 +5873,7 @@ test("compact-pruned threads still update items retained after the compact marke
   );
 });
 
-test("conversation and right-panel analysis only scan the pruned active segment", () => {
+test("conversation and right-panel analysis project only the active compact segment", () => {
   const archivedItems = Array.from({ length: 1_000 }, (_, index) =>
     makeUserMessage(`old-user-${index}`, `old request ${index}`),
   );
@@ -5674,7 +5889,21 @@ test("conversation and right-panel analysis only scan the pruned active segment"
           status: "completed",
         },
       ]),
-      makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+      makeTurn("turn-compact", [
+        {
+          type: "fileChange" as const,
+          id: "same-turn-pre-compact-file",
+          changes: [{ path: "/tmp/same-turn-pre.ts", kind: "modified" }],
+          status: "completed",
+        },
+        makeCompactItem("compact-1"),
+        {
+          type: "fileChange" as const,
+          id: "same-turn-post-compact-file",
+          changes: [{ path: "/tmp/same-turn-post.ts", kind: "modified" }],
+          status: "completed",
+        },
+      ]),
       makeTurn("turn-active", [
         makeUserMessage("active-user", "active request"),
         {
@@ -5690,14 +5919,20 @@ test("conversation and right-panel analysis only scan the pruned active segment"
   const conversation = buildConversationState(thread);
   const analysis = buildThreadAnalysis(thread, 0);
 
-  assert.equal(conversation.flatItems.length, 3);
+  assert.equal(thread.turns.length, 3);
+  assert.equal(conversation.flatItems.length, 1006);
   assert.deepEqual(
-    conversation.flatItems.map((item) => item.id),
-    ["compact-1", "active-user", "active-file"],
+    conversation.cells.map((cell) => cell.id),
+    [
+      "compact-1",
+      "same-turn-post-compact-file",
+      "active-user",
+      "active-file",
+    ],
   );
   assert.deepEqual(
     analysis.changedFiles.map((file) => file.path),
-    ["/tmp/active.ts"],
+    ["/tmp/active.ts", "/tmp/same-turn-post.ts"],
   );
 });
 
@@ -6918,7 +7153,7 @@ test("updateThreadItem preserves same-turn collab agent messages with different 
   ]);
 });
 
-test("updateThreadItem keeps only the latest separate context compaction marker", () => {
+test("updateThreadItem keeps separate context compaction markers as typed facts", () => {
   const thread = updateThreadItem(makeThread(), "turn-1", {
     type: "contextCompaction",
     id: "first-item",
@@ -6930,6 +7165,10 @@ test("updateThreadItem keeps only the latest separate context compaction marker"
   });
 
   assert.deepEqual(updated.turns[0]?.items, [
+    {
+      type: "contextCompaction",
+      id: "first-item",
+    },
     {
       type: "contextCompaction",
       id: "second-item",
@@ -7398,7 +7637,7 @@ test("upsertThreadMetadataPreservingTurns applies live active command metadata",
   );
 });
 
-test("compact-pruned late command start does not create active command monitor state", () => {
+test("compact thread keeps late command start as active command state", () => {
   const compact = {
     ...makeCompactItem("compact-1"),
     completedAtMs: 2_000,
@@ -7415,8 +7654,13 @@ test("compact-pruned late command start does not create active command monitor s
   );
   const analysis = buildThreadAnalysis(updated, 0);
 
-  assert.deepEqual(updated.activeCommandItems, undefined);
-  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+  assert.deepEqual(updated.activeCommandItems, [
+    { ...commandStart, startedAtMs: 1_000 },
+  ]);
+  assert.deepEqual(
+    analysis.monitors.sections[0]?.monitors.map((monitor) => monitor.label),
+    [commandStart.command],
+  );
 });
 
 test("compact-pruned late command delta does not create active command monitor state", () => {

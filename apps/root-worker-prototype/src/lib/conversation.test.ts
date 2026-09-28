@@ -3123,9 +3123,10 @@ test("pruned compact rows omit archived cells until lazy-loaded details are read
     ),
   ]);
 
-  const prunedState = buildConversationState(
-    normalizeThreadSnapshot(fullThread),
-  );
+  const prunedState = buildConversationState({
+    ...fullThread,
+    turns: fullThread.turns.slice(1),
+  });
   const compactEntry = prunedState.cells[0]?.entries[0];
 
   assert.equal(compactEntry?.kind, "compact");
@@ -3143,6 +3144,56 @@ test("pruned compact rows omit archived cells until lazy-loaded details are read
       cell.entries.map((entry) => entry.text),
     ),
     ["old request"],
+  );
+});
+
+test("lazy compact details include same-turn pre-compact output", () => {
+  const thread = makeThreadWithTurns([
+    makeTurn(
+      [
+        {
+          type: "userMessage",
+          id: "same-turn-user",
+          content: [{ type: "text", text: "trigger compact" }],
+        },
+        {
+          type: "agentMessage",
+          id: "same-turn-agent",
+          text: "working before compact",
+          phase: null,
+          memoryCitation: null,
+        },
+        {
+          type: "commandExecution",
+          id: "same-turn-command",
+          command: "git status --short",
+          cwd: "/repo",
+          status: "completed",
+          aggregatedOutput: " M file.ts\n",
+          exitCode: 0,
+          durationMs: 10,
+        },
+        {
+          type: "contextCompaction",
+          id: "compact-1",
+        },
+      ],
+      { id: "turn-compact" },
+    ),
+  ]);
+
+  const details = extractCompactConversationDetails(
+    buildConversationEntries(thread),
+    "compact-1",
+  );
+
+  assert.equal(details?.archivedEntryCount, 2);
+  assert.deepEqual(
+    details?.archivedCells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["same-turn-agent", "message"],
+      ["same-turn-command", "tool"],
+    ],
   );
 });
 
@@ -3420,7 +3471,7 @@ test("compact read projection preserves command and tool evidence across the bou
   );
 });
 
-test("keeps compact-triggering same-turn user messages while hiding stale same-turn output", () => {
+test("keeps compact-triggering same-turn user messages while archiving pre-compact output", () => {
   const firstPrompt =
     "editor支持一下diff editor吧然后从 git panel点击变化的文件能直接跳转editor的diff view";
   const followupPrompt = "等下刚才发送的user message没显示";
@@ -3504,6 +3555,16 @@ test("keeps compact-triggering same-turn user messages while hiding stale same-t
       .map((entry) => entry.id)
       .filter((id) => id === "item-13" || id === "cmd-1"),
     [],
+  );
+  assert.deepEqual(
+    state.cells
+      .find((cell) => cell.id === "compact-1")
+      ?.entries.flatMap((entry) =>
+        entry.kind === "compact"
+          ? (entry.archivedCells ?? []).map((cell) => cell.id)
+          : [],
+      ),
+    ["item-13", "cmd-1"],
   );
 });
 

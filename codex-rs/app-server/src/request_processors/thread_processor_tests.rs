@@ -1378,6 +1378,57 @@ mod thread_processor_behavior_tests {
     }
 
     #[test]
+    fn populate_thread_turns_from_history_keeps_same_turn_output_after_compact() {
+        let mut thread = completed_thread();
+        let items = vec![
+            turn_started("turn-compact"),
+            user_message("trigger compact"),
+            compacted("summary"),
+            agent_message("visible after compact"),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
+                protocol::protocol::ExecCommandEndEvent {
+                    call_id: "exec-after-compact".to_string(),
+                    process_id: Some("pid-1".to_string()),
+                    turn_id: "turn-compact".to_string(),
+                    completed_at_ms: 123,
+                    command: vec!["git".to_string(), "status".to_string(), "--short".to_string()],
+                    cwd: test_path_buf("/tmp").abs(),
+                    parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                        cmd: "git status --short".to_string(),
+                    }],
+                    source: protocol::protocol::ExecCommandSource::Agent,
+                    interaction_input: None,
+                    initial_wait_ms: None,
+                    notify_on: None,
+                    stdout: " M file.ts\n".to_string(),
+                    stderr: String::new(),
+                    aggregated_output: " M file.ts\n".to_string(),
+                    exit_code: 0,
+                    duration: std::time::Duration::from_millis(12),
+                    formatted_output: " M file.ts\n".to_string(),
+                    status: protocol::protocol::ExecCommandStatus::Completed,
+                },
+            )),
+        ];
+
+        populate_thread_turns_from_history(&mut thread, &items, None);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(
+            turn_item_ids(&thread.turns[0]),
+            vec!["item-2", "item-2:summary", "item-3", "exec-after-compact"]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[2],
+            ThreadItem::AgentMessage { text, .. } if text == "visible after compact"
+        ));
+        assert!(matches!(
+            &thread.turns[0].items[3],
+            ThreadItem::CommandExecution { id, .. } if id == "exec-after-compact"
+        ));
+    }
+
+    #[test]
     fn populate_thread_turns_from_history_preserves_flat_compaction_display_items() {
         let mut thread = completed_thread();
 

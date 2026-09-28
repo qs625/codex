@@ -911,27 +911,6 @@ export function updateThreadItem(
         return turn;
       }
       foundTurn = true;
-      if (
-        !hasMatchingThreadItem(turn.items, nextItem) &&
-        turnHasCompactItem(turn) &&
-        nextItem.type !== "contextCompaction" &&
-        !nextItemIsInitContext &&
-        !isSummaryItemForLatestCompact(thread, nextItem) &&
-        !canAppendUntimedLiveItemAfterCompactInTurn(
-          thread,
-          turn,
-          nextItem,
-          timestamps,
-        ) &&
-        !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
-      ) {
-        return turn;
-      }
-      if (
-        shouldRejectAmbiguousCompactItem(thread, turn, nextItem, timestamps)
-      ) {
-        return turn;
-      }
       shouldUpdateActiveCommandItems = true;
       const items = [...completedCollabSyntheticItems, nextItem].reduce(
         appendOrMergeThreadItem,
@@ -996,10 +975,7 @@ export function updateThreadItem(
   }
 
   const activeTurn = isCollabCompletionNotificationItem(nextItem)
-    ? threadHasCompactItem(thread) &&
-      !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
-      ? undefined
-      : [...thread.turns].reverse().find(isTurnInFlight)
+    ? [...thread.turns].reverse().find(isTurnInFlight)
     : undefined;
   if (activeTurn) {
     shouldUpdateActiveCommandItems = true;
@@ -1018,22 +994,6 @@ export function updateThreadItem(
         existingCompactItemIds,
       ),
     );
-  }
-
-  if (
-    threadHasCompactItem(thread) &&
-    isLegacyCompactSummaryResultItem(nextItem)
-  ) {
-    return thread;
-  }
-
-  if (
-    threadHasCompactItem(thread) &&
-    !isExactSummaryItemForLatestCompact(thread, nextItem) &&
-    !canCreateUntimedLiveTurnItemAfterCompact(thread, nextItem, timestamps) &&
-    !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
-  ) {
-    return thread;
   }
 
   shouldUpdateActiveCommandItems = true;
@@ -1089,97 +1049,11 @@ function countVisibleContextCompactions(thread: Thread) {
   return collectContextCompactionItemIds(thread).length;
 }
 
-function shouldRejectAmbiguousCompactItem(
-  thread: Thread,
-  turn: Turn,
-  nextItem: ThreadItem,
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
-  if (
-    nextItem.type !== "contextCompaction" ||
-    hasMatchingThreadItem(turn.items, nextItem) ||
-    !turnHasCompactItem(turn) ||
-    isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
-  ) {
-    return false;
-  }
-  const durableCompactionCount = thread.stats?.compactionCount;
-  return (
-    durableCompactionCount !== undefined &&
-    validCompactionCount(durableCompactionCount) >
-      countVisibleContextCompactions(thread)
-  );
-}
-
-function canMergeTurnSnapshotItems(thread: Thread, nextTurn: Turn) {
+function canMergeTurnSnapshotItems(_thread: Thread, nextTurn: Turn) {
   if (nextTurn.items.length === 0) {
     return false;
   }
-  const existingTurn = thread.turns.find((turn) => turn.id === nextTurn.id);
-  if (
-    !existingTurn &&
-    threadHasCompactItem(thread) &&
-    !isTurnSnapshotAfterLatestCompact(thread, nextTurn) &&
-    !isActiveInFlightTurnSnapshot(thread, nextTurn) &&
-    !isUntimedInFlightUserTurnAfterCompactAnchor(thread, nextTurn)
-  ) {
-    return false;
-  }
-  return !shouldRejectAmbiguousCompactTurnSnapshot(
-    thread,
-    nextTurn,
-    existingTurn,
-  );
-}
-
-function shouldRejectAmbiguousCompactTurnSnapshot(
-  thread: Thread,
-  nextTurn: Turn,
-  existingTurn: Turn | undefined = thread.turns.find(
-    (turn) => turn.id === nextTurn.id,
-  ),
-) {
-  if (!existingTurn || !turnHasCompactItem(existingTurn)) {
-    return false;
-  }
-  const unmatchedCompactItems = nextTurn.items.filter(
-    (item) =>
-      item.type === "contextCompaction" &&
-      !hasMatchingThreadItem(existingTurn.items, item),
-  );
-  if (unmatchedCompactItems.length === 0) {
-    return false;
-  }
-  if (
-    unmatchedCompactItems.some((item) =>
-      isCompactItemSnapshotAfterLatestCompact(thread, nextTurn, item),
-    )
-  ) {
-    return false;
-  }
-  const durableCompactionCount = thread.stats?.compactionCount;
-  return (
-    durableCompactionCount !== undefined &&
-    validCompactionCount(durableCompactionCount) >
-      countVisibleContextCompactions(thread)
-  );
-}
-
-function isCompactItemSnapshotAfterLatestCompact(
-  thread: Thread,
-  turn: Turn,
-  item: ThreadItem,
-) {
-  return isTimestampAfterLatestCompact(
-    thread,
-    item.completedAtMs ??
-      item.startedAtMs ??
-      timestampMsFromSeconds(turn.completedAt) ??
-      timestampMsFromSeconds(turn.startedAt),
-  );
+  return true;
 }
 
 function hasMatchingThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
@@ -1311,14 +1185,6 @@ export function appendAgentDelta(
           return turn;
         }
         const hasItem = turn.items.some((item) => item.id === itemId);
-        if (
-          !hasItem &&
-          turnHasCompactItem(turn) &&
-          !isExactSummaryDeltaForLatestCompact(thread, itemId) &&
-          !canAppendUntimedLiveItemAfterCompactInTurn(thread, turn)
-        ) {
-          return turn;
-        }
         const items = hasItem
           ? turn.items.flatMap((item) => {
               if (item.id !== itemId || item.type !== "agentMessage") {
@@ -1338,9 +1204,7 @@ export function appendAgentDelta(
             ];
         return { ...turn, items };
       })
-    : threadHasCompactItem(thread) && !isThreadActive(thread)
-      ? thread.turns
-      : [
+    : [
           ...thread.turns,
           {
             id: turnId,
@@ -1364,127 +1228,8 @@ export function appendAgentDelta(
   return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
 }
 
-function isExactSummaryDeltaForLatestCompact(thread: Thread, itemId: string) {
-  const latestCompact = findLatestCompactItemPosition(thread.turns);
-  return latestCompact !== null && itemId === `${latestCompact.id}:summary`;
-}
-
 function isThreadActive(thread: Thread) {
   return thread.lifecycleStatus.type === "active";
-}
-
-function canAppendUntimedLiveItemAfterCompactInTurn(
-  thread: Thread,
-  turn: Turn,
-  item?: ThreadItem,
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
-  return (
-    isTurnInFlight(turn) &&
-    !hasExplicitItemTimestamp(item, timestamps) &&
-    (isThreadActive(thread) || hasPostCompactUserMessage(turn))
-  );
-}
-
-function hasPostCompactUserMessage(turn: Turn) {
-  for (let index = turn.items.length - 1; index >= 0; index -= 1) {
-    const item = turn.items[index];
-    if (!item) {
-      continue;
-    }
-    if (item.type === "userMessage") {
-      return true;
-    }
-    if (item.type === "contextCompaction") {
-      return false;
-    }
-  }
-  return false;
-}
-
-function canCreateUntimedLiveTurnItemAfterCompact(
-  thread: Thread,
-  item?: ThreadItem,
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
-  if (hasExplicitItemTimestamp(item, timestamps)) {
-    return false;
-  }
-  const hasRecoveredLiveAnchor =
-    hasUntimedInFlightPostCompactUserAnchor(thread);
-  if (item && isUserMessageItem(item)) {
-    return isThreadActive(thread) || hasRecoveredLiveAnchor;
-  }
-  return (
-    item !== undefined &&
-    isUntimedLiveVisibleItemAfterCompact(item) &&
-    (hasUntimedInFlightTurnAfterLatestCompact(thread) || hasRecoveredLiveAnchor)
-  );
-}
-
-function isUntimedLiveVisibleItemAfterCompact(item: ThreadItem) {
-  switch (item.type) {
-    case "agentMessage":
-    case "commandExecution":
-    case "commandExecutionNotification":
-    case "builtinToolCall":
-    case "dynamicToolCall":
-    case "mcpToolCall":
-    case "eventDrivenToolCall":
-    case "eventDrivenTool":
-    case "clientRecovery":
-    case "fileChange":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function hasUntimedInFlightTurnAfterLatestCompact(thread: Thread) {
-  const latestCompact = findLatestCompactItemPosition(thread.turns);
-  if (!latestCompact) {
-    return false;
-  }
-  return thread.turns
-    .slice(latestCompact.turnIndex + 1)
-    .some(
-      (turn) =>
-        isTurnInFlight(turn) && turnOrderTimestampSeconds(turn) === null,
-    );
-}
-
-function hasUntimedInFlightPostCompactUserAnchor(thread: Thread) {
-  const latestCompact = findLatestCompactItemPosition(thread.turns);
-  if (!latestCompact) {
-    return false;
-  }
-  return thread.turns.slice(latestCompact.turnIndex).some((turn, offset) => {
-    if (!isTurnInFlight(turn) || turnOrderTimestampSeconds(turn) !== null) {
-      return false;
-    }
-    const itemStartIndex = offset === 0 ? latestCompact.itemIndex + 1 : 0;
-    return turn.items
-      .slice(itemStartIndex)
-      .some((item) => item.type === "userMessage");
-  });
-}
-
-function isUntimedInFlightUserTurnAfterCompactAnchor(
-  thread: Thread,
-  turn: Turn,
-) {
-  return (
-    isTurnInFlight(turn) &&
-    turnOrderTimestampSeconds(turn) === null &&
-    turn.items.some((item) => item.type === "userMessage") &&
-    hasUntimedInFlightPostCompactUserAnchor(thread)
-  );
 }
 
 function threadHasCompactItem(thread: Thread) {
@@ -1500,52 +1245,6 @@ function isTurnSnapshotAfterLatestCompact(thread: Thread, turn: Turn) {
     thread,
     timestampMsFromSeconds(turn.startedAt) ??
       timestampMsFromSeconds(turn.completedAt),
-  );
-}
-
-function isItemNotificationAfterLatestCompact(
-  thread: Thread,
-  item: ThreadItem,
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
-  return isTimestampAfterLatestCompact(
-    thread,
-    compactGuardItemTimestampMs(item, timestamps),
-  );
-}
-
-function hasExplicitItemTimestamp(
-  item?: ThreadItem,
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
-  return (
-    Number.isFinite(timestamps?.startedAtMs) ||
-    Number.isFinite(timestamps?.completedAtMs) ||
-    Number.isFinite(item?.startedAtMs) ||
-    Number.isFinite(item?.completedAtMs) ||
-    Number.isFinite(item && "createdAtMs" in item ? item.createdAtMs : null)
-  );
-}
-
-function compactGuardItemTimestampMs(
-  item: ThreadItem,
-  timestamps?: {
-    startedAtMs?: number | null;
-    completedAtMs?: number | null;
-  },
-) {
-  return (
-    timestamps?.startedAtMs ??
-    timestamps?.completedAtMs ??
-    item.startedAtMs ??
-    item.completedAtMs ??
-    ("createdAtMs" in item ? item.createdAtMs : null)
   );
 }
 
@@ -2186,11 +1885,6 @@ function threadItemsEqual(left: ThreadItem, right: ThreadItem | undefined) {
 }
 
 export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
-  const latestCompact = findLatestCompactItemPosition(thread.turns);
-  if (!latestCompact) {
-    return thread;
-  }
-
   const latestActiveSubscriptionTurn = thread.turns
     .filter(isActiveSubscriptionsTurn)
     .at(-1);
@@ -2204,40 +1898,9 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
   const activeCommandItems = rawActiveCommandItems
     ? dropLegacyOrphanCommandOutputPlaceholders(rawActiveCommandItems)
     : rawActiveCommandItems;
-  const postCompactTurns = thread.turns.slice(latestCompact.turnIndex);
-  const turns = postCompactTurns
-    .map((turn, index) => {
-      if (index !== 0) {
-        return turn;
-      }
-      const retainedPostCompactItems: ThreadItem[] = [];
-      const retainedPreCompactItems = turn.items
-        .slice(0, latestCompact.itemIndex)
-        .filter((item) => {
-          if (isPostCompactPreMarkerItem(item, latestCompact)) {
-            insertTurnItemByTimestamp(retainedPostCompactItems, item);
-            return false;
-          }
-          return (
-            isUserMessageItem(item) ||
-            isCompactSummaryResultItem(item, latestCompact.id)
-          );
-        });
-      const items = [
-        ...retainedPreCompactItems,
-        ...turn.items.slice(latestCompact.itemIndex),
-      ];
-      for (const item of retainedPostCompactItems) {
-        insertTurnItemByTimestamp(items, item);
-      }
-      return items.length === turn.items.length &&
-        retainedPostCompactItems.length === 0
-        ? turn
-        : { ...turn, items };
-    })
+  const turns = thread.turns
     .filter((turn) => !isActiveSubscriptionsTurn(turn))
-    .filter((turn) => !isActiveCommandsTurn(turn))
-    .filter((turn) => turn.items.length > 0 || isTurnInFlight(turn));
+    .filter((turn) => !isActiveCommandsTurn(turn));
 
   if (
     turns.length === thread.turns.length &&
@@ -2259,42 +1922,8 @@ function isActiveCommandsTurn(turn: Turn) {
   return turn.id === "active-commands";
 }
 
-function isPostCompactPreMarkerItem(
-  item: ThreadItem,
-  latestCompact: { id: string; timestampMs?: number | null },
-) {
-  if (
-    isUserMessageItem(item) ||
-    isCompactSummaryResultItem(item, latestCompact.id) ||
-    !Number.isFinite(latestCompact.timestampMs)
-  ) {
-    return false;
-  }
-  const itemTimestampMs = threadItemOrderTimestampMs(item);
-  return (
-    itemTimestampMs !== null &&
-    itemTimestampMs > (latestCompact.timestampMs ?? Number.POSITIVE_INFINITY)
-  );
-}
-
 function isUserMessageItem(item: ThreadItem) {
   return item.type === "userMessage";
-}
-
-function isSummaryItemForLatestCompact(thread: Thread, item: ThreadItem) {
-  const latestCompact = findLatestCompactItemPosition(thread.turns);
-  return (
-    latestCompact !== null && isCompactSummaryResultItem(item, latestCompact.id)
-  );
-}
-
-function isExactSummaryItemForLatestCompact(thread: Thread, item: ThreadItem) {
-  const latestCompact = findLatestCompactItemPosition(thread.turns);
-  return (
-    latestCompact !== null &&
-    item.type === "agentMessage" &&
-    item.id === `${latestCompact.id}:summary`
-  );
 }
 
 function isCompactSummaryResultItem(item: ThreadItem, compactItemId: string) {
