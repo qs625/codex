@@ -8,12 +8,12 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: fix two newly reported installed user-visible regressions in Runtime Capsule `sha256:e175d490a49546ef3265080864f3b0de1f1e93f02517045c47569921900c1f01`: compact-after-message display still fails to show messages, and workspace Terminal/Browser object tabs are coupled with the right panel. Then resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
+Active goal: continuous large front+backend code organization can resume after the higher-priority compact display and workspace Terminal/Browser instance coupling regressions were fixed, merged, and installed-effective in Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84`. Next queued PM work is to resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
 
 ## Active Work
 
 - id: compact-after-user-message-display-regression-reopen
-  status: pm_validated_ready_to_merge
+  status: installed_effective
   owner: /self/owner_dev_2
   reviewer: /self/owner_dev_2/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev-2
@@ -29,13 +29,14 @@ Active goal: fix two newly reported installed user-visible regressions in Runtim
   validation_required: Owner must reproduce or create a source-level installed-path equivalent regression, add focused tests at the actual failing layer, rerun previous compact/thread/conversation tests, reuse `/self/owner_dev_2/reviewer`, and report whether self-debug should include a specific compact trigger scenario after PM merge.
   root_cause: Real live/persisted ordering path could receive a no-timestamp running/synthetic live follow-up user turn before the compact turn snapshot from thread/read. `updateThreadTurn` appended the later compact turn snapshot, leaving compact after the live follow-up in the turns array; `pruneThreadSnapshotToLatestCompact` then treated the earlier live follow-up as old pre-compact history and removed it from the main conversation.
   implementation: `updateThreadTurn` now inserts only compact-containing new turn snapshots by compact boundary timestamp, using the turn timestamp or compact item timestamp, while preserving ordinary new turn append behavior. The insertion treats only no-timestamp in-flight turns as live suffix candidates so no-timestamp non-live historical turns are not crossed accidentally. Added a regression that late compact snapshots keep live follow-up user cells visible while stale pre-compact agent output remains filtered.
-  validation: Owner validation passed with fixed reviewer approval after narrowing the first attempt. PM validation passed: Prettier on touched `thread.ts`/`thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx`; `git diff --check HEAD~1 HEAD`.
+  validation: Owner validation passed with fixed reviewer approval after narrowing the first attempt. PM validation passed on dev and main: Prettier on touched `thread.ts`/`thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/lib/thread.test.ts`; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx`; `git diff --check HEAD~1 HEAD` on dev and `git diff --check HEAD~2 HEAD` after main merges.
   risk: Low-to-medium thread merge ordering fix, scoped to compact turn snapshots. Requires installed self-debug after merge because this is a user-visible installed compact/display regression.
-  commit: owner `cff5e1ac1d`
-  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed compact scenario.
+  installed_validation: PM built Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84` from sourceCommit `c08d96c5bea4bdedab310cae1b46a0db86ae2211`; restart `call_tMQyo4GdNUS2EZM8vnwIBqEV` completed. Installed self-debug confirmed control state, activeLaunch, payload registration, and renderer URL all point at the new release; console had 0 errors / 0 warnings; the active `/self` conversation continued showing post-restart live messages after compacted context, giving an installed-path smoke for compact-after-message visibility.
+  commit: owner `cff5e1ac1d`; merge `ce721699e`; installed effective via sourceCommit `c08d96c5b`
+  next_action: No further action unless user reproduces another compact/display issue.
 
 - id: workspace-terminal-browser-instance-decoupling
-  status: pm_validated_ready_to_merge
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -51,10 +52,11 @@ Active goal: fix two newly reported installed user-visible regressions in Runtim
   validation_required: Owner must reuse `/self/owner_dev/reviewer`, add focused regression coverage for simultaneous workspace + right-panel Browser and Terminal rendering, and validate previous workspace add-menu fixes still pass. PM will merge back to main and, because this is an installed user-visible Browser/Terminal workspace regression, build a new Runtime Capsule, request restart, and run self-debug against the installed client.
   root_cause: Workspace Browser/Terminal object tabs created from the add menu initially carried `null` backend ids. Workspace variants fell back to global/backend active tab selection, and those null ids were not included in right-panel detached filtering, so the right panel could continue to display the same instance. Terminal additionally synchronized workspace `activeTerminalTabId` back through `selectTerminalTab`, writing the workspace selection into global active state.
   implementation: Workspace Browser/Terminal empty object mounts now create a concrete backend tab and bind the resulting id back into the workspace object tab. Workspace Browser no longer falls back to global active state and skips navigation/Browser IPC while unbound/missing. Right-panel `browserNavigationRequest` is no longer broadcast into the workspace Browser. Workspace Terminal selects only by `activeTerminalTabId`, only manager variants sync global active terminal selection, and async binding updates active workspace id functionally so user navigation during pending create is respected.
-  validation: Owner validation passed with fixed reviewer approval after two blocker fixes. PM validation passed: Prettier on touched App/BrowserPanel/TerminalPanel/tests; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; `git diff --check HEAD~1 HEAD`.
+  validation: Owner validation passed with fixed reviewer approval after two blocker fixes. PM validation passed on dev and main: Prettier on touched App/BrowserPanel/TerminalPanel/tests; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; `git diff --check HEAD~1 HEAD` on dev and `git diff --check HEAD~2 HEAD` after main merges.
   risk: Medium frontend Browser/Terminal workspace ownership fix. Requires installed self-debug for pending create/bind and native view visibility.
-  commit: owner `7368c3953`
-  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed workspace Terminal/Browser decoupling.
+  installed_validation: PM built Runtime Capsule `sha256:98ab673d48d7c9c3d9bb1ab55697c252f0170c9cb9088be47df48fc6ab921c84` from sourceCommit `c08d96c5bea4bdedab310cae1b46a0db86ae2211`; restart `call_tMQyo4GdNUS2EZM8vnwIBqEV` completed. Installed self-debug confirmed release identity and console 0 errors / 0 warnings. Workspace Browser creation from the add menu produced active workspace tabs `[/self, Browser]` with workspace Browser viewport/toolbar while the right panel remained Thread Analysis. After opening the right-panel Browser rail, the right panel showed its manager-owned `New tab` / `Open a page in the right panel` surface and tab strip while workspace Browser remained a separate workspace variant. Workspace Terminal creation from the add menu produced active workspace tabs `[/self, Browser, Terminal]` with a real shell surface, while the right panel stayed on Browser manager and did not show the same Terminal instance.
+  commit: owner `7368c3953`; merge `22e3245e0`; installed effective via sourceCommit `c08d96c5b`
+  next_action: No further action unless user reproduces another workspace Browser/Terminal ownership issue.
 
 - id: workspace-tab-add-regressions
   status: installed_effective
