@@ -3856,6 +3856,7 @@ test("updateThreadItem preserves live init context notifications after compact",
       cell.entries.map((entry) => entry.id),
     ),
     [
+      "old-user",
       "compact-1",
       "init-after-compact:section:0",
       "init-after-compact:section:1",
