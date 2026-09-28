@@ -1,4 +1,4 @@
-import type { RunModel, RunModelListResponse } from "../types";
+import type { RunModel, RunModelListResponse, Thread } from "../types";
 
 export type RunConfigSelection = {
   model: string;
@@ -7,6 +7,13 @@ export type RunConfigSelection = {
   contextWindow: number | null;
   maxContextWindow: number | null;
   autoCompactTokenLimit: number | null;
+};
+
+export type RunConfigDisplaySummary = {
+  modelLabel: string;
+  reasoningLabel: string;
+  selection: RunConfigSelection | null;
+  provenance: "explicit" | "inherited" | "unresolved";
 };
 
 export function normalizeModelListResponse(
@@ -105,6 +112,53 @@ export function resolveSelectionForModel(
   };
 }
 
+export function resolveRunConfigDisplaySummary(
+  thread: Thread | null,
+  models: RunModel[],
+): RunConfigDisplaySummary {
+  if (!thread) {
+    return {
+      modelLabel: "unresolved model",
+      reasoningLabel: "unresolved reasoning",
+      selection: null,
+      provenance: "unresolved",
+    };
+  }
+
+  const matchedModel = resolveDisplayModelForThread(thread, models);
+  if (matchedModel) {
+    return {
+      modelLabel: getRunModelLabel(matchedModel),
+      reasoningLabel: resolveReasoningEffortForModel(
+        matchedModel,
+        thread.reasoningEffort,
+      ),
+      selection: resolveSelectionForModel(matchedModel, thread.reasoningEffort),
+      provenance: thread.model ? "explicit" : "inherited",
+    };
+  }
+
+  if (thread.model) {
+    return {
+      modelLabel: thread.modelProvider
+        ? `${thread.model} · ${thread.modelProvider}`
+        : thread.model,
+      reasoningLabel: thread.reasoningEffort ?? "unresolved reasoning",
+      selection: null,
+      provenance: "explicit",
+    };
+  }
+
+  return {
+    modelLabel: thread.modelProvider
+      ? `unresolved model (${thread.modelProvider})`
+      : "unresolved model",
+    reasoningLabel: thread.reasoningEffort ?? "unresolved reasoning",
+    selection: null,
+    provenance: "unresolved",
+  };
+}
+
 export function isSameRunModel(
   model: RunModel,
   currentModel: string | null,
@@ -114,6 +168,27 @@ export function isSameRunModel(
     model.model === currentModel &&
     (model.modelProvider ?? null) === currentModelProvider
   );
+}
+
+function resolveDisplayModelForThread(thread: Thread, models: RunModel[]) {
+  if (thread.model) {
+    return (
+      models.find((model) =>
+        isSameRunModel(model, thread.model, thread.modelProvider),
+      ) ?? null
+    );
+  }
+
+  const providerDefault = models.find(
+    (model) =>
+      model.isDefault &&
+      (thread.modelProvider == null ||
+        (model.modelProvider ?? null) === thread.modelProvider),
+  );
+  if (providerDefault || thread.modelProvider != null) {
+    return providerDefault ?? null;
+  }
+  return models.find((model) => model.isDefault) ?? null;
 }
 
 type CurrentRunModelTarget = {

@@ -3,12 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   applyRunConfigOverride,
+  applyRunConfigSelectionToThread,
   buildSendMessagePayload,
 } from "./sendMessagePayload";
-import {
-  buildProjectAgentSidebar,
-  findProjectByRootIdentity,
-} from "./thread";
+import { buildProjectAgentSidebar, findProjectByRootIdentity } from "./thread";
 import type { ComposerDraft } from "./composerDraft";
 import type { Thread } from "../types";
 
@@ -108,6 +106,86 @@ test("applyRunConfigOverride uses pending config for immediate sends", () => {
       model: "gpt-5.5",
       modelProvider: "modelhub",
       effort: "high",
+      text: "next",
+      skills: [],
+      images: [],
+    },
+  );
+});
+
+test("applyRunConfigOverride preserves explicit provider-neutral selection", () => {
+  const thread = makeThread({
+    model: "gpt-5",
+    modelProvider: "openai",
+    reasoningEffort: "medium",
+  });
+
+  assert.deepEqual(
+    buildSendMessagePayload({
+      draft: {
+        text: "next",
+        skills: [],
+        images: [],
+      },
+      thread: applyRunConfigOverride(thread, {
+        model: "gpt-5.6",
+        modelProvider: null,
+        reasoningEffort: "high",
+        contextWindow: 128000,
+        maxContextWindow: 256000,
+        autoCompactTokenLimit: 90000,
+      }),
+      threadId: "thread-1",
+    }),
+    {
+      threadId: "thread-1",
+      model: "gpt-5.6",
+      modelProvider: null,
+      effort: "high",
+      text: "next",
+      skills: [],
+      images: [],
+    },
+  );
+});
+
+test("applyRunConfigSelectionToThread keeps null model provider explicit", () => {
+  assert.equal(
+    applyRunConfigSelectionToThread(
+      makeThread({
+        model: "gpt-5",
+        modelProvider: "openai",
+        reasoningEffort: "medium",
+      }),
+      {
+        model: "gpt-5.6",
+        modelProvider: null,
+        reasoningEffort: "high",
+      },
+    ).modelProvider,
+    null,
+  );
+});
+
+test("buildSendMessagePayload preserves inherited run config as null overrides", () => {
+  assert.deepEqual(
+    buildSendMessagePayload({
+      draft: {
+        text: "next",
+        skills: [],
+        images: [],
+      },
+      thread: makeThread({
+        model: null,
+        reasoningEffort: null,
+      }),
+      threadId: "thread-1",
+    }),
+    {
+      threadId: "thread-1",
+      model: null,
+      modelProvider: "openai",
+      effort: null,
       text: "next",
       skills: [],
       images: [],

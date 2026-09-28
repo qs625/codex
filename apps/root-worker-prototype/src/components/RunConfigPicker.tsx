@@ -8,28 +8,29 @@ import {
   getSupportedReasoningEfforts,
   isSameRunModel,
   normalizeModelListResponse,
+  resolveRunConfigDisplaySummary,
   resolveSelectionForModel,
 } from "../lib/runConfig";
 import { toErrorMessage } from "../lib/shared";
-import {
-  getThreadModelLabel,
-  getThreadReasoningLabel,
-} from "../lib/thread";
 import type { RunConfigSelection } from "../lib/runConfig";
 import type { RunModel, RunModelListResponse, Thread } from "../types";
 
 export function RunConfigPicker({
   disabled,
+  initialModelsForTest = [],
   onApply,
   selectedThread,
 }: {
   disabled: boolean;
+  initialModelsForTest?: RunModel[];
   onApply: (selection: RunConfigSelection) => void;
   selectedThread: Thread | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [models, setModels] = useState<RunModel[]>([]);
-  const [hasRequestedModels, setHasRequestedModels] = useState(false);
+  const [models, setModels] = useState<RunModel[]>(() => initialModelsForTest);
+  const [hasRequestedModels, setHasRequestedModels] = useState(
+    () => initialModelsForTest.length > 0,
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftModel, setDraftModel] = useState<string | null>(null);
@@ -44,8 +45,13 @@ export function RunConfigPicker({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const openThreadIdRef = useRef<string | null>(null);
 
-  const activeModelLabel = getThreadModelLabel(selectedThread);
-  const activeReasoningLabel = getThreadReasoningLabel(selectedThread);
+  const activeSummary = useMemo(
+    () => resolveRunConfigDisplaySummary(selectedThread, models),
+    [models, selectedThread],
+  );
+  const activeModelLabel = activeSummary.modelLabel;
+  const activeReasoningLabel = activeSummary.reasoningLabel;
+  const activeSelection = activeSummary.selection;
   const selectedModel = useMemo(
     () =>
       models.find((model) =>
@@ -64,9 +70,16 @@ export function RunConfigPicker({
     !disabled;
   const hasChanged =
     selectedThread != null &&
-    (draftModel !== selectedThread.model ||
-      draftModelProvider !== selectedThread.modelProvider ||
-      draftReasoningEffort !== selectedThread.reasoningEffort);
+    (draftModel !==
+      (activeSelection ? activeSelection.model : selectedThread.model) ||
+      draftModelProvider !==
+        (activeSelection
+          ? activeSelection.modelProvider
+          : selectedThread.modelProvider) ||
+      draftReasoningEffort !==
+        (activeSelection
+          ? activeSelection.reasoningEffort
+          : selectedThread.reasoningEffort));
 
   useEffect(() => {
     if (!isOpen) {
@@ -74,10 +87,45 @@ export function RunConfigPicker({
     }
     openThreadIdRef.current = selectedThread?.id ?? null;
     setFallbackMessage(null);
-    setDraftModel(selectedThread?.model ?? null);
-    setDraftModelProvider(selectedThread?.modelProvider ?? null);
-    setDraftReasoningEffort(selectedThread?.reasoningEffort ?? null);
+    setDraftModel(activeSelection?.model ?? selectedThread?.model ?? null);
+    setDraftModelProvider(
+      activeSelection
+        ? activeSelection.modelProvider
+        : (selectedThread?.modelProvider ?? null),
+    );
+    setDraftReasoningEffort(
+      activeSelection?.reasoningEffort ??
+        selectedThread?.reasoningEffort ??
+        null,
+    );
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !activeSelection) {
+      return;
+    }
+    const draftIsRawInheritedState =
+      selectedThread?.model == null &&
+      selectedThread?.reasoningEffort == null &&
+      draftModel == null &&
+      draftReasoningEffort == null;
+    if (!draftIsRawInheritedState) {
+      return;
+    }
+    syncDraftForSelection(
+      activeSelection,
+      selectedThread?.reasoningEffort ?? null,
+    );
+  }, [
+    activeSelection?.model,
+    activeSelection?.modelProvider,
+    activeSelection?.reasoningEffort,
+    draftModel,
+    draftReasoningEffort,
+    isOpen,
+    selectedThread?.model,
+    selectedThread?.reasoningEffort,
+  ]);
 
   useEffect(() => {
     if (!isOpen || openThreadIdRef.current === selectedThread?.id) {
@@ -87,11 +135,11 @@ export function RunConfigPicker({
   }, [isOpen, selectedThread?.id]);
 
   useEffect(() => {
-    if (!isOpen || hasRequestedModels || isLoading) {
+    if (!selectedThread || hasRequestedModels || isLoading) {
       return;
     }
     void loadModels();
-  }, [hasRequestedModels, isLoading, isOpen]);
+  }, [hasRequestedModels, isLoading, selectedThread?.id]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -170,17 +218,15 @@ export function RunConfigPicker({
         selectedThread?.reasoningEffort ?? null,
       );
       setModels(normalizedModels);
-      const currentModel =
-        normalizedModels.find(
-          (model) =>
-            isSameRunModel(
-              model,
-              selectedThread?.model ?? null,
-              selectedThread?.modelProvider ?? null,
-            ),
-        ) ?? null;
-      if (currentModel && !currentModel.current) {
-        syncDraftForModel(currentModel, selectedThread?.reasoningEffort ?? null);
+      const resolvedSummary = resolveRunConfigDisplaySummary(
+        selectedThread ?? null,
+        normalizedModels,
+      );
+      if (resolvedSummary.selection) {
+        syncDraftForSelection(
+          resolvedSummary.selection,
+          selectedThread?.reasoningEffort ?? null,
+        );
       }
     } catch (error) {
       setLoadError(toErrorMessage(error));
@@ -196,6 +242,13 @@ export function RunConfigPicker({
 
   function syncDraftForModel(model: RunModel, currentEffort: string | null) {
     const selection = resolveSelectionForModel(model, currentEffort);
+    syncDraftForSelection(selection, currentEffort);
+  }
+
+  function syncDraftForSelection(
+    selection: RunConfigSelection,
+    currentEffort: string | null,
+  ) {
     setDraftModel(selection.model);
     setDraftModelProvider(selection.modelProvider);
     setDraftReasoningEffort(selection.reasoningEffort);
@@ -348,9 +401,7 @@ export function RunConfigPopoverContent({
       ) : null}
 
       {!isLoading && !loadError && models.length === 0 ? (
-        <div className="run-config-state">
-          暂无可用模型，当前配置未受影响。
-        </div>
+        <div className="run-config-state">暂无可用模型，当前配置未受影响。</div>
       ) : null}
 
       {!isLoading && !loadError && models.length > 0 ? (
