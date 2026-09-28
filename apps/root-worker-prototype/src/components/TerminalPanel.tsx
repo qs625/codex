@@ -941,17 +941,6 @@ export function TerminalPanel({
             >
               <PlusIcon />
             </button>
-            {state.detachedCount > 0 ? (
-              <button
-                type="button"
-                className="browser-icon-button terminal-reattach-button"
-                onClick={() =>
-                  applyState(window.codexDesktop.reattachTerminalTabs())
-                }
-              >
-                Reattach {state.detachedCount}
-              </button>
-            ) : null}
           </div>
         </>
       ) : null}

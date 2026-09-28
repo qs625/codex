@@ -422,6 +422,15 @@ test("TerminalPanel manager excludes the terminal session owned by workspace", (
   assert.match(source, /Terminal session is open in workspace\./);
 });
 
+test("TerminalPanel does not show a manual terminal reattach affordance", () => {
+  const source = terminalPanelSource();
+
+  assert.match(source, /detachedCount: 0/);
+  assert.doesNotMatch(source, /terminal-reattach-button/);
+  assert.doesNotMatch(source, /Reattach \{state\.detachedCount\}/);
+  assert.doesNotMatch(source, /reattachTerminalTabs\(\)/);
+});
+
 test("TerminalPanel does not render a duplicate visible running status row below tabs", () => {
   const source = terminalPanelSource();
   const tabStripIndex = sourceIndex(source, 'aria-label="Terminal tabs"');

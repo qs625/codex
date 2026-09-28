@@ -879,7 +879,7 @@ test("detached workspace objects are hidden from the right panel while workspace
 
   assert.match(
     appSource,
-    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\.\.\.closingWorkspaceBrowserTabIds[\s\S]*\[closingWorkspaceBrowserTabIds, workspaceTabs\]/,
+    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\.\.\.closingWorkspaceBrowserTabIds,[\s\S]*\.\.\.closedWorkspaceBrowserTabIds,[\s\S]*closedWorkspaceBrowserTabIds,[\s\S]*closingWorkspaceBrowserTabIds,[\s\S]*workspaceTabs,[\s\S]*\]\s*,\s*\);/,
   );
   assert.match(
     appSource,
@@ -1004,7 +1004,7 @@ test("workspace Browser and Terminal close buttons close owned instances without
   );
   assert.match(
     closeWorkspaceTabSource,
-    /options\.closeOwnedBrowserTab[\s\S]*rememberClosingWorkspaceBrowserTab\(closingTab\.browserTabId\)[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)[\s\S]*isBrowserTabNotFoundError\(error\)[\s\S]*restoreWorkspaceTabAfterFailedClose\(closingTab\)[\s\S]*forgetClosingWorkspaceBrowserTab\(closingTab\.browserTabId!\)/,
+    /options\.closeOwnedBrowserTab[\s\S]*rememberClosingWorkspaceBrowserTab\(closingTab\.browserTabId\)[\s\S]*suppressClosedWorkspaceBrowserTab\(closingTab\.browserTabId\)[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)[\s\S]*isBrowserTabNotFoundError\(error\)[\s\S]*return;[\s\S]*releaseClosedWorkspaceBrowserTab\(closingTab\.browserTabId!\)[\s\S]*restoreWorkspaceTabAfterFailedClose\(closingTab\)[\s\S]*forgetClosingWorkspaceBrowserTab\(closingTab\.browserTabId!\)/,
   );
   assert.match(
     closeWorkspaceTabSource,
@@ -1016,6 +1016,61 @@ test("workspace Browser and Terminal close buttons close owned instances without
   );
   assert.doesNotMatch(closeButtonSource, /setRightPanelView/);
   assert.doesNotMatch(closeButtonSource, /FocusRequest/);
+});
+
+test("workspace close-owned Browser remains suppressed until browser state confirms it is gone", () => {
+  const { appSource } = readSources(["app"]);
+  const pruneMissingWorkspaceBrowserTabsSource = sourceSlice(
+    appSource,
+    "function pruneMissingWorkspaceBrowserTabs(",
+    "function closeWorkspaceTab(",
+  );
+  const closeWorkspaceTabSource = sourceSlice(
+    appSource,
+    "function closeWorkspaceTab(",
+    "function handleWorkspaceObjectDragOver",
+  );
+  const detachedIdsSource = sourceSlice(
+    appSource,
+    "const detachedWorkspaceBrowserTabIds = useMemo",
+    "const detachedWorkspaceTerminalTabIds = useMemo",
+  );
+  const returnSource = sourceSlice(
+    appSource,
+    "function handleReturnWorkspaceObjectToRightPanel",
+    "function handleWorkspaceTabDragStart",
+  );
+
+  assert.match(
+    appSource,
+    /const \[closedWorkspaceBrowserTabIds, setClosedWorkspaceBrowserTabIds\] =\s*useState<string\[\]>\(\[\]\)/,
+  );
+  assert.match(
+    appSource,
+    /function suppressClosedWorkspaceBrowserTab\(tabId: string\)[\s\S]*current\.includes\(tabId\) \? current : \[\.\.\.current, tabId\]/,
+  );
+  assert.match(
+    appSource,
+    /function releaseClosedWorkspaceBrowserTab\(tabId: string\)[\s\S]*current\.filter\(\(id\) => id !== tabId\)/,
+  );
+  assert.match(
+    pruneMissingWorkspaceBrowserTabsSource,
+    /const liveBrowserTabIds = new Set\(browserTabIds\);[\s\S]*setClosedWorkspaceBrowserTabIds\(\(current\) =>[\s\S]*current\.filter\(\(id\) => liveBrowserTabIds\.has\(id\)\)/,
+  );
+  assert.match(
+    closeWorkspaceTabSource,
+    /rememberClosingWorkspaceBrowserTab\(closingTab\.browserTabId\);[\s\S]*suppressClosedWorkspaceBrowserTab\(closingTab\.browserTabId\);[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
+  );
+  assert.match(
+    closeWorkspaceTabSource,
+    /if \(isBrowserTabNotFoundError\(error\)\) \{[\s\S]*return;[\s\S]*\}[\s\S]*releaseClosedWorkspaceBrowserTab\(closingTab\.browserTabId!\);[\s\S]*restoreWorkspaceTabAfterFailedClose\(closingTab\)/,
+  );
+  assert.match(
+    detachedIdsSource,
+    /\.\.\.closingWorkspaceBrowserTabIds,[\s\S]*\.\.\.closedWorkspaceBrowserTabIds/,
+  );
+  assert.doesNotMatch(returnSource, /suppressClosedWorkspaceBrowserTab/);
+  assert.doesNotMatch(returnSource, /closeOwnedBrowserTab/);
 });
 
 test("browserBoundsFromElement measures the visible viewport rect with sequence", () => {
@@ -1757,9 +1812,10 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /browserNativeViewSuppressed/,
   ]);
   assertMatches(appSource, [
-    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\.\.\.closingWorkspaceBrowserTabIds[\s\S]*\[closingWorkspaceBrowserTabIds, workspaceTabs\]/,
+    /const detachedWorkspaceBrowserTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "browser" && tab\.browserTabId[\s\S]*map\(\(tab\) => tab\.browserTabId as string\)[\s\S]*\.\.\.closingWorkspaceBrowserTabIds,[\s\S]*\.\.\.closedWorkspaceBrowserTabIds,[\s\S]*closedWorkspaceBrowserTabIds,[\s\S]*closingWorkspaceBrowserTabIds,[\s\S]*workspaceTabs,[\s\S]*\]\s*,\s*\);/,
     /const detachedWorkspaceTerminalTabIds = useMemo\([\s\S]*workspaceTabs[\s\S]*tab\.kind === "terminal" && tab\.terminalTabId[\s\S]*map\(\(tab\) => tab\.terminalTabId as string\)[\s\S]*\.\.\.closingWorkspaceTerminalTabIds[\s\S]*\[closingWorkspaceTerminalTabIds, workspaceTabs\]/,
     /detachedBrowserTabIds=\{detachedWorkspaceBrowserTabIds\}/,
+    /onBrowserTabIdsChange=\{pruneMissingWorkspaceBrowserTabs\}/,
     /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/,
     /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/,
     /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/,
@@ -1816,11 +1872,13 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /onOpenWorkspaceObject\?\.\(kind\)/,
     /hasWorkspaceObjectDragData\(event\.dataTransfer\)/,
     /detachedBrowserTabIds\?: string\[\]/,
+    /onBrowserTabIdsChange\?: \(tabIds: string\[\]\) => void/,
     /detachedTerminalTabIds\?: string\[\]/,
     /onReturnWorkspaceObject\?: \(payload: WorkspaceObjectDragPayload\) => void/,
     /browserTabFocusRequest\?: \{ tabId: string; token: number \} \| null/,
     /terminalTabFocusRequest\?: \{ tabId: string; token: number \} \| null/,
     /detachedBrowserTabIds=\{detachedBrowserTabIds\}/,
+    /onBrowserTabIdsChange=\{onBrowserTabIdsChange\}/,
     /detachedTerminalTabIds=\{detachedTerminalTabIds\}/,
   ]);
   assertDoesNotMatchAny(rightPanelSource, [
@@ -2003,14 +2061,14 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /!workspaceTabsEnabled &&[\s\S]*gitDiffPreview\.loading/,
     /gitDiffRequestScopeByTargetRef/,
     /function clearGitDiffPreview\(\) \{[\s\S]*if \(!workspaceTabsEnabled\) \{[\s\S]*gitDiffRequestScopeByTargetRef\.current\.clear\(\)/,
-    /function beginGitDiffRequest\(targetId: string/,
+    /function beginGitDiffRequest\([\s\S]*targetId: string/,
     /function isCurrentGitDiffRequest\(targetId: string, scope: number\)/,
     /const targetId = `worktree:\$\{thread\.cwd\}:\$\{mode\}:\$\{change\.originalPath \?\? ""\}:\$\{change\.path\}`/,
     /const targetId = `commit:\$\{thread\.cwd\}:\$\{commit\.hash\}:\$\{file\.originalPath \?\? ""\}:\$\{file\.path\}`/,
-    /beginGitDiffRequest\(targetId, \{ exclusive: !workspaceTabsEnabled \}\)/,
+    /beginGitDiffRequest\(targetId, \{[\s\S]*exclusive: !workspaceTabsEnabled,[\s\S]*\}\)/,
     /isCurrentGitDiffRequest\(targetId, scope\)/,
     /if \(!workspaceTabsEnabled\) \{[\s\S]*onSetActiveView\("preview"\)/,
-    /gitDiffPreview=\{workspaceTabsEnabled \? null : gitDiffPreview\.diff\}/,
+    /gitDiffPreview=\{[\s\S]*workspaceTabsEnabled \? null : gitDiffPreview\.diff[\s\S]*\}/,
     /filePanelView=\{fileSourcePanelView\}/,
     /variant = "manager"/,
     /variant\?: "manager" \| "workspace"/,
@@ -2158,7 +2216,7 @@ test("right panel terminal rail click is the explicit terminal panel focus sourc
   assert.notEqual(railClickIndex, -1);
   assert.match(
     railClickSource,
-    /setTerminalPanelFocusRequestToken\(\s*\(current\) => current \+ 1,\s*\);/,
+    /setTerminalPanelFocusRequestToken\(\s*\(current\) => current \+ 1\s*\);/,
   );
 });
 
