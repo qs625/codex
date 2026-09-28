@@ -453,6 +453,12 @@ a,
   -webkit-app-region: drag;
 }
 
+.project-list-header {
+  grid-template-areas:
+    "drag drag"
+    "heading actions";
+}
+
 body.macos-window-chrome .sidebar > .sidebar-section-header:first-child {
   min-height: 76px;
   padding-top: 10px;
@@ -533,15 +539,34 @@ body.macos-window-chrome
   flex: 0 0 auto;
 }
 
+.project-create-button {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  max-width: none;
+  flex: 0 0 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #78716c;
+}
+
+.project-create-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 .sidebar-action-button span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sidebar-section-header:hover .sidebar-action-button,
-.sidebar-section-header:focus-within .sidebar-action-button,
-.sidebar-action-button[aria-expanded="true"] {
+.project-list-header:hover .project-create-button,
+.project-list-header:focus-within .project-create-button,
+.project-create-button[aria-expanded="true"] {
   opacity: 1;
   pointer-events: auto;
 }
