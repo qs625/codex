@@ -693,7 +693,19 @@ test("virtual list renders backend compact summary read projection as a visible 
   assert.match(markup, /Context compacted/);
   assert.match(markup, /compact summary body from thread\/read/);
   assert.match(markup, /Init Context · User Preferences/);
-  assert.doesNotMatch(markup, /old answer hidden by compact/);
+  const compactDetailsMarkup =
+    markup.match(
+      /<details class="compact-history-details">[\s\S]*?<\/details>/,
+    )?.[0] ?? "";
+  assert.match(compactDetailsMarkup, /old answer hidden by compact/);
+  const mainTimelineMarkup = markup.replace(compactDetailsMarkup, "");
+  assert.doesNotMatch(mainTimelineMarkup, /old answer hidden by compact/);
+  const searchCurrentRowMarkup =
+    mainTimelineMarkup.match(
+      /<div class="conversation-virtual-row search-match search-current"[\s\S]*?(?=<div class="conversation-virtual-row|$)/,
+    )?.[0] ?? "";
+  assert.match(searchCurrentRowMarkup, /compact summary body from thread\/read/);
+  assert.doesNotMatch(searchCurrentRowMarkup, /old answer hidden by compact/);
   assert.doesNotMatch(markup, /compact-summary-details/);
 });
 
