@@ -4822,6 +4822,66 @@ test("active compact head accepts in-flight user turn snapshot as a live landing
   assert.equal(updated.turns.at(-1)?.id, "turn-live");
 });
 
+test("late compact turn snapshot preserves existing live follow-up cells", () => {
+  const liveFollowupThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-live", [
+          makeUserMessage("user-live", "new request after compact starts"),
+        ]),
+        status: "running",
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+  const compactTurn = {
+    ...makeTurn("turn-compact", [
+      makeAgentMessage("stale-agent", "old assistant output"),
+      {
+        ...makeCompactItem("compact-1"),
+        completedAtMs: 2_000,
+      },
+      makeAgentMessage("compact-1:summary", "compact summary"),
+      makeInitContextItem("ctx-1"),
+    ]),
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+  } satisfies Turn;
+
+  const updated = updateThreadTurnSnapshot(liveFollowupThread, compactTurn);
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.map((turn) => [turn.id, turn.items.map((item) => item.id)]),
+    [
+      ["turn-compact", ["compact-1", "compact-1:summary", "ctx-1"]],
+      ["turn-live", ["user-live"]],
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["compact-1:summary", "message"],
+      ["ctx-1:section:0", "tool"],
+      ["ctx-1:section:1", "tool"],
+      ["user-live", "message"],
+    ],
+  );
+  assert.equal(
+    conversation.cells
+      .flatMap((cell) => cell.entries)
+      .map((entry) => entry.id)
+      .includes("stale-agent"),
+    false,
+  );
+});
+
 test("non-active compact head rejects old user turn snapshots without a timestamp", () => {
   const compact = {
     ...makeCompactItem("compact-1"),
