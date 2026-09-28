@@ -703,10 +703,8 @@ impl ThreadRequestProcessor {
             ));
         }
         let fallback_thread = build_thread_from_live_snapshot(thread_id, live_snapshot);
-        let LiveThreadReadProjectionBase {
-            mut thread,
-            persisted_turns,
-        } = live_thread_read_projection_base(fallback_thread, persisted_thread);
+        let LiveThreadReadProjectionBase { mut thread } =
+            live_thread_read_projection_base(fallback_thread, persisted_thread);
         let runtime_status = self
             .thread_lifecycle_runtime
             .live_thread_runtime_status(thread_id)
@@ -733,21 +731,9 @@ impl ThreadRequestProcessor {
             }
             Err(err) => return Err(err),
         };
-        let durable_persisted_turns = if include_turns {
-            self.load_persisted_thread_for_read(thread_id, /*include_turns*/ true)
-                .await?
-                .map(|thread| thread.turns)
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
         if include_turns {
-            restore_persisted_display_turns(&mut thread, &persisted_turns);
-            restore_persisted_display_turns(&mut thread, &durable_persisted_turns);
-            apply_runtime_activity_items_from_persisted_turns(&mut thread);
             self.apply_persisted_subscription_snapshot_items(thread_id, &mut thread)
                 .await?;
-            prune_turns_to_latest_compaction_boundary(&mut thread.turns);
         }
         apply_live_active_command_items_from_active_turn(&mut thread, active_turn.as_ref());
         Ok((thread, has_live_in_progress_turn))

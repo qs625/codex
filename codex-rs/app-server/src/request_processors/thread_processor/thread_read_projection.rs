@@ -2,19 +2,12 @@ use super::*;
 
 pub(super) struct LiveThreadReadProjectionBase {
     pub(super) thread: Thread,
-    pub(super) persisted_turns: Vec<Turn>,
 }
 
 pub(super) fn live_thread_read_projection_base(
     fallback_thread: Thread,
     persisted_thread: Option<Thread>,
 ) -> LiveThreadReadProjectionBase {
-    let mut persisted_turns = persisted_thread
-        .as_ref()
-        .map(|thread| thread.turns.clone())
-        .unwrap_or_default();
-    prune_turns_to_latest_compaction_boundary(&mut persisted_turns);
-
     let thread = match persisted_thread {
         Some(mut thread) => {
             if thread.path.is_none() {
@@ -27,10 +20,7 @@ pub(super) fn live_thread_read_projection_base(
         None => fallback_thread,
     };
 
-    LiveThreadReadProjectionBase {
-        thread,
-        persisted_turns,
-    }
+    LiveThreadReadProjectionBase { thread }
 }
 
 #[cfg(test)]
@@ -131,7 +121,8 @@ mod tests {
         assert_eq!(projection.thread.preview, "persisted preview");
         assert_eq!(
             projection
-                .persisted_turns
+                .thread
+                .turns
                 .iter()
                 .map(|turn| turn.id.as_str())
                 .collect::<Vec<_>>(),
@@ -163,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn live_projection_base_prunes_persisted_turns_to_latest_compaction() {
+    fn live_projection_base_leaves_persisted_turns_to_loaded_runtime_projection() {
         let fallback = thread("thread-1", "live-session", None, Vec::new());
         let persisted = thread(
             "thread-1",
@@ -180,11 +171,16 @@ mod tests {
 
         assert_eq!(
             projection
-                .persisted_turns
+                .thread
+                .turns
                 .iter()
                 .map(|turn| turn.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["compaction-1", "turn-after-compact"]
+            vec![
+                "turn-before-compact",
+                "compaction-1",
+                "turn-after-compact"
+            ]
         );
     }
 
@@ -200,6 +196,6 @@ mod tests {
         let projection = live_thread_read_projection_base(fallback, None);
 
         assert_eq!(projection.thread.session_id, "live-session");
-        assert_eq!(projection.persisted_turns, Vec::<Turn>::new());
+        assert_eq!(projection.thread.turns, Vec::<Turn>::new());
     }
 }

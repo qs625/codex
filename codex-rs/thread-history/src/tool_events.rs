@@ -81,7 +81,7 @@ impl ThreadHistoryBuilder {
                 },
             );
         }
-        self.upsert_item_in_turn_id(&payload.turn_id, item);
+        self.upsert_item_in_turn_id_or_create_strict(&payload.turn_id, item);
     }
 
     pub(super) fn handle_exec_command_output_delta(
@@ -100,7 +100,7 @@ impl ThreadHistoryBuilder {
                 item: item.clone(),
             });
         }
-        self.upsert_item_in_turn_id(&payload.turn_id, item);
+        self.upsert_item_in_turn_id_or_create_strict(&payload.turn_id, item);
     }
 
     pub(super) fn handle_guardian_assessment(&mut self, payload: &GuardianAssessmentEvent) {

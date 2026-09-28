@@ -87,6 +87,48 @@ impl ThreadHistoryBuilder {
         );
     }
 
+    pub(super) fn upsert_item_in_turn_id_or_create_strict(
+        &mut self,
+        turn_id: &str,
+        item: ThreadItem,
+    ) {
+        if turn_id.is_empty() {
+            self.upsert_item_in_current_turn(item);
+            return;
+        }
+
+        if let Some(turn) = self.current_turn.as_mut()
+            && turn.id == turn_id
+        {
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            upsert_turn_item(&mut turn.items, item);
+            return;
+        }
+
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.opened_explicitly && matches!(turn.status, TurnStatus::InProgress)
+            })
+        {
+            warn!(
+                item_id = item.id(),
+                "dropping turn-scoped item for unknown turn id `{turn_id}` while another turn is active"
+            );
+            return;
+        }
+
+        self.finish_current_turn();
+        let mut turn = self.new_turn(Some(turn_id.to_string()));
+        upsert_turn_item(&mut turn.items, item);
+        self.current_turn = Some(turn);
+    }
+
     pub(super) fn upsert_item_in_turn_id_or_create(&mut self, turn_id: &str, item: ThreadItem) {
         if let Some(turn) = self.current_turn.as_mut()
             && turn.id == turn_id
