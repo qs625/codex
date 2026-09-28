@@ -12,6 +12,26 @@ Active goal: continuous large front+backend code organization. User asked to con
 
 ## Active Work
 
+- id: continuous-code-organization-tranche-46
+  status: dispatched
+  owner: /self/owner_main
+  reviewer: /self/owner_main/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace
+  branch: refactor/continuous-code-organization-46
+  task_type: exclusive_large_production_code_quality_refactor
+  depends_on: main `9196865b3`; user explicitly asked to keep going and not stop
+  files: owner to select after screening at least three production candidates; must update this entry with exact files before delivery
+  base_commit: `9196865b3`
+  next_action: Owner should perform a larger coherent production code organization tranche, commit on this branch, reuse `/self/owner_main/reviewer` for independent review, and report selection, design, validation, risk, and merge recommendation. No immediate Runtime Capsule restart is expected unless owner discovers the selected path is user-visible, Runtime Capsule/Launcher adjacent, Browser/Terminal lifecycle altering, provider-visible schema altering, workflow runtime altering, thread lifecycle altering, thread analysis monitor behavior altering, workspace tab behavior altering, request/response registry altering, request scheduling altering, or otherwise needs installed-state validation.
+  constraints: Preserve behavior, provider-visible tool/schema/descriptions, API/IPC/JSONRPC method params/errors/field names, persisted history/protocol semantics, thread lifecycle/read/list/archive/status semantics, thread-analysis monitor semantics, workspace tab ordering/storage semantics, outgoing request/response callback semantics, request serialization/scheduling semantics, Browser/Terminal lifecycle, compact/display merge behavior, Runtime Capsule/Launcher semantics, workflow runtime semantics, login/account state-machine semantics, config write/read semantics, memory startup/consolidation semantics, and external/native provider parity. Do not restore broad facades or expand old registry surfaces. Avoid test-only cleanup, small helper-only churn, broad facade/registry consolidation, speculative rewrites, generated/vendor files, and any provider-visible contract or UI text/schema drift. Do not work in `source_workspace-dev-3` or synchronize it; it still has unrelated Browser WIP.
+  selection: Pending. Owner must evaluate at least three production candidates and select a larger but coherent module-boundary refactor. Prefer Rust/backend/runtime or a substantial Electron/frontend seam. Avoid recently touched paths: compact/display, Git panel diff projection, Settings config catalog, feedback upload log collection, apps/list load-state, LSP manager file-target, context usage projection, approval request projection, slash menu suggestion projection, Android connection payload projection, fuzzy search, workflow request handling, filesystem watch lifecycle, account billing/rate-limit, catalog request projection, config manager write planning, memory startup wiring, request serialization queues, outgoing message pending-request registry, workspace tab ordering/storage, and threadAnalysis monitor inventory. Avoid known-problem paths `mcp_tool.rs` and `safety_check_downgrade.rs`; treat `external_agent_config_processor.rs`, `plugins.rs`/marketplace, `initialize_processor.rs`, `host_lifecycle.rs`, Browser/Terminal lifecycle, thread lifecycle/read/list/archive/status, thread analysis visible behavior, workspace tab visible behavior, outgoing request/response registry, request serialization/scheduling, Runtime Capsule/Launcher, workflow runtime, provider-visible schema surfaces, config write/read behavior, and memory startup/consolidation behavior as high-risk unless the owner can prove a narrow behavior-equivalent seam and focused regression matrix.
+  production_issue: Pending owner selection. Target should be a real production maintainability problem such as mixed request target construction, side-effect orchestration, response projection, repeated fallback/default normalization, duplicated state snapshot construction, or unclear provider-neutral boundary—not a cosmetic rename or test-only helper.
+  implementation: Pending owner delivery.
+  reviewer_result: Pending owner review through fixed reviewer `/self/owner_main/reviewer`.
+  validation: Pending. Minimum expected validation is formatter/checker for touched language, focused unit/integration tests covering unchanged behavior, `git diff --check`, and for any Rust/app-server/backend path `cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server`. If frontend/Electron-only, run the narrow TS/CJS test suite plus formatting checks; if visible workflow behavior changes unexpectedly, escalate before proceeding.
+  risk: Pending selected path. Must remain behavior-equivalent; if owner discovers necessary behavior change, stop and report rather than folding it into a code-quality tranche.
+  commit: pending
+
 - id: continuous-code-organization-tranche-45
   status: merged_pending_capsule_delivery
   owner: /self/owner_main
