@@ -308,9 +308,12 @@ export function BrowserPanel({
     }
     passiveBoundsCorrectionRef.current?.();
   };
-  const showNativeBrowserView = async (browserApi: BrowserPanelApi) => {
+  const showNativeBrowserView = async (
+    browserApi: BrowserPanelApi,
+    tab: BrowserPanelTabState | null = activeTab,
+  ) => {
     const viewport = viewportRef.current;
-    if (!viewport || !activeTab) {
+    if (!viewport || !tab) {
       return;
     }
     const bounds = {
@@ -319,7 +322,7 @@ export function BrowserPanel({
         nextBrowserBoundsSequence(boundsSequenceRef),
       ),
       surfaceId: browserSurfaceIdRef.current,
-      tabId: activeTab.id,
+      tabId: tab.id,
     };
     const nextState = await browserApi.showBrowserView(bounds);
     applyBrowserState(nextState);
@@ -376,6 +379,9 @@ export function BrowserPanel({
           existingTabIds,
         );
         if (createdTab) {
+          if (active && !nativeOverlayActive && !resizing) {
+            void showNativeBrowserView(browserApi, createdTab);
+          }
           onWorkspaceBrowserTabBound?.({
             kind: "browser",
             browserTabId: createdTab.id,
@@ -396,7 +402,9 @@ export function BrowserPanel({
     active,
     activeBrowserTabId,
     isManagerVariant,
+    nativeOverlayActive,
     onWorkspaceBrowserTabBound,
+    resizing,
   ]);
 
   useEffect(() => {
