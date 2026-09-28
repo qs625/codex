@@ -50,6 +50,7 @@ import {
   type GoalComposerCommand,
 } from "./lib/composerDraft";
 import { buildConversationState } from "./lib/conversation";
+import { resolveConversationInitialAnchorForLoad } from "./lib/conversationInitialAnchor";
 import { filterConversationCellsForDisplay } from "./lib/conversationPresentation";
 import { clientLifecycleFailureReason } from "./lib/clientLifecycleStatus";
 import { isConversationNearBottom } from "./lib/conversationScroll";
@@ -475,6 +476,14 @@ function App() {
   } | null>(null);
   const [terminalCommandFocusRequest, setTerminalCommandFocusRequest] =
     useState<TerminalCommandFocusRequest | null>(null);
+  const [focusedConversationItem, setFocusedConversationItem] = useState<{
+    itemId: string;
+    token: number;
+  } | null>(null);
+  const [compactInitialAnchorLoad, setCompactInitialAnchorLoad] = useState<{
+    threadId: string;
+    requestId: number;
+  } | null>(null);
   const [terminalPanelFocusRequestToken, setTerminalPanelFocusRequestToken] =
     useState(0);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
@@ -514,6 +523,8 @@ function App() {
   const threadsRef = useRef<Thread[]>([]);
   const composerDraftsRef = useRef<ComposerDraftsByThreadId>({});
   const shouldStickConversationToBottomRef = useRef(true);
+  const compactInitialAnchorTokenRef = useRef(0);
+  const handledCompactInitialAnchorKeyRef = useRef<string | null>(null);
   const filePreviewRef = useRef<FilePreview | null>(null);
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
@@ -990,6 +1001,9 @@ function App() {
 
   useLayoutEffect(() => {
     shouldStickConversationToBottomRef.current = true;
+    handledCompactInitialAnchorKeyRef.current = null;
+    setFocusedConversationItem(null);
+    setCompactInitialAnchorLoad(null);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -1196,6 +1210,42 @@ function App() {
     }
     container.scrollTop = container.scrollHeight;
   }, [conversationCells, isLoadingThread, selectedThreadId]);
+
+  useEffect(() => {
+    const anchor = resolveConversationInitialAnchorForLoad(conversationCells, {
+      selectedThreadId,
+      isLoadingThread,
+      load: compactInitialAnchorLoad,
+    });
+    if (!anchor) {
+      if (
+        !isLoadingThread &&
+        compactInitialAnchorLoad?.threadId === selectedThreadId
+      ) {
+        setCompactInitialAnchorLoad(null);
+      }
+      return;
+    }
+    const anchorKey = `${selectedThreadId}:${anchor.reason}:${anchor.itemId}`;
+    if (handledCompactInitialAnchorKeyRef.current === anchorKey) {
+      setCompactInitialAnchorLoad(null);
+      return;
+    }
+    handledCompactInitialAnchorKeyRef.current = anchorKey;
+    setCompactInitialAnchorLoad(null);
+    shouldStickConversationToBottomRef.current = false;
+    compactInitialAnchorTokenRef.current += 1;
+    setFocusedConversationItem({
+      itemId: anchor.itemId,
+      token: compactInitialAnchorTokenRef.current,
+    });
+  }, [
+    compactInitialAnchorLoad?.requestId,
+    compactInitialAnchorLoad?.threadId,
+    conversationCells,
+    isLoadingThread,
+    selectedThreadId,
+  ]);
 
   const selectedTreeRootId = useMemo(() => {
     const seedThread =
@@ -1745,6 +1795,7 @@ function App() {
         return;
       }
       markThreadLoaded(threadId);
+      setCompactInitialAnchorLoad({ threadId, requestId });
       setThreads((current) => upsertThreadWithPending(current, payload.thread));
     } catch (loadError) {
       const latestRequestId =
@@ -4215,7 +4266,7 @@ function App() {
                 draft={draft}
                 draftImages={draftImages}
                 draftSkills={draftSkills}
-                focusedConversationItem={null}
+                focusedConversationItem={focusedConversationItem}
                 imageInputRef={imageInputRef}
                 isLoadingThread={isLoadingThread}
                 isSending={isSending}

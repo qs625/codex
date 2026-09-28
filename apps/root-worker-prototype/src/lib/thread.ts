@@ -1422,10 +1422,28 @@ function canCreateUntimedLiveTurnItemAfterCompact(
     return isThreadActive(thread) || hasRecoveredLiveAnchor;
   }
   return (
-    item?.type === "commandExecution" &&
-    isRunningCommandExecutionStatus(item.status) &&
+    item !== undefined &&
+    isUntimedLiveVisibleItemAfterCompact(item) &&
     (hasUntimedInFlightTurnAfterLatestCompact(thread) || hasRecoveredLiveAnchor)
   );
+}
+
+function isUntimedLiveVisibleItemAfterCompact(item: ThreadItem) {
+  switch (item.type) {
+    case "agentMessage":
+    case "commandExecution":
+    case "commandExecutionNotification":
+    case "builtinToolCall":
+    case "dynamicToolCall":
+    case "mcpToolCall":
+    case "eventDrivenToolCall":
+    case "eventDrivenTool":
+    case "clientRecovery":
+    case "fileChange":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function hasUntimedInFlightTurnAfterLatestCompact(thread: Thread) {
@@ -1495,10 +1513,7 @@ function isItemNotificationAfterLatestCompact(
 ) {
   return isTimestampAfterLatestCompact(
     thread,
-    timestamps?.startedAtMs ??
-      timestamps?.completedAtMs ??
-      item.startedAtMs ??
-      item.completedAtMs,
+    compactGuardItemTimestampMs(item, timestamps),
   );
 }
 
@@ -1513,7 +1528,24 @@ function hasExplicitItemTimestamp(
     Number.isFinite(timestamps?.startedAtMs) ||
     Number.isFinite(timestamps?.completedAtMs) ||
     Number.isFinite(item?.startedAtMs) ||
-    Number.isFinite(item?.completedAtMs)
+    Number.isFinite(item?.completedAtMs) ||
+    Number.isFinite(item && "createdAtMs" in item ? item.createdAtMs : null)
+  );
+}
+
+function compactGuardItemTimestampMs(
+  item: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  return (
+    timestamps?.startedAtMs ??
+    timestamps?.completedAtMs ??
+    item.startedAtMs ??
+    item.completedAtMs ??
+    ("createdAtMs" in item ? item.createdAtMs : null)
   );
 }
 

@@ -206,6 +206,7 @@ type CommandNotificationItem = Extract<
   { type: "commandExecutionNotification" }
 >;
 type BuiltinToolCallItem = Extract<ThreadItem, { type: "builtinToolCall" }>;
+type DynamicToolCallItem = Extract<ThreadItem, { type: "dynamicToolCall" }>;
 
 function makeCommandExecution(
   overrides: Partial<CommandExecutionItem> = {},
@@ -276,6 +277,23 @@ function makeScheduleUnsubscribe(
       subscription_id: "sub-schedule",
       unsubscribed: true,
     },
+    ...overrides,
+  };
+}
+
+function makeDynamicToolCall(
+  overrides: Partial<DynamicToolCallItem> = {},
+): DynamicToolCallItem {
+  return {
+    type: "dynamicToolCall",
+    id: "dynamic-tool-1",
+    namespace: "functions",
+    tool: "read",
+    arguments: { path: "/tmp/file" },
+    status: "completed",
+    contentItems: [{ text: "same output" }],
+    success: true,
+    durationMs: 10,
     ...overrides,
   };
 }
@@ -4643,6 +4661,116 @@ test("recovered compact running turn keeps live tool output after post-compact u
       ["user-after-compact", "message"],
       ["tool-live", "tool"],
     ],
+  );
+});
+
+test("recovered compact running turn keeps later live visible items after post-compact user", () => {
+  const recoveredThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-recovered", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeUserMessage("user-after-compact", "continue after restart"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const withAgent = updateThreadItem(
+    recoveredThread,
+    "turn-live-agent",
+    makeAgentMessage("agent-after-compact", "live assistant completion"),
+  );
+  const withCommandNotification = updateThreadItem(
+    withAgent,
+    "turn-command-notification",
+    makeCommandNotification({
+      id: "cmd-live:notification:exit",
+      commandItemId: "cmd-live",
+      createdAtMs: 13_000,
+    }),
+  );
+  const withBuiltin = updateThreadItem(
+    withCommandNotification,
+    "turn-builtin",
+    makeScheduleSubscribe({ id: "builtin-after-compact" }),
+  );
+  const updated = updateThreadItem(
+    withBuiltin,
+    "turn-dynamic",
+    makeDynamicToolCall({ id: "dynamic-after-compact" }),
+  );
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [
+      "compact-1",
+      "user-after-compact",
+      "agent-after-compact",
+      "cmd-live:notification:exit",
+      "builtin-after-compact",
+      "dynamic-after-compact",
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["user-after-compact", "message"],
+      ["agent-after-compact", "message"],
+      ["cmd-live:notification:exit", "tool"],
+      ["builtin-after-compact", "tool"],
+      ["dynamic-after-compact", "tool"],
+    ],
+  );
+});
+
+test("recovered compact running turn rejects stale command notifications before compact", () => {
+  const recoveredThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [
+      {
+        ...makeTurn("turn-recovered", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeUserMessage("user-after-compact", "continue after restart"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = updateThreadItem(
+    recoveredThread,
+    "turn-stale-command-notification",
+    makeCommandNotification({
+      id: "cmd-old:notification:exit",
+      commandItemId: "cmd-old",
+      createdAtMs: 11_000,
+    }),
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-after-compact"],
   );
 });
 
