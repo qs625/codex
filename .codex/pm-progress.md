@@ -37,7 +37,7 @@ Active goal: fix two newly reported installed UI regressions from 2026-09-28: (1
   next_action: Build Runtime Capsule from main, request restart, and self-debug installed conversation visibility for compact-after-current-message path.
 
 - id: workspace-browser-create-flashes-right-panel-and-covers-add-popup
-  status: dispatched
+  status: merged_pending_capsule_delivery
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -51,8 +51,12 @@ Active goal: fix two newly reported installed UI regressions from 2026-09-28: (1
   constraints: Preserve workspace Browser/Terminal ownership isolation, existing right-panel Browser manager usability, Browser native view lifecycle and visibility, Browser stale-id close suppression, workspace tab ordering/storage, add-menu creation behavior, Terminal/Conversation fixes, and provider/API/IPC shape. Do not solve by globally hiding the right Browser panel, disabling Browser creation, relying on timeouts, closing the add menu prematurely as the only fix, adding broad remounts, CSS-hiding real state, or special-casing the exact installed release/thread.
   expected_implementation: Reproduce or source-trace both symptoms. Introduce or tighten an explicit boundary so workspace Browser creation/binding does not update the right-panel Browser manager selected/visible state except through intentional manager actions. Fix overlay/native-view layering so the add menu remains above workspace Browser content while open, using the existing app chrome/popover layering model or a narrow portal/z-index/native-view occlusion adjustment. Add focused tests for workspace Browser creation not selecting/refreshing right Browser manager state and add menu remaining topmost/visible during Browser creation; if native-view layering is only integration-testable, add the closest source-level contract plus PM-installed self-debug criteria.
   validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused Browser/workspace/add-menu/RightPanel tests plus Prettier/diff check. If Electron/native Browser view code is touched, run the relevant Electron CJS BrowserPanel tests. PM will merge to main and, because this is installed user-visible UI behavior, build a Runtime Capsule, request restart, and self-debug the installed client for no right-panel flash and popup layering.
-  commit: pending
-  next_action: owner_dev to implement and hand back commit, reviewer result, validation, risk, and merge recommendation.
+  root_cause: Workspace Browser auto-create used `createBrowserTab({ activate: true })`, which updated the global Browser active tab and could make the right-side Browser manager refresh/flash. Separately, the workspace add menu was not part of the Browser native overlay hide conditions, so the native Browser view could cover the DOM popup.
+  implementation: Merged owner commit `fe6093cac` as `7f1bd6bcc`. Workspace Browser auto-create now uses `activate: false` and binds the workspace tab with `resolveCreatedWorkspaceBrowserTab`, using before/after tab id differences and an initial-empty-state fallback to the appended tab. `workspaceAddMenuOpen` is now included in workspace and right BrowserPanel `nativeOverlayActive`, hiding the native Browser view under the add popup.
+  validation: Owner validation passed with fixed reviewer approval after reviewer caught the initial-empty-state binding edge. PM main validation passed: Prettier on App/BrowserPanel/RightPanel/RightPanel.test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/lib/workspaceTabs.test.ts`; `node --test apps/root-worker-prototype/electron/browserPanelTabs.test.cjs apps/root-worker-prototype/electron/browserPanelSurface.test.cjs`; `git diff --check HEAD~1 HEAD`.
+  risk: Medium frontend/native Browser view layering and manager selection isolation fix. Requires installed self-debug for real native popup layering and no right-panel Browser flash.
+  commit: owner `fe6093cac`; merge `7f1bd6bcc`
+  next_action: Build Runtime Capsule from main, request restart, and self-debug installed Browser workspace add behavior.
 
 - id: conversation-live-assistant-messages-not-displayed
   status: installed_effective
