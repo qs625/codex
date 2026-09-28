@@ -53,6 +53,7 @@ const {
   normalizeBrowserPanelState,
   nextBrowserBoundsSequence,
   openCwdTreeFilePreview,
+  resolveCreatedWorkspaceBrowserTab,
   resolveBrowserPanelChromeLabels,
   resolveBrowserPanelTabSelection,
   resolveThreadAnalysisCommandFocus,
@@ -681,6 +682,49 @@ test("BrowserPanel manager selection ignores workspace-owned tabs", () => {
   assert.equal(withLocalManagerSelection.activeTab?.id, "browser-c");
 });
 
+test("BrowserPanel resolves inactive workspace-created tabs without stealing manager active tab", () => {
+  const managerTab = {
+    id: "browser-manager",
+    title: "Manager",
+    url: "https://manager.example",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  };
+  const workspaceTab = {
+    id: "browser-workspace",
+    title: "Workspace",
+    url: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  };
+
+  assert.equal(
+    resolveCreatedWorkspaceBrowserTab(
+      [managerTab, workspaceTab],
+      new Set(["browser-manager"]),
+    )?.id,
+    "browser-workspace",
+  );
+  assert.equal(
+    resolveCreatedWorkspaceBrowserTab(
+      [managerTab, workspaceTab],
+      new Set<string>(),
+    )?.id,
+    "browser-workspace",
+  );
+  assert.equal(
+    resolveCreatedWorkspaceBrowserTab(
+      [managerTab],
+      new Set(["browser-manager"]),
+    )?.id,
+    "browser-manager",
+  );
+});
+
 test("BrowserPanel workspace selection does not fall back after its tab closes", () => {
   const tabs = [
     {
@@ -1182,7 +1226,7 @@ test("browser native view hides under app overlays and restores with measured bo
   );
   assert.match(
     appSource,
-    /browserNativeOverlayActive=\{[\s\S]*isSelfCommandOpen \|\| isSettingsOpen \|\| isCreatingChatThread/,
+    /browserNativeOverlayActive=\{[\s\S]*workspaceAddMenuOpen \|\|[\s\S]*isSelfCommandOpen \|\|[\s\S]*isSettingsOpen \|\|[\s\S]*isCreatingChatThread/,
   );
   assert.match(appSource, /browserPanelResizing=\{isRightPanelResizing\}/);
   assert.match(appSource, /setIsRightPanelResizing\(panel === "right"\)/);
@@ -1992,7 +2036,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /const shouldHideNativeView =[\s\S]*!activeTab[\s\S]*managerNativeViewBlocked/,
     /const workspaceSelectionMissing = !isManagerVariant && activeTab == null/,
     /workspaceBrowserTabCreatePendingRef\.current/,
-    /createBrowserTab\(\{ activate: true \}\)[\s\S]*onWorkspaceBrowserTabBound\?\.\(\{[\s\S]*browserTabId: createdTab\.id/,
+    /const existingTabIds = new Set\([\s\S]*stateRef\.current\.tabs\.map\(\(tab\) => tab\.id\)[\s\S]*\);/,
+    /createBrowserTab\(\{ activate: false \}\)[\s\S]*resolveCreatedWorkspaceBrowserTab\([\s\S]*normalizedState\.tabs,[\s\S]*existingTabIds,[\s\S]*\)[\s\S]*onWorkspaceBrowserTabBound\?\.\(\{[\s\S]*browserTabId: createdTab\.id/,
     /if \(workspaceSelectionMissing\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const normalized = normalizeBrowserUrl\(address\)/,
     /if \(workspaceSelectionMissing\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const browserApi = currentBrowserPanelApi\(\)/,
     /function nextBrowserPanelSurfaceId\(\)/,
