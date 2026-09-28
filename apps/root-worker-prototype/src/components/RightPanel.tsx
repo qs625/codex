@@ -82,6 +82,7 @@ import type {
 } from "../types";
 
 export {
+  applyBrowserNativeTopOcclusion,
   BrowserPanel,
   browserBoundsFromElement,
   browserBoundsMatch,

@@ -30,6 +30,15 @@ type BrowserViewBounds = {
   sequence?: number;
 };
 
+export type BrowserNativeOcclusionRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+const EMPTY_NATIVE_OCCLUSION_RECTS: readonly BrowserNativeOcclusionRect[] = [];
+
 export type BrowserPanelTabState = {
   id: string;
   url: string | null;
@@ -133,6 +142,7 @@ export function BrowserPanel({
   active = true,
   variant = "manager",
   nativeOverlayActive,
+  nativeOcclusionRects = EMPTY_NATIVE_OCCLUSION_RECTS,
   resizing,
   navigationRequest,
   onNavigationRequestHandled,
@@ -146,6 +156,7 @@ export function BrowserPanel({
   active?: boolean;
   variant?: "manager" | "workspace";
   nativeOverlayActive: boolean;
+  nativeOcclusionRects?: readonly BrowserNativeOcclusionRect[];
   resizing: boolean;
   navigationRequest: { url: string; token: number } | null;
   onNavigationRequestHandled?: (token: number) => void;
@@ -161,6 +172,7 @@ export function BrowserPanel({
   const passiveBoundsCorrectionRef = useRef<(() => void) | null>(null);
   const addressInputFocusedRef = useRef(false);
   const lastAddressTabIdRef = useRef<string | null>(null);
+  const nativeOcclusionRectsRef = useRef(nativeOcclusionRects);
   const workspaceBrowserTabCreatePendingRef = useRef(false);
   const browserSurfaceRef = useRef({
     activeBrowserTabId,
@@ -180,6 +192,7 @@ export function BrowserPanel({
   const hasBrowserApi = currentBrowserPanelApi() !== null;
   const isManagerVariant = variant === "manager";
   onBrowserTabIdsChangeRef.current = onBrowserTabIdsChange;
+  nativeOcclusionRectsRef.current = nativeOcclusionRects;
   browserSurfaceRef.current = {
     activeBrowserTabId,
     detachedBrowserTabIds,
@@ -316,14 +329,17 @@ export function BrowserPanel({
     if (!viewport || !tab) {
       return;
     }
-    const bounds = {
-      ...browserBoundsFromElement(
-        viewport,
-        nextBrowserBoundsSequence(boundsSequenceRef),
-      ),
-      surfaceId: browserSurfaceIdRef.current,
-      tabId: tab.id,
-    };
+    const bounds = applyBrowserNativeTopOcclusion(
+      {
+        ...browserBoundsFromElement(
+          viewport,
+          nextBrowserBoundsSequence(boundsSequenceRef),
+        ),
+        surfaceId: browserSurfaceIdRef.current,
+        tabId: tab.id,
+      },
+      nativeOcclusionRectsRef.current,
+    );
     const nextState = await browserApi.showBrowserView(bounds);
     applyBrowserState(nextState);
   };
@@ -550,14 +566,18 @@ export function BrowserPanel({
         .then((nextState) => applyBrowserState(nextState))
         .catch((error) => setLocalError(toBrowserError(error)));
     };
-    const measureBounds = () => ({
-      ...browserBoundsFromElement(
-        viewport,
-        nextBrowserBoundsSequence(boundsSequenceRef),
-      ),
-      surfaceId,
-      tabId: activeTab?.id ?? null,
-    });
+    const measureBounds = () =>
+      applyBrowserNativeTopOcclusion(
+        {
+          ...browserBoundsFromElement(
+            viewport,
+            nextBrowserBoundsSequence(boundsSequenceRef),
+          ),
+          surfaceId,
+          tabId: activeTab?.id ?? null,
+        },
+        nativeOcclusionRectsRef.current,
+      );
     const sendBounds = () => {
       const bounds = measureBounds();
       if (browserBoundsMatch(lastSentBounds, bounds)) {
@@ -619,6 +639,10 @@ export function BrowserPanel({
     nativeOverlayActive,
     resizing,
   ]);
+
+  useEffect(() => {
+    passiveBoundsCorrectionRef.current?.();
+  }, [nativeOcclusionRects]);
 
   const navigate = () => {
     if (workspaceSelectionMissing) {
@@ -1121,6 +1145,33 @@ export function browserBoundsFromElement(
     width: Math.max(0, Math.round(rect.width)),
     height: Math.max(0, Math.round(rect.height)),
     ...(sequence ? { sequence } : {}),
+  };
+}
+
+export function applyBrowserNativeTopOcclusion<
+  T extends BrowserViewBounds & Record<string, unknown>,
+>(bounds: T, occlusionRects: readonly BrowserNativeOcclusionRect[]): T {
+  if (occlusionRects.length === 0 || bounds.width <= 0 || bounds.height <= 0) {
+    return bounds;
+  }
+  const boundsRight = bounds.x + bounds.width;
+  const boundsBottom = bounds.y + bounds.height;
+  const nextY = occlusionRects.reduce((currentY, rect) => {
+    const overlapsX = rect.left < boundsRight && rect.right > bounds.x;
+    const overlapsY = rect.top < boundsBottom && rect.bottom > bounds.y;
+    if (!overlapsX || !overlapsY) {
+      return currentY;
+    }
+    return Math.max(currentY, Math.ceil(rect.bottom));
+  }, bounds.y);
+  if (nextY <= bounds.y) {
+    return bounds;
+  }
+  const clampedY = Math.min(nextY, boundsBottom);
+  return {
+    ...bounds,
+    y: clampedY,
+    height: Math.max(0, boundsBottom - clampedY),
   };
 }
 

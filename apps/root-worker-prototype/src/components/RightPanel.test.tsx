@@ -34,6 +34,7 @@ const {
   browserBoundsMatch,
   browserBoundsFromElement,
   BrowserPanel,
+  applyBrowserNativeTopOcclusion,
   browserTabLabel,
   buildGitGraphVisualModel,
   cancelFilePreviewEdit,
@@ -1136,6 +1137,30 @@ test("browserBoundsFromElement measures the visible viewport rect with sequence"
   });
 });
 
+test("applyBrowserNativeTopOcclusion keeps Browser content visible below chrome menus", () => {
+  assert.deepEqual(
+    applyBrowserNativeTopOcclusion(
+      { x: 100, y: 100, width: 500, height: 420, sequence: 8 },
+      [{ left: 320, top: 78, right: 544, bottom: 184 }],
+    ),
+    { x: 100, y: 184, width: 500, height: 336, sequence: 8 },
+  );
+  assert.deepEqual(
+    applyBrowserNativeTopOcclusion(
+      { x: 100, y: 100, width: 500, height: 420, sequence: 9 },
+      [{ left: 620, top: 78, right: 844, bottom: 184 }],
+    ),
+    { x: 100, y: 100, width: 500, height: 420, sequence: 9 },
+  );
+  assert.deepEqual(
+    applyBrowserNativeTopOcclusion(
+      { x: 100, y: 100, width: 500, height: 420, sequence: 10 },
+      [{ left: 320, top: 540, right: 544, bottom: 620 }],
+    ),
+    { x: 100, y: 100, width: 500, height: 420, sequence: 10 },
+  );
+});
+
 test("nextBrowserBoundsSequence advances past manual wall-clock bounds", () => {
   const originalNow = Date.now;
   Date.now = () => 1_800_000;
@@ -1210,6 +1235,51 @@ test("browser native view hides under app overlays and restores with measured bo
   );
   assert.match(
     browserPanelSource,
+    /const EMPTY_NATIVE_OCCLUSION_RECTS: readonly BrowserNativeOcclusionRect\[\] = \[\]/,
+  );
+  assert.match(
+    browserPanelSource,
+    /export function BrowserPanel\([\s\S]*nativeOcclusionRects = EMPTY_NATIVE_OCCLUSION_RECTS,[\s\S]*nativeOcclusionRects\?: readonly BrowserNativeOcclusionRect\[\]/,
+  );
+  assert.match(
+    browserPanelSource,
+    /const nativeOcclusionRectsRef = useRef\(nativeOcclusionRects\)/,
+  );
+  assert.match(
+    browserPanelSource,
+    /nativeOcclusionRectsRef\.current = nativeOcclusionRects/,
+  );
+  assert.match(
+    browserPanelSource,
+    /const bounds = applyBrowserNativeTopOcclusion\([\s\S]*browserBoundsFromElement\([\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: tab\.id,[\s\S]*nativeOcclusionRectsRef\.current,[\s\S]*\);/,
+  );
+  assert.match(
+    browserPanelSource,
+    /const measureBounds = \(\) =>[\s\S]*applyBrowserNativeTopOcclusion\([\s\S]*browserBoundsFromElement\([\s\S]*surfaceId,[\s\S]*tabId: activeTab\?\.id \?\? null,[\s\S]*nativeOcclusionRectsRef\.current,[\s\S]*\);/,
+  );
+  const nativeVisibilityEffectSource = sourceSlice(
+    browserPanelSource,
+    "useEffect(() => {\n    const viewport = viewportRef.current;",
+    "  const navigate = () => {",
+  );
+  assert.match(
+    nativeVisibilityEffectSource,
+    /useEffect\(\(\) => \{\s*passiveBoundsCorrectionRef\.current\?\.\(\);\s*\}, \[nativeOcclusionRects\]\);/,
+  );
+  const nativeHideCleanupSource = nativeVisibilityEffectSource.slice(
+    nativeVisibilityEffectSource.indexOf(
+      "useEffect(() => {\n    const viewport = viewportRef.current;",
+    ),
+    nativeVisibilityEffectSource.indexOf(
+      "useEffect(() => {\n    passiveBoundsCorrectionRef.current?.();",
+    ),
+  );
+  assert.doesNotMatch(
+    nativeHideCleanupSource,
+    /\[\s*[\s\S]*nativeOcclusionRects[\s\S]*\]\);/,
+  );
+  assert.match(
+    browserPanelSource,
     /await showNativeBrowserView\(browserApi\);[\s\S]*await browserApi\.navigateBrowserView\(\{[\s\S]*target: normalized\.url,[\s\S]*surfaceId: browserSurfaceIdRef\.current,[\s\S]*tabId: activeTab\?\.id \?\? null/,
   );
   const showBranch = browserPanelSource.slice(
@@ -1226,14 +1296,94 @@ test("browser native view hides under app overlays and restores with measured bo
   );
   assert.match(
     appSource,
-    /browserNativeOverlayActive=\{[\s\S]*workspaceAddMenuOpen \|\|[\s\S]*isSelfCommandOpen \|\|[\s\S]*isSettingsOpen \|\|[\s\S]*isCreatingChatThread/,
+    /const browserNativeModalOverlayActive =[\s\S]*isSelfCommandOpen \|\| isSettingsOpen \|\| isCreatingChatThread/,
   );
+  assert.match(
+    appSource,
+    /const workspaceBrowserNativeOcclusionRects = useMemo\([\s\S]*workspaceAddMenuOcclusionRect \? \[workspaceAddMenuOcclusionRect\] : \[\],[\s\S]*\[workspaceAddMenuOcclusionRect\]/,
+  );
+  assert.match(
+    appSource,
+    /browserNativeOverlayActive=\{browserNativeModalOverlayActive\}/,
+  );
+  assert.match(
+    appSource,
+    /variant="workspace"[\s\S]*nativeOverlayActive=\{browserNativeModalOverlayActive\}/,
+  );
+  const modalOverlaySource = sourceSlice(
+    appSource,
+    "const browserNativeModalOverlayActive =",
+    "function handleGitDiffPreviewChange",
+  );
+  assert.doesNotMatch(modalOverlaySource, /workspaceAddMenuOpen/);
   assert.match(appSource, /browserPanelResizing=\{isRightPanelResizing\}/);
   assert.match(appSource, /setIsRightPanelResizing\(panel === "right"\)/);
   assert.match(appSource, /setIsRightPanelResizing\(false\)/);
   assert.match(appSource, /setPointerCapture\(pointerId\)/);
   assert.match(appSource, /releasePointerCapture\(pointerCapture\.pointerId\)/);
   assert.match(appSource, /window\.addEventListener\("blur", finishResize\)/);
+});
+
+test("workspace add menu coexists with native Browser content instead of hiding it", () => {
+  const { appSource, stylesSource } = readSources(["app", "styles"]);
+
+  const workspaceBrowserPanelSource = sourceSlice(
+    appSource,
+    '<BrowserPanel\n                  active\n                  variant="workspace"',
+    '<div\n              className="workspace-tab-panel"\n              hidden={activeWorkspaceTab?.kind !== "terminal"}',
+  );
+  assert.match(
+    workspaceBrowserPanelSource,
+    /nativeOverlayActive=\{browserNativeModalOverlayActive\}/,
+  );
+  assert.match(
+    workspaceBrowserPanelSource,
+    /nativeOcclusionRects=\{workspaceBrowserNativeOcclusionRects\}/,
+  );
+  assert.doesNotMatch(workspaceBrowserPanelSource, /workspaceAddMenuOpen/);
+
+  const rightPanelPropsSource = sourceSlice(
+    appSource,
+    "<RightPanel\n            activeView={rightPanelView}",
+    "browserPanelResizing={isRightPanelResizing}",
+  );
+  assert.match(
+    rightPanelPropsSource,
+    /browserNativeOverlayActive=\{browserNativeModalOverlayActive\}/,
+  );
+  assert.doesNotMatch(rightPanelPropsSource, /workspaceAddMenuOpen/);
+
+  const workspaceChromeSource = sourceSlice(
+    appSource,
+    "{workspaceAddMenuOpen && workspaceAddMenuPosition ? (",
+    '<div className="workspace-tab-content">',
+  );
+  assert.match(workspaceChromeSource, /className="workspace-tab-add-menu"/);
+  assert.match(workspaceChromeSource, /role="menu"/);
+  assert.match(
+    workspaceChromeSource,
+    /selectWorkspaceAddMenuItem\("browser"\)/,
+  );
+
+  const menuOcclusionSource = sourceSlice(
+    appSource,
+    "useLayoutEffect(() => {\n    if (!workspaceAddMenuOpen || !workspaceAddMenuPosition)",
+    "}, [workspaceAddMenuOpen, workspaceAddMenuPosition]);",
+  );
+  assertMatches(menuOcclusionSource, [
+    /workspaceAddMenuRef\.current/,
+    /getBoundingClientRect\(\)/,
+    /setWorkspaceAddMenuOcclusionRect/,
+    /left: Math\.max\(0, Math\.round\(rect\.left\)\)/,
+    /bottom: Math\.max\(0, Math\.round\(rect\.bottom\)\)/,
+    /new ResizeObserver\(updateWorkspaceAddMenuOcclusion\)/,
+  ]);
+
+  assertMatches(stylesSource, [
+    /\.workspace-tab-add-menu \{[\s\S]*position: fixed;[\s\S]*z-index: 70;/,
+    /\.workspace-tab-add-menu \{[\s\S]*-webkit-app-region: no-drag;/,
+    /\.browser-native-viewport \{[\s\S]*position: relative;[\s\S]*flex: 1;/,
+  ]);
 });
 
 test("browser tab helpers preserve active tab state and readable labels", () => {
