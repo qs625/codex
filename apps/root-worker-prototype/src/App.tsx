@@ -656,11 +656,6 @@ function App() {
     );
     document.addEventListener("keydown", closeWorkspaceAddMenuOnKeyDown);
     window.addEventListener("resize", closeWorkspaceAddMenuOnViewportChange);
-    document.addEventListener(
-      "scroll",
-      closeWorkspaceAddMenuOnViewportChange,
-      true,
-    );
     return () => {
       document.removeEventListener(
         "pointerdown",
@@ -671,11 +666,6 @@ function App() {
       window.removeEventListener(
         "resize",
         closeWorkspaceAddMenuOnViewportChange,
-      );
-      document.removeEventListener(
-        "scroll",
-        closeWorkspaceAddMenuOnViewportChange,
-        true,
       );
     };
   }, [workspaceAddMenuOpen]);
@@ -3565,6 +3555,71 @@ function App() {
     setRightPanelView(view);
   }
 
+  function activateWorkspaceFallbackTab(tab: WorkspaceObjectTab | null) {
+    setActiveWorkspaceTabId(tab?.id ?? null);
+    if (tab?.kind === "conversation" && tab.threadId) {
+      selectThread(tab.threadId);
+      return;
+    }
+    if (tab?.kind === "terminal") {
+      setTerminalPanelFocusRequestToken((current) => current + 1);
+      return;
+    }
+    if (tab?.kind === "file" && tab.path) {
+      setFilePanelView("preview");
+      if (filePreview?.path !== tab.path) {
+        void loadFilePreview(tab.path, { preserveRightPanel: true });
+      }
+    }
+  }
+
+  function isBrowserTabNotFoundError(error: unknown) {
+    return /browser tab not found/i.test(toErrorMessage(error));
+  }
+
+  function pruneMissingWorkspaceBrowserTabs(browserTabIds: string[]) {
+    const liveBrowserTabIds = new Set(browserTabIds);
+    const currentTabs = workspaceTabsRef.current;
+    const staleBrowserTabs = currentTabs.filter(
+      (tab) =>
+        tab.kind === "browser" &&
+        tab.browserTabId &&
+        !liveBrowserTabIds.has(tab.browserTabId),
+    );
+    if (staleBrowserTabs.length === 0) {
+      return;
+    }
+    const staleWorkspaceTabIds = new Set(staleBrowserTabs.map((tab) => tab.id));
+    const firstStaleIndex = currentTabs.findIndex((tab) =>
+      staleWorkspaceTabIds.has(tab.id),
+    );
+    const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId(
+      currentTabs,
+      activeWorkspaceTabId,
+      selectedThreadWorkspaceTabId,
+    );
+    const next = currentTabs.filter((tab) => !staleWorkspaceTabIds.has(tab.id));
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    storedWorkspaceTabOrderRef.current =
+      storedWorkspaceTabOrderRef.current.filter(
+        (id) => !staleWorkspaceTabIds.has(id),
+      );
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
+    if (
+      currentVisibleWorkspaceTabId &&
+      staleWorkspaceTabIds.has(currentVisibleWorkspaceTabId)
+    ) {
+      activateWorkspaceFallbackTab(
+        next[firstStaleIndex] ?? next[firstStaleIndex - 1] ?? next[0] ?? null,
+      );
+    }
+  }
+
   function closeWorkspaceTab(
     tabId: string,
     options: { closeOwnedBrowserTab?: boolean } = {},
@@ -3597,28 +3652,19 @@ function App() {
     ) {
       void window.codexDesktop
         .closeBrowserTab(closingTab.browserTabId)
-        .catch((error) => setError(toErrorMessage(error)));
+        .catch((error) => {
+          if (isBrowserTabNotFoundError(error)) {
+            return;
+          }
+          setError(toErrorMessage(error));
+        });
     }
     if (currentVisibleWorkspaceTabId !== tabId) {
       return;
     }
     const fallback =
       next[closingIndex] ?? next[closingIndex - 1] ?? next[0] ?? null;
-    setActiveWorkspaceTabId(fallback?.id ?? null);
-    if (fallback?.kind === "conversation" && fallback.threadId) {
-      selectThread(fallback.threadId);
-      return;
-    }
-    if (fallback?.kind === "terminal") {
-      setTerminalPanelFocusRequestToken((current) => current + 1);
-      return;
-    }
-    if (fallback?.kind === "file" && fallback.path) {
-      setFilePanelView("preview");
-      if (filePreview?.path !== fallback.path) {
-        void loadFilePreview(fallback.path, { preserveRightPanel: true });
-      }
-    }
+    activateWorkspaceFallbackTab(fallback);
   }
 
   function handleWorkspaceObjectDragOver(event: DragEvent<HTMLElement>) {
@@ -4120,6 +4166,7 @@ function App() {
                     handleBrowserNavigationRequestHandled
                   }
                   onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
+                  onBrowserTabIdsChange={pruneMissingWorkspaceBrowserTabs}
                   activeBrowserTabId={activeWorkspaceTab.browserTabId ?? null}
                 />
               ) : null}
@@ -4197,6 +4244,7 @@ function App() {
             onOpenPreviewExternally={() => void openPreviewExternally()}
             onOpenPreviewInBrowser={openPreviewInBrowser}
             onOpenBrowserTabInWorkspace={openBrowserInWorkspace}
+            onBrowserTabIdsChange={pruneMissingWorkspaceBrowserTabs}
             onOpenTerminalTabInWorkspace={openTerminalInWorkspace}
             onOpenWorkspaceObject={openRightPanelObjectInWorkspace}
             onReturnWorkspaceObject={handleReturnWorkspaceObjectToRightPanel}

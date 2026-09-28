@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -58,6 +59,19 @@ test("run config popover renders model and reasoning radio groups", () => {
   assert.match(markup, /GPT-5/);
   assert.match(markup, /Balanced model/);
   assert.match(markup, /aria-checked="true"[^>]*>medium/);
+});
+
+test("run config popover opens above the composer with bounded height", () => {
+  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.match(
+    css,
+    /\.run-config-popover \{[\s\S]*bottom: calc\(100% \+ 8px\);[\s\S]*max-height: min\(520px, calc\(100vh - 160px\)\);[\s\S]*overflow: auto;/,
+  );
+  assert.doesNotMatch(
+    css,
+    /\.run-config-popover \{[\s\S]*top: calc\(100% \+ 8px\);/,
+  );
 });
 
 test("run config popover marks configured provider models", () => {

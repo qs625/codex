@@ -122,6 +122,7 @@ export function TerminalPanel({
   );
   const [state, setState] = useState<TerminalPanelState>(EMPTY_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [terminalStateLoaded, setTerminalStateLoaded] = useState(false);
   const [displayPreferences, setDisplayPreferences] = useState(
     readTerminalDisplayPreferences,
   );
@@ -159,12 +160,15 @@ export function TerminalPanel({
     : null;
   terminalFocusRequestTokenRef.current = terminalFocusRequestToken;
 
-  const requestTerminalViewportFocus = useCallback((tabId: string | null = null) => {
-    const token = terminalFocusRequestTokenRef.current + 1;
-    terminalFocusRequestTokenRef.current = token;
-    pendingTerminalFocusRequestRef.current = { token, tabId };
-    setTerminalFocusRequestToken(token);
-  }, []);
+  const requestTerminalViewportFocus = useCallback(
+    (tabId: string | null = null) => {
+      const token = terminalFocusRequestTokenRef.current + 1;
+      terminalFocusRequestTokenRef.current = token;
+      pendingTerminalFocusRequestRef.current = { token, tabId };
+      setTerminalFocusRequestToken(token);
+    },
+    [],
+  );
 
   const applyPendingTerminalFocus = useCallback(() => {
     const request = pendingTerminalFocusRequestRef.current;
@@ -185,28 +189,32 @@ export function TerminalPanel({
     terminal.focus();
   }, []);
 
-  const publishPreferredTerminalSize = useCallback((next: TerminalSize) => {
-    const threadId = thread?.id ?? null;
-    const previousPreferred = lastPreferredSizeRef.current;
-    if (
-      threadId &&
-      (previousPreferred?.threadId !== threadId ||
-        previousPreferred.rows !== next.rows ||
-        previousPreferred.cols !== next.cols)
-    ) {
-      lastPreferredSizeRef.current = { threadId, ...next };
-      void window.codexDesktop
-        .updateTerminalPreferredSize({ threadId, size: next })
-        .catch(() => {
-          if (lastPreferredSizeRef.current?.threadId === threadId) {
-            lastPreferredSizeRef.current = previousPreferred;
-          }
-        });
-    }
-  }, [thread?.id]);
+  const publishPreferredTerminalSize = useCallback(
+    (next: TerminalSize) => {
+      const threadId = thread?.id ?? null;
+      const previousPreferred = lastPreferredSizeRef.current;
+      if (
+        threadId &&
+        (previousPreferred?.threadId !== threadId ||
+          previousPreferred.rows !== next.rows ||
+          previousPreferred.cols !== next.cols)
+      ) {
+        lastPreferredSizeRef.current = { threadId, ...next };
+        void window.codexDesktop
+          .updateTerminalPreferredSize({ threadId, size: next })
+          .catch(() => {
+            if (lastPreferredSizeRef.current?.threadId === threadId) {
+              lastPreferredSizeRef.current = previousPreferred;
+            }
+          });
+      }
+    },
+    [thread?.id],
+  );
 
   useEffect(() => {
     let disposed = false;
+    setTerminalStateLoaded(false);
     const unsubscribe = window.codexDesktop.subscribeTerminalState((event) => {
       if (disposed) {
         return;
@@ -229,13 +237,20 @@ export function TerminalPanel({
     void window.codexDesktop
       .getTerminalState(thread?.id ?? null)
       .then((nextState) => {
-        if (!disposed && terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
+        if (
+          !disposed &&
+          terminalStateRequestSeqRef.current.isCurrent(requestSeq)
+        ) {
           setState(nextState);
           setLocalError(null);
+          setTerminalStateLoaded(true);
         }
       })
       .catch((error) => {
-        if (!disposed && terminalStateRequestSeqRef.current.isCurrent(requestSeq)) {
+        if (
+          !disposed &&
+          terminalStateRequestSeqRef.current.isCurrent(requestSeq)
+        ) {
           setLocalError(toTerminalError(error));
         }
       });
@@ -246,7 +261,9 @@ export function TerminalPanel({
   }, [thread?.id]);
 
   useEffect(() => {
-    if (!isTerminalCommandFocusRequestForThread(focusCommandRequest, thread?.id)) {
+    if (
+      !isTerminalCommandFocusRequestForThread(focusCommandRequest, thread?.id)
+    ) {
       return;
     }
     const requestSeq = terminalStateRequestSeqRef.current.begin();
@@ -326,7 +343,8 @@ export function TerminalPanel({
       return;
     }
     if (focusTerminalTabRequest.tabId === state.activeTabId) {
-      lastTerminalTabFocusRequestTokenRef.current = focusTerminalTabRequest.token;
+      lastTerminalTabFocusRequestTokenRef.current =
+        focusTerminalTabRequest.token;
       return;
     }
     lastTerminalTabFocusRequestTokenRef.current = focusTerminalTabRequest.token;
@@ -609,6 +627,27 @@ export function TerminalPanel({
       .catch((error) => setLocalError(toTerminalError(error)));
   };
 
+  useEffect(() => {
+    if (
+      isManagerVariant ||
+      !terminalStateLoaded ||
+      activeTerminalTabId != null ||
+      visibleTabs.length > 0 ||
+      localError ||
+      state.error
+    ) {
+      return;
+    }
+    createTerminal();
+  }, [
+    activeTerminalTabId,
+    isManagerVariant,
+    localError,
+    state.error,
+    terminalStateLoaded,
+    visibleTabs.length,
+  ]);
+
   const liveCommands = selectRunningActiveCommandItems(thread);
 
   const focusLiveCommand = (command: (typeof liveCommands)[number]) => {
@@ -706,7 +745,10 @@ export function TerminalPanel({
               </button>
             </div>
             {showDisplaySettings ? (
-              <div className="terminal-display-settings" aria-label="Terminal display settings">
+              <div
+                className="terminal-display-settings"
+                aria-label="Terminal display settings"
+              >
                 <div className="terminal-display-settings-heading">
                   <span>Display</span>
                   <button type="button" onClick={resetDisplayPreferences}>
@@ -719,7 +761,8 @@ export function TerminalPanel({
                     value={displayPreferences.fontFamily}
                     onChange={(event) =>
                       updateDisplayPreferences({
-                        fontFamily: event.target.value as typeof displayPreferences.fontFamily,
+                        fontFamily: event.target
+                          .value as typeof displayPreferences.fontFamily,
                       })
                     }
                   >
@@ -768,7 +811,9 @@ export function TerminalPanel({
 
           {liveCommands.length > 0 ? (
             <div className="terminal-live-commands" aria-label="Live Commands">
-              <span className="terminal-live-commands-label">Live Commands</span>
+              <span className="terminal-live-commands-label">
+                Live Commands
+              </span>
               <div className="terminal-live-command-list">
                 {liveCommands.map((command) => (
                   <button
@@ -786,7 +831,11 @@ export function TerminalPanel({
             </div>
           ) : null}
 
-          <div className="browser-tab-strip terminal-tab-strip" role="tablist" aria-label="Terminal tabs">
+          <div
+            className="browser-tab-strip terminal-tab-strip"
+            role="tablist"
+            aria-label="Terminal tabs"
+          >
             <div className="browser-tabs">
               {visibleTabs.map((tab) => {
                 const isActive = tab.id === activeTab?.id;
@@ -810,10 +859,14 @@ export function TerminalPanel({
                             requestTerminalViewportFocus(tab.id);
                             setLocalError(null);
                           })
-                          .catch((error) => setLocalError(toTerminalError(error)));
+                          .catch((error) =>
+                            setLocalError(toTerminalError(error)),
+                          );
                       }}
                       onDoubleClick={() =>
-                        onOpenTerminalTabInWorkspace?.(terminalTabDragPayload(tab))
+                        onOpenTerminalTabInWorkspace?.(
+                          terminalTabDragPayload(tab),
+                        )
                       }
                       onDragStart={(event) =>
                         writeWorkspaceObjectDragData(
@@ -834,7 +887,9 @@ export function TerminalPanel({
                       title="Close tab (process keeps running)"
                       onClick={(event) => {
                         event.stopPropagation();
-                        applyState(window.codexDesktop.closeTerminalTab(tab.id));
+                        applyState(
+                          window.codexDesktop.closeTerminalTab(tab.id),
+                        );
                       }}
                     >
                       <XIcon />
@@ -856,7 +911,9 @@ export function TerminalPanel({
               <button
                 type="button"
                 className="browser-icon-button terminal-reattach-button"
-                onClick={() => applyState(window.codexDesktop.reattachTerminalTabs())}
+                onClick={() =>
+                  applyState(window.codexDesktop.reattachTerminalTabs())
+                }
               >
                 Reattach {state.detachedCount}
               </button>
@@ -932,7 +989,8 @@ function measureTerminalViewportSize(
   measure.remove();
 
   const cellWidth = bounds.width / 32;
-  const cellHeight = displayPreferences.fontSize * displayPreferences.lineHeight;
+  const cellHeight =
+    displayPreferences.fontSize * displayPreferences.lineHeight;
   if (cellWidth <= 0 || cellHeight <= 0) {
     return null;
   }

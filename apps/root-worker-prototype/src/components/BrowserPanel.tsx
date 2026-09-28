@@ -140,6 +140,7 @@ export function BrowserPanel({
   navigationRequest,
   onNavigationRequestHandled,
   onOpenBrowserTabInWorkspace,
+  onBrowserTabIdsChange,
   activeBrowserTabId,
   focusBrowserTabRequest,
   detachedBrowserTabIds = [],
@@ -151,6 +152,7 @@ export function BrowserPanel({
   navigationRequest: { url: string; token: number } | null;
   onNavigationRequestHandled?: (token: number) => void;
   onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
+  onBrowserTabIdsChange?: (tabIds: string[]) => void;
   activeBrowserTabId?: string | null;
   focusBrowserTabRequest?: { tabId: string; token: number } | null;
   detachedBrowserTabIds?: string[];
@@ -168,6 +170,7 @@ export function BrowserPanel({
   });
   const browserSurfaceIdRef = useRef(nextBrowserPanelSurfaceId());
   const lastBrowserTabFocusRequestTokenRef = useRef(0);
+  const onBrowserTabIdsChangeRef = useRef(onBrowserTabIdsChange);
   const [address, setAddress] = useState("");
   const [managerSelectedBrowserTabId, setManagerSelectedBrowserTabId] =
     useState<string | null>(null);
@@ -175,6 +178,7 @@ export function BrowserPanel({
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
   const isManagerVariant = variant === "manager";
+  onBrowserTabIdsChangeRef.current = onBrowserTabIdsChange;
   browserSurfaceRef.current = {
     activeBrowserTabId,
     detachedBrowserTabIds,
@@ -266,6 +270,9 @@ export function BrowserPanel({
   const applyBrowserState = (nextState: BrowserPanelState) => {
     const normalizedState = normalizeBrowserPanelState(nextState);
     setState(normalizedState);
+    onBrowserTabIdsChangeRef.current?.(
+      normalizedState.tabs.map((tab) => tab.id),
+    );
     const normalizedActiveTab =
       normalizedState.tabs.find(
         (tab) => tab.id === normalizedState.activeTabId,
