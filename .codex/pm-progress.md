@@ -8,9 +8,51 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: continuous large front+backend code organization can resume after the higher-priority workspace close ownership and Project hover add button regressions were fixed, merged, and installed-effective in Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd`. Next queued PM work is to resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
+Active goal: fix the installed Browser workspace close regression where closing a workspace Browser still returns it to the right panel and then right-panel close reports not found, while also hiding the user-visible Terminal `Reattach` affordance. Current installed Runtime Capsule is `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd`. Then resume validation/integration of `continuous-code-organization-tranche-55` after confirming no new user-visible regression reports.
 
 ## Active Work
+
+- id: workspace-browser-close-still-returns-not-found
+  status: pm_validated_ready_to_merge
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/terminal-hide-reattach-affordance
+  task_type: frontend_workspace_browser_close_regression_fix
+  depends_on: main `ce413c959`; installed Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd`; user reported Browser workspace tab close still returns it to the right panel and then closing there errors not found
+  files: expected `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/BrowserPanel.tsx`, `apps/root-worker-prototype/src/components/RightPanel.test.tsx`, and focused Browser/workspace tests as required
+  base_commit: `ce413c959`
+  product_contract: Closing a workspace Browser tab must remove/destroy that workspace-owned Browser instance and must not let the right-side Browser manager show the same id afterward. If the backend tab is already gone, the UI must converge as closed without surfacing or reviving a stale tab. Right-panel close must not be handed a tab id that workspace close already closed or marked closing.
+  problem_model: The previous close fix kept the Browser id detached only while `closeBrowserTab` was pending, then forgot it in `finally`. If backend state/BrowserPanel state still contains the closed id briefly or right manager state has not yet observed the close, forgetting the id can release a stale Browser tab back to the manager. The subsequent right-panel close then calls `closeTab` for a backend-missing id and surfaces `Browser tab not found`.
+  constraints: Preserve explicit drag-back return, Browser manager usability for manager-owned tabs, workspace close semantics, stale-id pruning/not-found idempotence, native view ownership, add-menu create/bind, and Terminal/compact fixes. Do not solve with timeouts, CSS hiding, global Browser disabling, or broad remounts.
+  expected_implementation: Add a durable client-side closed/suppressed Browser id state or equivalent lifecycle so workspace-close-owned Browser ids remain hidden from the right manager until BrowserPanel reports live ids no longer include them (or until a new tab with a different id is created). Treat not-found as already closed and keep UI converged. Ensure explicit return does not add to closed/suppressed ids. Add source/component tests covering close-owned Browser suppresses right manager after backend close/not-found and explicit return still releases to right.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, update focused tests, and run RightPanel/BrowserPanel/workspace tests plus TerminalPanel tests if combined with reattach UI change.
+  root_cause: Workspace close-owned Browser ids were suppressed only while `closeBrowserTab` was pending. If the right Browser manager had not yet observed backend state removing the closed id, releasing suppression in `finally` let the stale id reappear in the right panel; closing it there hit backend `Browser tab not found`.
+  implementation: Added durable `closedWorkspaceBrowserTabIds` suppression. Workspace close-owned Browser ids remain detached/suppressed until BrowserPanel reports live browser ids no longer include them; backend not-found is treated as already closed and keeps UI converged. Non-not-found errors release suppression and restore the workspace tab. Explicit return still uses bare close and does not suppress. RightPanel now forwards `onBrowserTabIdsChange` to keep suppression cleanup connected through the manager BrowserPanel.
+  validation: Owner validation passed with fixed reviewer approval after reviewer caught missing RightPanel callback forwarding. PM validation passed: ignored-whitespace diff confirmed RightPanel behavior change is callback plumbing plus formatting; Prettier on App/RightPanel/TerminalPanel/tests; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/TerminalPanel.test.tsx src/lib/workspaceTabs.test.ts`; `git diff --check HEAD~1 HEAD`.
+  risk: Medium Browser manager/workspace ownership race fix. Requires installed self-debug close/reopen/not-found regression check.
+  commit: owner `d72e10190`
+  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed Browser workspace close behavior.
+
+- id: terminal-hide-reattach-affordance
+  status: pm_validated_ready_to_merge
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/terminal-hide-reattach-affordance
+  task_type: frontend_terminal_ui_polish
+  depends_on: main `ce413c959`; installed Runtime Capsule `sha256:54441db1f20d62fb4bde9cf87d096aabeee622993c7ffb9228e2f8f8c062c9fd`; user requested Terminal should not show the reattach affordance
+  files: expected `apps/root-worker-prototype/src/components/TerminalPanel.tsx`, `apps/root-worker-prototype/src/components/TerminalPanel.test.tsx`, and possibly styles only if needed
+  base_commit: `ce413c959`
+  product_contract: Terminal should not expose the `Reattach N` button/affordance in the visible UI. Detached/lost terminal recovery bookkeeping and backend IPC may remain for internal/runtime use, but the Terminal panel should not prompt users with a reattach action.
+  constraints: Preserve Terminal session/process lifecycle, close semantics, workspace/right-panel ownership, terminal tab filtering, live command focus behavior, backend `reattachTerminalTabs` IPC if still used internally/tests, and recent workspace close fixes. Do not remove backend recovery helpers unless proven unused and covered by focused Electron tests. Do not replace `Reattach` with another equally noisy visible prompt.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, update focused source/component tests so `TerminalPanel` no longer renders `terminal-reattach-button` or `Reattach`, and run focused TerminalPanel tests plus Prettier/diff check.
+  root_cause: `TerminalPanel.tsx` rendered a visible `Reattach N` button whenever `state.detachedCount > 0`.
+  implementation: Removed the visible `terminal-reattach-button` / `Reattach {state.detachedCount}` block from TerminalPanel. Backend `reattachTerminalTabs` IPC/API and detached bookkeeping remain for internal/runtime use.
+  validation: Owner validation passed with fixed reviewer approval. PM validation passed together with Browser close fix: Prettier on touched files; RightPanel/TerminalPanel/workspaceTabs focused tests; `git diff --check`.
+  risk: Low Terminal UI polish. Requires installed self-debug to confirm no visible Reattach affordance.
+  commit: owner `d72e10190`
+  next_action: PM merge to main, build Runtime Capsule, restart, and self-debug installed Terminal UI.
 
 - id: project-hover-add-button-missing
   status: installed_effective
