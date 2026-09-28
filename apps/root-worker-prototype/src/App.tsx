@@ -446,6 +446,10 @@ function App() {
   const [draggedWorkspaceTab, setDraggedWorkspaceTab] = useState<string | null>(
     null,
   );
+  const [closingWorkspaceBrowserTabIds, setClosingWorkspaceBrowserTabIds] =
+    useState<string[]>([]);
+  const [closingWorkspaceTerminalTabIds, setClosingWorkspaceTerminalTabIds] =
+    useState<string[]>([]);
   const [
     rightPanelBrowserTabFocusRequest,
     setRightPanelBrowserTabFocusRequest,
@@ -3637,6 +3641,45 @@ function App() {
     return /browser tab not found/i.test(toErrorMessage(error));
   }
 
+  function isTerminalTabNotFoundError(error: unknown) {
+    return /terminal tab not found/i.test(toErrorMessage(error));
+  }
+
+  function rememberClosingWorkspaceBrowserTab(tabId: string) {
+    setClosingWorkspaceBrowserTabIds((current) =>
+      current.includes(tabId) ? current : [...current, tabId],
+    );
+  }
+
+  function forgetClosingWorkspaceBrowserTab(tabId: string) {
+    setClosingWorkspaceBrowserTabIds((current) =>
+      current.filter((id) => id !== tabId),
+    );
+  }
+
+  function rememberClosingWorkspaceTerminalTab(tabId: string) {
+    setClosingWorkspaceTerminalTabIds((current) =>
+      current.includes(tabId) ? current : [...current, tabId],
+    );
+  }
+
+  function forgetClosingWorkspaceTerminalTab(tabId: string) {
+    setClosingWorkspaceTerminalTabIds((current) =>
+      current.filter((id) => id !== tabId),
+    );
+  }
+
+  function restoreWorkspaceTabAfterFailedClose(tab: WorkspaceObjectTab) {
+    const next = upsertWorkspaceTab(workspaceTabsRef.current, tab);
+    workspaceTabsRef.current = next;
+    setWorkspaceTabs(next);
+    storedWorkspaceTabOrderRef.current = storeWorkspaceTabOrder(
+      next,
+      undefined,
+      storedWorkspaceTabOrderRef.current,
+    );
+  }
+
   function pruneMissingWorkspaceBrowserTabs(browserTabIds: string[]) {
     const liveBrowserTabIds = new Set(browserTabIds);
     const currentTabs = workspaceTabsRef.current;
@@ -3682,7 +3725,10 @@ function App() {
 
   function closeWorkspaceTab(
     tabId: string,
-    options: { closeOwnedBrowserTab?: boolean } = {},
+    options: {
+      closeOwnedBrowserTab?: boolean;
+      closeOwnedTerminalTab?: boolean;
+    } = {},
   ) {
     const currentTabs = workspaceTabsRef.current;
     const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId);
@@ -3710,13 +3756,37 @@ function App() {
       closingTab?.kind === "browser" &&
       closingTab.browserTabId
     ) {
+      rememberClosingWorkspaceBrowserTab(closingTab.browserTabId);
       void window.codexDesktop
         .closeBrowserTab(closingTab.browserTabId)
         .catch((error) => {
           if (isBrowserTabNotFoundError(error)) {
             return;
           }
+          restoreWorkspaceTabAfterFailedClose(closingTab);
           setError(toErrorMessage(error));
+        })
+        .finally(() => {
+          forgetClosingWorkspaceBrowserTab(closingTab.browserTabId!);
+        });
+    }
+    if (
+      options.closeOwnedTerminalTab &&
+      closingTab?.kind === "terminal" &&
+      closingTab.terminalTabId
+    ) {
+      rememberClosingWorkspaceTerminalTab(closingTab.terminalTabId);
+      void window.codexDesktop
+        .closeTerminalTab(closingTab.terminalTabId)
+        .catch((error) => {
+          if (isTerminalTabNotFoundError(error)) {
+            return;
+          }
+          restoreWorkspaceTabAfterFailedClose(closingTab);
+          setError(toErrorMessage(error));
+        })
+        .finally(() => {
+          forgetClosingWorkspaceTerminalTab(closingTab.terminalTabId!);
         });
     }
     if (currentVisibleWorkspaceTabId !== tabId) {
@@ -3893,18 +3963,22 @@ function App() {
         EMPTY_GIT_DIFF_PREVIEW)
       : EMPTY_GIT_DIFF_PREVIEW;
   const detachedWorkspaceBrowserTabIds = useMemo(
-    () =>
-      workspaceTabs
+    () => [
+      ...workspaceTabs
         .filter((tab) => tab.kind === "browser" && tab.browserTabId)
         .map((tab) => tab.browserTabId as string),
-    [workspaceTabs],
+      ...closingWorkspaceBrowserTabIds,
+    ],
+    [closingWorkspaceBrowserTabIds, workspaceTabs],
   );
   const detachedWorkspaceTerminalTabIds = useMemo(
-    () =>
-      workspaceTabs
+    () => [
+      ...workspaceTabs
         .filter((tab) => tab.kind === "terminal" && tab.terminalTabId)
         .map((tab) => tab.terminalTabId as string),
-    [workspaceTabs],
+      ...closingWorkspaceTerminalTabIds,
+    ],
+    [closingWorkspaceTerminalTabIds, workspaceTabs],
   );
 
   return (
@@ -4006,6 +4080,7 @@ function App() {
                         event.stopPropagation();
                         closeWorkspaceTab(tab.id, {
                           closeOwnedBrowserTab: true,
+                          closeOwnedTerminalTab: true,
                         });
                       }}
                       onKeyDown={(event) => {
@@ -4014,6 +4089,7 @@ function App() {
                           event.stopPropagation();
                           closeWorkspaceTab(tab.id, {
                             closeOwnedBrowserTab: true,
+                            closeOwnedTerminalTab: true,
                           });
                         }
                       }}
