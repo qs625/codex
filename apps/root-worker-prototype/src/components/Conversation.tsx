@@ -47,6 +47,7 @@ type CompactRowProps = {
   onOpenLocalFile?: (target: string) => void;
   onOpenArtifactUrl?: (url: string) => void;
   showArchivedHistory?: boolean;
+  archivedHistoryInitiallyOpen?: boolean;
 };
 
 type ArchivedHistoryRowProps = {
@@ -1682,11 +1683,16 @@ export const CompactRow = memo(function CompactRow({
   onOpenLocalFile,
   onOpenArtifactUrl,
   showArchivedHistory = true,
+  archivedHistoryInitiallyOpen = false,
 }: CompactRowProps) {
   const archivedCells = entry.archivedCells ?? [];
   const archivedEntryCount = entry.archivedEntryCount ?? archivedCells.length;
   const hasArchivedHistory =
     showArchivedHistory && (archivedCells.length > 0 || archivedEntryCount > 0);
+  const [isArchivedHistoryOpen, setIsArchivedHistoryOpen] = useState(
+    archivedHistoryInitiallyOpen,
+  );
+  const compactSummary = entry.compactSummary?.trim() ?? "";
 
   return (
     <section className="compact-row" aria-label="Context compacted">
@@ -1702,26 +1708,42 @@ export const CompactRow = memo(function CompactRow({
             <time>{entry.timestamp}</time>
           </div>
         </div>
+        {compactSummary ? (
+          <div className="compact-summary-body">
+            <MarkdownContent
+              text={compactSummary}
+              {...(onOpenLocalFile ? { onOpenLocalFile } : {})}
+            />
+          </div>
+        ) : null}
         {hasArchivedHistory ? (
-          <details className="compact-history-details">
+          <details
+            className="compact-history-details"
+            open={isArchivedHistoryOpen}
+            onToggle={(event) =>
+              setIsArchivedHistoryOpen(event.currentTarget.open)
+            }
+          >
             <summary>
               Previous context · {archivedEntryCount} item
               {archivedEntryCount === 1 ? "" : "s"}
             </summary>
-            <div className="compact-history-body">
-              {archivedCells.map((cell) => (
-                <div
-                  key={cell.id}
-                  className={`archive-cell archive-cell-${cell.kind}`}
-                >
-                  {renderArchivedConversationCell(
-                    cell,
-                    onOpenLocalFile,
-                    onOpenArtifactUrl,
-                  )}
-                </div>
-              ))}
-            </div>
+            {isArchivedHistoryOpen ? (
+              <div className="compact-history-body">
+                {archivedCells.map((cell) => (
+                  <div
+                    key={cell.id}
+                    className={`archive-cell archive-cell-${cell.kind}`}
+                  >
+                    {renderArchivedConversationCell(
+                      cell,
+                      onOpenLocalFile,
+                      onOpenArtifactUrl,
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </details>
         ) : null}
       </div>
@@ -1889,7 +1911,9 @@ function areCompactRowPropsEqual(
   return (
     previous.entry === next.entry &&
     previous.onOpenLocalFile === next.onOpenLocalFile &&
-    previous.onOpenArtifactUrl === next.onOpenArtifactUrl
+    previous.onOpenArtifactUrl === next.onOpenArtifactUrl &&
+    previous.showArchivedHistory === next.showArchivedHistory &&
+    previous.archivedHistoryInitiallyOpen === next.archivedHistoryInitiallyOpen
   );
 }
 

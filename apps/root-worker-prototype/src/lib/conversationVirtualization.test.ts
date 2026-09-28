@@ -108,7 +108,7 @@ test("estimates archived history rows separately from compact rows", () => {
   assert.ok(estimateConversationCellHeight(compactCell) > 0);
 });
 
-test("compact row height ignores archived details and inline summary fields", () => {
+test("compact row height ignores archived details while accounting for summary text", () => {
   const collapsedCompactCell: ConversationCell = {
     id: "compact-collapsed",
     kind: "compact",
@@ -142,10 +142,10 @@ test("compact row height ignores archived details and inline summary fields", ()
     estimateConversationCellHeight(expandedCompactCell),
     estimateConversationCellHeight(collapsedCompactCell),
   );
-  assert.equal(estimateConversationCellHeight(collapsedCompactCell), 156);
+  assert.ok(estimateConversationCellHeight(collapsedCompactCell) > 156);
 });
 
-test("compact row height stays fixed for large compact summary fields", () => {
+test("compact row height expands for large compact summaries", () => {
   const shortCompactCell: ConversationCell = {
     id: "compact-short",
     kind: "compact",
@@ -177,8 +177,8 @@ test("compact row height stays fixed for large compact summary fields", () => {
   const shortHeight = estimateConversationCellHeight(shortCompactCell);
   const longHeight = estimateConversationCellHeight(longCompactCell);
 
-  assert.equal(longHeight, shortHeight);
-  assert.equal(shortHeight, 156);
+  assert.ok(shortHeight > 156);
+  assert.ok(longHeight > shortHeight);
 });
 
 test("context section entries are estimated as separate rows", () => {

@@ -4063,6 +4063,14 @@ body.macos-window-chrome
   border-bottom: 1px solid rgba(75, 85, 99, 0.1);
 }
 
+.compact-summary-body {
+  min-width: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(75, 85, 99, 0.08);
+  background: rgba(255, 255, 255, 0.58);
+  overflow-wrap: anywhere;
+}
+
 .archive-summary {
   cursor: pointer;
 }

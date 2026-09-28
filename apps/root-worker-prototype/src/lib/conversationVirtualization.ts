@@ -13,6 +13,7 @@ const TEXT_LINE_HEIGHT = 22;
 const TEXT_CHARS_PER_LINE = 72;
 const TOOL_CHARS_PER_LINE = 84;
 const ATTACHMENT_BLOCK_HEIGHT = 176;
+const COMPACT_SUMMARY_CHARS_PER_LINE = 78;
 
 export type ConversationVirtualLayout = {
   heights: number[];
@@ -144,8 +145,16 @@ function estimateToolCellHeight(entries: ConversationEntry[]) {
   return height;
 }
 
-function estimateCompactCellHeight(_entry: ConversationEntry | undefined) {
-  return DEFAULT_COMPACT_ROW_HEIGHT;
+function estimateCompactCellHeight(entry: ConversationEntry | undefined) {
+  const summary = entry?.compactSummary?.trim();
+  if (!summary) {
+    return DEFAULT_COMPACT_ROW_HEIGHT;
+  }
+  return (
+    DEFAULT_COMPACT_ROW_HEIGHT +
+    estimateWrappedTextHeight(summary, COMPACT_SUMMARY_CHARS_PER_LINE, 1) +
+    24
+  );
 }
 
 function estimateNestedCellsHeight(cells: ConversationCell[]) {
