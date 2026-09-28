@@ -5,6 +5,7 @@
 - Older completed work and stale known issues move into this directory instead of staying in the live progress file.
 
 ## Volumes
+- [2026-09-28-tranches-26-44.md](2026-09-28-tranches-26-44.md): archived full continuous-code-organization tranche 26-44 entries from the live progress file on 2026-09-28; live file keeps a compact pending-delivery commit summary.
 - [2026-09-28.md](2026-09-28.md): archived older continuous-code-organization tranche 4-25 entries from the live progress file on 2026-09-28.
 - [2026-09-19.md](2026-09-19.md): archived live progress entries and known-issues snapshot moved from the overgrown live progress file on 2026-09-19.
 - [through-2026-08-18.md](through-2026-08-18.md): work items and completed entries moved from the live progress file on 2026-09-03.
