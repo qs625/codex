@@ -8,9 +8,47 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: fix two newly reported installed UI regressions from 2026-09-28: (1) compact still causes subsequent/current messages to disappear from the main conversation, and (2) creating a workspace Browser makes the right-side Browser panel refresh/flash while the workspace Browser covers the add button popup. Current installed Runtime Capsule is `sha256:cb8c2695ce2ac9d45c4cd6ecc0f35c62f400ebf40c5b1d386890b026fbe932cd` from main `5dae2e01b`; main is currently at `e377d9c88`.
+Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28: (1) after the workspace add-menu Browser isolation fix, clicking Browser creates/selects the workspace Browser tab but Browser content does not display; (2) the add-new-project popup dropdown disappears when conversation messages/output refresh. Current installed Runtime Capsule is `sha256:95599851c0936c5f237b22e3d0eab4bc55f47315440c92c68cc85746b6a2444c` from main `7660081cc`; main is currently at `77f5a4424`.
 
 ## Active Work
+
+- id: workspace-browser-add-menu-content-missing
+  status: dispatched
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/workspace-browser-add-content-visible
+  task_type: frontend_workspace_browser_native_view_regression_fix
+  depends_on: main `77f5a4424`; installed Runtime Capsule `sha256:95599851c0936c5f237b22e3d0eab4bc55f47315440c92c68cc85746b6a2444c`; user reported that after clicking Browser in the workspace add popup, the Browser content no longer displays
+  files: expected `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/BrowserPanel.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, Browser native view IPC/bounds helpers, focused RightPanel/BrowserPanel/Electron Browser tests as root cause requires
+  base_commit: `77f5a4424`
+  product_contract: Selecting Browser from the workspace add menu must create/select a workspace-owned Browser tab that visibly shows the Browser content/navigation surface. The fix must keep the previous contract: workspace Browser creation must not refresh/flash or select the right-side Browser manager, and the workspace add popup must remain above Browser native content while open. Workspace Browser native view visibility/focus must be scoped to the visible workspace surface, not achieved by re-polluting the global manager active tab.
+  problem_model: The previous fix changed workspace auto-create to `createBrowserTab({ activate: false })` to avoid right-panel manager pollution. The likely missed edge is that Electron/native Browser view display may still be tied to the backend/global active Browser tab, so the newly bound workspace tab exists in frontend state but its native content is not shown. Another possibility is `nativeOverlayActive` remains true too long after menu selection, Browser bounds are not resent after binding, or workspace Browser variant treats the explicit tab as selected while native view visibility remains blocked.
+  constraints: Preserve right-panel manager isolation, add popup top-layer behavior, Browser native lifecycle, stale-id close suppression, workspace tab persistence/order, Terminal/Conversation fixes, provider/API shape, and installed compact display fix. Do not revert to `activate: true` if that reintroduces right-panel flash; do not hide the right Browser panel, force remount broadly, rely on timeouts, or treat a toolbar-only Browser panel as content-visible.
+  expected_investigation: Reproduce in installed or dev path and determine whether the content is missing because the backend/native active tab was never selected for the workspace surface, bounds/visibility were not applied after bind, overlay hide condition stayed active, or BrowserPanel content rendering short-circuited. Explain why the prior self-debug only checked tab creation/right-panel/popup layering and missed content visibility.
+  expected_implementation: Add a provider-neutral/frontend ownership boundary that allows workspace Browser to display its bound native tab without mutating the right-panel manager selected state. If backend selection is required for native view display, introduce a workspace-scoped display/show call or narrow frontend call path that does not update manager selection. Ensure overlay hide applies while popup is open and clears immediately after close/selection with bounds re-applied. Add focused regression tests that prove workspace Browser add creates a visible content surface, while right-panel manager state remains unchanged.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused RightPanel/BrowserPanel/workspace tests, relevant Electron Browser native-view tests if touched, Prettier, and `git diff --check`. PM will merge, build Runtime Capsule, restart, and self-debug installed Browser add flow including content visibility, right-panel non-flash, and popup layering.
+  commit: pending
+  next_action: owner_dev to reproduce/root-cause/fix and hand back commit, reviewer result, validation, risk, and merge recommendation.
+
+- id: project-add-popup-dropdown-disappears-on-output
+  status: dispatched
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/workspace-browser-add-content-visible
+  task_type: frontend_popup_stability_regression_fix
+  depends_on: main `77f5a4424`; installed Runtime Capsule `sha256:95599851c0936c5f237b22e3d0eab4bc55f47315440c92c68cc85746b6a2444c`; user reported that a dropdown inside the add-new-project popup disappears when messages/output are produced
+  files: expected `apps/root-worker-prototype/src/components/Panels.tsx`, project add/create popup component/state, global outside-click/focus/scroll dismissal hooks, conversation/output refresh interaction surfaces, and focused component tests as root cause requires
+  base_commit: `77f5a4424`
+  product_contract: The add-new-project popup and any dropdown inside it are user-controlled transient UI. Conversation message/tool/output refresh, virtual list rerender, or unrelated app state updates are not a dismiss intent and must not close the popup/dropdown. Valid dismissal remains explicit selection/submit/cancel, outside pointer/focus, Escape, route/workspace change that invalidates the target, or viewport/layout change if explicitly part of the existing popup contract. Dropdown interaction must remain stable while background agent output streams.
+  problem_model: This resembles the earlier workspace add menu disappearing during output refresh. Likely hotspots are document capture scroll/focus listeners, component remount due to unstable keys/props, focus restoration from conversation updates, outside-click detection misclassifying virtual list/output changes, or popup/dropdown state being tied to parent render state that resets when live messages arrive.
+  constraints: Preserve Project add hover behavior, Project/Chat creation semantics, valid outside/Escape dismissal, accessibility focus/aria, and existing workspace add menu stability fixes. Do not keep popups permanently open after real outside clicks, suppress all conversation rerenders, use timeouts, or hide the dropdown under another layer.
+  expected_investigation: Reproduce or source-trace which event closes the project popup/dropdown during message output. Identify whether it is unmount/remount, blur/focusout, scroll, outside-pointer logic, or state reset. Compare with the existing workspace add-menu fix so the popup stability model is consistent across top-level add menus.
+  expected_implementation: Make popup/dropdown lifetime depend on explicit user dismissal and real target invalidation, not on unrelated output refresh. If needed, narrow dismissal listeners to trusted pointer/keyboard events and ignore internal/virtualized/conversation layout churn. Add component/source tests simulating live output or rerender while dropdown is open and asserting it remains open, plus outside/Escape still closes.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused Panels/project popup tests and any shared popup/dropdown tests, Prettier, and `git diff --check`. PM will verify installed behavior after merge/restart.
+  commit: pending
+  next_action: owner_dev to fix together with workspace Browser content regression if file/semantic conflicts are manageable; otherwise report split recommendation.
 
 - id: compact-after-current-message-still-hidden
   status: installed_effective
