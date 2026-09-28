@@ -27,18 +27,16 @@ import {
   TerminalIcon,
   XIcon,
 } from "./icons";
-import { BrowserPanel, type BrowserWorkspaceTabDescriptor } from "./BrowserPanel";
+import {
+  BrowserPanel,
+  type BrowserWorkspaceTabDescriptor,
+} from "./BrowserPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { LocalImagePreview } from "./Conversation";
-import {
-  countActiveCommandItemsWithProcess,
-} from "../lib/activeCommands";
+import { countActiveCommandItemsWithProcess } from "../lib/activeCommands";
 import { isChatCompatCwd } from "../lib/chatCompat";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
-import {
-  buildGitPanelViewModel,
-  isGitGraphCommit,
-} from "../lib/gitPanelView";
+import { buildGitPanelViewModel, isGitGraphCommit } from "../lib/gitPanelView";
 import { filePreviewOpenInBrowserActionVisible } from "../lib/filePreviewBrowser";
 import { MarkdownContent } from "../lib/markdown";
 import { resolveRightPanelTabClick } from "../lib/rightPanelView";
@@ -95,7 +93,10 @@ export {
   resolveBrowserPanelTabSelection,
   shouldClearBrowserLocalError,
 } from "./BrowserPanel";
-export type { BrowserPanelTabState, BrowserWorkspaceTabDescriptor } from "./BrowserPanel";
+export type {
+  BrowserPanelTabState,
+  BrowserWorkspaceTabDescriptor,
+} from "./BrowserPanel";
 export { resolveThreadAnalysisCommandFocus } from "../lib/threadAnalysisCommandFocus";
 export type { ThreadAnalysisCommandFocusTarget } from "../lib/threadAnalysisCommandFocus";
 
@@ -109,15 +110,25 @@ type FilePreviewEditState = {
   error: string | null;
 };
 
-type GitSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitSnapshot"]>>;
+type GitSnapshot = Awaited<
+  ReturnType<Window["codexDesktop"]["readGitSnapshot"]>
+>;
 type GitChange = GitSnapshot["changes"][number];
 type GitGraphItem = GitSnapshot["graph"][number];
 type GitGraphCommit = Extract<GitGraphItem, { type: "commit" }>;
-type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
-type GitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitFileDiff"]>>;
-type GitCommitFileDiffSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFileDiff"]>>;
+type GitCommitFilesSnapshot = Awaited<
+  ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>
+>;
+type GitFileDiffSnapshot = Awaited<
+  ReturnType<Window["codexDesktop"]["readGitFileDiff"]>
+>;
+type GitCommitFileDiffSnapshot = Awaited<
+  ReturnType<Window["codexDesktop"]["readGitCommitFileDiff"]>
+>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
-export type GitDiffPreviewSnapshot = GitFileDiffSnapshot | GitCommitFileDiffSnapshot;
+export type GitDiffPreviewSnapshot =
+  | GitFileDiffSnapshot
+  | GitCommitFileDiffSnapshot;
 export type GitDiffPreviewState = {
   loading: boolean;
   diff: GitDiffPreviewSnapshot | null;
@@ -216,6 +227,7 @@ export function RightPanel({
   onOpenPreviewInBrowser,
   onOpenTreeFile,
   onOpenBrowserTabInWorkspace,
+  onBrowserTabIdsChange,
   onOpenTerminalTabInWorkspace,
   onOpenWorkspaceObject,
   onReturnWorkspaceObject,
@@ -262,11 +274,15 @@ export function RightPanel({
   availableSkillCount: number;
   availableWorkflows: WorkflowSummary[];
   isCollapsed: boolean;
-  onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
+  onNavigateToSymbol: (
+    destination: FileLocation,
+    sourceLocation: FileLocation,
+  ) => void;
   onOpenPreviewExternally: () => void;
   onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
   onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
+  onBrowserTabIdsChange?: (tabIds: string[]) => void;
   onOpenTerminalTabInWorkspace?: (
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
   ) => void;
@@ -356,7 +372,10 @@ export function RightPanel({
     updateGitDiffPreview({ loading: false, diff: null, error: null });
   }
 
-  function beginGitDiffRequest(targetId: string, options: { exclusive?: boolean } = {}) {
+  function beginGitDiffRequest(
+    targetId: string,
+    options: { exclusive?: boolean } = {},
+  ) {
     const scope = gitDiffRequestSequenceRef.current + 1;
     gitDiffRequestSequenceRef.current = scope;
     if (options.exclusive) {
@@ -410,7 +429,10 @@ export function RightPanel({
     view: RightPanelView | null = null,
   ): WorkspaceObjectDragPayload | null {
     const payload = readWorkspaceObjectDragData(event.dataTransfer);
-    if (!payload || (payload.kind !== "browser" && payload.kind !== "terminal")) {
+    if (
+      !payload ||
+      (payload.kind !== "browser" && payload.kind !== "terminal")
+    ) {
       return null;
     }
     if (view != null && payload.kind !== workspaceObjectKindForView(view)) {
@@ -452,9 +474,18 @@ export function RightPanel({
     const targetId = `worktree:${thread.cwd}:${mode}:${change.originalPath ?? ""}:${change.path}`;
     const title = change.path.split("/").filter(Boolean).at(-1) ?? change.path;
     const subtitle = `${mode} diff · ${change.path}`;
-    const scope = beginGitDiffRequest(targetId, { exclusive: !workspaceTabsEnabled });
+    const scope = beginGitDiffRequest(targetId, {
+      exclusive: !workspaceTabsEnabled,
+    });
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
-    updateGitDiffPreview({ loading: true, diff: null, error: null, targetId, title, subtitle });
+    updateGitDiffPreview({
+      loading: true,
+      diff: null,
+      error: null,
+      targetId,
+      title,
+      subtitle,
+    });
     if (!workspaceTabsEnabled) {
       onSetFilePanelView("preview");
       onSetActiveView("preview");
@@ -484,7 +515,10 @@ export function RightPanel({
           updateGitDiffPreview({
             loading: false,
             diff: null,
-            error: error instanceof Error ? error.message : "Failed to read Git diff.",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to read Git diff.",
             targetId,
             title,
             subtitle,
@@ -502,9 +536,18 @@ export function RightPanel({
     const shortHash = commit.hash.slice(0, 7);
     const title = `${fileName} diff`;
     const subtitle = `${shortHash} · ${file.path}`;
-    const scope = beginGitDiffRequest(targetId, { exclusive: !workspaceTabsEnabled });
+    const scope = beginGitDiffRequest(targetId, {
+      exclusive: !workspaceTabsEnabled,
+    });
     gitDiffBasePreviewKey.current = filePreviewIdentity(preview, previewRootId);
-    updateGitDiffPreview({ loading: true, diff: null, error: null, targetId, title, subtitle });
+    updateGitDiffPreview({
+      loading: true,
+      diff: null,
+      error: null,
+      targetId,
+      title,
+      subtitle,
+    });
     if (!workspaceTabsEnabled) {
       onSetFilePanelView("preview");
       onSetActiveView("preview");
@@ -535,7 +578,10 @@ export function RightPanel({
           updateGitDiffPreview({
             loading: false,
             diff: null,
-            error: error instanceof Error ? error.message : "Failed to read Git commit diff.",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to read Git commit diff.",
             targetId,
             title,
             subtitle,
@@ -582,9 +628,7 @@ export function RightPanel({
             onDragOver={(event) =>
               handleWorkspaceObjectReturnDragOver(event, null)
             }
-            onDrop={(event) =>
-              handleWorkspaceObjectReturnDrop(event, null)
-            }
+            onDrop={(event) => handleWorkspaceObjectReturnDrop(event, null)}
           >
             {effectiveActiveView === "skills" ? (
               <ThreadAnalysisPanel
@@ -614,6 +658,7 @@ export function RightPanel({
                 navigationRequest={browserNavigationRequest ?? null}
                 onNavigationRequestHandled={onBrowserNavigationRequestHandled}
                 onOpenBrowserTabInWorkspace={onOpenBrowserTabInWorkspace}
+                onBrowserTabIdsChange={onBrowserTabIdsChange}
                 focusBrowserTabRequest={browserTabFocusRequest}
                 detachedBrowserTabIds={detachedBrowserTabIds}
               />
@@ -638,9 +683,15 @@ export function RightPanel({
                 onNavigateToSymbol={onNavigateToSymbol}
                 onOpenPreviewExternally={onOpenPreviewExternally}
                 onOpenPreviewInBrowser={onOpenPreviewInBrowser}
-                gitDiffPreview={workspaceTabsEnabled ? null : gitDiffPreview.diff}
-                gitDiffPreviewError={workspaceTabsEnabled ? null : gitDiffPreview.error}
-                gitDiffPreviewLoading={workspaceTabsEnabled ? false : gitDiffPreview.loading}
+                gitDiffPreview={
+                  workspaceTabsEnabled ? null : gitDiffPreview.diff
+                }
+                gitDiffPreviewError={
+                  workspaceTabsEnabled ? null : gitDiffPreview.error
+                }
+                gitDiffPreviewLoading={
+                  workspaceTabsEnabled ? false : gitDiffPreview.loading
+                }
                 onOpenTreeFile={openTreeFileFromPreview}
                 onPreviewUpdated={onPreviewUpdated}
                 onToggleTreeDirectory={onToggleTreeDirectory}
@@ -715,50 +766,48 @@ export function RightPanel({
               badge: string;
             }>
           ).map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                draggable={workspaceObjectKindForView(item.view) != null}
-                className={`panel-rail-button ${
-                  item.view === effectiveActiveView ? "active" : ""
-                }`}
-                aria-label={item.label}
-                onDoubleClick={() => {
-                  const kind = workspaceObjectKindForView(item.view);
-                  if (kind) {
-                    onOpenWorkspaceObject?.(kind);
-                  }
-                }}
-                onDragStart={(event) =>
-                  handleWorkspaceObjectDragStart(event, item.view)
+            <button
+              key={item.label}
+              type="button"
+              draggable={workspaceObjectKindForView(item.view) != null}
+              className={`panel-rail-button ${
+                item.view === effectiveActiveView ? "active" : ""
+              }`}
+              aria-label={item.label}
+              onDoubleClick={() => {
+                const kind = workspaceObjectKindForView(item.view);
+                if (kind) {
+                  onOpenWorkspaceObject?.(kind);
                 }
-                onDragOver={(event) =>
-                  handleWorkspaceObjectReturnDragOver(event, item.view)
+              }}
+              onDragStart={(event) =>
+                handleWorkspaceObjectDragStart(event, item.view)
+              }
+              onDragOver={(event) =>
+                handleWorkspaceObjectReturnDragOver(event, item.view)
+              }
+              onDrop={(event) =>
+                handleWorkspaceObjectReturnDrop(event, item.view)
+              }
+              onClick={() => {
+                const next = resolveRightPanelTabClick({
+                  activeView: effectiveActiveView,
+                  clickedView: item.view,
+                  isCollapsed,
+                });
+                if (item.view === "terminal") {
+                  setTerminalPanelFocusRequestToken((current) => current + 1);
                 }
-                onDrop={(event) =>
-                  handleWorkspaceObjectReturnDrop(event, item.view)
-                }
-                onClick={() => {
-                  const next = resolveRightPanelTabClick({
-                    activeView: effectiveActiveView,
-                    clickedView: item.view,
-                    isCollapsed,
-                  });
-                  if (item.view === "terminal") {
-                    setTerminalPanelFocusRequestToken(
-                      (current) => current + 1,
-                    );
-                  }
-                  onSetActiveView(next.nextView);
-                  onSetCollapsed(next.nextCollapsed);
-                }}
-              >
-                <span className="panel-rail-icon">{item.icon}</span>
-                {item.badge ? (
-                  <span className="panel-rail-badge">{item.badge}</span>
-                ) : null}
-              </button>
-            ))}
+                onSetActiveView(next.nextView);
+                onSetCollapsed(next.nextCollapsed);
+              }}
+            >
+              <span className="panel-rail-icon">{item.icon}</span>
+              {item.badge ? (
+                <span className="panel-rail-badge">{item.badge}</span>
+              ) : null}
+            </button>
+          ))}
         </nav>
       </div>
     </aside>
@@ -803,9 +852,19 @@ function WorkflowRunSummary({ run }: { run: WorkflowRunView }) {
   return (
     <section className="workflow-summary-card">
       <div className="workflow-summary-grid">
-        <WorkflowSummaryMetric label="Runner" value={run.runnerStatus || "unknown"} />
-        <WorkflowSummaryMetric label="Run" value={run.statusLabel} tone={run.statusTone} />
-        <WorkflowSummaryMetric label="Updated" value={formatWorkflowTimestamp(run.updatedAt)} />
+        <WorkflowSummaryMetric
+          label="Runner"
+          value={run.runnerStatus || "unknown"}
+        />
+        <WorkflowSummaryMetric
+          label="Run"
+          value={run.statusLabel}
+          tone={run.statusTone}
+        />
+        <WorkflowSummaryMetric
+          label="Updated"
+          value={formatWorkflowTimestamp(run.updatedAt)}
+        />
       </div>
       <div className="workflow-message" title={run.message}>
         {run.message || "No workflow message."}
@@ -862,7 +921,9 @@ function WorkflowStageRail({ run }: { run: WorkflowRunView }) {
         <div className="workflow-graph-empty">Graph unavailable</div>
       )}
 
-      {run.graphNote ? <p className="workflow-graph-note">{run.graphNote}</p> : null}
+      {run.graphNote ? (
+        <p className="workflow-graph-note">{run.graphNote}</p>
+      ) : null}
     </section>
   );
 }
@@ -911,7 +972,9 @@ function WorkflowTimeline({ timeline }: { timeline: WorkflowTimelineItem[] }) {
                   {item.statusLabel}
                 </span>
               </div>
-              <span title={item.message}>{item.message || item.runnerStatus}</span>
+              <span title={item.message}>
+                {item.message || item.runnerStatus}
+              </span>
               <time dateTime={new Date(item.updatedAt * 1000).toISOString()}>
                 {formatWorkflowTimestamp(item.updatedAt)}
               </time>
@@ -940,7 +1003,9 @@ function WorkflowEmptyState({
               <span className="context-section-eyebrow">Available</span>
               <strong>Workflows</strong>
             </div>
-            <span className="context-inline-metric">{availableWorkflows.length}</span>
+            <span className="context-inline-metric">
+              {availableWorkflows.length}
+            </span>
           </div>
           <div className="workflow-available-list">
             {availableWorkflows.slice(0, 5).map((workflow) => (
@@ -1143,7 +1208,9 @@ function ThreadAnalysisPanel({
         >
           <OverviewMetric
             label="Context"
-            value={contextUsage.hasBudgetData ? contextUsage.budgetUsedPercent : 0}
+            value={
+              contextUsage.hasBudgetData ? contextUsage.budgetUsedPercent : 0
+            }
             tone="open"
           />
           <OverviewMetric
@@ -1212,8 +1279,12 @@ function ThreadAnalysisPanel({
                     backgroundColor: getContextUsageCategoryColor(category.id),
                   }}
                 />
-                <span className="context-category-pill-label">{category.label}</span>
-                <span className="context-category-pill-value">{category.sharePercent}%</span>
+                <span className="context-category-pill-label">
+                  {category.label}
+                </span>
+                <span className="context-category-pill-value">
+                  {category.sharePercent}%
+                </span>
               </div>
             ))}
           </div>
@@ -1242,7 +1313,7 @@ function ThreadAnalysisPanel({
                 </div>
                 {section.monitors.length > 0 ? (
                   <div className="monitor-list">
-                    {section.monitors.map((monitor) => (
+                    {section.monitors.map((monitor) =>
                       monitor.kind === "command" ? (
                         <button
                           key={monitor.id}
@@ -1257,8 +1328,8 @@ function ThreadAnalysisPanel({
                         <article key={monitor.id} className="monitor-row">
                           <MonitorRowContent monitor={monitor} />
                         </article>
-                      )
-                    ))}
+                      ),
+                    )}
                   </div>
                 ) : (
                   <div className="monitor-empty">{section.emptyLabel}</div>
@@ -1282,12 +1353,20 @@ function ThreadAnalysisPanel({
           {contextUsage.loadedConcreteSkills.length > 0 ? (
             <div className="context-skill-list">
               {contextUsage.loadedConcreteSkills.map((skill) => (
-                <article key={`${skill.kind}:${skill.path}:${skill.name}`} className="context-skill-row">
+                <article
+                  key={`${skill.kind}:${skill.path}:${skill.name}`}
+                  className="context-skill-row"
+                >
                   <div className="context-skill-copy">
                     <strong>{skill.name}</strong>
-                    <span>loaded {skill.loadCount} time{skill.loadCount === 1 ? "" : "s"}</span>
+                    <span>
+                      loaded {skill.loadCount} time
+                      {skill.loadCount === 1 ? "" : "s"}
+                    </span>
                   </div>
-                  <span className={`skill-kind-badge ${skill.kind}`}>{formatSkillKind(skill.kind)}</span>
+                  <span className={`skill-kind-badge ${skill.kind}`}>
+                    {formatSkillKind(skill.kind)}
+                  </span>
                 </article>
               ))}
             </div>
@@ -1318,7 +1397,9 @@ function RuntimeRestartProgressCard({
   ].filter((item): item is [string, string] => Boolean(item));
 
   return (
-    <section className={`context-section-card runtime-restart-card ${progress.status}`}>
+    <section
+      className={`context-section-card runtime-restart-card ${progress.status}`}
+    >
       <div className="context-section-header">
         <div>
           <span className="context-section-eyebrow">Runtime Restart</span>
@@ -1428,7 +1509,10 @@ export function ScheduleAgendaLayout({
     return null;
   }
 
-  const itemCount = groups.reduce((total, group) => total + group.items.length, 0);
+  const itemCount = groups.reduce(
+    (total, group) => total + group.items.length,
+    0,
+  );
   const groupsId = "schedule-agenda-groups";
 
   return (
@@ -1533,7 +1617,9 @@ function GoalDetailPanel({
       <div className="context-section-header">
         <div>
           <span className="context-section-eyebrow">Thread Goal</span>
-          <strong>{goal ? formatGoalStatus(goal.status) : "No active goal"}</strong>
+          <strong>
+            {goal ? formatGoalStatus(goal.status) : "No active goal"}
+          </strong>
         </div>
         <div className="goal-detail-actions">
           {primaryAction ? (
@@ -1569,9 +1655,7 @@ function GoalDetailPanel({
           </div>
         </>
       ) : (
-        <p className="goal-detail-empty">
-          No active goal.
-        </p>
+        <p className="goal-detail-empty">No active goal.</p>
       )}
       {actionError ? (
         <p className="goal-detail-error" role="status">
@@ -1741,15 +1825,18 @@ function GitPanel({
   const [changesCollapsed, setChangesCollapsed] = useState(false);
   const [graphPanePercent, setGraphPanePercent] = useState(66);
   const [isResizingPanes, setIsResizingPanes] = useState(false);
-  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(
+    null,
+  );
   const [stagedChangesCollapsed, setStagedChangesCollapsed] = useState(false);
-  const [unstagedChangesCollapsed, setUnstagedChangesCollapsed] = useState(false);
+  const [unstagedChangesCollapsed, setUnstagedChangesCollapsed] =
+    useState(false);
   const [commitFilesByHash, setCommitFilesByHash] = useState<
     Record<string, GitCommitFilesSnapshot | undefined>
   >({});
-  const [commitFilesLoadingByHash, setCommitFilesLoadingByHash] = useState<Record<string, boolean>>(
-    {},
-  );
+  const [commitFilesLoadingByHash, setCommitFilesLoadingByHash] = useState<
+    Record<string, boolean>
+  >({});
   const lastGitCwd = useRef<string | null>(null);
   const gitRequestScope = useRef(0);
   const graphScroll = useDragScroll<HTMLDivElement>();
@@ -1782,7 +1869,10 @@ function GitPanel({
 
     setLoading(true);
     window.codexDesktop
-      .readGitSnapshot(thread.cwd, selectedGraphRef ? { ref: selectedGraphRef } : undefined)
+      .readGitSnapshot(
+        thread.cwd,
+        selectedGraphRef ? { ref: selectedGraphRef } : undefined,
+      )
       .then((nextSnapshot) => {
         if (!cancelled) {
           setSnapshot(nextSnapshot);
@@ -1802,7 +1892,10 @@ function GitPanel({
             refs: [],
             graph: [],
             changes: [],
-            error: error instanceof Error ? error.message : "Failed to read Git status.",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to read Git status.",
           };
           setSnapshot(unavailableSnapshot);
         }
@@ -1824,7 +1917,12 @@ function GitPanel({
   );
 
   function loadCommitFiles(hash: string) {
-    if (!thread || !hasProjectCwd || commitFilesByHash[hash] || commitFilesLoadingByHash[hash]) {
+    if (
+      !thread ||
+      !hasProjectCwd ||
+      commitFilesByHash[hash] ||
+      commitFilesLoadingByHash[hash]
+    ) {
       return;
     }
 
@@ -1834,7 +1932,10 @@ function GitPanel({
       .readGitCommitFiles(thread.cwd, hash)
       .then((filesSnapshot) => {
         if (gitRequestScope.current === scope) {
-          setCommitFilesByHash((current) => ({ ...current, [hash]: filesSnapshot }));
+          setCommitFilesByHash((current) => ({
+            ...current,
+            [hash]: filesSnapshot,
+          }));
         }
       })
       .catch((error) => {
@@ -1844,14 +1945,20 @@ function GitPanel({
             [hash]: {
               available: false,
               files: [],
-              error: error instanceof Error ? error.message : "Failed to read commit files.",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to read commit files.",
             },
           }));
         }
       })
       .finally(() => {
         if (gitRequestScope.current === scope) {
-          setCommitFilesLoadingByHash((current) => ({ ...current, [hash]: false }));
+          setCommitFilesLoadingByHash((current) => ({
+            ...current,
+            [hash]: false,
+          }));
         }
       });
   }
@@ -1876,7 +1983,9 @@ function GitPanel({
     setGraphPanePercent(Math.min(82, Math.max(35, nextPercent)));
   }
 
-  function handlePaneSplitterPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+  function handlePaneSplitterPointerDown(
+    event: React.PointerEvent<HTMLDivElement>,
+  ) {
     if (changesCollapsed) {
       return;
     }
@@ -1886,7 +1995,9 @@ function GitPanel({
     event.preventDefault();
   }
 
-  function handlePaneSplitterPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+  function handlePaneSplitterPointerMove(
+    event: React.PointerEvent<HTMLDivElement>,
+  ) {
     if (!isResizingPanes) {
       return;
     }
@@ -1894,14 +2005,21 @@ function GitPanel({
     event.preventDefault();
   }
 
-  function handlePaneSplitterPointerEnd(event: React.PointerEvent<HTMLDivElement>) {
-    if (isResizingPanes && event.currentTarget.hasPointerCapture(event.pointerId)) {
+  function handlePaneSplitterPointerEnd(
+    event: React.PointerEvent<HTMLDivElement>,
+  ) {
+    if (
+      isResizingPanes &&
+      event.currentTarget.hasPointerCapture(event.pointerId)
+    ) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     setIsResizingPanes(false);
   }
 
-  function handlePaneSplitterKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+  function handlePaneSplitterKeyDown(
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ) {
     if (event.key === "ArrowUp") {
       setGraphPanePercent((value) => Math.max(35, value - 4));
       event.preventDefault();
@@ -1919,7 +2037,9 @@ function GitPanel({
       <section
         className={`git-section git-graph-section ${changesCollapsed ? "changes-collapsed" : ""}`}
         aria-label="Git graph"
-        style={!changesCollapsed ? { flexBasis: `${graphPanePercent}%` } : undefined}
+        style={
+          !changesCollapsed ? { flexBasis: `${graphPanePercent}%` } : undefined
+        }
       >
         <GitSectionHeader
           graphToolbar
@@ -1932,7 +2052,9 @@ function GitPanel({
                 <select
                   className="git-ref-select"
                   value={selectedGraphRef ?? ""}
-                  disabled={!thread || !hasProjectCwd || loading || !snapshot?.available}
+                  disabled={
+                    !thread || !hasProjectCwd || loading || !snapshot?.available
+                  }
                   onChange={(event) => {
                     setSelectedGraphRef(event.target.value || null);
                   }}
@@ -1969,7 +2091,11 @@ function GitPanel({
           ) : loading && !snapshot ? (
             <GitEmptyState message="Loading Git graph..." />
           ) : snapshot?.available === false ? (
-            <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
+            <GitEmptyState
+              message={
+                snapshot.error ?? "Git is unavailable for this workspace."
+              }
+            />
           ) : snapshot && gitPanelView.graphCommitCount > 0 ? (
             <GitGraphVisualList
               commitFilesByHash={commitFilesByHash}
@@ -2006,7 +2132,11 @@ function GitPanel({
       <section
         className={`git-section git-changes-section ${changesCollapsed ? "collapsed" : ""}`}
         aria-label="Git changes"
-        style={!changesCollapsed ? { flexBasis: `${100 - graphPanePercent}%` } : undefined}
+        style={
+          !changesCollapsed
+            ? { flexBasis: `${100 - graphPanePercent}%` }
+            : undefined
+        }
       >
         <GitSectionHeader
           collapsed={changesCollapsed}
@@ -2027,11 +2157,18 @@ function GitPanel({
           }
         />
         {!changesCollapsed ? (
-          <div className="git-changes-list drag-scroll-region" {...changesScroll}>
+          <div
+            className="git-changes-list drag-scroll-region"
+            {...changesScroll}
+          >
             {loading && !snapshot ? (
               <GitEmptyState message="Loading changes..." />
             ) : snapshot?.available === false ? (
-              <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
+              <GitEmptyState
+                message={
+                  snapshot.error ?? "Git is unavailable for this workspace."
+                }
+              />
             ) : snapshot ? (
               <>
                 <GitChangeGroup
@@ -2039,7 +2176,9 @@ function GitPanel({
                   collapsed={stagedChangesCollapsed}
                   mode="staged"
                   onOpenDiff={onOpenDiff}
-                  onToggle={() => setStagedChangesCollapsed((collapsed) => !collapsed)}
+                  onToggle={() =>
+                    setStagedChangesCollapsed((collapsed) => !collapsed)
+                  }
                   title="Staged Changes"
                 />
                 <GitChangeGroup
@@ -2047,7 +2186,9 @@ function GitPanel({
                   collapsed={unstagedChangesCollapsed}
                   mode="unstaged"
                   onOpenDiff={onOpenDiff}
-                  onToggle={() => setUnstagedChangesCollapsed((collapsed) => !collapsed)}
+                  onToggle={() =>
+                    setUnstagedChangesCollapsed((collapsed) => !collapsed)
+                  }
                   title="Changes"
                 />
               </>
@@ -2077,7 +2218,9 @@ function GitSectionHeader({
   trailing?: ReactNode;
 }) {
   return (
-    <div className={`git-section-header ${graphToolbar ? "graph-toolbar" : ""}`}>
+    <div
+      className={`git-section-header ${graphToolbar ? "graph-toolbar" : ""}`}
+    >
       <div className="git-section-title">
         {onToggle ? (
           <button
@@ -2177,9 +2320,13 @@ function GitGraphVisualList({
           key={visualCommit.commit.hash}
           commit={visualCommit.commit}
           filesSnapshot={commitFilesByHash[visualCommit.commit.hash]}
-          isLoadingFiles={Boolean(commitFilesLoadingByHash[visualCommit.commit.hash])}
+          isLoadingFiles={Boolean(
+            commitFilesLoadingByHash[visualCommit.commit.hash],
+          )}
           isSelected={selectedCommitHash === visualCommit.commit.hash}
-          onOpenFileDiff={(file) => onOpenCommitFileDiff(visualCommit.commit, file)}
+          onOpenFileDiff={(file) =>
+            onOpenCommitFileDiff(visualCommit.commit, file)
+          }
           onToggle={() => onToggleCommit(visualCommit.commit)}
         />
       ))}
@@ -2204,7 +2351,10 @@ function GitGraphRow({
 }) {
   const headRef = commit.refs.find((ref) => ref.startsWith("HEAD -> "));
   const otherRefs = commit.refs.filter((ref) => ref !== headRef).slice(0, 3);
-  const extraRefCount = Math.max(0, commit.refs.length - (headRef ? 1 : 0) - otherRefs.length);
+  const extraRefCount = Math.max(
+    0,
+    commit.refs.length - (headRef ? 1 : 0) - otherRefs.length,
+  );
   const isMerge = commit.parents.length > 1;
   return (
     <article
@@ -2229,7 +2379,11 @@ function GitGraphRow({
           onToggle();
         }}
       >
-        <div className="git-graph-lanes" aria-hidden="true" data-drag-scroll-handle="true">
+        <div
+          className="git-graph-lanes"
+          aria-hidden="true"
+          data-drag-scroll-handle="true"
+        >
           <span className="git-graph-lane-placeholder" />
         </div>
         <div className="git-graph-copy">
@@ -2246,10 +2400,13 @@ function GitGraphRow({
                 {ref}
               </span>
             ))}
-            {extraRefCount > 0 ? <span className="git-ref-more">+{extraRefCount}</span> : null}
+            {extraRefCount > 0 ? (
+              <span className="git-ref-more">+{extraRefCount}</span>
+            ) : null}
           </div>
           <span className="git-graph-meta">
-            {commit.author} · {commit.relativeTime || "recently"} · {commit.shortHash}
+            {commit.author} · {commit.relativeTime || "recently"} ·{" "}
+            {commit.shortHash}
             {isMerge ? ` · merge ${commit.parents.length}` : ""}
           </span>
         </div>
@@ -2278,7 +2435,9 @@ function GitCommitFileList({
   onOpenFileDiff: (file: GitCommitFile) => void;
 }) {
   if (isLoading && !filesSnapshot) {
-    return <div className="git-commit-files-state">Loading commit files...</div>;
+    return (
+      <div className="git-commit-files-state">Loading commit files...</div>
+    );
   }
   if (filesSnapshot?.available === false) {
     return (
@@ -2288,7 +2447,11 @@ function GitCommitFileList({
     );
   }
   if (!filesSnapshot || filesSnapshot.files.length === 0) {
-    return <div className="git-commit-files-state">No file changes in this commit.</div>;
+    return (
+      <div className="git-commit-files-state">
+        No file changes in this commit.
+      </div>
+    );
   }
 
   return (
@@ -2326,13 +2489,18 @@ export function GitCommitFileRow({
       aria-label={`Open commit diff for ${file.path}`}
       title={`Open commit diff for ${file.path}`}
     >
-      <span className={`git-file-kind ${gitStatusClass(file.status)}`} aria-hidden="true">
+      <span
+        className={`git-file-kind ${gitStatusClass(file.status)}`}
+        aria-hidden="true"
+      >
         {fileIconLabel(file.path)}
       </span>
       <div className="git-commit-file-copy">
         <strong title={file.path}>{baseName(file.path)}</strong>
         <span title={file.path}>{directory}</span>
-        {file.originalPath ? <span title={file.originalPath}>from {file.originalPath}</span> : null}
+        {file.originalPath ? (
+          <span title={file.originalPath}>from {file.originalPath}</span>
+        ) : null}
       </div>
       <span className={`git-commit-file-status ${gitStatusClass(file.status)}`}>
         {gitStatusLabel(file.status)}
@@ -2350,23 +2518,29 @@ export function buildGitGraphVisualModel(
   graph: GitGraphItem[],
   options: GitGraphVisualOptions | number = {},
 ): GitGraphVisualModel {
-  const rowHeight = typeof options === "number" ? options : options.rowHeight ?? GIT_GRAPH_COMMIT_ROW_HEIGHT;
-  const expandedHeightsByHash = typeof options === "number" ? undefined : options.expandedHeightsByHash;
+  const rowHeight =
+    typeof options === "number"
+      ? options
+      : (options.rowHeight ?? GIT_GRAPH_COMMIT_ROW_HEIGHT);
+  const expandedHeightsByHash =
+    typeof options === "number" ? undefined : options.expandedHeightsByHash;
   const commits = graph.filter(isGitGraphCommit);
   let nextRowTop = 0;
-  const visualCommits = commits.map((commit, rowIndex): GitGraphVisualCommit => {
-    const lane = gitGraphVisualLane(commit);
-    const visualCommit = {
-      commit,
-      rowIndex,
-      lane,
-      colorLane: lane,
-      x: laneCenterX(lane),
-      y: nextRowTop + rowHeight / 2,
-    };
-    nextRowTop += rowHeight + (expandedHeightsByHash?.[commit.hash] ?? 0);
-    return visualCommit;
-  });
+  const visualCommits = commits.map(
+    (commit, rowIndex): GitGraphVisualCommit => {
+      const lane = gitGraphVisualLane(commit);
+      const visualCommit = {
+        commit,
+        rowIndex,
+        lane,
+        colorLane: lane,
+        x: laneCenterX(lane),
+        y: nextRowTop + rowHeight / 2,
+      };
+      nextRowTop += rowHeight + (expandedHeightsByHash?.[commit.hash] ?? 0);
+      return visualCommit;
+    },
+  );
   const maxLane = Math.max(0, ...visualCommits.map((commit) => commit.lane));
   const height = Math.max(rowHeight, nextRowTop);
   const paths: GitGraphVisualPath[] = [];
@@ -2423,10 +2597,17 @@ function estimateGitCommitFilesBlockHeight(
   if (isLoadingFiles && !filesSnapshot) {
     return GIT_COMMIT_FILES_STATE_HEIGHT + GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM;
   }
-  if (!filesSnapshot || filesSnapshot.available === false || filesSnapshot.files.length === 0) {
+  if (
+    !filesSnapshot ||
+    filesSnapshot.available === false ||
+    filesSnapshot.files.length === 0
+  ) {
     return GIT_COMMIT_FILES_STATE_HEIGHT + GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM;
   }
-  return filesSnapshot.files.length * GIT_COMMIT_FILE_ROW_HEIGHT + GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM;
+  return (
+    filesSnapshot.files.length * GIT_COMMIT_FILE_ROW_HEIGHT +
+    GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM
+  );
 }
 
 function gitGraphVisualLane(commit: GitGraphCommit) {
@@ -2443,7 +2624,10 @@ function gitGraphVisualLane(commit: GitGraphCommit) {
   return Math.min(Math.max(0, occupiedLaneCount), 3);
 }
 
-function findMainlineCommitBefore(commits: GitGraphVisualCommit[], beforeIndex: number) {
+function findMainlineCommitBefore(
+  commits: GitGraphVisualCommit[],
+  beforeIndex: number,
+) {
   for (let index = beforeIndex - 1; index >= 0; index -= 1) {
     if (commits[index].lane === 0) {
       return commits[index];
@@ -2452,7 +2636,10 @@ function findMainlineCommitBefore(commits: GitGraphVisualCommit[], beforeIndex: 
   return null;
 }
 
-function findMainlineCommitAfter(commits: GitGraphVisualCommit[], afterIndex: number) {
+function findMainlineCommitAfter(
+  commits: GitGraphVisualCommit[],
+  afterIndex: number,
+) {
   for (let index = afterIndex; index < commits.length; index += 1) {
     if (commits[index].lane === 0) {
       return commits[index];
@@ -2587,7 +2774,10 @@ export function GitChangeRow({
           <span title={change.originalPath}>from {change.originalPath}</span>
         ) : null}
       </div>
-      <span className={`git-change-state ${gitStatusClass(status)}`} data-drag-scroll-handle="true">
+      <span
+        className={`git-change-state ${gitStatusClass(status)}`}
+        data-drag-scroll-handle="true"
+      >
         {gitStatusLabel(status)}
       </span>
     </article>
@@ -2666,13 +2856,17 @@ function useDragScroll<T extends HTMLElement>() {
 }
 
 function isInteractiveDragTarget(target: EventTarget) {
-  return target instanceof Element && Boolean(target.closest("button,a,input,textarea,select"));
+  return (
+    target instanceof Element &&
+    Boolean(target.closest("button,a,input,textarea,select"))
+  );
 }
 
 function isDragScrollHandle(target: EventTarget, scrollRoot: HTMLElement) {
   return (
     target instanceof Element &&
-    (target === scrollRoot || Boolean(target.closest("[data-drag-scroll-handle]")))
+    (target === scrollRoot ||
+      Boolean(target.closest("[data-drag-scroll-handle]")))
   );
 }
 
@@ -2680,7 +2874,9 @@ function isSuppressedDragScrollClick(target: EventTarget) {
   return (
     target instanceof Element &&
     target.closest(".drag-scroll-region") instanceof HTMLElement &&
-    target.closest(".drag-scroll-region")?.getAttribute("data-drag-scroll-suppressed") === "true"
+    target
+      .closest(".drag-scroll-region")
+      ?.getAttribute("data-drag-scroll-suppressed") === "true"
   );
 }
 
@@ -2692,13 +2888,18 @@ export function resolveMarkdownPreviewLocalFileTarget(
     return target;
   }
 
-  const lastSlash = Math.max(previewPath.lastIndexOf("/"), previewPath.lastIndexOf("\\"));
+  const lastSlash = Math.max(
+    previewPath.lastIndexOf("/"),
+    previewPath.lastIndexOf("\\"),
+  );
   if (lastSlash < 0) {
     return target;
   }
 
-  const baseDir = lastSlash === 0 ? previewPath.slice(0, 1) : previewPath.slice(0, lastSlash);
-  const separator = previewPath.includes("\\") && !previewPath.includes("/") ? "\\" : "/";
+  const baseDir =
+    lastSlash === 0 ? previewPath.slice(0, 1) : previewPath.slice(0, lastSlash);
+  const separator =
+    previewPath.includes("\\") && !previewPath.includes("/") ? "\\" : "/";
   return normalizeRelativeFileTarget(baseDir, target, separator);
 }
 
@@ -2706,7 +2907,11 @@ function isRelativeMarkdownPreviewTarget(target: string) {
   return /^\.{1,2}[\\/]/.test(target);
 }
 
-function normalizeRelativeFileTarget(baseDir: string, target: string, separator: "/" | "\\") {
+function normalizeRelativeFileTarget(
+  baseDir: string,
+  target: string,
+  separator: "/" | "\\",
+) {
   const driveMatch = baseDir.match(/^([A-Za-z]:)(.*)$/);
   const isUncPath = baseDir.startsWith("\\\\");
   const isAbsolutePosixPath = baseDir.startsWith("/");
@@ -2768,7 +2973,10 @@ export function filePreviewSourceEditorVisible(
   editMode: FilePreviewEditState["mode"],
 ) {
   const renderMode = filePreviewRenderMode(preview);
-  return renderMode === "editor" || (filePreviewCanEdit(preview) && editMode !== "readonly");
+  return (
+    renderMode === "editor" ||
+    (filePreviewCanEdit(preview) && editMode !== "readonly")
+  );
 }
 
 export function filePreviewHeaderEditControlsVisible({
@@ -2790,7 +2998,10 @@ export function filePreviewHeaderEditControlsVisible({
   );
 }
 
-export function filePreviewIdentity(preview: FilePreview | null, rootId: string | null) {
+export function filePreviewIdentity(
+  preview: FilePreview | null,
+  rootId: string | null,
+) {
   if (!preview) {
     return null;
   }
@@ -2858,7 +3069,10 @@ export function FilePreviewPanel({
   gitDiffPreview: GitDiffPreviewSnapshot | null;
   gitDiffPreviewError: string | null;
   gitDiffPreviewLoading: boolean;
-  onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
+  onNavigateToSymbol: (
+    destination: FileLocation,
+    sourceLocation: FileLocation,
+  ) => void;
   onOpenPreviewExternally: () => void;
   onOpenPreviewInBrowser: () => void;
   onOpenTreeFile: (path: string) => void;
@@ -2872,7 +3086,8 @@ export function FilePreviewPanel({
 }) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const hoverPositionRef = useRef<Monaco.Position | null>(null);
-  const decorationCollectionRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const decorationCollectionRef =
+    useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const pendingDefinitionRef = useRef(false);
   const modifierPressedRef = useRef(false);
   const previewEnabledRef = useRef(preview?.lsp.enabled ?? false);
@@ -2895,13 +3110,17 @@ export function FilePreviewPanel({
     filePanelView,
     preview: showingGitDiffPreview ? null : preview,
     previewError: showingGitDiffPreview ? gitDiffPreviewError : previewError,
-    previewLoading: showingGitDiffPreview ? gitDiffPreviewLoading : previewLoading,
+    previewLoading: showingGitDiffPreview
+      ? gitDiffPreviewLoading
+      : previewLoading,
   });
   const showOpenPreviewInBrowserAction = filePreviewOpenInBrowserActionVisible({
     filePanelView,
     preview: showingGitDiffPreview ? null : preview,
     previewError: showingGitDiffPreview ? gitDiffPreviewError : previewError,
-    previewLoading: showingGitDiffPreview ? gitDiffPreviewLoading : previewLoading,
+    previewLoading: showingGitDiffPreview
+      ? gitDiffPreviewLoading
+      : previewLoading,
   });
   const isEditingPreview = editState.mode === "editing";
   const isSavingPreview = editState.mode === "saving";
@@ -3018,11 +3237,7 @@ export function FilePreviewPanel({
           onClick={() =>
             setEditState((current) =>
               beginFilePreviewEdit(
-                syncFilePreviewEditState(
-                  current,
-                  preview,
-                  previewRenderMode,
-                ),
+                syncFilePreviewEditState(current, preview, previewRenderMode),
               ),
             )
           }
@@ -3065,7 +3280,9 @@ export function FilePreviewPanel({
           ? "pdf"
           : preview?.language || "plain";
   const workspaceStatusBar =
-    isWorkspaceVariant && filePanelView === "preview" && !showingGitDiffPreview ? (
+    isWorkspaceVariant &&
+    filePanelView === "preview" &&
+    !showingGitDiffPreview ? (
       <div className="preview-workspace-status-bar">
         <div className="preview-utility-primary">
           <span className="preview-signal plain" />
@@ -3074,7 +3291,9 @@ export function FilePreviewPanel({
           </button>
           {preview?.lsp.enabled ? <span>language server</span> : null}
           {threadRootPath ? (
-            <span className="preview-utility-cwd">{trimPath(threadRootPath)}</span>
+            <span className="preview-utility-cwd">
+              {trimPath(threadRootPath)}
+            </span>
           ) : null}
         </div>
         <div className="preview-header-actions">
@@ -3104,46 +3323,50 @@ export function FilePreviewPanel({
     ) : null;
 
   return (
-    <div className={`preview-panel ${isWorkspaceVariant ? "preview-panel-workspace" : ""}`}>
+    <div
+      className={`preview-panel ${isWorkspaceVariant ? "preview-panel-workspace" : ""}`}
+    >
       {!isWorkspaceVariant ? (
-      <header className="panel-content-header preview-header">
-        <div className="panel-content-copy">
-          <h2>
-            {filePanelView === "tree"
-              ? (threadRootPath ? trimPath(threadRootPath) : "Workspace Browser")
-              : showingGitDiffPreview && gitDiffPreview?.path
-                ? gitDiffPreview.path
-                : preview
-                ? preview.displayPath
-                : "Linked Context"}
-          </h2>
-        </div>
-        <div className="preview-header-actions">
-          {previewHeaderEditActions}
-          {showOpenPreviewInBrowserAction ? (
-            <button
-              type="button"
-              className="panel-inline-action preview-open-browser-button"
-              aria-label="Open preview in Browser"
-              title="Open in Browser"
-              onClick={onOpenPreviewInBrowser}
-            >
-              <BrowserIcon />
-            </button>
-          ) : null}
-          {filePanelView === "preview" ? (
-            <button
-              type="button"
-              className="panel-inline-action preview-open-button"
-              aria-label="Open preview in system editor"
-              onClick={onOpenPreviewExternally}
-              disabled={!preview || showingGitDiffPreview}
-            >
-              <OpenIcon />
-            </button>
-          ) : null}
-        </div>
-      </header>
+        <header className="panel-content-header preview-header">
+          <div className="panel-content-copy">
+            <h2>
+              {filePanelView === "tree"
+                ? threadRootPath
+                  ? trimPath(threadRootPath)
+                  : "Workspace Browser"
+                : showingGitDiffPreview && gitDiffPreview?.path
+                  ? gitDiffPreview.path
+                  : preview
+                    ? preview.displayPath
+                    : "Linked Context"}
+            </h2>
+          </div>
+          <div className="preview-header-actions">
+            {previewHeaderEditActions}
+            {showOpenPreviewInBrowserAction ? (
+              <button
+                type="button"
+                className="panel-inline-action preview-open-browser-button"
+                aria-label="Open preview in Browser"
+                title="Open in Browser"
+                onClick={onOpenPreviewInBrowser}
+              >
+                <BrowserIcon />
+              </button>
+            ) : null}
+            {filePanelView === "preview" ? (
+              <button
+                type="button"
+                className="panel-inline-action preview-open-button"
+                aria-label="Open preview in system editor"
+                onClick={onOpenPreviewExternally}
+                disabled={!preview || showingGitDiffPreview}
+              >
+                <OpenIcon />
+              </button>
+            ) : null}
+          </div>
+        </header>
       ) : null}
       {workspaceStatusBar}
 
@@ -3161,239 +3384,309 @@ export function FilePreviewPanel({
       ) : null}
       {filePanelView === "tree" ? null : (
         <>
-      {showingGitDiffPreview ? (
-        <GitDiffPreviewPanel
-          diff={gitDiffPreview}
-          error={gitDiffPreviewError}
-          loading={gitDiffPreviewLoading}
-        />
-      ) : null}
-      {!showingGitDiffPreview && previewLoading ? <div className="preview-empty">Loading file…</div> : null}
-      {!showingGitDiffPreview && !previewLoading && previewError ? <div className="preview-empty">{previewError}</div> : null}
-      {!showingGitDiffPreview && !previewLoading && !previewError && !preview ? (
-        <div className="preview-empty">
-          <p>Open a local file link in the conversation to pin code context here.</p>
-        </div>
-      ) : null}
-      {!showingGitDiffPreview && !previewLoading && !previewError && previewRenderMode === "image" && preview?.image ? (
-        <div className="preview-editor-shell preview-image-shell">
-          <div className="preview-utility-strip">
-            <div className="preview-utility-primary">
-              <span className="preview-signal plain" />
-              <button type="button" className="preview-lsp-button plain" disabled>
-                IMAGE
-              </button>
-            </div>
-            <div className="preview-utility-secondary">
-              <span>{preview.image.mimeType}</span>
-              <span className="preview-utility-separator">•</span>
-              <span>{formatByteSize(preview.image.byteSize)}</span>
-              <span className="preview-utility-separator">•</span>
-              <span className="preview-utility-cwd">{preview.image.name}</span>
-            </div>
-          </div>
-          <div className="preview-image-pad">
-            <LocalImagePreview
-              path={preview.image.path}
-              label={preview.image.name}
-              className="preview-image"
+          {showingGitDiffPreview ? (
+            <GitDiffPreviewPanel
+              diff={gitDiffPreview}
+              error={gitDiffPreviewError}
+              loading={gitDiffPreviewLoading}
             />
-          </div>
-        </div>
-      ) : null}
-      {!showingGitDiffPreview && !previewLoading && !previewError && previewRenderMode === "pdf" && preview?.pdf ? (
-        <div className="preview-editor-shell preview-pdf-shell">
-          <div className="preview-utility-strip">
-            <div className="preview-utility-primary">
-              <span className="preview-signal plain" />
-              <button type="button" className="preview-lsp-button plain" disabled>
-                PDF
-              </button>
-            </div>
-            <div className="preview-utility-secondary">
-              <span>{preview.pdf.mimeType}</span>
-              <span className="preview-utility-separator">•</span>
-              <span>{formatByteSize(preview.pdf.byteSize)}</span>
-              <span className="preview-utility-separator">•</span>
-              <span className="preview-utility-cwd">{preview.pdf.name}</span>
-            </div>
-          </div>
-          <object
-            className="preview-pdf-frame"
-            data={preview.pdf.url}
-            type={preview.pdf.mimeType}
-            aria-label={`PDF preview for ${preview.pdf.name}`}
-          >
+          ) : null}
+          {!showingGitDiffPreview && previewLoading ? (
+            <div className="preview-empty">Loading file…</div>
+          ) : null}
+          {!showingGitDiffPreview && !previewLoading && previewError ? (
+            <div className="preview-empty">{previewError}</div>
+          ) : null}
+          {!showingGitDiffPreview &&
+          !previewLoading &&
+          !previewError &&
+          !preview ? (
             <div className="preview-empty">
-              <p>This PDF cannot be embedded here. Use the open button to view it in the system app.</p>
+              <p>
+                Open a local file link in the conversation to pin code context
+                here.
+              </p>
             </div>
-          </object>
-        </div>
-      ) : null}
-      {!showingGitDiffPreview && !previewLoading && !previewError && preview && previewRenderMode !== "image" && previewRenderMode !== "pdf" ? (
-        <div className="preview-editor-shell">
-          <div className="preview-utility-strip">
-            <div className="preview-utility-primary">
-              <span className={`preview-signal ${previewLspState(preview)}`} />
-              <button
-                type="button"
-                className={`preview-lsp-button ${previewLspState(preview)}`}
-                disabled
-              >
-                {preview.lsp.lspStatus.phase.toUpperCase()}
-              </button>
-            </div>
-            <div className="preview-utility-secondary">
-              <span>{preview.language}</span>
-              <span className="preview-utility-separator">•</span>
-              <span>{preview.lsp.lspStatus.detail ?? preview.lsp.serverLabel ?? "LSP idle"}</span>
-              <span className="preview-utility-separator">•</span>
-              <span className="preview-utility-cwd">
-                {preview.lsp.workspaceRoot ?? "No workspace root"}
-              </span>
-            </div>
-          </div>
-          {!previewSourceEditorVisible ? (
-            <div className="preview-markdown-pad">
-              <MarkdownContent
-                text={preview.content}
-                onOpenLocalFile={(target) =>
-                  onOpenTreeFile(
-                    resolveMarkdownPreviewLocalFileTarget(preview.path, target),
-                  )
-                }
-              />
-            </div>
-          ) : (
-            <div className="preview-editor-pad">
-              {editState.error ? (
-                <div className="preview-edit-error" role="alert">
-                  {editState.error}
+          ) : null}
+          {!showingGitDiffPreview &&
+          !previewLoading &&
+          !previewError &&
+          previewRenderMode === "image" &&
+          preview?.image ? (
+            <div className="preview-editor-shell preview-image-shell">
+              <div className="preview-utility-strip">
+                <div className="preview-utility-primary">
+                  <span className="preview-signal plain" />
+                  <button
+                    type="button"
+                    className="preview-lsp-button plain"
+                    disabled
+                  >
+                    IMAGE
+                  </button>
                 </div>
-              ) : null}
-              <Editor
-                key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
-                height="100%"
-                onMount={(editor, monaco) => {
-                  editorRef.current = editor;
-                  decorationCollectionRef.current = editor.createDecorationsCollection();
-                  editor.addCommand(
-                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-                    () => {
-                      savePreviewDraftRef.current();
-                    },
-                  );
-                  editor.revealPositionInCenter({
-                    lineNumber: preview.line ?? 1,
-                    column: preview.column ?? 1,
-                  });
-                  editor.setPosition({
-                    lineNumber: preview.line ?? 1,
-                    column: preview.column ?? 1,
-                  });
-
-                  editor.onMouseMove((event) => {
-                    hoverPositionRef.current = event.target.position ?? null;
-                    modifierPressedRef.current =
-                      event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey;
-                    updateLinkDecoration(editor, decorationCollectionRef.current, {
-                      modifierPressed: modifierPressedRef.current,
-                      enabled: previewEnabledRef.current,
-                      position: hoverPositionRef.current,
-                    });
-                  });
-
-                  editor.onMouseLeave(() => {
-                    hoverPositionRef.current = null;
-                    updateLinkDecoration(editor, decorationCollectionRef.current, {
-                      enabled: previewEnabledRef.current,
-                      modifierPressed: false,
-                      position: null,
-                    });
-                  });
-
-                  editor.onMouseDown((event) => {
-                    if (
-                      !previewEnabledRef.current ||
-                      !event.target.position ||
-                      event.event.browserEvent.button !== 0 ||
-                      !(event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey) ||
-                      pendingDefinitionRef.current
-                    ) {
-                      return;
+                <div className="preview-utility-secondary">
+                  <span>{preview.image.mimeType}</span>
+                  <span className="preview-utility-separator">•</span>
+                  <span>{formatByteSize(preview.image.byteSize)}</span>
+                  <span className="preview-utility-separator">•</span>
+                  <span className="preview-utility-cwd">
+                    {preview.image.name}
+                  </span>
+                </div>
+              </div>
+              <div className="preview-image-pad">
+                <LocalImagePreview
+                  path={preview.image.path}
+                  label={preview.image.name}
+                  className="preview-image"
+                />
+              </div>
+            </div>
+          ) : null}
+          {!showingGitDiffPreview &&
+          !previewLoading &&
+          !previewError &&
+          previewRenderMode === "pdf" &&
+          preview?.pdf ? (
+            <div className="preview-editor-shell preview-pdf-shell">
+              <div className="preview-utility-strip">
+                <div className="preview-utility-primary">
+                  <span className="preview-signal plain" />
+                  <button
+                    type="button"
+                    className="preview-lsp-button plain"
+                    disabled
+                  >
+                    PDF
+                  </button>
+                </div>
+                <div className="preview-utility-secondary">
+                  <span>{preview.pdf.mimeType}</span>
+                  <span className="preview-utility-separator">•</span>
+                  <span>{formatByteSize(preview.pdf.byteSize)}</span>
+                  <span className="preview-utility-separator">•</span>
+                  <span className="preview-utility-cwd">
+                    {preview.pdf.name}
+                  </span>
+                </div>
+              </div>
+              <object
+                className="preview-pdf-frame"
+                data={preview.pdf.url}
+                type={preview.pdf.mimeType}
+                aria-label={`PDF preview for ${preview.pdf.name}`}
+              >
+                <div className="preview-empty">
+                  <p>
+                    This PDF cannot be embedded here. Use the open button to
+                    view it in the system app.
+                  </p>
+                </div>
+              </object>
+            </div>
+          ) : null}
+          {!showingGitDiffPreview &&
+          !previewLoading &&
+          !previewError &&
+          preview &&
+          previewRenderMode !== "image" &&
+          previewRenderMode !== "pdf" ? (
+            <div className="preview-editor-shell">
+              <div className="preview-utility-strip">
+                <div className="preview-utility-primary">
+                  <span
+                    className={`preview-signal ${previewLspState(preview)}`}
+                  />
+                  <button
+                    type="button"
+                    className={`preview-lsp-button ${previewLspState(preview)}`}
+                    disabled
+                  >
+                    {preview.lsp.lspStatus.phase.toUpperCase()}
+                  </button>
+                </div>
+                <div className="preview-utility-secondary">
+                  <span>{preview.language}</span>
+                  <span className="preview-utility-separator">•</span>
+                  <span>
+                    {preview.lsp.lspStatus.detail ??
+                      preview.lsp.serverLabel ??
+                      "LSP idle"}
+                  </span>
+                  <span className="preview-utility-separator">•</span>
+                  <span className="preview-utility-cwd">
+                    {preview.lsp.workspaceRoot ?? "No workspace root"}
+                  </span>
+                </div>
+              </div>
+              {!previewSourceEditorVisible ? (
+                <div className="preview-markdown-pad">
+                  <MarkdownContent
+                    text={preview.content}
+                    onOpenLocalFile={(target) =>
+                      onOpenTreeFile(
+                        resolveMarkdownPreviewLocalFileTarget(
+                          preview.path,
+                          target,
+                        ),
+                      )
                     }
+                  />
+                </div>
+              ) : (
+                <div className="preview-editor-pad">
+                  {editState.error ? (
+                    <div className="preview-edit-error" role="alert">
+                      {editState.error}
+                    </div>
+                  ) : null}
+                  <Editor
+                    key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
+                    height="100%"
+                    onMount={(editor, monaco) => {
+                      editorRef.current = editor;
+                      decorationCollectionRef.current =
+                        editor.createDecorationsCollection();
+                      editor.addCommand(
+                        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                        () => {
+                          savePreviewDraftRef.current();
+                        },
+                      );
+                      editor.revealPositionInCenter({
+                        lineNumber: preview.line ?? 1,
+                        column: preview.column ?? 1,
+                      });
+                      editor.setPosition({
+                        lineNumber: preview.line ?? 1,
+                        column: preview.column ?? 1,
+                      });
 
-                    pendingDefinitionRef.current = true;
-                    event.event.preventDefault();
-                    event.event.stopPropagation();
-                    event.event.browserEvent.preventDefault();
-                    event.event.browserEvent.stopPropagation();
-                    const sourcePosition = resolvePreviewDefinitionPosition(
-                      editor,
-                      event.target.position,
-                    );
+                      editor.onMouseMove((event) => {
+                        hoverPositionRef.current =
+                          event.target.position ?? null;
+                        modifierPressedRef.current =
+                          event.event.browserEvent.metaKey ||
+                          event.event.browserEvent.ctrlKey;
+                        updateLinkDecoration(
+                          editor,
+                          decorationCollectionRef.current,
+                          {
+                            modifierPressed: modifierPressedRef.current,
+                            enabled: previewEnabledRef.current,
+                            position: hoverPositionRef.current,
+                          },
+                        );
+                      });
 
-                    void window.codexDesktop
-                      .lspDefinition({
-                        path: preview.path,
-                        line: sourcePosition.lineNumber,
-                        column: sourcePosition.column,
-                      })
-                      .then((response) => {
-                        const destination = response.locations[0];
-                        if (response.enabled && destination) {
-                          onNavigateToSymbol(destination, {
+                      editor.onMouseLeave(() => {
+                        hoverPositionRef.current = null;
+                        updateLinkDecoration(
+                          editor,
+                          decorationCollectionRef.current,
+                          {
+                            enabled: previewEnabledRef.current,
+                            modifierPressed: false,
+                            position: null,
+                          },
+                        );
+                      });
+
+                      editor.onMouseDown((event) => {
+                        if (
+                          !previewEnabledRef.current ||
+                          !event.target.position ||
+                          event.event.browserEvent.button !== 0 ||
+                          !(
+                            event.event.browserEvent.metaKey ||
+                            event.event.browserEvent.ctrlKey
+                          ) ||
+                          pendingDefinitionRef.current
+                        ) {
+                          return;
+                        }
+
+                        pendingDefinitionRef.current = true;
+                        event.event.preventDefault();
+                        event.event.stopPropagation();
+                        event.event.browserEvent.preventDefault();
+                        event.event.browserEvent.stopPropagation();
+                        const sourcePosition = resolvePreviewDefinitionPosition(
+                          editor,
+                          event.target.position,
+                        );
+
+                        void window.codexDesktop
+                          .lspDefinition({
                             path: preview.path,
                             line: sourcePosition.lineNumber,
                             column: sourcePosition.column,
+                          })
+                          .then((response) => {
+                            const destination = response.locations[0];
+                            if (response.enabled && destination) {
+                              onNavigateToSymbol(destination, {
+                                path: preview.path,
+                                line: sourcePosition.lineNumber,
+                                column: sourcePosition.column,
+                              });
+                            }
+                          })
+                          .catch((error) => {
+                            console.error(
+                              "Failed to resolve definition",
+                              error,
+                            );
+                          })
+                          .finally(() => {
+                            pendingDefinitionRef.current = false;
+                            updateLinkDecoration(
+                              editor,
+                              decorationCollectionRef.current,
+                              {
+                                enabled: previewEnabledRef.current,
+                                modifierPressed: modifierPressedRef.current,
+                                position: hoverPositionRef.current,
+                              },
+                            );
                           });
-                        }
-                      })
-                      .catch((error) => {
-                        console.error("Failed to resolve definition", error);
-                      })
-                      .finally(() => {
-                        pendingDefinitionRef.current = false;
-                        updateLinkDecoration(editor, decorationCollectionRef.current, {
-                          enabled: previewEnabledRef.current,
-                          modifierPressed: modifierPressedRef.current,
-                          position: hoverPositionRef.current,
-                        });
                       });
-                  });
-                }}
-                onChange={(value) => {
-                  if (!isEditingPreview) {
-                    return;
-                  }
-                  setEditState((current) =>
-                    updateFilePreviewDraft(current, value ?? ""),
-                  );
-                }}
-                language={preview.language}
-                loading={<div className="preview-empty">Loading editor…</div>}
-                options={{
-                  automaticLayout: true,
-                  definitionLinkOpensInPeek: false,
-                  contextmenu: false,
-                  fontSize: 12,
-                  lineNumbersMinChars: 3,
-                  minimap: { enabled: false },
-                  readOnly: !isEditingPreview,
-                  renderLineHighlight: "all",
-                  roundedSelection: false,
-                  scrollBeyondLastLine: false,
-                  selectionHighlight: false,
-                  wordWrap: "on",
-                }}
-                path={preview.path}
-                theme="vs"
-                value={previewDraft}
-              />
+                    }}
+                    onChange={(value) => {
+                      if (!isEditingPreview) {
+                        return;
+                      }
+                      setEditState((current) =>
+                        updateFilePreviewDraft(current, value ?? ""),
+                      );
+                    }}
+                    language={preview.language}
+                    loading={
+                      <div className="preview-empty">Loading editor…</div>
+                    }
+                    options={{
+                      automaticLayout: true,
+                      definitionLinkOpensInPeek: false,
+                      contextmenu: false,
+                      fontSize: 12,
+                      lineNumbersMinChars: 3,
+                      minimap: { enabled: false },
+                      readOnly: !isEditingPreview,
+                      renderLineHighlight: "all",
+                      roundedSelection: false,
+                      scrollBeyondLastLine: false,
+                      selectionHighlight: false,
+                      wordWrap: "on",
+                    }}
+                    path={preview.path}
+                    theme="vs"
+                    value={previewDraft}
+                  />
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      ) : null}
+          ) : null}
         </>
       )}
     </div>
@@ -3413,7 +3706,9 @@ export function GitDiffPreviewPanel({
     return <div className="preview-empty">Loading Git diff...</div>;
   }
   if (!diff) {
-    return <div className="preview-empty">{error ?? "No Git diff selected."}</div>;
+    return (
+      <div className="preview-empty">{error ?? "No Git diff selected."}</div>
+    );
   }
 
   const status = diff.status ?? "M";
@@ -3422,7 +3717,9 @@ export function GitDiffPreviewPanel({
     <div className="preview-editor-shell git-diff-preview-shell">
       <div className="preview-utility-strip">
         <div className="preview-utility-primary">
-          <span className={`preview-signal ${diff.available ? "ready" : "unavailable"}`} />
+          <span
+            className={`preview-signal ${diff.available ? "ready" : "unavailable"}`}
+          />
           <button type="button" className="preview-lsp-button plain" disabled>
             DIFF
           </button>
@@ -3459,7 +3756,9 @@ export function GitDiffPreviewPanel({
       {!canRenderSideBySide ? (
         <div className="preview-git-diff-fallback">
           <div className="preview-empty">
-            {error ?? diff.error ?? "This change cannot be shown as a side-by-side text diff."}
+            {error ??
+              diff.error ??
+              "This change cannot be shown as a side-by-side text diff."}
           </div>
           {diff.unifiedDiff ? (
             <Editor
@@ -3490,7 +3789,9 @@ export function GitDiffPreviewPanel({
           <DiffEditor
             height="100%"
             language={diff.language}
-            loading={<div className="preview-empty">Loading diff editor...</div>}
+            loading={
+              <div className="preview-empty">Loading diff editor...</div>
+            }
             modified={diff.newContent}
             original={diff.oldContent}
             options={{
@@ -3568,7 +3869,11 @@ function CwdFileTreePanel({
         </div>
       </div>
       {rootEntries.length > 0 ? (
-        <div className="cwd-tree-list" role="tree" aria-label="Thread cwd file tree">
+        <div
+          className="cwd-tree-list"
+          role="tree"
+          aria-label="Thread cwd file tree"
+        >
           {rootEntries.map((entry) => (
             <CwdTreeEntryRow
               key={entry.path}
@@ -3658,7 +3963,10 @@ function CwdTreeEntryRow({
       </div>
       {isDirectory && isExpanded ? (
         isLoading && childEntries.length === 0 ? (
-          <div className="cwd-tree-loading" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+          <div
+            className="cwd-tree-loading"
+            style={{ paddingLeft: `${28 + depth * 16}px` }}
+          >
             Loading…
           </div>
         ) : childEntries.length > 0 ? (
@@ -3676,11 +3984,17 @@ function CwdTreeEntryRow({
             />
           ))
         ) : childError ? (
-          <div className="cwd-tree-error" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+          <div
+            className="cwd-tree-error"
+            style={{ paddingLeft: `${28 + depth * 16}px` }}
+          >
             {childError}
           </div>
         ) : (
-          <div className="cwd-tree-loading" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+          <div
+            className="cwd-tree-loading"
+            style={{ paddingLeft: `${28 + depth * 16}px` }}
+          >
             Empty directory
           </div>
         )

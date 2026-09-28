@@ -448,6 +448,8 @@ function App() {
   );
   const [closingWorkspaceBrowserTabIds, setClosingWorkspaceBrowserTabIds] =
     useState<string[]>([]);
+  const [closedWorkspaceBrowserTabIds, setClosedWorkspaceBrowserTabIds] =
+    useState<string[]>([]);
   const [closingWorkspaceTerminalTabIds, setClosingWorkspaceTerminalTabIds] =
     useState<string[]>([]);
   const [
@@ -3657,6 +3659,18 @@ function App() {
     );
   }
 
+  function suppressClosedWorkspaceBrowserTab(tabId: string) {
+    setClosedWorkspaceBrowserTabIds((current) =>
+      current.includes(tabId) ? current : [...current, tabId],
+    );
+  }
+
+  function releaseClosedWorkspaceBrowserTab(tabId: string) {
+    setClosedWorkspaceBrowserTabIds((current) =>
+      current.filter((id) => id !== tabId),
+    );
+  }
+
   function rememberClosingWorkspaceTerminalTab(tabId: string) {
     setClosingWorkspaceTerminalTabIds((current) =>
       current.includes(tabId) ? current : [...current, tabId],
@@ -3682,6 +3696,9 @@ function App() {
 
   function pruneMissingWorkspaceBrowserTabs(browserTabIds: string[]) {
     const liveBrowserTabIds = new Set(browserTabIds);
+    setClosedWorkspaceBrowserTabIds((current) =>
+      current.filter((id) => liveBrowserTabIds.has(id)),
+    );
     const currentTabs = workspaceTabsRef.current;
     const staleBrowserTabs = currentTabs.filter(
       (tab) =>
@@ -3757,12 +3774,14 @@ function App() {
       closingTab.browserTabId
     ) {
       rememberClosingWorkspaceBrowserTab(closingTab.browserTabId);
+      suppressClosedWorkspaceBrowserTab(closingTab.browserTabId);
       void window.codexDesktop
         .closeBrowserTab(closingTab.browserTabId)
         .catch((error) => {
           if (isBrowserTabNotFoundError(error)) {
             return;
           }
+          releaseClosedWorkspaceBrowserTab(closingTab.browserTabId!);
           restoreWorkspaceTabAfterFailedClose(closingTab);
           setError(toErrorMessage(error));
         })
@@ -3968,8 +3987,13 @@ function App() {
         .filter((tab) => tab.kind === "browser" && tab.browserTabId)
         .map((tab) => tab.browserTabId as string),
       ...closingWorkspaceBrowserTabIds,
+      ...closedWorkspaceBrowserTabIds,
     ],
-    [closingWorkspaceBrowserTabIds, workspaceTabs],
+    [
+      closedWorkspaceBrowserTabIds,
+      closingWorkspaceBrowserTabIds,
+      workspaceTabs,
+    ],
   );
   const detachedWorkspaceTerminalTabIds = useMemo(
     () => [
