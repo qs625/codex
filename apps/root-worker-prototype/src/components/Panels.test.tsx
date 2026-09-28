@@ -487,6 +487,23 @@ test("SidebarPanel exposes project create and chat quick create", () => {
   assert.doesNotMatch(markup, /id="new-thread-popover"/);
 });
 
+test("SidebarPanel keeps project create visually quiet until hover or focus", () => {
+  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.match(
+    css,
+    /\.sidebar-action-button \{[\s\S]*opacity: 0;[\s\S]*pointer-events: none;[\s\S]*transition:[\s\S]*opacity 120ms ease;/,
+  );
+  assert.match(
+    css,
+    /\.sidebar-section-header:hover \.sidebar-action-button,[\s\S]*\.sidebar-section-header:focus-within \.sidebar-action-button,[\s\S]*\.sidebar-action-button\[aria-expanded="true"\] \{[\s\S]*opacity: 1;[\s\S]*pointer-events: auto;/,
+  );
+  assert.match(
+    css,
+    /\.chat-list-header:hover \.chat-create-button,[\s\S]*\.chat-list-header:focus-within \.chat-create-button \{[\s\S]*opacity: 1;[\s\S]*pointer-events: auto;/,
+  );
+});
+
 test("SidebarPanel disables chat quick create while a chat is being created", () => {
   const sidebar = makeSidebar();
 

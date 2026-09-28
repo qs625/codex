@@ -111,13 +111,17 @@ function sourceSlice(source: string, start: string, end: string): string {
 
 function assertMatches(source: string, patterns: RegExp[]): void {
   for (const pattern of patterns) {
-    assert.match(source, pattern);
+    assert.match(source, pattern, `Expected source to match ${pattern}`);
   }
 }
 
 function assertDoesNotMatchAny(source: string, patterns: RegExp[]): void {
   for (const pattern of patterns) {
-    assert.doesNotMatch(source, pattern);
+    assert.doesNotMatch(
+      source,
+      pattern,
+      `Expected source not to match ${pattern}`,
+    );
   }
 }
 
@@ -985,7 +989,7 @@ test("workspace Browser and Terminal tabs can be returned to the right panel", (
   );
   assert.match(
     terminalPanelSource,
-    /!visibleTabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusTerminalTabRequest\.tabId === state\.activeTabId[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*selectTerminalTab\(focusTerminalTabRequest\.tabId\)/,
+    /!visibleTabs\.some\(\(tab\) => tab\.id === focusTerminalTabRequest\.tabId\)[\s\S]*return;[\s\S]*focusTerminalTabRequest\.tabId === state\.activeTabId[\s\S]*lastTerminalTabFocusRequestTokenRef\.current =[\s\S]*focusTerminalTabRequest\.token;[\s\S]*lastTerminalTabFocusRequestTokenRef\.current = focusTerminalTabRequest\.token;[\s\S]*\.selectTerminalTab\(focusTerminalTabRequest\.tabId\)[\s\S]*requestTerminalViewportFocus\(focusTerminalTabRequest\.tabId\)/,
   );
 });
 
@@ -1621,7 +1625,8 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /getWorkspaceTabThread/,
     /getRootThreadConversationTitle\(thread\)/,
     /getAgentRoleLabel\(thread\)/,
-    /isRootThread\(thread\)[\s\S]*\? getAgentRoleLabel\(thread\)[\s\S]*: getThreadPresenceLabel\(thread\)/,
+    /const title = isRootThread\(thread\)[\s\S]*\? getRootThreadConversationTitle\(thread\)[\s\S]*: getThreadPath\(thread\)/,
+    /subtitle: isRootThread\(thread\)[\s\S]*\? getAgentRoleLabel\(thread\)[\s\S]*: getThreadPresenceLabel\(thread\)/,
     /getThreadPath\(thread\)/,
     /storedWorkspaceTabOrderRef/,
     /applyStoredWorkspaceTabOrder\([\s\S]*storedWorkspaceTabOrderRef\.current/,
@@ -1638,6 +1643,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /function closeWorkspaceAddMenuOnKeyDown\(event: KeyboardEvent\)[\s\S]*event\.key === "Escape"[\s\S]*setWorkspaceAddMenuOpen\(false\)/,
     /document\.addEventListener\([\s\S]*"pointerdown"[\s\S]*closeWorkspaceAddMenuOnPointerDown[\s\S]*true/,
     /document\.addEventListener\("keydown", closeWorkspaceAddMenuOnKeyDown\)/,
+    /window\.addEventListener\("resize", closeWorkspaceAddMenuOnViewportChange\)/,
     /function toggleWorkspaceAddMenu\(\)[\s\S]*workspaceAddButtonRef\.current[\s\S]*getBoundingClientRect\(\)[\s\S]*setWorkspaceAddMenuPosition/,
     /function selectWorkspaceAddMenuItem\([\s\S]*kind: "terminal" \| "browser" \| "chat"[\s\S]*setWorkspaceAddMenuOpen\(false\)[\s\S]*openTerminalInWorkspace\(\)[\s\S]*openBrowserInWorkspace\(\)[\s\S]*void createBlankChatThread\(\)/,
     /aria-label="Add workspace tab"[\s\S]*aria-haspopup="menu"[\s\S]*aria-expanded=\{workspaceAddMenuOpen\}[\s\S]*onClick=\{toggleWorkspaceAddMenu\}/,
@@ -1657,7 +1663,10 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /workspace-tab-dot \$\{threadDisplayStatusClass\(tabThread\)\}/,
     /const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*currentTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId/,
     /closeWorkspaceTabById\(currentTabs, tabId\)/,
-    /if \(currentVisibleWorkspaceTabId !== tabId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const fallback =[\s\S]*next\[closingIndex\][\s\S]*setActiveWorkspaceTabId\(fallback\?\.id \?\? null\)/,
+    /function activateWorkspaceFallbackTab\(tab: WorkspaceObjectTab \| null\) \{[\s\S]*setActiveWorkspaceTabId\(tab\?\.id \?\? null\)[\s\S]*tab\?\.kind === "conversation"[\s\S]*selectThread\(tab\.threadId\)[\s\S]*tab\?\.kind === "terminal"[\s\S]*setTerminalPanelFocusRequestToken[\s\S]*tab\?\.kind === "file"[\s\S]*loadFilePreview\(tab\.path, \{ preserveRightPanel: true \}\)/,
+    /if \(currentVisibleWorkspaceTabId !== tabId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const fallback =[\s\S]*next\[closingIndex\][\s\S]*activateWorkspaceFallbackTab\(fallback\)/,
+    /function pruneMissingWorkspaceBrowserTabs\(browserTabIds: string\[\]\)[\s\S]*tab\.kind === "browser"[\s\S]*tab\.browserTabId[\s\S]*!liveBrowserTabIds\.has\(tab\.browserTabId\)[\s\S]*setWorkspaceTabs\(next\)[\s\S]*activateWorkspaceFallbackTab/,
+    /function isBrowserTabNotFoundError\(error: unknown\)[\s\S]*browser tab not found/,
     /event\.stopPropagation\(\);[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true/,
     /async function openFilePathInWorkspace\(target: string\)/,
     /return \{ preview, rootId: requestRootId \}/,
@@ -1680,6 +1689,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /const activeTerminalThread =/,
     /thread=\{activeTerminalThread\}/,
     /activeWorkspaceTab\?\.kind === "browser"[\s\S]*<BrowserPanel[\s\S]*variant="workspace"[\s\S]*activeBrowserTabId=\{activeWorkspaceTab\.browserTabId \?\? null\}/,
+    /activeWorkspaceTab\?\.kind === "browser"[\s\S]*onBrowserTabIdsChange=\{pruneMissingWorkspaceBrowserTabs\}/,
     /activeWorkspaceTab\?\.kind === "terminal"[\s\S]*<TerminalPanel[\s\S]*variant="workspace"[\s\S]*activeTerminalTabId=\{activeWorkspaceTab\.terminalTabId \?\? null\}/,
     /function gitDiffWorkspaceTabId\(targetId: string\)/,
     /function workspaceTabForGitDiff\([\s\S]*state: GitDiffPreviewState,[\s\S]*\): WorkspaceObjectTab \| null/,
@@ -1699,6 +1709,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /filePanelViewRef/,
     /filePanelViewRef\.current === "tree"/,
     /function handleSetRightPanelView\(view: RightPanelView\) \{[\s\S]*ensureFileTreeDirectoryLoaded\(selectedThread\.cwd\)[\s\S]*if \(activeWorkspaceTab\?\.kind === "browser"/,
+    /document\.addEventListener\([\s\S]*"scroll"[\s\S]*closeWorkspaceAddMenuOnViewportChange/,
   ]);
   const workspaceBrowserPanelSource = sourceSlice(
     appSource,
@@ -1722,10 +1733,12 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /detachedTerminalTabIds=\{detachedWorkspaceTerminalTabIds\}/,
     /onReturnWorkspaceObject=\{handleReturnWorkspaceObjectToRightPanel\}/,
     /browserTabFocusRequest=\{rightPanelBrowserTabFocusRequest\}/,
+    /onBrowserTabIdsChange=\{pruneMissingWorkspaceBrowserTabs\}/,
     /terminalTabFocusRequest=\{rightPanelTerminalTabFocusRequest\}/,
     /function handleOpenArtifactUrl\(url: string\)[\s\S]*setRightPanelView\("browser"\)/,
     /function closeWorkspaceTab\([\s\S]*options: \{ closeOwnedBrowserTab\?: boolean \} = \{\}[\s\S]*options\.closeOwnedBrowserTab[\s\S]*closingTab\?\.kind === "browser"[\s\S]*window\.codexDesktop[\s\S]*\.closeBrowserTab\(closingTab\.browserTabId\)/,
-    /function closeWorkspaceTab\([\s\S]*const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*currentTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId,[\s\S]*\);[\s\S]*if \(currentVisibleWorkspaceTabId !== tabId\)[\s\S]*setActiveWorkspaceTabId\(fallback\?\.id \?\? null\)/,
+    /\.catch\(\(error\) => \{[\s\S]*isBrowserTabNotFoundError\(error\)[\s\S]*return;[\s\S]*setError\(toErrorMessage\(error\)\)/,
+    /function closeWorkspaceTab\([\s\S]*const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId\([\s\S]*currentTabs,[\s\S]*activeWorkspaceTabId,[\s\S]*selectedThreadWorkspaceTabId,[\s\S]*\);[\s\S]*if \(currentVisibleWorkspaceTabId !== tabId\)[\s\S]*const fallback =[\s\S]*activateWorkspaceFallbackTab\(fallback\)/,
     /className="workspace-tab-close"[\s\S]*onClick=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true[\s\S]*onKeyDown=\{\(event\) => \{[\s\S]*closeWorkspaceTab\(tab\.id,[\s\S]*closeOwnedBrowserTab: true/,
     /function handleReturnWorkspaceObjectToRightPanel\([\s\S]*payload\.kind === "browser"[\s\S]*closeWorkspaceTab\(tab\.id\);[\s\S]*setRightPanelView\("browser"\)[\s\S]*setRightPanelBrowserTabFocusRequest/,
   ]);
@@ -1786,11 +1799,17 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /browserTabDragPayload/,
     /browserTabId: tab\.id/,
     /onOpenBrowserTabInWorkspace/,
+    /onBrowserTabIdsChange\?: \(tabIds: string\[\]\) => void/,
     /activeBrowserTabId\?: string \| null/,
     /variant = "manager"/,
     /variant\?: "manager" \| "workspace"/,
   ]);
   assert.match(terminalPanelSource, /activeTerminalTabId\?: string \| null/);
+  assertMatches(terminalPanelSource, [
+    /const \[terminalStateLoaded, setTerminalStateLoaded\] = useState\(false\)/,
+    /setTerminalStateLoaded\(false\)[\s\S]*getTerminalState\(thread\?\.id \?\? null\)[\s\S]*setTerminalStateLoaded\(true\)/,
+    /useEffect\(\(\) => \{[\s\S]*isManagerVariant[\s\S]*!terminalStateLoaded[\s\S]*activeTerminalTabId != null[\s\S]*visibleTabs\.length > 0[\s\S]*return;[\s\S]*createTerminal\(\);/,
+  ]);
   const browserSelectionSource = sourceSlice(
     browserPanelSource,
     "export function resolveBrowserPanelTabSelection",
@@ -1880,6 +1899,9 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /Browser content is open in workspace\./,
     /const browserSurfaceRef = useRef\(\{/,
     /detachedBrowserTabIds/,
+    /const onBrowserTabIdsChangeRef = useRef\(onBrowserTabIdsChange\)/,
+    /onBrowserTabIdsChangeRef\.current = onBrowserTabIdsChange/,
+    /onBrowserTabIdsChangeRef\.current\?\.[\s\S]*normalizedState\.tabs\.map\(\(tab\) => tab\.id\)/,
     /const addressInputFocusedRef = useRef\(false\)/,
     /const lastAddressTabIdRef = useRef<string \| null>\(null\)/,
     /const syncAddressFromTab = \(/,
@@ -1964,7 +1986,7 @@ test("workspace conversation tabs use concrete thread labels and preserve layout
     /width: 100%;/,
     /\.workspace-tab-panel > \.conversation-panel,[\s\S]*\.workspace-tab-panel > \.browser-panel \{[\s\S]*border-top: 0;[\s\S]*box-shadow: none;[\s\S]*background-image: none;/,
     /\.workspace-tab-strip \{[\s\S]*gap: 6px;[\s\S]*border-bottom: 0;[\s\S]*box-shadow: none;/,
-    /\.workspace-tab-list \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow-x: auto;/,
+    /\.workspace-tab-list \{[\s\S]*max-width: calc\(100% - 34px\);[\s\S]*flex: 0 1 auto;[\s\S]*overflow-x: auto;/,
     /\.workspace-tab \{[\s\S]*border: 0;[\s\S]*border-radius: 999px;[\s\S]*background: rgba\(28, 25, 23, 0\.045\);/,
     /\.workspace-tab\.active \{[\s\S]*background: rgba\(15, 118, 110, 0\.12\);[\s\S]*box-shadow: inset 0 0 0 1px/,
     /\.workspace-tab-add-button \{[\s\S]*width: 28px;[\s\S]*border-radius: 999px;[\s\S]*background: rgba\(28, 25, 23, 0\.045\);/,
