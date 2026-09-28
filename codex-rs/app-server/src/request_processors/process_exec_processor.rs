@@ -64,71 +64,15 @@ impl ProcessExecRequestProcessor {
         request_id: ConnectionRequestId,
         params: ProcessSpawnParams,
     ) -> Result<(), JSONRPCErrorError> {
-        let ProcessSpawnParams {
-            command,
-            process_handle,
-            cwd,
-            tty,
-            stream_stdin,
-            stream_stdout_stderr,
-            output_bytes_cap,
-            timeout_ms,
-            env: env_overrides,
-            size,
-        } = params;
         let method_name = "process/spawn";
-        tracing::debug!("{method_name} command: {command:?}");
-        if command.is_empty() {
-            return Err(invalid_request("command must not be empty"));
-        }
-        if process_handle.is_empty() {
-            return Err(invalid_request("processHandle must not be empty"));
-        }
-        if size.is_some() && !tty {
-            return Err(invalid_params("process/spawn size requires tty: true"));
-        }
-        let mut env = std::env::vars().collect::<HashMap<_, _>>();
-        if let Some(env_overrides) = env_overrides {
-            for (key, value) in env_overrides {
-                match value {
-                    Some(value) => {
-                        env.insert(key, value);
-                    }
-                    None => {
-                        env.remove(&key);
-                    }
-                }
-            }
-        }
-        let expiration = match timeout_ms {
-            Some(Some(timeout_ms)) => match u64::try_from(timeout_ms) {
-                Ok(timeout_ms) => timeout_ms.into(),
-                Err(_) => {
-                    return Err(invalid_params(format!(
-                        "{method_name} timeoutMs must be non-negative, got {timeout_ms}"
-                    )));
-                }
-            },
-            Some(None) => ExecExpiration::Cancellation(CancellationToken::new()),
-            None => ExecExpiration::DefaultTimeout,
-        };
-        let output_bytes_cap = output_bytes_cap.unwrap_or(Some(DEFAULT_OUTPUT_BYTES_CAP));
-        let size = size.map(terminal_size_from_protocol).transpose()?;
+        let request = ProcessSpawnRequest::from_protocol(method_name, params)?;
+        tracing::debug!("{method_name} command: {:?}", request.command);
 
         self.process_exec_manager
             .start(StartProcessParams {
                 outgoing: self.outgoing.clone(),
                 request_id,
-                process_handle,
-                command,
-                cwd,
-                env,
-                expiration,
-                tty,
-                stream_stdin,
-                stream_stdout_stderr,
-                output_bytes_cap,
-                size,
+                request,
             })
             .await?;
 
@@ -205,6 +149,10 @@ struct ProcessControlRequest {
 struct StartProcessParams {
     outgoing: Arc<OutgoingMessageSender>,
     request_id: ConnectionRequestId,
+    request: ProcessSpawnRequest,
+}
+
+struct ProcessSpawnRequest {
     process_handle: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
@@ -215,6 +163,83 @@ struct StartProcessParams {
     stream_stdout_stderr: bool,
     output_bytes_cap: Option<usize>,
     size: Option<TerminalSize>,
+}
+
+impl ProcessSpawnRequest {
+    fn from_protocol(
+        method_name: &str,
+        params: ProcessSpawnParams,
+    ) -> Result<Self, JSONRPCErrorError> {
+        let ProcessSpawnParams {
+            command,
+            process_handle,
+            cwd,
+            tty,
+            stream_stdin,
+            stream_stdout_stderr,
+            output_bytes_cap,
+            timeout_ms,
+            env: env_overrides,
+            size,
+        } = params;
+
+        if command.is_empty() {
+            return Err(invalid_request("command must not be empty"));
+        }
+        if process_handle.is_empty() {
+            return Err(invalid_request("processHandle must not be empty"));
+        }
+        if size.is_some() && !tty {
+            return Err(invalid_params("process/spawn size requires tty: true"));
+        }
+
+        let mut env = std::env::vars().collect::<HashMap<_, _>>();
+        apply_env_overrides(&mut env, env_overrides);
+
+        let expiration = match timeout_ms {
+            Some(Some(timeout_ms)) => match u64::try_from(timeout_ms) {
+                Ok(timeout_ms) => timeout_ms.into(),
+                Err(_) => {
+                    return Err(invalid_params(format!(
+                        "{method_name} timeoutMs must be non-negative, got {timeout_ms}"
+                    )));
+                }
+            },
+            Some(None) => ExecExpiration::Cancellation(CancellationToken::new()),
+            None => ExecExpiration::DefaultTimeout,
+        };
+
+        Ok(Self {
+            process_handle,
+            command,
+            cwd,
+            env,
+            expiration,
+            tty,
+            stream_stdin,
+            stream_stdout_stderr,
+            output_bytes_cap: output_bytes_cap.unwrap_or(Some(DEFAULT_OUTPUT_BYTES_CAP)),
+            size: size.map(terminal_size_from_protocol).transpose()?,
+        })
+    }
+}
+
+fn apply_env_overrides(
+    env: &mut HashMap<String, String>,
+    env_overrides: Option<HashMap<String, Option<String>>>,
+) {
+    if let Some(env_overrides) = env_overrides {
+        for (key, value) in env_overrides {
+            match value {
+                Some(value) => {
+                    env.insert(key, value);
+                }
+                None => {
+                    env.remove(&key);
+                }
+            }
+        }
+    }
 }
 
 struct RunProcessParams {
@@ -246,11 +271,67 @@ struct ProcessOutputCapture {
     cap_reached: bool,
 }
 
+struct ProcessOutputAccumulator {
+    buffer: Vec<u8>,
+    observed_num_bytes: usize,
+    cap_reached: bool,
+    stream_output: bool,
+    output_bytes_cap: Option<usize>,
+}
+
+struct ProcessOutputChunk<'a> {
+    bytes: &'a [u8],
+    cap_reached: bool,
+}
+
+impl ProcessOutputAccumulator {
+    fn new(stream_output: bool, output_bytes_cap: Option<usize>) -> Self {
+        Self {
+            buffer: Vec::new(),
+            observed_num_bytes: 0,
+            cap_reached: false,
+            stream_output,
+            output_bytes_cap,
+        }
+    }
+
+    fn accept_chunk<'a>(&mut self, chunk: &'a [u8]) -> ProcessOutputChunk<'a> {
+        let capped_chunk = match self.output_bytes_cap {
+            Some(output_bytes_cap) => {
+                let capped_chunk_len = output_bytes_cap
+                    .saturating_sub(self.observed_num_bytes)
+                    .min(chunk.len());
+                self.observed_num_bytes += capped_chunk_len;
+                &chunk[0..capped_chunk_len]
+            }
+            None => chunk,
+        };
+        self.cap_reached = Some(self.observed_num_bytes) == self.output_bytes_cap;
+        if !self.stream_output {
+            self.buffer.extend_from_slice(capped_chunk);
+        }
+        ProcessOutputChunk {
+            bytes: capped_chunk,
+            cap_reached: self.cap_reached,
+        }
+    }
+
+    fn finish(self) -> ProcessOutputCapture {
+        ProcessOutputCapture {
+            text: bytes_to_string_smart(&self.buffer),
+            cap_reached: self.cap_reached,
+        }
+    }
+}
+
 impl ProcessExecManager {
     async fn start(&self, params: StartProcessParams) -> Result<(), JSONRPCErrorError> {
         let StartProcessParams {
             outgoing,
             request_id,
+            request,
+        } = params;
+        let ProcessSpawnRequest {
             process_handle,
             command,
             cwd,
@@ -261,7 +342,7 @@ impl ProcessExecManager {
             stream_stdout_stderr,
             output_bytes_cap,
             size,
-        } = params;
+        } = request;
 
         let (program, args) = command
             .split_first()
@@ -595,9 +676,7 @@ fn collect_spawn_process_output(
         output_bytes_cap,
     } = params;
     tokio::spawn(async move {
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut observed_num_bytes = 0usize;
-        let mut cap_reached = false;
+        let mut output = ProcessOutputAccumulator::new(stream_output, output_bytes_cap);
         loop {
             let mut chunk = tokio::select! {
                 chunk = output_rx.recv() => match chunk {
@@ -611,17 +690,7 @@ fn collect_spawn_process_output(
             {
                 chunk.extend_from_slice(&next_chunk);
             }
-            let capped_chunk = match output_bytes_cap {
-                Some(output_bytes_cap) => {
-                    let capped_chunk_len = output_bytes_cap
-                        .saturating_sub(observed_num_bytes)
-                        .min(chunk.len());
-                    observed_num_bytes += capped_chunk_len;
-                    &chunk[0..capped_chunk_len]
-                }
-                None => chunk.as_slice(),
-            };
-            cap_reached = Some(observed_num_bytes) == output_bytes_cap;
+            let capped_chunk = output.accept_chunk(&chunk);
             if stream_output {
                 outgoing
                     .send_server_notification_to_connection_and_wait(
@@ -629,22 +698,17 @@ fn collect_spawn_process_output(
                         ServerNotification::ProcessOutputDelta(ProcessOutputDeltaNotification {
                             process_handle: process_handle.clone(),
                             stream,
-                            delta_base64: STANDARD.encode(capped_chunk),
-                            cap_reached,
+                            delta_base64: STANDARD.encode(capped_chunk.bytes),
+                            cap_reached: capped_chunk.cap_reached,
                         }),
                     )
                     .await;
-            } else {
-                buffer.extend_from_slice(capped_chunk);
             }
-            if cap_reached {
+            if capped_chunk.cap_reached {
                 break;
             }
         }
-        ProcessOutputCapture {
-            text: bytes_to_string_smart(&buffer),
-            cap_reached,
-        }
+        output.finish()
     })
 }
 
@@ -705,4 +769,107 @@ fn no_active_process_error(process_handle: &str) -> JSONRPCErrorError {
 
 fn process_no_longer_running_error(process_handle: &str) -> JSONRPCErrorError {
     invalid_request(format!("process {process_handle:?} is no longer running"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn spawn_params() -> ProcessSpawnParams {
+        ProcessSpawnParams {
+            command: vec!["echo".to_string()],
+            process_handle: "process-1".to_string(),
+            cwd: AbsolutePathBuf::try_from(std::env::current_dir().unwrap()).unwrap(),
+            tty: false,
+            stream_stdin: false,
+            stream_stdout_stderr: false,
+            output_bytes_cap: None,
+            timeout_ms: None,
+            env: None,
+            size: None,
+        }
+    }
+
+    #[test]
+    fn process_spawn_request_applies_defaults_and_env_overrides() {
+        let mut params = spawn_params();
+        let existing_key = std::env::vars()
+            .next()
+            .map(|(key, _)| key)
+            .unwrap_or_else(|| "PATH".to_string());
+        params.env = Some(HashMap::from([
+            (
+                "PROCESS_EXEC_TEST_ENV".to_string(),
+                Some("value".to_string()),
+            ),
+            (existing_key.clone(), None),
+        ]));
+
+        let request = ProcessSpawnRequest::from_protocol("process/spawn", params).unwrap();
+
+        assert_eq!(request.output_bytes_cap, Some(DEFAULT_OUTPUT_BYTES_CAP));
+        assert_eq!(
+            request.env.get("PROCESS_EXEC_TEST_ENV"),
+            Some(&"value".to_string())
+        );
+        assert!(!request.env.contains_key(&existing_key));
+    }
+
+    #[test]
+    fn process_spawn_request_preserves_explicit_unbounded_output_and_timeout_cancellation() {
+        let mut params = spawn_params();
+        params.output_bytes_cap = Some(None);
+        params.timeout_ms = Some(None);
+
+        let request = ProcessSpawnRequest::from_protocol("process/spawn", params).unwrap();
+
+        assert_eq!(request.output_bytes_cap, None);
+        assert!(matches!(
+            request.expiration,
+            ExecExpiration::Cancellation(_)
+        ));
+    }
+
+    #[test]
+    fn process_spawn_request_rejects_size_without_tty_before_size_validation() {
+        let mut params = spawn_params();
+        params.size = Some(ProcessTerminalSize { rows: 0, cols: 0 });
+
+        let err = match ProcessSpawnRequest::from_protocol("process/spawn", params) {
+            Ok(_) => panic!("size without tty should fail"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.message, "process/spawn size requires tty: true");
+    }
+
+    #[test]
+    fn process_output_accumulator_buffers_capped_output() {
+        let mut output = ProcessOutputAccumulator::new(false, Some(3));
+
+        let first = output.accept_chunk(b"ab");
+        assert_eq!(first.bytes, b"ab");
+        assert!(!first.cap_reached);
+        let second = output.accept_chunk(b"cde");
+        assert_eq!(second.bytes, b"c");
+        assert!(second.cap_reached);
+
+        let captured = output.finish();
+        assert_eq!(captured.text, "abc");
+        assert!(captured.cap_reached);
+    }
+
+    #[test]
+    fn process_output_accumulator_streams_without_buffering() {
+        let mut output = ProcessOutputAccumulator::new(true, None);
+
+        let chunk = output.accept_chunk(b"streamed");
+
+        assert_eq!(chunk.bytes, b"streamed");
+        assert!(!chunk.cap_reached);
+        let captured = output.finish();
+        assert_eq!(captured.text, "");
+        assert!(!captured.cap_reached);
+    }
 }
