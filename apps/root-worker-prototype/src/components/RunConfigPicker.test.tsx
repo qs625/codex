@@ -89,7 +89,7 @@ test("run config popover renders model and reasoning radio groups", () => {
   assert.match(markup, /aria-checked="true"[^>]*>medium/);
 });
 
-test("run config trigger resolves inherited defaults for text and aria", () => {
+test("run config trigger renders inherited provider default without catalog guess", () => {
   const markup = renderToStaticMarkup(
     <RunConfigPicker
       disabled={false}
@@ -111,15 +111,15 @@ test("run config trigger resolves inherited defaults for text and aria", () => {
     />,
   );
 
-  assert.match(markup, /GPT-5\.6 · openai · high/);
+  assert.match(markup, /openai · default/);
   assert.match(
     markup,
-    /aria-label="运行配置，当前模型 GPT-5\.6 · openai，reasoning high"/,
+    /aria-label="运行配置，当前模型 openai，reasoning default"/,
   );
-  assert.doesNotMatch(markup, /openai · default/);
+  assert.doesNotMatch(markup, /GPT-5\.6 · openai · high/);
 });
 
-test("run config trigger reports unresolved inherited config without default", () => {
+test("run config trigger reports inherited provider default without catalog", () => {
   const markup = renderToStaticMarkup(
     <RunConfigPicker
       disabled={false}
@@ -128,8 +128,7 @@ test("run config trigger reports unresolved inherited config without default", (
     />,
   );
 
-  assert.match(markup, /unresolved model \(openai\) · unresolved reasoning/);
-  assert.doesNotMatch(markup, /default/);
+  assert.match(markup, /openai · default/);
 });
 
 test("run config popover opens above the composer with bounded height", () => {

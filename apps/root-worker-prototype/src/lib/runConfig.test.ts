@@ -253,7 +253,7 @@ test("resolveSelectionForModel carries model context metadata", () => {
   );
 });
 
-test("resolveRunConfigDisplaySummary resolves inherited default model", () => {
+test("resolveRunConfigDisplaySummary does not use catalog default for inherited provider default", () => {
   assert.deepEqual(
     resolveRunConfigDisplaySummary(makeThread(), [
       makeModel({
@@ -269,16 +269,9 @@ test("resolveRunConfigDisplaySummary resolves inherited default model", () => {
       }),
     ]),
     {
-      modelLabel: "GPT-5.6 · openai",
-      reasoningLabel: "high",
-      selection: {
-        model: "gpt-5.6",
-        modelProvider: "openai",
-        reasoningEffort: "high",
-        contextWindow: null,
-        maxContextWindow: null,
-        autoCompactTokenLimit: null,
-      },
+      modelLabel: "openai",
+      reasoningLabel: "default",
+      selection: null,
       provenance: "inherited",
     },
   );
@@ -303,12 +296,12 @@ test("resolveRunConfigDisplaySummary keeps explicit current-only model concrete"
   );
 });
 
-test("resolveRunConfigDisplaySummary reports unresolved inherited config", () => {
+test("resolveRunConfigDisplaySummary reports inherited provider default", () => {
   assert.deepEqual(resolveRunConfigDisplaySummary(makeThread(), []), {
-    modelLabel: "unresolved model (openai)",
-    reasoningLabel: "unresolved reasoning",
+    modelLabel: "openai",
+    reasoningLabel: "default",
     selection: null,
-    provenance: "unresolved",
+    provenance: "inherited",
   });
 });
 
@@ -323,10 +316,10 @@ test("resolveRunConfigDisplaySummary does not use another provider default", () 
       }),
     ]),
     {
-      modelLabel: "unresolved model (openai)",
-      reasoningLabel: "unresolved reasoning",
+      modelLabel: "openai",
+      reasoningLabel: "default",
       selection: null,
-      provenance: "unresolved",
+      provenance: "inherited",
     },
   );
 });
