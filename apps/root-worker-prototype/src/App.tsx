@@ -32,7 +32,13 @@ import {
 } from "./components/SelfCommandDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
-import { XIcon } from "./components/icons";
+import {
+  BrowserIcon,
+  PlusIcon,
+  RobotIcon,
+  TerminalIcon,
+  XIcon,
+} from "./components/icons";
 import {
   clearComposerDraft,
   getComposerDraft,
@@ -432,6 +438,11 @@ function App() {
     string | null
   >(null);
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceObjectTab[]>([]);
+  const [workspaceAddMenuOpen, setWorkspaceAddMenuOpen] = useState(false);
+  const [workspaceAddMenuPosition, setWorkspaceAddMenuPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
   const [draggedWorkspaceTab, setDraggedWorkspaceTab] = useState<string | null>(
     null,
   );
@@ -529,6 +540,8 @@ function App() {
   const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const voiceMediaStreamRef = useRef<MediaStream | null>(null);
   const voiceEventsChannelRef = useRef<RTCDataChannel | null>(null);
+  const workspaceAddButtonRef = useRef<HTMLButtonElement | null>(null);
+  const workspaceAddMenuRef = useRef<HTMLDivElement | null>(null);
   const voiceFinalTranscriptWaitersRef = useRef(
     new Map<string, Set<() => void>>(),
   );
@@ -604,6 +617,68 @@ function App() {
       openConversationWorkspaceTab(selectedThreadId);
     }
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    if (!workspaceAddMenuOpen) {
+      return;
+    }
+
+    function closeWorkspaceAddMenuOnPointerDown(
+      event: globalThis.PointerEvent,
+    ) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (
+        workspaceAddButtonRef.current?.contains(target) ||
+        workspaceAddMenuRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setWorkspaceAddMenuOpen(false);
+    }
+
+    function closeWorkspaceAddMenuOnKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setWorkspaceAddMenuOpen(false);
+      }
+    }
+
+    function closeWorkspaceAddMenuOnViewportChange() {
+      setWorkspaceAddMenuOpen(false);
+    }
+
+    document.addEventListener(
+      "pointerdown",
+      closeWorkspaceAddMenuOnPointerDown,
+      true,
+    );
+    document.addEventListener("keydown", closeWorkspaceAddMenuOnKeyDown);
+    window.addEventListener("resize", closeWorkspaceAddMenuOnViewportChange);
+    document.addEventListener(
+      "scroll",
+      closeWorkspaceAddMenuOnViewportChange,
+      true,
+    );
+    return () => {
+      document.removeEventListener(
+        "pointerdown",
+        closeWorkspaceAddMenuOnPointerDown,
+        true,
+      );
+      document.removeEventListener("keydown", closeWorkspaceAddMenuOnKeyDown);
+      window.removeEventListener(
+        "resize",
+        closeWorkspaceAddMenuOnViewportChange,
+      );
+      document.removeEventListener(
+        "scroll",
+        closeWorkspaceAddMenuOnViewportChange,
+        true,
+      );
+    };
+  }, [workspaceAddMenuOpen]);
 
   useEffect(() => {
     const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
@@ -3415,6 +3490,36 @@ function App() {
     upsertWorkspaceObjectTab(workspaceTabForTerminal(tab, selectedThread));
   }
 
+  function toggleWorkspaceAddMenu() {
+    if (workspaceAddMenuOpen) {
+      setWorkspaceAddMenuOpen(false);
+      return;
+    }
+    const button = workspaceAddButtonRef.current;
+    if (!button) {
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    setWorkspaceAddMenuPosition({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 232)),
+      top: rect.bottom + 6,
+    });
+    setWorkspaceAddMenuOpen(true);
+  }
+
+  function selectWorkspaceAddMenuItem(kind: "terminal" | "browser" | "chat") {
+    setWorkspaceAddMenuOpen(false);
+    if (kind === "terminal") {
+      openTerminalInWorkspace();
+      return;
+    }
+    if (kind === "browser") {
+      openBrowserInWorkspace();
+      return;
+    }
+    void createBlankChatThread();
+  }
+
   function handleGitDiffPreviewChange(state: GitDiffPreviewState) {
     setGitDiffPreview(state);
     if (!state.targetId) {
@@ -3470,6 +3575,11 @@ function App() {
       return;
     }
     const closingTab = currentTabs[closingIndex];
+    const currentVisibleWorkspaceTabId = resolveActiveWorkspaceTabId(
+      currentTabs,
+      activeWorkspaceTabId,
+      selectedThreadWorkspaceTabId,
+    );
     const next = closeWorkspaceTabById(currentTabs, tabId);
     workspaceTabsRef.current = next;
     setWorkspaceTabs(next);
@@ -3489,16 +3599,26 @@ function App() {
         .closeBrowserTab(closingTab.browserTabId)
         .catch((error) => setError(toErrorMessage(error)));
     }
-    if (visibleWorkspaceTabId !== tabId) {
+    if (currentVisibleWorkspaceTabId !== tabId) {
       return;
     }
     const fallback =
       next[closingIndex] ?? next[closingIndex - 1] ?? next[0] ?? null;
-    if (fallback) {
-      activateWorkspaceTab(fallback);
+    setActiveWorkspaceTabId(fallback?.id ?? null);
+    if (fallback?.kind === "conversation" && fallback.threadId) {
+      selectThread(fallback.threadId);
       return;
     }
-    setActiveWorkspaceTabId(null);
+    if (fallback?.kind === "terminal") {
+      setTerminalPanelFocusRequestToken((current) => current + 1);
+      return;
+    }
+    if (fallback?.kind === "file" && fallback.path) {
+      setFilePanelView("preview");
+      if (filePreview?.path !== fallback.path) {
+        void loadFilePreview(fallback.path, { preserveRightPanel: true });
+      }
+    }
   }
 
   function handleWorkspaceObjectDragOver(event: DragEvent<HTMLElement>) {
@@ -3737,64 +3857,143 @@ function App() {
           onDragOver={handleWorkspaceObjectDragOver}
           onDrop={handleWorkspaceObjectDrop}
         >
-          <div
-            className="workspace-tab-strip"
-            role="tablist"
-            aria-label="Workspace object tabs"
-          >
-            {workspaceTabs.map((tab) => {
-              const active = tab.id === visibleWorkspaceTabId;
-              const tabThread = getWorkspaceTabThread(tab, threads);
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={`workspace-tab ${active ? "active" : ""} ${
-                    draggedWorkspaceTab === tab.id ? "dragging" : ""
-                  }`}
-                  role="tab"
-                  aria-selected={active}
-                  draggable
-                  title={`${tab.title}${tab.subtitle ? ` · ${tab.subtitle}` : ""}`}
-                  onClick={() => selectWorkspaceTab(tab.id)}
-                  onDragEnd={() => setDraggedWorkspaceTab(null)}
-                  onDragOver={(event) =>
-                    handleWorkspaceTabDragOver(event, tab.id)
-                  }
-                  onDragStart={(event) =>
-                    handleWorkspaceTabDragStart(event, tab.id)
-                  }
-                  onDrop={(event) => handleWorkspaceTabDrop(event, tab.id)}
-                >
-                  <span
-                    className={`workspace-tab-dot ${threadDisplayStatusClass(tabThread)}`}
-                  />
-                  <span className="workspace-tab-label">{tab.title}</span>
-                  <span
-                    aria-label={`Close ${tab.title}`}
-                    className="workspace-tab-close"
-                    role="button"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeWorkspaceTab(tab.id, { closeOwnedBrowserTab: true });
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
+          <div className="workspace-tab-strip">
+            <div
+              className="workspace-tab-list"
+              role="tablist"
+              aria-label="Workspace object tabs"
+            >
+              {workspaceTabs.map((tab) => {
+                const active = tab.id === visibleWorkspaceTabId;
+                const tabThread = getWorkspaceTabThread(tab, threads);
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`workspace-tab ${active ? "active" : ""} ${
+                      draggedWorkspaceTab === tab.id ? "dragging" : ""
+                    }`}
+                    role="tab"
+                    aria-selected={active}
+                    draggable
+                    title={`${tab.title}${tab.subtitle ? ` · ${tab.subtitle}` : ""}`}
+                    onClick={() => selectWorkspaceTab(tab.id)}
+                    onDragEnd={() => setDraggedWorkspaceTab(null)}
+                    onDragOver={(event) =>
+                      handleWorkspaceTabDragOver(event, tab.id)
+                    }
+                    onDragStart={(event) =>
+                      handleWorkspaceTabDragStart(event, tab.id)
+                    }
+                    onDrop={(event) => handleWorkspaceTabDrop(event, tab.id)}
+                  >
+                    <span
+                      className={`workspace-tab-dot ${threadDisplayStatusClass(tabThread)}`}
+                    />
+                    <span className="workspace-tab-label">{tab.title}</span>
+                    <span
+                      aria-label={`Close ${tab.title}`}
+                      className="workspace-tab-close"
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
                         event.stopPropagation();
                         closeWorkspaceTab(tab.id, {
                           closeOwnedBrowserTab: true,
                         });
-                      }
-                    }}
-                  >
-                    <XIcon />
-                  </span>
-                </button>
-              );
-            })}
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          closeWorkspaceTab(tab.id, {
+                            closeOwnedBrowserTab: true,
+                          });
+                        }
+                      }}
+                    >
+                      <XIcon />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              ref={workspaceAddButtonRef}
+              type="button"
+              className={`workspace-tab-add-button ${
+                workspaceAddMenuOpen ? "active" : ""
+              }`}
+              aria-label="Add workspace tab"
+              aria-haspopup="menu"
+              aria-expanded={workspaceAddMenuOpen}
+              onClick={toggleWorkspaceAddMenu}
+            >
+              <PlusIcon />
+            </button>
           </div>
+          {workspaceAddMenuOpen && workspaceAddMenuPosition ? (
+            <div
+              ref={workspaceAddMenuRef}
+              className="workspace-tab-add-menu"
+              role="menu"
+              aria-label="Add workspace tab"
+              style={{
+                left: workspaceAddMenuPosition.left,
+                top: workspaceAddMenuPosition.top,
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="workspace-tab-add-menu-item"
+                onClick={() => selectWorkspaceAddMenuItem("terminal")}
+              >
+                <span className="workspace-tab-add-menu-icon">
+                  <TerminalIcon />
+                </span>
+                <span className="workspace-tab-add-menu-copy">
+                  <span className="workspace-tab-add-menu-label">Terminal</span>
+                  <span className="workspace-tab-add-menu-description">
+                    Open a workspace terminal
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="workspace-tab-add-menu-item"
+                onClick={() => selectWorkspaceAddMenuItem("browser")}
+              >
+                <span className="workspace-tab-add-menu-icon">
+                  <BrowserIcon />
+                </span>
+                <span className="workspace-tab-add-menu-copy">
+                  <span className="workspace-tab-add-menu-label">Browser</span>
+                  <span className="workspace-tab-add-menu-description">
+                    Open a workspace browser
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="workspace-tab-add-menu-item"
+                disabled={isCreatingChatThread}
+                onClick={() => selectWorkspaceAddMenuItem("chat")}
+              >
+                <span className="workspace-tab-add-menu-icon">
+                  <RobotIcon />
+                </span>
+                <span className="workspace-tab-add-menu-copy">
+                  <span className="workspace-tab-add-menu-label">Chat</span>
+                  <span className="workspace-tab-add-menu-description">
+                    Start a blank chat
+                  </span>
+                </span>
+              </button>
+            </div>
+          ) : null}
           <div className="workspace-tab-content">
             <div
               className="workspace-tab-panel"

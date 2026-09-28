@@ -79,6 +79,8 @@ a,
 [role="button"],
 .workspace-tab,
 .workspace-tab-close,
+.workspace-tab-add-button,
+.workspace-tab-add-menu,
 .panel-rail-button,
 .panel-resizer,
 .composer-shell,
@@ -138,8 +140,16 @@ a,
   border-bottom: 0;
   background: rgba(255, 255, 255, 0.5);
   box-shadow: none;
-  overflow-x: auto;
   -webkit-app-region: drag;
+}
+
+.workspace-tab-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
 }
 
 .workspace-tab {
@@ -200,6 +210,106 @@ a,
 .workspace-tab-close svg {
   width: 12px;
   height: 12px;
+}
+
+.workspace-tab-add-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(28, 25, 23, 0.045);
+  color: #57534e;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab-add-button:hover,
+.workspace-tab-add-button:focus-visible,
+.workspace-tab-add-button.active {
+  background: rgba(15, 118, 110, 0.12);
+  color: #292524;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.16);
+}
+
+.workspace-tab-add-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.workspace-tab-add-menu {
+  position: fixed;
+  z-index: 70;
+  width: 224px;
+  padding: 5px;
+  border: 1px solid rgba(28, 25, 23, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 28px rgba(28, 25, 23, 0.14);
+  backdrop-filter: blur(18px);
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab-add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #44403c;
+  text-align: left;
+}
+
+.workspace-tab-add-menu-item:hover,
+.workspace-tab-add-menu-item:focus-visible {
+  background: rgba(28, 25, 23, 0.06);
+}
+
+.workspace-tab-add-menu-item:disabled {
+  opacity: 0.52;
+}
+
+.workspace-tab-add-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 7px;
+  background: rgba(15, 118, 110, 0.09);
+  color: #0f766e;
+}
+
+.workspace-tab-add-menu-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.workspace-tab-add-menu-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workspace-tab-add-menu-label {
+  color: #292524;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-tab-add-menu-description {
+  color: #78716c;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .workspace-tab.active {
@@ -6656,7 +6766,9 @@ body.macos-window-chrome
   border-radius: 7px;
   background: transparent;
   color: #57534e;
-  transition: background 120ms ease, transform 120ms ease;
+  transition:
+    background 120ms ease,
+    transform 120ms ease;
 }
 
 .git-section-toggle:hover {
@@ -7079,7 +7191,9 @@ body.macos-window-chrome
   color: #64748b;
   opacity: 0;
   transform: translateX(3px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
 }
 
 .git-graph-row-affordance svg {
