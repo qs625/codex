@@ -13,7 +13,7 @@ Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28
 ## Active Work
 
 - id: workspace-browser-add-menu-content-missing
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -32,12 +32,13 @@ Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28
   why_prior_validation_missed: The previous installed self-debug checked workspace tab creation, right-panel non-flash, and add-menu top-layer behavior, but did not validate that inactive-create immediately attached visible native Browser content for the workspace surface.
   implementation: Merged owner commit `737f920f4` as `d3c5155fe`. `showNativeBrowserView` now accepts an explicit target tab and sends bounds with `surfaceId + tabId`. Workspace Browser auto-create still uses `activate: false`, but after resolving `createdTab` it calls `showNativeBrowserView(browserApi, createdTab)` when active, overlay is clear, and not resizing.
   validation: Owner validation passed with fixed reviewer approval. PM main validation passed: Prettier on BrowserPanel/Panels/RightPanel.test/Panels.test; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx src/components/Panels.test.tsx src/lib/workspaceTabs.test.ts`; `node --test apps/root-worker-prototype/electron/browserPanelTabs.test.cjs apps/root-worker-prototype/electron/browserPanelSurface.test.cjs`; `git diff --check HEAD~1 HEAD`.
+  installed_validation: PM built Runtime Capsule `sha256:a9400e55450a81eb97faaef03a29307f9ede811b88672105f84f569dd30600ad` from main `883b187e0`; restart `call_8qJCVmT4n1mAPdj4q3Vsvcle` completed. Installed self-debug confirmed control selected/externalCurrent/active payload and renderer URL point at the new release, console 0 errors / 0 warnings. From the workspace add popup, selecting Browser created and selected a workspace Browser tab while the right panel remained Thread Analysis. The workspace Browser showed a visible native viewport; navigating to `https://example.com/` displayed the real Example Domain page in the workspace Browser screenshot.
   risk: Medium native Browser surface activation fix. Requires installed self-debug to confirm real content is visible, right panel remains unpolluted, and popup layering still holds.
   commit: owner `737f920f4`; merge `d3c5155fe`
-  next_action: Build Runtime Capsule from main, request restart, and self-debug installed Browser add flow including content visibility.
+  next_action: No further action unless user reproduces another workspace Browser content issue.
 
 - id: project-add-popup-dropdown-disappears-on-output
-  status: merged_pending_capsule_delivery
+  status: installed_effective
   owner: /self/owner_dev
   reviewer: /self/owner_dev/reviewer
   checkout: /Users/bytedance/.morpheus/source_workspace-dev
@@ -55,9 +56,10 @@ Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28
   root_cause: Project add dialog lived under `SidebarPanel`; unrelated conversation/output updates could rerender the parent. The native `<select>` dropdown is sensitive to React rerender even when popup state stays open, so background output could collapse the open dropdown.
   implementation: Merged owner commit `737f920f4` as `d3c5155fe`. `NewThreadDialog` is memoized, `existingProjectPaths` is stabilized by a project cwd key/ref, and cancel/submit callbacks are stable while still invoking the latest submit callback through a ref.
   validation: Owner validation passed with fixed reviewer approval. PM main validation passed with the same focused suite as the Browser content fix, including new `SidebarPanel keeps project create dialog stable during unrelated rerenders` source contract.
+  installed_validation: PM built Runtime Capsule `sha256:a9400e55450a81eb97faaef03a29307f9ede811b88672105f84f569dd30600ad` from main `883b187e0`; restart `call_8qJCVmT4n1mAPdj4q3Vsvcle` completed. Installed self-debug opened the Project add dialog, focused/clicked its native select dropdown, and waited during command/output refresh; the dialog and select remained the same DOM nodes, visible, same outerHTML length, and the select retained focus. Console remained 0 errors / 0 warnings.
   risk: Low-to-medium popup stability fix. Requires installed self-debug for native select/dropdown stability during live output.
   commit: owner `737f920f4`; merge `d3c5155fe`
-  next_action: Build Runtime Capsule from main, request restart, and self-debug installed Project add popup/dropdown stability during output refresh.
+  next_action: No further action unless user reproduces another project add popup/dropdown issue.
 
 - id: compact-after-current-message-still-hidden
   status: installed_effective
