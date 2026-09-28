@@ -8,9 +8,28 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Active goal: fix follow-up installed popup/workspace regressions from 2026-09-28: (1) after the workspace add-menu Browser isolation fix, clicking Browser creates/selects the workspace Browser tab but Browser content does not display; (2) the add-new-project popup dropdown disappears when conversation messages/output refresh. Current installed Runtime Capsule is `sha256:95599851c0936c5f237b22e3d0eab4bc55f47315440c92c68cc85746b6a2444c` from main `7660081cc`; main is currently at `77f5a4424`.
+Active goal: fix the follow-up installed workspace Browser/add-popup layering regression from 2026-09-28: with the workspace Browser open, opening the workspace add popup still makes the Browser content disappear. Current installed Runtime Capsule is `sha256:a9400e55450a81eb97faaef03a29307f9ede811b88672105f84f569dd30600ad` from main `883b187e0`; main is currently at `b61bbe2dc`.
 
 ## Active Work
+
+- id: workspace-browser-content-hidden-while-add-popup-open
+  status: dispatched
+  owner: /self/owner_dev
+  reviewer: /self/owner_dev/reviewer
+  checkout: /Users/bytedance/.morpheus/source_workspace-dev
+  branch: fix/workspace-browser-popup-content-coexist
+  task_type: frontend_workspace_browser_native_view_layering_regression_fix
+  depends_on: main `b61bbe2dc`; installed Runtime Capsule `sha256:a9400e55450a81eb97faaef03a29307f9ede811b88672105f84f569dd30600ad`; user reported that when the workspace add button popup is open, the workspace Browser content still does not display
+  files: expected `apps/root-worker-prototype/src/App.tsx`, `apps/root-worker-prototype/src/components/BrowserPanel.tsx`, `apps/root-worker-prototype/src/components/RightPanel.tsx`, Browser native view bounds/overlay helpers, focused RightPanel/BrowserPanel/Electron Browser native view tests as root cause requires
+  base_commit: `b61bbe2dc`
+  product_contract: Workspace Browser content and the workspace add popup must coexist. Opening the add popup over an active workspace Browser must keep Browser content visible in the workspace area while the popup remains visible and pointer-interactable above it. The popup must not be covered by Browser native content, but protecting the popup must not blank/hide the entire BrowserView. Right-panel Browser manager isolation must remain intact: workspace Browser visibility must not be achieved by selecting/refreshing the right-side manager.
+  problem_model: The prior fix added `workspaceAddMenuOpen` to `nativeOverlayActive`, which hides the Browser native view while the add menu is open. That avoids BrowserView covering the DOM popup but overcorrects by blanking the entire Browser content. Electron BrowserView/native content does not obey DOM z-index, so the fix likely needs a narrower native-view occlusion strategy, bounds avoidance/clipping, or a small chrome-owned overlay hole/region rather than a global hide.
+  constraints: Preserve workspace Browser content visibility, add popup pointer usability, right-panel manager non-flash/non-pollution, workspace Browser explicit tab binding, Browser close stale suppression, Project dropdown stability, compact display fix, and valid overlay hiding for modal/system overlays that genuinely should obscure Browser content. Do not reintroduce `activate: true` manager pollution, hide the right panel, hide the whole BrowserView for the add popup, force close the popup, rely on timeouts, or accept toolbar-only Browser as content-visible.
+  expected_investigation: Reproduce installed behavior and identify exactly which overlay/native visibility condition blanks Browser content when the add popup opens. Determine whether the right fix is to remove the add popup from full native-overlay hiding, shrink/reposition the BrowserView bounds away from the popup rectangle, introduce popup-specific native occlusion metadata, or move the popup into a native-safe chrome area. Explain why full hide remains appropriate or inappropriate for other overlays such as settings/self-command.
+  expected_implementation: Replace the add-popup-specific full-hide behavior with a narrower strategy so Browser content remains visible while popup is open and `elementFromPoint`/visual evidence still prove the popup is topmost and clickable. Prefer a principled BrowserView bounds/occlusion helper over one-off CSS. Add focused tests that distinguish modal overlays that hide BrowserView from workspace add popup, which should preserve content while protecting popup interaction.
+  validation_required: Owner must reuse `/self/owner_dev/reviewer`, run focused RightPanel/BrowserPanel/workspace/Electron Browser native-view tests plus Prettier and `git diff --check`. PM will merge, build Runtime Capsule, restart, and self-debug with screenshot proof that Example Domain remains visible while the workspace add popup is open and clickable.
+  commit: pending
+  next_action: owner_dev to reproduce/root-cause/fix and hand back commit, reviewer result, validation, risk, and merge recommendation.
 
 - id: workspace-browser-add-menu-content-missing
   status: installed_effective
