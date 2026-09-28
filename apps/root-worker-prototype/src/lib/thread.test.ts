@@ -4646,6 +4646,124 @@ test("recovered compact running turn keeps live tool output after post-compact u
   );
 });
 
+test("recovered compact thread keeps second live user turn and later output visible", () => {
+  const recoveredThread = {
+    ...makeThread(),
+    turns: [
+      {
+        ...makeTurn("turn-recovered", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeUserMessage("user-recovery", "recover after restart"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const withSecondUser = updateThreadItem(
+    recoveredThread,
+    "turn-second-user",
+    makeUserMessage("user-second", "compact feedback follow-up"),
+  );
+  const withAssistant = appendAgentDelta(
+    withSecondUser,
+    "turn-second-user",
+    "assistant-second",
+    "working on the compact display fix",
+  );
+  const updated = updateThreadItem(
+    withAssistant,
+    "turn-second-user",
+    makeCommandExecution({
+      id: "tool-second",
+      command: "pnpm test",
+    }),
+  );
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.map((turn) => [turn.id, turn.items.map((item) => item.id)]),
+    [
+      ["turn-recovered", ["compact-1", "user-recovery"]],
+      ["turn-second-user", ["user-second", "assistant-second", "tool-second"]],
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["user-recovery", "message"],
+      ["user-second", "message"],
+      ["assistant-second", "message"],
+      ["tool-second", "tool"],
+    ],
+  );
+  assert.ok(
+    conversation.entries.some(
+      (entry) =>
+        entry.id === "user-second" &&
+        entry.text === "compact feedback follow-up",
+    ),
+  );
+});
+
+test("recovered compact thread accepts second live user turn snapshot", () => {
+  const recoveredThread = {
+    ...makeThread(),
+    turns: [
+      {
+        ...makeTurn("turn-recovered", [
+          {
+            ...makeCompactItem("compact-1"),
+            completedAtMs: 12_000,
+          },
+          makeUserMessage("user-recovery", "recover after restart"),
+        ]),
+        status: "running" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+  const secondUserTurn = {
+    ...makeTurn("turn-second-user", [
+      makeUserMessage("user-second", "compact feedback follow-up"),
+    ]),
+    status: "running" as const,
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+  } satisfies Turn;
+
+  const updated = updateThreadTurnSnapshot(recoveredThread, secondUserTurn);
+  const conversation = buildConversationState(updated);
+
+  assert.deepEqual(
+    updated.turns.map((turn) => [turn.id, turn.items.map((item) => item.id)]),
+    [
+      ["turn-recovered", ["compact-1", "user-recovery"]],
+      ["turn-second-user", ["user-second"]],
+    ],
+  );
+  assert.deepEqual(
+    conversation.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["user-recovery", "message"],
+      ["user-second", "message"],
+    ],
+  );
+});
+
 test("non-active compact head rejects untimed follow-up user items", () => {
   const compactedThread = {
     ...makeThread(),
