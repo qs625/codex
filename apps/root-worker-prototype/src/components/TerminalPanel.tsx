@@ -74,6 +74,7 @@ export function TerminalPanel({
   focusCommandRequest,
   focusPanelRequestToken,
   onOpenTerminalTabInWorkspace,
+  onWorkspaceTerminalTabBound,
   activeTerminalTabId,
   focusTerminalTabRequest,
   detachedTerminalTabIds = [],
@@ -83,6 +84,9 @@ export function TerminalPanel({
   focusCommandRequest?: TerminalCommandFocusRequest | null;
   focusPanelRequestToken?: number;
   onOpenTerminalTabInWorkspace?: (
+    tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
+  ) => void;
+  onWorkspaceTerminalTabBound?: (
     tab: Extract<WorkspaceObjectDragPayload, { kind: "terminal" }>,
   ) => void;
   activeTerminalTabId?: string | null;
@@ -111,6 +115,7 @@ export function TerminalPanel({
     useRef<PendingTerminalViewportFocusRequest | null>(null);
   const lastAppliedTerminalFocusTokenRef = useRef(0);
   const lastTerminalTabFocusRequestTokenRef = useRef(0);
+  const workspaceTerminalCreatePendingRef = useRef(false);
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const lastPreferredSizeRef = useRef<{
     threadId: string;
@@ -142,12 +147,14 @@ export function TerminalPanel({
   );
   const managerHasDetachedTabs =
     isManagerVariant && detachedTerminalTabIdSet.size > 0;
+  const selectedTerminalTabId = isManagerVariant
+    ? state.activeTabId
+    : activeTerminalTabId;
   const activeTab = useMemo(
     () =>
-      visibleTabs.find((tab) => tab.id === state.activeTabId) ??
-      visibleTabs[0] ??
-      null,
-    [state.activeTabId, visibleTabs],
+      visibleTabs.find((tab) => tab.id === selectedTerminalTabId) ??
+      (isManagerVariant ? (visibleTabs[0] ?? null) : null),
+    [isManagerVariant, selectedTerminalTabId, visibleTabs],
   );
   activeTabIdRef.current = activeTab?.id ?? null;
   activeTabRuntimeRef.current = activeTab
@@ -309,6 +316,7 @@ export function TerminalPanel({
 
   useEffect(() => {
     if (
+      !isManagerVariant ||
       !activeTerminalTabId ||
       activeTerminalTabId === state.activeTabId ||
       !state.tabs.some((tab) => tab.id === activeTerminalTabId)
@@ -325,6 +333,7 @@ export function TerminalPanel({
       .catch((error) => setLocalError(toTerminalError(error)));
   }, [
     activeTerminalTabId,
+    isManagerVariant,
     requestTerminalViewportFocus,
     state.activeTabId,
     state.tabs,
@@ -613,7 +622,7 @@ export function TerminalPanel({
       .catch((error) => setLocalError(toTerminalError(error)));
   };
 
-  const createTerminal = () => {
+  const createTerminal = (options: { bindWorkspaceTab?: boolean } = {}) => {
     void window.codexDesktop
       .createTerminal({
         cwd: thread?.cwd ?? null,
@@ -623,8 +632,32 @@ export function TerminalPanel({
         setState(nextState);
         requestTerminalViewportFocus(nextState.activeTabId);
         setLocalError(null);
+        if (options.bindWorkspaceTab) {
+          const createdTab =
+            nextState.tabs.find((tab) => tab.id === nextState.activeTabId) ??
+            nextState.tabs.at(-1) ??
+            null;
+          if (createdTab) {
+            onWorkspaceTerminalTabBound?.({
+              kind: "terminal",
+              terminalTabId: createdTab.id,
+              sessionId: createdTab.sessionId,
+              threadId: createdTab.threadId,
+              title: createdTab.title,
+              cwd: createdTab.cwd,
+              commandItemId: createdTab.commandItemId,
+              command: createdTab.title,
+              status: createdTab.status,
+            });
+          }
+        }
       })
-      .catch((error) => setLocalError(toTerminalError(error)));
+      .catch((error) => setLocalError(toTerminalError(error)))
+      .finally(() => {
+        if (options.bindWorkspaceTab) {
+          workspaceTerminalCreatePendingRef.current = false;
+        }
+      });
   };
 
   useEffect(() => {
@@ -632,20 +665,21 @@ export function TerminalPanel({
       isManagerVariant ||
       !terminalStateLoaded ||
       activeTerminalTabId != null ||
-      visibleTabs.length > 0 ||
+      workspaceTerminalCreatePendingRef.current ||
       localError ||
       state.error
     ) {
       return;
     }
-    createTerminal();
+    workspaceTerminalCreatePendingRef.current = true;
+    createTerminal({ bindWorkspaceTab: true });
   }, [
     activeTerminalTabId,
     isManagerVariant,
     localError,
+    onWorkspaceTerminalTabBound,
     state.error,
     terminalStateLoaded,
-    visibleTabs.length,
   ]);
 
   const liveCommands = selectRunningActiveCommandItems(thread);

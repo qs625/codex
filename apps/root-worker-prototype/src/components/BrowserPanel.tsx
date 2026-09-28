@@ -110,11 +110,8 @@ export function resolveBrowserPanelTabSelection({
   const renderedTabs = isManagerVariant ? managerVisibleTabs : tabs;
   const selectedBrowserTabId = isManagerVariant
     ? (managerSelectedBrowserTabId ?? activeTabId)
-    : activeBrowserTabId
-      ? activeBrowserTabId
-      : activeTabId;
-  const hasExplicitWorkspaceSelection =
-    !isManagerVariant && activeBrowserTabId != null;
+    : activeBrowserTabId;
+  const hasExplicitWorkspaceSelection = !isManagerVariant;
   const activeTab =
     renderedTabs.find((tab) => tab.id === selectedBrowserTabId) ??
     (hasExplicitWorkspaceSelection ? null : (renderedTabs[0] ?? null));
@@ -141,6 +138,7 @@ export function BrowserPanel({
   onNavigationRequestHandled,
   onOpenBrowserTabInWorkspace,
   onBrowserTabIdsChange,
+  onWorkspaceBrowserTabBound,
   activeBrowserTabId,
   focusBrowserTabRequest,
   detachedBrowserTabIds = [],
@@ -153,6 +151,7 @@ export function BrowserPanel({
   onNavigationRequestHandled?: (token: number) => void;
   onOpenBrowserTabInWorkspace?: (tab: BrowserWorkspaceTabDescriptor) => void;
   onBrowserTabIdsChange?: (tabIds: string[]) => void;
+  onWorkspaceBrowserTabBound?: (tab: BrowserWorkspaceTabDescriptor) => void;
   activeBrowserTabId?: string | null;
   focusBrowserTabRequest?: { tabId: string; token: number } | null;
   detachedBrowserTabIds?: string[];
@@ -162,6 +161,7 @@ export function BrowserPanel({
   const passiveBoundsCorrectionRef = useRef<(() => void) | null>(null);
   const addressInputFocusedRef = useRef(false);
   const lastAddressTabIdRef = useRef<string | null>(null);
+  const workspaceBrowserTabCreatePendingRef = useRef(false);
   const browserSurfaceRef = useRef({
     activeBrowserTabId,
     detachedBrowserTabIds,
@@ -227,8 +227,7 @@ export function BrowserPanel({
   );
   const managerNativeViewBlocked =
     managerActiveTabDetached || (managerHasDetachedTabs && activeTab == null);
-  const workspaceSelectionMissing =
-    !isManagerVariant && activeBrowserTabId != null && activeTab == null;
+  const workspaceSelectionMissing = !isManagerVariant && activeTab == null;
   const displayUrl =
     activeTab?.url ??
     (!isManagerVariant && !workspaceSelectionMissing ? state.url : "") ??
@@ -349,6 +348,57 @@ export function BrowserPanel({
   }, []);
 
   useEffect(() => {
+    if (
+      !active ||
+      isManagerVariant ||
+      activeBrowserTabId != null ||
+      workspaceBrowserTabCreatePendingRef.current
+    ) {
+      return;
+    }
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      setLocalError("In-app browser is unavailable in this environment.");
+      return;
+    }
+    workspaceBrowserTabCreatePendingRef.current = true;
+    setLocalError(null);
+    void browserApi
+      .createBrowserTab({ activate: true })
+      .then((nextState) => {
+        const normalizedState = normalizeBrowserPanelState(nextState);
+        applyBrowserState(normalizedState);
+        const createdTab =
+          normalizedState.tabs.find(
+            (tab) => tab.id === normalizedState.activeTabId,
+          ) ??
+          normalizedState.tabs.at(-1) ??
+          null;
+        if (createdTab) {
+          onWorkspaceBrowserTabBound?.({
+            kind: "browser",
+            browserTabId: createdTab.id,
+            title: createdTab.title,
+            url: createdTab.url,
+          });
+        }
+      })
+      .catch((commandError) =>
+        setLocalError(
+          toBrowserError(commandError) || "Could not create a tab.",
+        ),
+      )
+      .finally(() => {
+        workspaceBrowserTabCreatePendingRef.current = false;
+      });
+  }, [
+    active,
+    activeBrowserTabId,
+    isManagerVariant,
+    onWorkspaceBrowserTabBound,
+  ]);
+
+  useEffect(() => {
     if (!isManagerVariant) {
       return;
     }
@@ -376,6 +426,9 @@ export function BrowserPanel({
       return;
     }
     onNavigationRequestHandled?.(navigationRequest.token);
+    if (workspaceSelectionMissing) {
+      return;
+    }
     const normalized = normalizeBrowserUrl(navigationRequest.url);
     if (!normalized.ok) {
       setLocalError(normalized.reason);
@@ -411,6 +464,7 @@ export function BrowserPanel({
     managerHasDetachedTabs,
     navigationRequest,
     onNavigationRequestHandled,
+    workspaceSelectionMissing,
   ]);
 
   useEffect(() => {
